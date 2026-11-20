@@ -159,9 +159,11 @@ fn real_paths_child() {
             paths::instance_models_dir(),
             PathBuf::from("/var/lib/llama.cpp/models")
         );
-        // And its default StateDir is the service user's, the one the shipped
-        // `server@default.ini` names (under the data root the instance unit's
-        // `StateDirectory=` creates), whoever asks: the configurator names it
+        // And its default StateDir is the service user's root (the instance's
+        // own folder is `instance_state_dir()/<id>`, the launch filling the id
+        // in; the shipped `server@default.ini` names it no more), under the
+        // data root the instance unit's
+        // `StateDirectory=` creates, whoever asks: the configurator names it
         // as the instance's default, so it must not be the asking user's own
         // `slot_state::default_state_dir()`.
         #[cfg(target_os = "linux")]

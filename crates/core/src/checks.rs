@@ -39,6 +39,7 @@ pub const KEYS: &[&str] = &[
     "model-profile-bad-value",
     "model-profile-model-missing",
     "model-profile-over-memory",
+    "server-bad-tags",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -110,6 +111,9 @@ impl Refusal {
             }
             "model-profile-over-memory" => {
                 strings::fill("model-profile-over-memory", &[&v(0), &v(1), &v(2), &v(3)])
+            }
+            "server-bad-tags" => {
+                strings::fill("server-bad-tags", &[&v(0), &v(1), &v(2), &v(3), &v(4)])
             }
             other => other.to_string(),
         }
@@ -574,6 +578,72 @@ pub fn spec_type(value: &str) -> Result<(), Refusal> {
         .try_for_each(|entry| one_of("spec-type", entry, SPEC_TYPES))
 }
 
+/// The most tags one server profile or instance carries.
+pub const TAGS_MAX: usize = 8;
+
+/// The least characters of a tag.
+pub const TAG_MIN: usize = 1;
+
+/// The most characters of a tag.
+pub const TAG_MAX: usize = 32;
+
+/// The `Tags` key as the list every reader reads: split on `,`, each entry
+/// trimmed, an empty entry (an empty key, a doubled comma, a trailing one)
+/// dropped, so the rule judges the list the file carries.
+fn tags_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// The tags of a server profile or of an instance, as the `Tags` list is
+/// written: `count` entries, each of [`TAG_MIN`] to [`TAG_MAX`] characters of
+/// `a-z`, `0-9` and `-`, not the same tag twice. The web UI shows them, and
+/// the manager never passes them to llama-server, so the list is checked here
+/// and nowhere else. A list of none is what an off switch looks like, and is
+/// accepted: it is the empty key, written by a save that cleared them.
+pub fn tags_rule(tags: &[String]) -> Result<(), Refusal> {
+    let limits = [
+        TAGS_MAX.to_string(),
+        TAG_MIN.to_string(),
+        TAG_MAX.to_string(),
+    ];
+    let list = tags.join(",");
+    let refuse = |reason: &str| {
+        Refusal::new(
+            "server-bad-tags",
+            &[&reason, &list, &limits[0], &limits[1], &limits[2]],
+        )
+    };
+    if tags.len() > TAGS_MAX {
+        return Err(refuse("too many tags"));
+    }
+    let mut seen: Vec<&str> = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let bad = if tag.is_empty() {
+            "empty tag"
+        } else if tag.len() > TAG_MAX {
+            "too long"
+        } else if !tag
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
+            "bad characters"
+        } else if seen.contains(&tag.as_str()) {
+            "the same tag twice"
+        } else {
+            seen.push(tag.as_str());
+            ""
+        };
+        if !bad.is_empty() {
+            return Err(refuse(bad));
+        }
+    }
+    Ok(())
+}
+
 /// `value` of `key` as one JSON object, which llama.cpp merges key by key.
 pub fn json_object(key: &str, value: &str) -> Result<(), Refusal> {
     match serde_json::from_str::<serde_json::Value>(value) {
@@ -790,6 +860,7 @@ pub fn server_file(text: &str, model_profiles: &str) -> Result<(), Refusal> {
         }
     }
     bind_list(&s.get("Hostname").unwrap_or_default())?;
+    tags_rule(&tags_list(s.get("Tags").as_deref().unwrap_or_default()))?;
     let models_max = s.get("ModelsMax").and_then(|v| ini::parse_int(&v));
     startup_count(startup_flagged(&raw_sections(model_profiles)), models_max)
 }
@@ -1088,6 +1159,27 @@ top-p = 0.95\r\n";
         );
     }
 
+    /// Every key a check refuses with has its own arm in [`Refusal::text`], so
+    /// the client reads a sentence and never the key. The strings lint
+    /// (`crates/config` `binding_lint`) counts a key of the language file as
+    /// used only through that arm, so a key added to [`KEYS`] with no arm is a
+    /// text the user never sees.
+    #[test]
+    fn every_check_key_has_its_own_text() {
+        for &key in KEYS {
+            let r = Refusal {
+                key,
+                values: (0..8).map(|i| format!("v{i}")).collect(),
+            };
+            let text = r.text();
+            assert_ne!(text, key, "{key}: Refusal::text has no arm for it");
+            assert!(
+                !text.contains("{0}") && !text.contains("{1}"),
+                "{key}: the text keeps a placeholder: {text:?}"
+            );
+        }
+    }
+
     // ── server@<id>.ini ─────────────────────────────────────────────────
 
     #[test]
@@ -1215,6 +1307,82 @@ top-p = 0.95\r\n";
                 server_file(&server(&format!("LogVerbosity = {good}\n")), ""),
                 Ok(()),
                 "LogVerbosity = {good:?}"
+            );
+        }
+    }
+
+    /// The `Tags` key of a server profile obeys [`tags_rule`] like the
+    /// record's tags of an instance do, so the file check refuses a list the
+    /// rule refuses: every surface that writes a profile through the manager
+    /// (the web's save, the GUI's, `pai server set`) refuses it, and nothing
+    /// lands. The refusal is the rule's own, naming the list and the limits.
+    /// The list is the one the reader reads, so blanks around an entry are
+    /// trimmed before it is judged, as every other reader of the key trims it.
+    #[test]
+    fn the_server_file_check_refuses_a_tags_list_the_rule_refuses() {
+        let want = |reason: &str, list: &str| Refusal {
+            key: "server-bad-tags",
+            values: vec![
+                reason.to_string(),
+                list.to_string(),
+                TAGS_MAX.to_string(),
+                TAG_MIN.to_string(),
+                TAG_MAX.to_string(),
+            ],
+        };
+        let too_long = "z".repeat(TAG_MAX + 1);
+        let over = (0..=TAGS_MAX)
+            .map(|i| format!("t{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let cases: Vec<(String, &str, String)> = vec![
+            ("Edge".into(), "bad characters", "Edge".into()),
+            ("gpu edge".into(), "bad characters", "gpu edge".into()),
+            ("gpu.edge".into(), "bad characters", "gpu.edge".into()),
+            ("gpu,gpu".into(), "the same tag twice", "gpu,gpu".into()),
+            // The space is the file's, not the tag's: trimmed, the entry is a
+            // capital letter, and the list the refusal names is the trimmed one.
+            ("Edge, v2".into(), "bad characters", "Edge,v2".into()),
+            (
+                format!("gpu,{too_long}"),
+                "too long",
+                format!("gpu,{too_long}"),
+            ),
+            (over.clone(), "too many tags", over),
+        ];
+        for (raw, reason, list) in cases {
+            assert_eq!(
+                server_file(&server(&format!("Tags = {raw}\n")), ""),
+                Err(want(reason, &list)),
+                "Tags = {raw:?}"
+            );
+        }
+    }
+
+    /// A list of the rule's own shape passes the file check: a plain list, a
+    /// hand-spaced one, the longest tag, the most tags. The empty key is no
+    /// tags, the way a save that cleared them writes it, and is not an empty
+    /// tag.
+    #[test]
+    fn the_server_file_check_accepts_a_tags_list_of_the_rules_shape() {
+        let at_limits = (0..TAGS_MAX)
+            .map(|i| format!("{i}{}", "t".repeat(TAG_MAX - 1)))
+            .collect::<Vec<_>>()
+            .join(",");
+        for raw in [
+            "edge,v2",
+            "",
+            "   ",
+            "edge , v2",
+            "a",
+            "0-9",
+            &at_limits,
+            "edge,v2\nPort = 8082",
+        ] {
+            assert_eq!(
+                server_file(&server(&format!("Tags = {raw}\n")), ""),
+                Ok(()),
+                "Tags = {raw:?}"
             );
         }
     }
@@ -2274,6 +2442,62 @@ top-p = 0.95\r\n";
             let allowed = r.values.get(2).cloned().unwrap_or_default();
             assert!(allowed.contains("draft-mtp"), "{allowed:?}");
         }
+    }
+
+    /// The tags of a server profile and of an instance (the `Tags` key of
+    /// `server@<id>.ini`, and the record's tags): up to [`TAGS_MAX`] of them,
+    /// each of [`TAG_MIN`] to [`TAG_MAX`] characters of `a-z`, `0-9` and `-`,
+    /// none twice. The web UI shows them and the manager never passes them to
+    /// llama-server, so this rule is the only check they meet. An empty list
+    /// is what clearing them looks like, so it passes.
+    #[test]
+    fn tags_are_a_short_list_of_lower_words_none_twice() {
+        for list in [
+            Vec::new(),
+            tags("gpu"),
+            tags("edge-1,v2"),
+            tags("a"),
+            tags(&"z".repeat(TAG_MAX)),
+            (0..TAGS_MAX).map(|i| format!("t{i}")).collect(),
+        ] {
+            assert_eq!(tags_rule(&list), Ok(()), "{list:?}");
+        }
+        let long = "z".repeat(TAG_MAX + 1);
+        for list in [
+            vec![String::new()],
+            tags("gpu").into_iter().chain([long]).collect(),
+            tags("GPU"),
+            tags("gpu edge"),
+            tags("gpu.edge"),
+            tags("gpu,edge,gpu"),
+            (0..=TAGS_MAX).map(|i| format!("t{i}")).collect(),
+        ] {
+            let r = tags_rule(&list).expect_err(&format!("{list:?}"));
+            assert_eq!(r.key, "server-bad-tags", "{list:?}: {r:?}");
+            assert!(KEYS.contains(&r.key), "{} missing from checks::KEYS", r.key);
+            assert_eq!(
+                Refusal::decode(&r.encode()),
+                Some(r.clone()),
+                "wire round trip: {r:?}"
+            );
+        }
+        // The refusal names the list it refused and the limits, so the page
+        // can say what to fix.
+        let r = tags_rule(&(0..=TAGS_MAX).map(|i| format!("t{i}")).collect::<Vec<_>>())
+            .expect_err("one tag over the most");
+        assert!(
+            r.values.iter().any(|v| *v == TAGS_MAX.to_string()),
+            "the refusal does not carry the most tags: {r:?}"
+        );
+        assert!(
+            r.values.iter().any(|v| v.contains("t0")),
+            "the refusal does not carry the tags it refused: {r:?}"
+        );
+    }
+
+    /// The `Tags` value as the file writes it: a comma-separated list.
+    fn tags(v: &str) -> Vec<String> {
+        v.split(',').map(String::from).collect()
     }
 
     /// `chat-template-kwargs` is parsed by llama.cpp as a JSON object

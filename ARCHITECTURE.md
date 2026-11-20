@@ -1110,13 +1110,16 @@ alternative (refuse every write while any render misses a file) blocking the fix
 A save writes whichever pool file holds the profile, `models.ini.disabled` included (a profile there
 is in effect where an `on` override assigns it), so both files' writes run the check.
 
-**(c) Port and tags** (unchanged). The port stays `Port` in `server@<id>.ini`. Tags go in the same file,
+**(c) Port and tags** (unchanged). The port stays `Port` in the instance's server profile, `server@<profile>.ini`, the profile its `instances.ini` section names (`ServerProfile`), never `server@<instance id>.ini`. Tags go in the same file,
 `[Server] Tags = coding, fast`, a framework key never passed to llama-server, a `ServerConfig` field so
 the GUI's and the web's whole-file saves keep them; 0 to 8, each 1 to 32 of `a-z`, `0-9`, `-`, no
-duplicates, refused `server-bad-tags` (a preference). The bff keeps the file's tags when `Tags` is
-absent from a `PUT .../server` body; `[]` clears them. The Overview gets them, with the port, through
-a new unauthenticated call **`Instances() -> [{id, engine, port, tags}]`** (D-Bus `a(ssqas)`, pipe
-`Instances`), the configured port (a running instance may use the previous one until a restart).
+duplicates, refused `server-bad-tags` (a preference). A `PUT .../server` body without `Tags` is 400
+`server-malformed`, like any other key the read gives (as built in slice 12, replacing "absent keeps
+the file's tags": the web UI is embedded in the bff, so no older page sends a body without it, and a
+refusal cannot erase tags); `[]` clears them. The Overview gets them, with the port, through
+a new unauthenticated call **`Instances() -> [{id, engine, port, profile_tags, instance_tags}]`** (D-Bus
+`a(ssqasas)`, pipe `Instances`; (d')), the configured port of that profile (a running instance may use the
+previous one until a restart), port 0 and no profile tags when the profile file is missing.
 
 **(d) Manager protocol 3**, each guarded method with its `As` form, under `configure` and the `writing`
 lock, recorded like every write:
@@ -1152,16 +1155,27 @@ stopped instances other than `default`, as it can already rewrite the files. Eve
 nothing.
 
 **(e) Snapshots per instance** (unchanged). An unset `StateDir` becomes `instance_state_dir()/<id>`
-(`with_instance_defaults` takes the id); the shipped `server@default.ini` sets `StateDir`, so `default`
-keeps its folder.
+(as built in slice 11, the launch passes `instance_state_dir().join(id)` to `with_instance_defaults`).
+`default` included, on every OS (coordinator, 2026-11-20: pre-release, no migration of the old root
+folder), so Linux's shipped `crates/core/defaults/server@default.ini` must stop setting `StateDir` to
+the root (open at the slice 11/12 review: its line 8 still does), like Windows'
+(`crates/core/defaults/windows/server@default.ini`), which sets neither folder; every reader follows
+(as built): the client restore
+(`pai-app` `slot_state::restore_newest_with`, `effective_state_dir` given the root), the GUI and CLI
+hints and the bff server document's `defaults.StateDir` (`crates/bff/src/server.rs` 95). The instance's
+cwd and the model-file and memory checks keep the root (`instance_current_dir`).
 
 **(f) The bff.** Every node-scoped route sits under the node's prefix `api` (`GET /api/node`, behind a session like every read since a600a46:
 `{"name": <host name>, "api": "/api"}`; hub mode answers `GET /api/nodes` with the same objects and
 `api` = `/api/nodes/<node>`): `instances` and everything below it, `presets` and everything below it,
 `engines`. At `/api` in every mode: `version`, `session`, `node`, `nodes`.
 
-- `GET /api/instances` items `{id, engine, state, port, tags, removable}`, sorted by id; one failed
-  status read gives that item `"state": "unknown"`, an unreachable manager or a refusal fails the list.
+- `GET /api/instances` items `{id, engine, state, port, tags, removable}` (as built in slice 12, without
+  `removable`: (f')). The handler asks `ListInstances` (the ids, in the manager's order), `Instances`
+  (port and both tag lists; a failure of that call, an older manager's, leaves port 0 and no tags) and
+  `Status` per id (the state, which `Instances` does not carry); a `NoInstance` status drops that item,
+  any other failed status read, an unreachable manager or a refusal fails the list (as built since
+  step 10; the earlier "sorted by id, state `unknown`" was never built).
 - `POST /api/instances` and `DELETE /api/instances/{id}`, as in (i) below.
 - **The pool stays at `/api/presets`**: the list, `GET`/`PUT /api/presets/{preset}` (the save applies to
   every instance it is in effect on) and `PUT /api/presets/{preset}/enabled` (the global switch), same
@@ -1375,7 +1389,7 @@ recorded:
 | Method (pipe name = D-Bus name) | D-Bus signature | Refusals |
 | --- | --- | --- |
 | `Instances()`, no authorization | `-> a(ssqasas)`: `(id, engine, port, profile_tags, instance_tags)`, the state left to `Status`; pipe objects `{id, engine, port, profile_tags, instance_tags}` (slice 12, 2026-11-20; `server_profile` joins after `engine`, `a(sssqasas)`, with the server-profile slice, while no release carries 3) | none; port 0 and no profile tags when the profile file is missing |
-| `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `server-bad-tags` (the rule of (c), one key for both lists: decision 2026-11-20 below); writes `Tags = ...` in the instance's `instances.ini` section, `[]` removes the key |
+| `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `server-bad-tags` (the rule of (c), one key for both lists: decision 2026-11-20 below); writes `Tags = ...` in the instance's `instances.ini` section, `[]` writes the key empty (as built; read as no tags) |
 | `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (exact id; not for `*`), `model-profile-bad-value` `[value]` (none/inherit/on/off; `*` takes none/inherit), `Io` when a file it reads cannot be read (only an absent file is empty), checks 1 and 3 of (b), model file and memory once built. `ModelsMax` is judged only when the call raises the instance's `load-on-startup` count, and not when its server profile cannot be read. Renders every instance, as every other write does |
 | `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `UnresolvableHost`, `load-on-startup-over-max` (the new cap against the instance's render, even when the count does not rise), `Io` when a file it reads cannot be read. The profile the instance already names answers Ok and writes nothing. Never restarts the instance: the switch applies at its next start, and until then the old address stays bound while the checks judge the new one, so another instance given the old address fails at its start, not at the save |
 | `CreateServerProfile(engine, profile, port)` (port `0` = absent, answer 2 below) | `(ssq)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig { port, ..Default }, true)` (a create-if-absent under the lock, so it never overwrites) |
@@ -1389,7 +1403,7 @@ New `ManagerError`s: `NoServerProfile(profile)`, `ServerProfileInUse(profile, in
 compromised bff can, during a member's session, also swap an instance's server profile (its port and
 bind address) and create or delete unused profiles, as it can already rewrite those files.
 
-*(f') The bff.* The routes, every one behind an administrator's session but `GET /api/instances`:
+*(f') The bff.* The routes, every one behind an administrator's session (`GET /api/instances` too, since a600a46):
 
 | Route | Body / reply | Errors |
 | --- | --- | --- |

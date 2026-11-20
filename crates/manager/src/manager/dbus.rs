@@ -158,6 +158,19 @@ where
         self.core(|m| m.list_instances()).await
     }
 
+    /// `Instances`: one row per instance, `(ssqasas)`, the last two arrays the
+    /// tags of the server profile it points at and the tags of its own
+    /// section. Answered to any caller, as the list of ids is.
+    async fn instances(&self) -> Vec<(String, String, u16, Vec<String>, Vec<String>)> {
+        self.core(|m| {
+            m.instances()
+                .into_iter()
+                .map(|i| (i.id, i.engine, i.port, i.profile_tags, i.instance_tags))
+                .collect()
+        })
+        .await
+    }
+
     async fn status(&self, id: String) -> Result<String, Error> {
         let state = self.core(move |m| m.status(&id)).await?;
         Ok(state_name(state).to_string())
@@ -365,6 +378,34 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.set_server_profile(&who, &instance, &profile))
+            .await?)
+    }
+
+    /// `SetInstanceTags`: the record's own tags of one instance, `(sas)`.
+    async fn set_instance_tags(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        instance: String,
+        tags: Vec<String>,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.set_instance_tags(&who, &instance, &tags))
+            .await?)
+    }
+
+    /// `SetInstanceTags` for `principal`, the principal first as every `As`
+    /// method has it (`ssas`).
+    async fn set_instance_tags_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        instance: String,
+        tags: Vec<String>,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.set_instance_tags(&who, &instance, &tags))
             .await?)
     }
 
@@ -1392,6 +1433,122 @@ pub(crate) fn manager_dbus_e2e() {
             .expect("restore the fixture record");
     }
 
+    // ── Instances and the tags of an instance: `(a(ssqasas))` and `(sas)` ─
+    // `Instances` answers one row per instance: id, engine, port, the tags of
+    // the server profile its section names, the tags of its own section. It
+    // asks nobody anything, as the list of ids does. `SetInstanceTags` answers
+    // the unit and writes one key of one section.
+    {
+        let seeded = "[default]\nServerProfile = default\nTags = gpu , edge \n";
+        std::fs::write(sys.join("instances.ini"), seeded).expect("record");
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nTags = edge,v2\n",
+        )
+        .expect("profile");
+        let c = Arc::new(Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            FakeResolver::lan(),
+        ));
+        let (_server, client) = connect(&c, Some(":1.42"));
+
+        let r = call(&client, "Instances", &()).expect("Instances");
+        assert_eq!(
+            r.body().signature().to_string(),
+            "a(ssqasas)",
+            "an array of a struct of two strings, a uint16 and two arrays of strings"
+        );
+        assert_eq!(
+            body::<Vec<(String, String, u16, Vec<String>, Vec<String>)>>(&r),
+            vec![(
+                "default".to_string(),
+                "llama.cpp".to_string(),
+                8080u16,
+                vec!["edge".to_string(), "v2".to_string()],
+                vec!["gpu".to_string(), "edge".to_string()],
+            )],
+            "the port of the profile, its tags, and the section's own trimmed"
+        );
+        assert_eq!(
+            *c.authority().asked.lock().unwrap(),
+            vec![],
+            "the list asks polkit nothing"
+        );
+        let (_server, anon) = connect(&c, None);
+        assert!(
+            call(&anon, "Instances", &()).is_ok(),
+            "a client with no sender reads the tags as it reads the ids"
+        );
+
+        let r = call(
+            &client,
+            "SetInstanceTags",
+            &("default", vec!["edge".to_string(), "a-1".to_string()]),
+        )
+        .expect("SetInstanceTags of default");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = default\nTags = edge,a-1\n",
+            "the section's own Tags replaced in place, the list joined with a comma"
+        );
+
+        let e = call(
+            &client,
+            "SetInstanceTags",
+            &("a_b", vec!["edge".to_string()]),
+        )
+        .expect_err("an invalid id");
+        assert_eq!(e.0, err_name("InvalidId"), "{e:?}");
+        let e = call(
+            &client,
+            "SetInstanceTags",
+            &("default", vec!["Edge".to_string()]),
+        )
+        .expect_err("a tag of bad characters");
+        assert_eq!(e.0, err_name("Invalid"), "{e:?}");
+        assert!(
+            e.1.contains("server-bad-tags"),
+            "the refusal key travels in the message: {e:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = default\nTags = edge,a-1\n",
+            "a refused list wrote nothing"
+        );
+
+        // The signature is `(sas)`: an id and an array of strings. zbus
+        // answers a shape mismatch with its own error, never one of the
+        // manager's, and the record is untouched.
+        for e in [
+            call(&client, "SetInstanceTags", &("default",)).expect_err("one string"),
+            call(&client, "SetInstanceTags", &("default", "edge"))
+                .expect_err("a string where an array belongs"),
+            call(&client, "SetInstanceTags", &("default", vec![7u32]))
+                .expect_err("a number where a string belongs"),
+        ] {
+            assert!(
+                !e.0.starts_with("org.privateai.Manager1."),
+                "not the manager's error: {e:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = default\nTags = edge,a-1\n",
+            "a body the method does not take writes nothing"
+        );
+        std::fs::write(
+            sys.join("instances.ini"),
+            "[default]\nServerProfile = default\n",
+        )
+        .expect("restore the record");
+    }
+
     // ── ReadFile says when it withheld the API key ───────────────────────
     // The reply is (exists, text, withheld): an older client expecting
     // (exists, text) fails to read it instead of taking the blanked file
@@ -2284,6 +2441,73 @@ pub(crate) fn manager_dbus_principal_e2e() {
             "[default]\nQwen3.8-27B = on\n",
             "a caller that is not the bff writes nothing"
         );
+    }
+
+    // ── The member's tags of an instance, vouched by the bff ──────────────
+    // `SetInstanceTagsAs(s principal, s instance, as tags)`: the tags verb
+    // with a principal. The principal is the first argument: an
+    // implementation taking them the other way answers InvalidId for
+    // "alice". A member's call reaches the core's own checks; a non-member
+    // is refused and writes nothing; a caller that is not the bff vouches
+    // for nobody.
+    {
+        std::fs::write(
+            sys.join("instances.ini"),
+            "[default]\nServerProfile = default\n",
+        )
+        .expect("instances.ini");
+        std::fs::write(sys.join("server@default.ini"), ini).expect("server@default.ini");
+        let record_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
+
+        let r = call(
+            &client,
+            "SetInstanceTagsAs",
+            &("alice", "default", vec!["edge".to_string()]),
+        )
+        .expect("SetInstanceTagsAs for a member");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            record_of("instances.ini"),
+            "[default]\nServerProfile = default\nTags = edge\n",
+            "a member's list lands"
+        );
+
+        let e = call(
+            &client,
+            "SetInstanceTagsAs",
+            &("bob", "default", vec!["gpu".to_string()]),
+        )
+        .expect_err("SetInstanceTagsAs for a non-member");
+        assert_eq!(e.0, format!("{PREFIX}NotAuthorized"), "{e:?}");
+        assert_eq!(
+            record_of("instances.ini"),
+            "[default]\nServerProfile = default\nTags = edge\n",
+            "the refused call wrote nothing"
+        );
+
+        // The `As` spelling is the only one carrying a principal: the plain
+        // verb takes two arguments, `(sas)`.
+        let e = call(
+            &client,
+            "SetInstanceTags",
+            &("alice", "default", vec!["edge".to_string()]),
+        )
+        .expect_err("the plain verb with three arguments");
+        assert!(
+            !e.0.starts_with("org.privateai.Manager1."),
+            "not the manager's error: {e:?}"
+        );
+
+        // The record as the phase's fixture has it, for the blocks after.
+        std::fs::write(
+            sys.join("instances.ini"),
+            "[default]\nServerProfile = default\n",
+        )
+        .expect("restore the record");
     }
 
     // ── The member's server profile of an instance, vouched by the bff ────

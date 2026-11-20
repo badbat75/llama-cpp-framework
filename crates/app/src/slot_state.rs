@@ -323,7 +323,10 @@ pub fn restore_newest_with(
         cfg,
         crate::server_control::backend().kind(),
         crate::server_control::Os::current(),
-        &crate::paths::instance_state_dir(),
+        // The instance the configurator drives: an unset StateDir is that
+        // instance's folder, the one the launch passes, never the root of
+        // every instance's folders.
+        &crate::paths::instance_state_dir().join("default"),
     );
     let Some(newest) = dumps_newest_first(&dir).into_iter().next() else {
         return Ok(None);
@@ -346,24 +349,33 @@ pub fn restore_newest_with(
 /// E2E phase for `data_root_e2e` (`src/tests/mod.rs`): it redirects the data
 /// tree. Under the manager (Linux and Windows; the test build's default
 /// backend is a manager) an instance whose StateDir is unset writes its
-/// snapshots to the engine's `paths::instance_state_dir()`, the folder its
-/// launch passes as `--slot-save-path`; the restore after a start reads that
-/// folder, not the user's data root. On macOS it is the user's default, as
-/// before. A dump no model profile matches is refused before any request, so the
-/// error names the file the restore picked.
+/// snapshots to the folder of ITS OWN: the engine's state root
+/// (`paths::instance_state_dir()`) with the instance's id joined, the folder
+/// the launch passes as `--slot-save-path`. The restore after a start reads
+/// that folder: neither the engine's root (where a dump of another instance
+/// sits), nor the user's data root. On macOS it is the user's default, as
+/// before. A dump no model profile matches is refused before any request, so
+/// the error names the file the restore picked.
 #[cfg(test)]
 pub(crate) fn restore_reads_the_instance_state_dir_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
-    let instance = crate::paths::instance_state_dir();
+    // The instance the configurator drives.
+    let root = crate::paths::instance_state_dir();
+    let instance = root.join("default");
     let user = pai_core::slot_state::default_state_dir();
     assert_ne!(instance, user, "fixture sanity: the two defaults differ");
+    assert_ne!(instance, root, "fixture sanity: a folder of its own");
     std::fs::create_dir_all(&instance).expect("instance state dir");
     std::fs::create_dir_all(&user).expect("user state dir");
     let instance_dump = state_file_name("Qwen3.8-27B");
     let user_dump = state_file_name("Qwen3.8-Flash-Next");
+    let root_dump = state_file_name("Qwen2.5-7B");
     std::fs::write(instance.join(&instance_dump), b"dump").expect("instance dump");
     std::fs::write(user.join(&user_dump), b"dump").expect("user dump");
+    // A dump sitting in the engine's root, beside the folders of the
+    // instances: it belongs to no instance, so the restore must not see it.
+    std::fs::write(root.join(&root_dump), b"dump").expect("root dump");
 
     let expected = if cfg!(any(windows, target_os = "linux")) {
         &instance_dump
@@ -381,7 +393,7 @@ pub(crate) fn restore_reads_the_instance_state_dir_e2e() {
         assert_eq!(
             got,
             Err(strings::fill("dump-no-model", &[expected])),
-            "the restore reads the instance's state folder for {cfg:?}"
+            "the restore reads the state folder of the instance for {cfg:?}"
         );
     }
 }

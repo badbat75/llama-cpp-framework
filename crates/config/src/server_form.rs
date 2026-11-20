@@ -178,6 +178,10 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // API Key: when unset, show empty and check the nokey box.
         opencode_api_key: cfg.opencode_api_key.clone().unwrap_or_default().into(),
         api_key_nokey: cfg.opencode_api_key.is_none(),
+        // The tags have no widget (the Server tab shows none): the list rides
+        // the form in the file's own `a,b` spelling, so a Save hands back what
+        // the file had.
+        tags: cfg.tags.join(",").into(),
     }
 }
 
@@ -302,7 +306,21 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         } else {
             server_cfg::opt_nonblank(Some(f.opencode_api_key.to_string()))
         },
+        // The form carries the tags text, no widget touches it: what the file
+        // had comes back unchanged, so a Server tab save never erases the line.
+        tags: tags_from_form(f.tags.as_str()),
     }
+}
+
+/// The form's tags text (the file's `a,b` spelling, as `config_to_form` wrote
+/// it) back to the list: each entry trimmed and an empty one dropped, the rule
+/// the reader of the `Tags` key applies.
+fn tags_from_form(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 #[cfg(test)]
@@ -341,8 +359,41 @@ mod tests {
             state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://proxy.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
+            // Metadata for the web UI, in the file beside the server keys: the
+            // GUI has no field for them, so the round trip must carry them
+            // through the form untouched.
+            tags: vec!["edge".into(), "v2".into()],
         };
         assert_eq!(form_to_config(&config_to_form(&cfg)), cfg);
+    }
+
+    /// The Server tab's Save keeps the file's `Tags`. The GUI has no field for
+    /// them (they are the web UI's metadata for the profile), and the Save
+    /// writes the WHOLE file from the form, so a form that does not carry them
+    /// erases them. Pinned from the file's text, as `load()` hands it to the
+    /// tab, to the text `save()` writes.
+    #[test]
+    fn a_server_tab_save_keeps_the_file_s_tags() {
+        // A ModelsDir is in the fixture so the form is not sent through
+        // `paths::` (see the note in `rocblas_hipblaslt_tri_state_round_trips`).
+        let loaded = server_cfg::from_text(
+            "[Server]\nPort = 8580\nModelsDir = E:\\models\nTags = edge,v2\n",
+        );
+        assert_eq!(
+            loaded.tags,
+            vec!["edge".to_string(), "v2".to_string()],
+            "the fixture must be a file that has tags"
+        );
+        let saved = form_to_config(&config_to_form(&loaded));
+        assert_eq!(
+            saved.tags, loaded.tags,
+            "the Save drops the tags the file had"
+        );
+        let text = server_cfg::render(&saved);
+        assert!(
+            text.contains("Tags = edge,v2"),
+            "the written file has no tags line:\n{text}"
+        );
     }
 
     // The Save button's refusal and `form_to_config` agree on each integer field:

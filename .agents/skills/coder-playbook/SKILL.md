@@ -170,6 +170,25 @@ Lessons only: the rules are in `AGENTS.md`.
 - A middleware that needs per-router facts uses `axum::middleware::from_fn_with_state(policy, guard)`: the
   router's state stays `()`, the fn's first parameter is `State<T>`, then `Request`, then `Next`, and
   `T: Clone + Send + Sync + 'static`. `from_fn` is the same call with `()` state.
+- A list handler over a manager whose trait reads rows in ONE call (`instances()`, no failure slot on the
+  row type) and status per id (`status(id)`): ONE blocking task does the rows then a status per id (the
+  test pins the sequence `["list", "instances", "status <id>"]`: rows asked ONCE), the status read is
+  TOLERANT (a failed read is an empty list), and a rows failure answers 200 with an empty list and NO
+  client detail, because the row type cannot name the instance a 404 belongs to.
+- A bff write route with nothing to show: gate `json_body(headers, body)?` BEFORE the session (the route's
+  own `*-malformed` 400 answers with no client call), then `session_user`, then the client in
+  `spawn_blocking` under `timeout`. Map the checks refusal through the boot route's ONE
+  `action_failure(422, field)`; a 403 from the client ends the session like the boot write's.
+- A list item whose extra fields come from a row looked up by id: `find` the row once per id ABOVE the
+  status `match`, then answer a missing row with the field's own default (`row.map_or(0, |r| r.port)`,
+  `row.map_or_else(Vec::new, |r| r.list.clone())`: no `||`, and the closure fixes the `Vec`'s type). The
+  `json!` key order is not a pin: every test here compares parsed JSON, so `preserve_order` never shows.
+- A list item's fields are pinned by the test's whole-object `json!` literals. Where the brief asks for a
+  field (a port) the literals omit, the literals win: implement what is pinned and report the conflict.
+  Every whole-list assertion elsewhere in the suite is then a stale pin: the bff's 13
+  `tests/origin.rs` Host tests compare the whole list and went red on the new `tags` key alone.
+- A D-Bus row tuple that grows past clippy's `type_complexity` is a module-level `type InstanceRow = (...)`
+  beside the other consts, with the signature `(s id, s engine, q port, ...)` in its doc comment.
 - One `Host` name rule over both families: strip the brackets and `text.parse::<IpAddr>()` covers IPv4 and
   IPv6 (an IPv6 with a zone id parses as no address; `Ipv4Addr` and `Ipv6Addr` each need their own parse).
   `IpAddr::is_loopback()` is `127.0.0.0/8` and `::1`, `is_unspecified()` is `0.0.0.0` and `[::]`.
@@ -187,6 +206,19 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## INI, config, the manager
 
+- `ServerForm` is a SLINT struct (`crates/config/ui/types.slint`), so a `ServerConfig` field
+  the GUI has no widget for (the server `tags`) cannot be a Rust-only field: add it to the
+  struct as the file's own spelling (tags as one `a,b` string) and carry it in both
+  conversions, or the Server tab's whole-file Save erases the line. No lint requires a widget
+  per form field (`ui_bindings` names the widgets it checks), and the form's dirty compare is
+  a whole-struct `!=`, so a field set on `server_form` and `server_form_base` together is
+  inert. `config_to_form` and `form_to_config` are exhaustive struct literals: a new
+  `ServerConfig` field reddens both.
+- `binding_lint::strings_t_keys_and_the_language_file_match` reddens the whole `-p pai-config`
+  suite when a strings key is used only OUTSIDE `crates/config` (a `checks::KEYS` refusal key
+  the manager and core name, e.g. `server-bad-tags`): the whitelist data (`GUI_ONLY_KEYS`,
+  `CLI_ONLY_FNS`) is in the tester's `binding_lint.rs`, so it is a red to report, never a
+  production change.
 - `set_key` writes the canonical `key = value`. A test that builds its expected text by rewriting a
   COMPACT fixture line (`ctx-size=8192` to `ctx-size=16384`) is red by construction, and a needle
   `matches("ctx-size=")` counts a canonical line as zero: fixture and needle must carry the canonical
@@ -221,6 +253,10 @@ Lessons only: the rules are in `AGENTS.md`.
   workflow as text and wants every shipped default quoted there. The workflow and the systemd
   unit are tests' fixtures read as text: an ordering line is a plain `After=`, and `After=` alone is what
   the test accepts.
+- The Linux `server@default.ini` is pinned a third way: `crates/bff/tests/server.rs`
+  `the_revision_is_the_keyed_hash_of_the_text` compares a keyed SipHash vector of the file's BYTES, its
+  last line and a no-`StateDir` line scan, so dropping a key line is a byte-exact job (LF, the whole
+  line, no blank left at the tail), and that bff suite is the check beside `xtask`'s.
 - The engine's build revision is `components::LLAMA_CPP_REVISION`: a bump moves the `.deb` Depends and the
   `.rpm` Requires and the version fixtures of `xtask/src/linux/package.rs`. The MSI's minimum is the
   release alone, so `windows/package.rs` does not follow.
@@ -386,6 +422,19 @@ Lessons only: the rules are in `AGENTS.md`.
   registers. A test that renders the app twice fails `Found multiple elements with the role "main"` on the
   SECOND render, and a page that passed its whole body on the first is proof the production code is right:
   the fix (`cleanup()` in the shared helper) is the tester's.
+- A new 422 refusal key needs ONE `case` in each of two tables, `ModelProfilePage.tsx` `REFUSALS.text`
+  and `ModelProfiles.tsx` `failureText`, and nothing else: `refusalOf` takes the reply's own `field`
+  (the `field` arm is only a fallback when the reply names none), and a field with no `<id>-control`
+  in the DOM (the read-only Assets rows, and the Assets card starts closed) is dropped, so the bar
+  shows the plain `save-refused` and no field is marked. `strings.test.ts`'s "every value is used"
+  wants a literal `t('key'` in the code, so the table case is what makes the strings key legal.
+- The tester's EN table in `fe/src/test/bff.ts` is a SECOND pin of `en_US.json`: `App.test.tsx`
+  "1a strings: en_US.json holds the English the brief gives" compares the file against it, so adding
+  entries there reddens App.test.tsx until the strings file has the keys (it is a baseline red of a
+  strings slice, and the strings edit alone turns it green).
+- `ModelProfilePage.test.tsx` "2d.63: once read, the h1 and the title take the id of the reply" is a
+  focus-timing test that lost one full-suite run (parallel workers) and passed 4/4 in its own file
+  and on a full rerun: report the flake, prove the tree green by rerunning, do not touch the page.
 - Running a web UI test as `npx vitest run fe/src/<File>.test.tsx` from the repo root uses NO config (no
   jsdom): every test of a DOM file fails at 0 ms with `ReferenceError: window is not defined`, which reads
   as a total code break. The one path is `npm --prefix fe test -- src/<File>.test.tsx`. Its failures are
@@ -407,6 +456,43 @@ Lessons only: the rules are in `AGENTS.md`.
   Mirror the test's own readers (rules from the brace balance, `prop()`, specificity, the chain match) in a
   scratch node script and run it on the sheet: every claim shows at once, and it catches a rule the
   harness wrote TWICE, which the selector-count pin reads as a red.
+- `useWarnOnLeave` (SaveBar.tsx): ONE listener per dirty section. A page-level one in `App.tsx` on top of a
+  form's own reddens every "beforeunload is armed only while the form is dirty" test: the two listeners go
+  in TWO passive-effect cleanups and the test's synchronous `unloadBlocked()` dispatch lands BETWEEN them,
+  so it reads the stale listener and "after a save" the browser is still asked. The section's owner arms its
+  own (a `useState` of its dirty, not a ref), and `App`'s `dirty` stays what it was, for the nav guard.
+- Report a section's dirty in the TURN that changes it: call the report from the field's `onChange` and
+  from the save handler inside `flushSync`, keeping the effect only for a read that arrives on its own. A
+  passive effect's `onDirty(false)` runs after the test's synchronous assertions, so a 204 leaves the page
+  asking, and an effect that early-returns when its value is unchanged never reports at mount (which is how
+  the page starts clean).
+- `startAt` in `fe/src/test/bff.ts` is `history.replaceState`: the app keeps ONE history entry, so
+  `window.history.back()` in such a test traverses nothing, fires no hashchange and a leave guard can never
+  open from it. jsdom DOES append for a fragment navigation (`location.hash = '#/a'` grew 1 to 2 to 3), and
+  a nav click a guard holds adds none. A test that navigates away, then calls `cleanup()` and renders again,
+  gets the page at the hash the navigation left. Quote which of these a leave-guard test needs.
+- `runStatus` (the same helper in `RunControls`, `Timeout`, `SessionRevoked`, `Boot`: the
+  `before(s, h2) && !inBoot(main, s)` filter) pins exactly ONE `role="status"` between the h1 and the Server
+  h2. A new status line the brief places in the header region (a field between Start at boot and the Server
+  section, as brief 12 puts its tags field) reddens EVERY test that calls it, 54 in one slice. The fix is an
+  `inTags`-style exclusion beside the existing `inBoot`, so it is the tester's, never a move of the field.
+- `useWarnOnLeave` (SaveBar.tsx) takes ONE listener per dirty section. A page-level one in `App.tsx` beside the
+  form's own reddens every "beforeunload is armed only while the form is dirty" test: the two removals are
+  passive-effect cleanups and the test's synchronous `unloadBlocked()` dispatch lands BETWEEN them, so it reads
+  the stale listener and the browser is still asked after a save. Each section arms its own (its own dirty in
+  `useState`, not a ref); `App`'s `dirty` stays what it was, for the nav guard.
+- Report a section's dirty in the TURN that changes it (from the field's `onChange`, and from the save handler
+  inside `flushSync`), keeping the effect for a read that arrives on its own: a passive effect's `onDirty(false)`
+  runs after the test's synchronous assertions, so a 204 leaves the page asking. An effect that early-returns
+  when its value is unchanged never reports at mount, which is how the page starts clean (12 T1.13).
+- `startAt` (`fe/src/test/bff.ts`) is `history.replaceState`: the app keeps ONE history entry, so `history.back()`
+  traverses nothing, fires no hashchange, and a leave guard can never open from it; jsdom DOES append for a
+  fragment navigation (`location.hash = '#/a'` grew 1 to 2 to 3), and a nav click a guard holds adds none. A test
+  that navigates away, `cleanup()`s and renders again lands at the hash the navigation left.
+- `runStatus` (the same helper in RunControls, Timeout, SessionRevoked and Boot: `before(s, h2) && !inBoot(...)`
+  with `inBoot` scoped to the header) pins exactly ONE `role="status"` between the h1 and the Server h2. Any new
+  status line the brief places in the header region reddens every test calling it (54 in brief 12). The fix is an
+  `inTags`-style exclusion beside `inBoot`, so it is the tester's, never a move of the field.
 - Making a read-only card editable turns red every fixture that pinned it read-only. The shared list under
   `fe/src/test/` spells the editable set and derives the tab stops from it, so the tab-order and "every
   control disabled" tests have ONE fix point there (an editable number field is TWO tab stops, its box and
@@ -493,6 +579,29 @@ Lessons only: the rules are in `AGENTS.md`.
 - `tests::data_root_e2e` runs every e2e phase in sequence in ONE test, so its first panic hides every
   later phase: the manager's "262 passed" says nothing about the pins of the D-Bus and pipe phases.
   Enumerate them in the copy, one patch at a time.
+- A text-pinning test that does `body.find(want)` and then slices `tail[want.len()..close]` with
+  `close = tail.find(')')` PANICS (`byte range starts at 33 but ends at 26`) for EVERY code shape when
+  `want` itself carries a `)` (`"paths::instance_state_dir().join("` puts one at 26, its length is 33).
+  Such a pin fixes the SHAPE of the code, not just its words: keep the join inline in the call it pins.
+  Work the slice arithmetic out in python before reshaping production code for a text test.
+- A slice-11 e2e phase that calls `instance_command("gpu-1", ...)` after an earlier block reset
+  `instances.ini` to `[default]` + `[lan-2]` can only get `NoConfig(instances.ini)`: an instance IS a
+  section (the same test pins that with its `[Default]` block). Report the missing section, no
+  production change gives a launch for an id the record has no section for.
+- A launch text-pinning test that finds `paths::instance_state_dir().join(` and then slices
+  `&body[at + want.len()..close]` (`close` = the first `)` after `at`) PANICS `byte range starts at 33
+  but ends at 26` the moment the code hoists the join into a local and passes the local to the call: the
+  needle's own length runs past the closing paren. Such a pin fixes the SHAPE of the code, so the join
+  goes inline in the call it pins. Read the slice arithmetic before restructuring.
+- A slice-11 e2e phase that calls `instance_command("gpu-1")` after the block that rewrote
+  `instances.ini` to `[default]` + `[lan-2]` can only get `NoConfig(instances.ini)`: an instance IS a
+  section, and the phase wrote no `[gpu-1]`. Grep the section headers the fixture writes before believing
+  a launch refusal is a production bug.
+- A fake manager that records `format!("set_instance_tags {id} {}", tags.join(","))` puts a TRAILING
+  SPACE on the empty list, and the test asserting the clear compares against
+  `"set_instance_tags default"` (no space) and, in the same block, `calls == ["set_instance_tags
+  default"]` which the fake's own format can never produce. Two assertions, one fake, unsatisfiable: the
+  record format is the tester's, report it.
 - A pin of an instance's startup count needs the instance's `[id]` section in `assignments.ini`:
   `assign::render` leaves a model profile OFF when the assignment carries no key for it and no `*`
   (`None => keys.contains_key("*") && global`), so an instance with no assignment section starts nothing
@@ -546,3 +655,21 @@ Lessons only: the rules are in `AGENTS.md`.
 - `startAt()` (`fe/src/test/bff.ts`) is itself a `history.replaceState`. A `vi.spyOn(history,
   'replaceState')` installed before `open()` records that call too, so an "exactly one replaceState"
   assertion needs the spy installed after the address is set.
+
+## Slice 11/12 (2026-11-20): pins of the rule a slice replaces
+
+- The tester's new pins and the wire phases of the SAME tree can pin opposite rules:
+  `crates/manager/src/tests/dbus_client.rs` (tags phase: port and profile_tags from the render
+  `server@<id>.ini`, and a missing render = `DEFAULT_PORT`) and `manager/dbus.rs`'s Version test
+  (literal protocol `4`) pin the rule the slice replaces; `manager_instance_tags_e2e` (service.rs,
+  port from the profile the section names, 0 when its file is missing) and `dbus_client.rs:1094`
+  (protocol `3`) pin the new one. No production code gives both: report the exact file:line pairs,
+  change no test.
+- `binding_lint::cli_print_paths_hold_no_language` scans EVERY print/format macro in `cli.rs`
+  (the `all: true` list): a path segment literal like `join("default")` passed inside `print!` is
+  text. Hoist the joined path into a local before the macro. The cli's own text pin slices the
+  Show arm from `instance_state_dir()` to the first `,` and wants `.join(` in that span, so keep
+  the join in the arm, not only the local.
+- `bff::server::field_of` answers the marked field from `args.first()`, which is the REFUSAL'S
+  REASON for a refusal whose first value is not a key (`server-bad-tags` starts with the reason):
+  such a key needs its own arm. The bff's 422 pins the field lower-case (`tags`), the form ids.

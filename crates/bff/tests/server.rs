@@ -152,7 +152,7 @@ const KEY_B: [u8; 16] = [
 const SHIPPED: &str = include_str!("../../core/defaults/server@default.ini");
 
 /// Every `[Server]` key `server_cfg::from_text` reads.
-const KEYS: [&str; 19] = [
+const KEYS: [&str; 20] = [
     "Port",
     "Hostname",
     "Threads",
@@ -172,6 +172,7 @@ const KEYS: [&str; 19] = [
     "StateDir",
     "OpencodeBaseUrl",
     "OpencodeApiKey",
+    "Tags",
 ];
 
 type Log = Arc<Mutex<Vec<String>>>;
@@ -272,6 +273,9 @@ struct Live {
     status_outcome: Arc<Mutex<Option<Outcome>>>,
     status_pause_ms: Arc<AtomicU64>,
     running: Arc<Mutex<bool>>,
+    /// The ids the record holds, for `list_instances`: empty is the one
+    /// instance `default`, every app's answer today.
+    instances: Arc<Mutex<Vec<String>>>,
 }
 
 /// A call a test stops: armed for the next one, it holds there until the test
@@ -448,7 +452,17 @@ impl ManagerClient for FakeManager {
     }
     fn list_instances(&self) -> Result<Vec<String>, ClientError> {
         self.record("list".into());
-        Ok(vec!["default".into()])
+        let ids = self
+            .live
+            .instances
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        Ok(if ids.is_empty() {
+            vec!["default".into()]
+        } else {
+            ids
+        })
     }
     fn status(&self, id: &str) -> Result<InstanceState, ClientError> {
         self.record(format!("status {id}"));
@@ -746,6 +760,12 @@ impl App {
     /// Answer every coming status read with `outcome`.
     fn set_status_outcome(&self, outcome: Outcome) {
         *self.live.status_outcome.lock().unwrap() = Some(outcome);
+    }
+
+    /// The record the manager holds: these ids, so the form of an instance
+    /// beside `default` can be read.
+    fn set_instances(&self, ids: &[&str]) {
+        *self.live.instances.lock().unwrap() = ids.iter().map(|id| id.to_string()).collect();
     }
 
     /// Refuse the write of `user`: the member of `pai` removed after the read.
@@ -1368,6 +1388,7 @@ SaveStateOnShutdown = true
 StateDir = /srv/state
 OpencodeBaseUrl = https://llm.example.com
 OpencodeApiKey = sk-test
+Tags = edge,v2
 Unknown = 7
 ";
     let doc = app_holding(text).read_default().await.document();
@@ -1393,6 +1414,7 @@ Unknown = 7
             "StateDir": "/srv/state",
             "OpencodeBaseUrl": "https://llm.example.com",
             "OpencodeApiKey": "sk-test",
+            "Tags": ["edge", "v2"],
         })
     );
 }
@@ -1432,6 +1454,9 @@ async fn unset_keys_are_null_in_the_shipped_file() {
         "WebuiMcpProxy",
         "LogVerbosity",
         "SaveStateOnShutdown",
+        // The shipped file sets no StateDir: every instance gets a folder of
+        // its own (`paths::instance_state_dir()/<id>`), so the field is unset.
+        "StateDir",
         "OpencodeBaseUrl",
         "OpencodeApiKey",
     ] {
@@ -1440,6 +1465,11 @@ async fn unset_keys_are_null_in_the_shipped_file() {
     for key in ["CudaDisableGraphs", "AttnRotDisable", "RocprofAttach"] {
         assert_eq!(values[key], json!(false), "{key}");
     }
+    assert_eq!(
+        values["Tags"],
+        json!([]),
+        "a profile with no tags reads as an empty list, not a missing key"
+    );
 }
 
 /// Values the configurator cannot read are unset, as it reads them: a word
@@ -1478,6 +1508,16 @@ async fn an_empty_file_is_every_key_unset() {
     assert_eq!(doc["values"]["ModelsDir"], Value::Null);
 }
 
+/// The snapshot folder of the instance `id`, as the launch resolves it: the
+/// engine's state root with the id joined (`paths::instance_state_dir`,
+/// `launch::instance_command`).
+fn state_dir_of(id: &str) -> String {
+    pai_core::paths::instance_state_dir()
+        .join(id)
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// `defaults`: llama.cpp's and the configurator's numbers, the base URL from
 /// the saved Hostname and Port (a loopback entry chosen, as
 /// `ServerConfig::client_host`) even though the file overrides it, and the
@@ -1501,8 +1541,36 @@ StateDir = /srv/state
             "ModelsMemoryMargin": 0,
             "OpencodeBaseUrl": "http://127.0.0.1:8580",
             "ModelsDir": pai_core::paths::instance_models_dir().to_string_lossy(),
-            "StateDir": pai_core::paths::instance_state_dir().to_string_lossy(),
+            "StateDir": state_dir_of("default"),
         })
+    );
+}
+
+/// The state directory the form shows as the default is the folder of the
+/// instance the request names, inside the engine's state root, as the
+/// manager's launch passes it (`launch::instance_command` joins the id): two
+/// instances never write their snapshots into one folder.
+#[tokio::test]
+async fn the_state_dir_default_is_the_folder_of_the_instance_of_the_request() {
+    let app = app_holding("");
+    app.set_instances(&["default", "gpu-1"]);
+    let cookie = app.sign_in().await;
+    let root = pai_core::paths::instance_state_dir();
+    for id in ["default", "gpu-1"] {
+        let doc = app
+            .get(&format!("/api/instances/{id}/server"), Some(&cookie))
+            .await
+            .document();
+        assert_eq!(
+            doc["defaults"]["StateDir"],
+            json!(state_dir_of(id)),
+            "{id}: the folder of the instance, not the root"
+        );
+    }
+    assert_ne!(
+        root.join("default").to_string_lossy().into_owned(),
+        root.join("gpu-1").to_string_lossy().into_owned(),
+        "the two folders are different"
     );
 }
 
@@ -1623,12 +1691,24 @@ async fn the_revision_follows_the_file_text() {
 /// `revision` is SipHash-2-4 of the file text under the router's secret,
 /// printed as 16 hex digits: the published vectors for the secret
 /// `00 01 .. 0f`, all 64 of which the `siphasher` implementation reproduces.
-/// The empty file is vector 0 of that list.
+/// The empty file is vector 0 of that list. The shipped file's vector is the
+/// hash of its bytes: no `StateDir` line, the file ending with `ModelsDir`.
 #[tokio::test]
 async fn the_revision_is_the_keyed_hash_of_the_text() {
+    assert!(
+        !SHIPPED
+            .lines()
+            .any(|l| l.trim_start().starts_with("StateDir")),
+        "the shipped Linux file sets no StateDir: {SHIPPED}"
+    );
+    assert_eq!(
+        SHIPPED.lines().last(),
+        Some(concat!("ModelsDir = /var/lib/llama", ".cpp/models")),
+        "the shipped file ends with the models folder it names: {SHIPPED}"
+    );
     let cases: [(&str, &str); 4] = [
         ("", "726fdb47dd0e0e31"),
-        (SHIPPED, "b5c74895c1989291"),
+        (SHIPPED, "109d822d77ca2d4d"),
         (WITH_KEY, "188192ef2476e7f0"),
         ("[Server]\nPort = 8580\n", "5124e870d1b0bbad"),
     ];
@@ -2632,4 +2712,120 @@ async fn a_read_that_outlives_the_read_limit_is_still_answered_at_it() {
         "the read was answered at the read's limit, not carried by the write's: {:?}",
         started.elapsed()
     );
+}
+
+// ── The tags of the profile ─────────────────────────────────────────────
+
+/// The tags of the profile travel in the form's document like every other
+/// value: the read gives the list in its order, the save writes it back, and a
+/// save of a document read unchanged keeps them. The save writes the whole
+/// file from the document, so a document that carried no `Tags` would erase
+/// the profile's tags.
+#[tokio::test]
+async fn the_tags_of_the_profile_travel_in_the_form_s_document() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+
+    app.put(
+        Some(&cookie),
+        &save_body(&doc, &[("Tags", json!(["edge", "v2"]))]),
+    )
+    .await;
+    assert!(
+        app.file_text().contains("Tags = edge,v2"),
+        "the list as the form sent it: {}",
+        app.file_text()
+    );
+    let after = app
+        .get("/api/instances/default/server", Some(&cookie))
+        .await
+        .document();
+    assert_eq!(
+        after["values"]["Tags"],
+        json!(["edge", "v2"]),
+        "read back as it was written"
+    );
+
+    let app = app_writing("[Server]\nPort = 8580\nTags = edge,v2\n");
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    assert_eq!(
+        doc["values"]["Tags"],
+        json!(["edge", "v2"]),
+        "the file's list, in its order"
+    );
+    app.put(Some(&cookie), &save_body(&doc, &[])).await;
+    assert!(
+        app.file_text().contains("Tags = edge,v2"),
+        "a save of the document read unchanged keeps the tags: {}",
+        app.file_text()
+    );
+}
+
+/// An empty list clears them: the file carries no line for `Tags` (an empty
+/// key is not written).
+#[tokio::test]
+async fn no_tags_writes_no_line() {
+    let app = app_writing("[Server]\nPort = 8580\nTags = edge,v2\n");
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.put(Some(&cookie), &save_body(&doc, &[("Tags", json!([]))]))
+        .await;
+    let text = app.file_text();
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("Tags")).collect();
+    assert!(lines.is_empty(), "no tags, no line: {lines:?}\n{text}");
+}
+
+/// A `Tags` that is not a list of strings is 400 `server-malformed` and
+/// nothing is written: a bare word, a number, a list with a number in it, a
+/// list of lists, null.
+#[tokio::test]
+async fn a_tags_that_is_not_a_list_of_strings_is_server_malformed() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    for tags in [
+        json!("edge"),
+        json!(5),
+        json!(["edge", 5]),
+        json!([["edge"]]),
+        json!(null),
+    ] {
+        let r = app
+            .put(Some(&cookie), &save_body(&doc, &[("Tags", tags.clone())]))
+            .await;
+        r.assert_error(StatusCode::BAD_REQUEST, "server-malformed");
+    }
+    assert!(app.writes().is_empty(), "nothing written");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
+}
+
+/// A `Tags` list of strings the rule refuses (a capital letter, a tag twice,
+/// one with a space) is 422 `server-bad-tags` with the rule's args and `field`
+/// `tags`, the form's one control for the list: the bff runs the manager's
+/// rule on the body before it asks for the write, so the manager is not asked
+/// and the file stays as it was.
+#[tokio::test]
+async fn a_tags_list_the_rule_refuses_is_422_naming_the_tags_field() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    let connects = app.connects.load(Ordering::SeqCst);
+    for (tags, reason, list) in [
+        (json!(["Edge"]), "bad characters", "Edge"),
+        (json!(["gpu", "gpu"]), "the same tag twice", "gpu,gpu"),
+        (json!(["gpu edge"]), "bad characters", "gpu edge"),
+    ] {
+        app.put(Some(&cookie), &save_body(&doc, &[("Tags", tags)]))
+            .await
+            .assert_refused("server-bad-tags", &[reason, list, "8", "1", "32"], "tags");
+    }
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        connects,
+        "the bff's own check: the manager is not asked again"
+    );
+    assert!(app.writes().is_empty(), "nothing written");
+    assert_eq!(app.file_text(), WITH_KEY, "the file as it was");
 }

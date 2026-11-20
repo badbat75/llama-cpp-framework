@@ -255,6 +255,16 @@ pub struct ServerConfig {
     /// and used by Claude Code env snippet. Useful when the server is exposed
     /// through a proxy or LLM gateway that requires authentication. None = unset.
     pub opencode_api_key: Option<String>,
+
+    /// The tags of this server profile, for the web UI: what the profile is
+    /// for (`edge`, `vision`, `v2`), shown next to the instance that uses it.
+    /// Not a llama-server flag, never in the environment and never in a
+    /// request: metadata, in the file beside the server keys. Written as one
+    /// `Tags` line, the list joined with `,`, and only when there is a tag.
+    /// The rule is [`checks::tags_rule`], applied to the file by
+    /// [`checks::server_file`] and to this form by [`check`], so every write
+    /// that runs the checks refuses a list the rule refuses.
+    pub tags: Vec<String>,
 }
 
 // ── Defaults & accessors ─────────────────────────────────────────────────
@@ -447,6 +457,20 @@ pub fn from_text(text: &str) -> ServerConfig {
     from_keys(&keys)
 }
 
+/// The `Tags` key as a list: `a,b`, each entry trimmed, an empty entry (a
+/// doubled comma, a trailing one) dropped. No key, no tags.
+fn tags_of(keys: &std::collections::BTreeMap<String, String>) -> Vec<String> {
+    keys.get("Tags")
+        .map(|v| {
+            v.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Parse the `[Server]` key/value map into a config. Split out of `load()` so
 /// the save→load round-trip test can run against `render()`'s output without
 /// touching the real config path.
@@ -491,6 +515,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         state_dir: opt_nonblank(keys.get("StateDir").cloned()),
         opencode_base_url: opt_nonblank(keys.get("OpencodeBaseUrl").cloned()),
         opencode_api_key: opt_nonblank(keys.get("OpencodeApiKey").cloned()),
+        tags: tags_of(keys),
     }
 }
 
@@ -578,7 +603,8 @@ pub fn check(cfg: &ServerConfig, cpus: usize) -> Result<(), checks::Refusal> {
             checks::comment_markers(key, v)?;
         }
     }
-    checks::bind_list(cfg.hostname.as_deref().unwrap_or_default())
+    checks::bind_list(cfg.hostname.as_deref().unwrap_or_default())?;
+    checks::tags_rule(&cfg.tags)
 }
 
 /// Render the whole server.ini body. Pure (no IO): the file-writing wrapper is
@@ -616,6 +642,16 @@ pub fn render_for_os(cfg: &ServerConfig, leave_dirs_unset: bool, windows: bool) 
         format!("; ModelsDir = {example}  ; commented = the engine's models folder")
     } else {
         format!("ModelsDir = {}", cfg.models_dir_or_default())
+    };
+
+    // Tags: metadata for the web UI, never a flag. A list with nothing in it
+    // writes no key at all (the line carries its own end of line, so an empty
+    // list leaves the template exactly as it is), and an empty one round-trips
+    // as an empty one.
+    let tags_line = if cfg.tags.is_empty() {
+        String::new()
+    } else {
+        format!("Tags = {}\n", cfg.tags.join(","))
     };
 
     // Each optional field renders as either `Key = value` or, when unset/default,
@@ -819,7 +855,7 @@ SaveStateOnShutdown = {save_state_lit}
 ; Both are useful when exposing llama-server through a reverse proxy or LLM gateway.
 {opencode_base_url_line}
 {opencode_api_key_line}
-
+{tags_line}
 ; ModelsDir: root directory. Models are scanned from ModelsDir/models/, mmproj
 ; projection files from ModelsDir/mmprojs/, MTP/draft heads from ModelsDir/mtps/,
 ; DFlash drafters from ModelsDir/dflashs/.
@@ -901,17 +937,17 @@ mod tests {
     /// llama-server needs to come up under the service (where it listens,
     /// where the models are) with today's defaults: the models in the shared
     /// `/var/lib/llama.cpp/models` (the engine's tmpfiles.d entry creates
-    /// it, everyone reads it), the state resolved for the service user
-    /// whose home is `/var/lib/private-ai` (the instance unit's
-    /// StateDirectory=). StateDir is among them because `render`
-    /// always writes it out: left blank, the manager's first write would
-    /// resolve it against the manager's own home instead.
+    /// it, everyone reads it). No StateDir, on every OS: the snapshots of an
+    /// instance live in `paths::instance_state_dir()/<id>`, which the launch
+    /// fills in (`launch::with_instance_defaults`), so a StateDir naming the
+    /// root here would make every instance share one folder (the snapshots
+    /// record of ARCHITECTURE.md). Windows ships the same keys, neither
+    /// folder (`defaults/windows/server@default.ini`).
     fn starting_values() -> ServerConfig {
         ServerConfig {
             port: Some(DEFAULT_PORT),
             hostname: Some("localhost".into()),
             models_dir: Some("/var/lib/llama.cpp/models".into()),
-            state_dir: Some("/var/lib/private-ai/.local/share/private-ai/state".into()),
             ..ServerConfig::default()
         }
     }
@@ -929,8 +965,17 @@ mod tests {
         let keys: Vec<&str> = sections[0].keys.keys().map(String::as_str).collect();
         assert_eq!(
             keys,
-            ["Hostname", "ModelsDir", "Port", "StateDir"],
-            "only the starting values: {text}"
+            ["Hostname", "ModelsDir", "Port"],
+            "only the starting values, no StateDir: {text}"
+        );
+        assert!(
+            !keys.contains(&"StateDir"),
+            "the shipped file sets no StateDir, the launch gives the \
+             instance its own folder: {text}"
+        );
+        assert!(
+            keys.contains(&"ModelsDir"),
+            "the shared models folder is kept: {text}"
         );
         let comments = text
             .lines()
@@ -963,7 +1008,9 @@ mod tests {
     }
 
     /// What the manager writes at its first save is the loaded config
-    /// rendered: pai's full template, the starting values in it.
+    /// rendered: pai's full template, the starting values in it, and
+    /// `StateDir` still unset in the manager's write (the instance's own
+    /// folder comes from the launch).
     #[test]
     fn rendering_the_shipped_default_server_file_gives_pais_template() {
         let loaded = from_text(&shipped_default("server@default.ini"));
@@ -979,10 +1026,35 @@ mod tests {
             "Port = 9931",
             "Hostname = localhost",
             "ModelsDir = /var/lib/llama.cpp/models",
-            "StateDir = /var/lib/private-ai/.local/share/private-ai/state",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}: {written}");
         }
+        // The old root is gone: the file named it, and every instance wrote
+        // its snapshots in one folder.
+        assert!(
+            !written.contains(concat!(
+                "/var/lib/private-ai/.local/share/",
+                "private-ai/state"
+            )),
+            "the state root is not carried over: {written}"
+        );
+        // The manager's write (it leaves an unset directory unset) keeps the
+        // key commented, so it reloads unset and the launch resolves
+        // `paths::instance_state_dir()/<id>`.
+        let managed = render_for(&loaded, true);
+        assert!(
+            managed.lines().any(|l| l.starts_with("; StateDir = ")),
+            "the hint line, commented: {managed}"
+        );
+        assert!(
+            !managed.lines().any(|l| l.starts_with("StateDir = ")),
+            "the manager's write sets no StateDir: {managed}"
+        );
+        assert_eq!(
+            from_text(&managed).state_dir,
+            None,
+            "it reloads unset: {managed}"
+        );
     }
 
     /// The manager accepts the shipped defaults as they are: the server file
@@ -1202,6 +1274,9 @@ mod tests {
             state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-proxy-key-123".into()),
+            // Metadata for the web UI, in the file beside the server keys: the
+            // order is part of the value.
+            tags: vec!["edge".into(), "v2".into(), "a-1".into()],
         };
         assert_eq!(round_trip(&original), original);
     }
@@ -1285,6 +1360,59 @@ mod tests {
         assert_eq!(read(" Internal ").as_deref(), Some("internal"));
         assert_eq!(read("default"), None);
         assert_eq!(read("butterfly"), None);
+    }
+
+    /// The tags of the profile: a plain list in the order it was written, on
+    /// one `Tags` line joined with `,`. A hand-edited ` gpu , edge ` comes back
+    /// trimmed, an empty entry (a doubled comma) is dropped, and a list with
+    /// nothing in it writes no key, so it round-trips as nothing.
+    #[test]
+    fn tags_round_trip_in_order_and_an_empty_list_writes_no_key() {
+        for list in [
+            Vec::new(),
+            vec!["gpu".to_string()],
+            vec!["edge".to_string(), "v2".to_string(), "gpu".to_string()],
+        ] {
+            let cfg = ServerConfig {
+                tags: list.clone(),
+                ..Default::default()
+            };
+            assert_eq!(round_trip(&cfg).tags, list, "{list:?}");
+        }
+        let written = render(&ServerConfig {
+            tags: vec!["edge".to_string(), "v2".to_string()],
+            ..Default::default()
+        });
+        assert!(
+            written.contains("\nTags = edge,v2\n"),
+            "the list is one line, joined with a comma:\n{written}"
+        );
+        for line in render(&ServerConfig::default()).lines() {
+            assert!(
+                !line
+                    .trim_start()
+                    .trim_start_matches(';')
+                    .trim_start()
+                    .starts_with("Tags"),
+                "an empty list wrote a Tags line: {line:?}"
+            );
+        }
+        let read = |v: &str| {
+            from_keys(&std::collections::BTreeMap::from([(
+                "Tags".to_string(),
+                v.to_string(),
+            )]))
+            .tags
+        };
+        assert_eq!(
+            read(" gpu , edge "),
+            vec!["gpu".to_string(), "edge".to_string()]
+        );
+        assert_eq!(
+            read("gpu,,edge"),
+            vec!["gpu".to_string(), "edge".to_string()]
+        );
+        assert_eq!(read(""), Vec::<String>::new());
     }
 
     /// A hand-edited `load-mode` is canonicalized rather than silently dropped,
@@ -1561,6 +1689,64 @@ mod tests {
                 set(&mut cfg, good);
                 assert_eq!(check(&cfg, 16), Ok(()), "{key} = {good}");
             }
+        }
+    }
+
+    /// The profile's tags obey the manager's rule (`checks::tags_rule`) before
+    /// a save, on every surface that runs this check: the GUI's Server tab,
+    /// `pai server set` and the web's save. The refusal is the rule's own, so
+    /// the same words name the same fault on every one of them, and an empty
+    /// list (the tags cleared) passes.
+    #[test]
+    fn the_check_judges_the_tags_by_the_managers_rule() {
+        let want = |reason: &str, list: &str| crate::checks::Refusal {
+            key: "server-bad-tags",
+            values: vec![
+                reason.into(),
+                list.into(),
+                crate::checks::TAGS_MAX.to_string(),
+                crate::checks::TAG_MIN.to_string(),
+                crate::checks::TAG_MAX.to_string(),
+            ],
+        };
+        let tags = |list: &[&str]| -> Vec<String> { list.iter().map(|t| t.to_string()).collect() };
+        let over: Vec<String> = (0..=crate::checks::TAGS_MAX)
+            .map(|i| format!("t{i}"))
+            .collect();
+        let over_list = over.join(",");
+        let long = "z".repeat(crate::checks::TAG_MAX + 1);
+        for (list, reason, named) in [
+            (tags(&["Edge"]), "bad characters", "Edge".to_string()),
+            (
+                tags(&["gpu", "gpu"]),
+                "the same tag twice",
+                "gpu,gpu".into(),
+            ),
+            (
+                tags(&["gpu", long.as_str()]),
+                "too long",
+                format!("gpu,{long}"),
+            ),
+            (tags(&[""]), "empty tag", String::new()),
+            (over.clone(), "too many tags", over_list),
+        ] {
+            let cfg = ServerConfig {
+                tags: list.clone(),
+                ..checked_base()
+            };
+            assert_eq!(check(&cfg, 16), Err(want(reason, &named)), "tags {list:?}");
+        }
+        for list in [
+            Vec::new(),
+            tags(&["edge", "v2"]),
+            tags(&["a"]),
+            tags(&["0-9"]),
+        ] {
+            let cfg = ServerConfig {
+                tags: list.clone(),
+                ..checked_base()
+            };
+            assert_eq!(check(&cfg, 16), Ok(()), "tags {list:?}");
         }
     }
 }

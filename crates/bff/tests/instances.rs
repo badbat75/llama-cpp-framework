@@ -6,12 +6,28 @@
 //! manager fails instead of hanging.
 //!
 //! The answer (fe/briefs/api-contract.md): 200 and
-//! `[{"id": ..., "engine": "llama.cpp", "state": ...}]` in the manager's
-//! order, the state as the manager names it; errors in the common shape
-//! `{"key": <strings key>, "args": [...]}`: 503 `client-unavailable` when no
-//! manager answers (none, gone, or too slow), 502 `client-not-authorized`
-//! when the manager refuses the bff, 502 `client-other` with no args on any
-//! other failure, never the manager's detail.
+//! `[{"id": ..., "engine": "llama.cpp", "state": ..., "port": ..., "tags":
+//! [...], "instanceTags": [...]}]` in the manager's order, the state as the
+//! manager names it, `port` the configured one (0 when the manager answers
+//! no row for the instance), `tags` the union the bff builds of the two
+//! lists the manager answers for the instance (the server profile's first,
+//! then its own, none twice), `instanceTags` the instance's own list only
+//! (saving it back must not copy the profile's tags into the instance);
+//! errors in the common
+//! shape `{"key": <strings key>, "args": [...]}`: 503 `client-unavailable`
+//! when no manager answers (none, gone, or too slow), 502
+//! `client-not-authorized` when the manager refuses the bff, 502
+//! `client-other` with no args on any other failure, never the manager's
+//! detail.
+//!
+//! `PUT /api/instances/{id}/tags` `{"tags": [<string>, ...]}` replaces the
+//! tags of one instance and answers 204 with no body. It acts for the
+//! signed-in user, as the verbs do, and the manager is the one that judges
+//! the list: a list its check refuses is 422 `{"key": "server-bad-tags",
+//! "args": [...], "field": "tags"}`, no such instance 404
+//! `client-no-instance`, a body the bff cannot read 400 `tags-malformed`
+//! with the manager not asked, a refusal of the user 403
+//! `session-not-administrator` with the session ended.
 //!
 //! Both reads sit behind a session, as every other read (`PLAN.md` 13a: a
 //! visitor who has not signed in sees only the sign-in page). With no session,
@@ -34,7 +50,8 @@ use axum::Router;
 use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
-use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use pai_core::checks::Refusal;
+use pai_core::client::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -66,6 +83,10 @@ const SHORT: Duration = Duration::from_secs(30 * 60 - 60);
 /// The key of the gate's answer (`session.rs`).
 const SESSION_REQUIRED: &str = "session-required";
 
+/// The port the fake's rows carry: the bff answers it as `port`, it is the
+/// manager's row that picks it (one row below carries another).
+const PORT: u16 = 8080;
+
 type Log = Arc<Mutex<Vec<String>>>;
 
 /// A manager that answers from its fields and logs every call
@@ -77,6 +98,13 @@ struct FakeManager {
     delay: Duration,
     /// What `boot_enabled` answers, for the tests that read the boot flag.
     boot: Result<bool, ClientError>,
+    /// What `instances` answers: the rows, each with its two tag lists. The
+    /// builder leaves it the failure a client that does not know the verb
+    /// answers, so a fake that says nothing about tags reads as a manager
+    /// that has none.
+    rows: Result<Vec<InstanceInfo>, ClientError>,
+    /// What `set_instance_tags` answers.
+    tags: Result<(), ClientError>,
     log: Log,
 }
 
@@ -100,7 +128,20 @@ impl FakeManager {
                 .collect(),
             delay: Duration::ZERO,
             boot: Ok(false),
+            rows: Err(ClientError::Other("no Instances verb".into())),
+            tags: Ok(()),
             log: log.clone(),
+        }
+    }
+
+    /// A row of `rows`: the id, the engine, the port and the two tag lists.
+    fn row(id: &str, port: u16, profile_tags: &[&str], instance_tags: &[&str]) -> InstanceInfo {
+        InstanceInfo {
+            id: id.to_string(),
+            engine: "llama.cpp".to_string(),
+            port,
+            profile_tags: profile_tags.iter().map(|t| t.to_string()).collect(),
+            instance_tags: instance_tags.iter().map(|t| t.to_string()).collect(),
         }
     }
 
@@ -160,6 +201,21 @@ impl ManagerClient for FakeManager {
     }
     fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
         Err(ClientError::Unavailable)
+    }
+    fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+        self.record("instances".into());
+        self.rows.clone()
+    }
+    fn set_instance_tags(&self, id: &str, tags: &[String]) -> Result<(), ClientError> {
+        // The empty list logs as no list at all: no trailing space (the
+        // join of no tags is "", the log names the instance alone).
+        let list = tags.join(",");
+        self.record(if list.is_empty() {
+            format!("set_instance_tags {id}")
+        } else {
+            format!("set_instance_tags {id} {list}")
+        });
+        self.tags.clone()
     }
 }
 
@@ -452,6 +508,26 @@ impl App {
             builder = builder.header(header::COOKIE, c);
         }
         let request = builder.body(Body::empty()).expect("request");
+        self.answer(request, uri).await
+    }
+
+    /// A request with a body sent as `application/json` (the tags write, and
+    /// the bodies that are not one).
+    async fn ask_json(&self, method: Method, uri: &str, cookie: Option<&str>, body: &str) -> Reply {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if let Some(c) = cookie {
+            builder = builder.header(header::COOKIE, c);
+        }
+        let request = builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request");
+        self.answer(request, uri).await
+    }
+
+    /// The router's answer to `request`, read into a `Reply` under the
+    /// deadline: a bff that waits on the manager fails, it does not hang.
+    async fn answer(&self, request: Request<Body>, uri: &str) -> Reply {
         let response = tokio::time::timeout(DEADLINE, self.router.clone().oneshot(request))
             .await
             .unwrap_or_else(|_| panic!("no answer to {uri} within {DEADLINE:?}"))
@@ -484,6 +560,20 @@ impl App {
             headers,
             body: String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
         }
+    }
+
+    /// Sign in and `PUT /api/instances/{id}/tags` with `body`.
+    async fn put_tags(&self, id: &str, body: &str) -> (Reply, String) {
+        let cookie = self.sign_in().await;
+        let r = self
+            .ask_json(
+                Method::PUT,
+                &format!("/api/instances/{id}/tags"),
+                Some(&cookie),
+                body,
+            )
+            .await;
+        (r, cookie)
     }
 
     /// Sign in and read `GET /api/instances` with that session.
@@ -681,7 +771,8 @@ async fn an_instance_removed_meanwhile_is_left_out() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active" }])
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] }]),
+        "no rows: port 0, no tags"
     );
 }
 
@@ -719,19 +810,19 @@ async fn each_instance_with_its_state_in_the_manager_s_order() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "state": "active" },
-            { "id": "coder", "engine": "llama.cpp", "state": "failed" },
-            { "id": "big-model", "engine": "llama.cpp", "state": "inactive" },
-            { "id": "a", "engine": "llama.cpp", "state": "activating" },
-            { "id": "z", "engine": "llama.cpp", "state": "deactivating" },
-            { "id": "odd", "engine": "llama.cpp", "state": "maintenance" },
+            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] },
+            { "id": "coder", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": [] },
+            { "id": "big-model", "engine": "llama.cpp", "state": "inactive", "port": 0, "tags": [], "instanceTags": [] },
+            { "id": "a", "engine": "llama.cpp", "state": "activating", "port": 0, "tags": [], "instanceTags": [] },
+            { "id": "z", "engine": "llama.cpp", "state": "deactivating", "port": 0, "tags": [], "instanceTags": [] },
+            { "id": "odd", "engine": "llama.cpp", "state": "maintenance", "port": 0, "tags": [], "instanceTags": [] },
         ])
     );
 }
 
 /// Reading the instances asks only the calls the manager answers without
-/// authorization: the list, then each status. Nothing starts, stops or
-/// reads a file.
+/// authorization: the list, the rows for the tags, then each status, the rows
+/// asked once for the whole list. Nothing starts, stops or reads a file.
 #[tokio::test]
 async fn reading_the_instances_asks_only_the_read_only_calls() {
     let app = app_listing(&[
@@ -740,7 +831,10 @@ async fn reading_the_instances_asks_only_the_read_only_calls() {
     ]);
     let r = app.instances().await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(app.calls(), ["list", "status default", "status coder"]);
+    assert_eq!(
+        app.calls(),
+        ["list", "instances", "status default", "status coder"]
+    );
 }
 
 /// The signed-in read acts as the bff's own account: the connect is asked
@@ -784,7 +878,7 @@ async fn a_manager_started_later_is_seen_at_the_next_request() {
     assert_eq!(second.status, StatusCode::OK, "{}", second.body);
     assert_eq!(
         second.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active" }])
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] }])
     );
     assert_eq!(asked.load(Ordering::SeqCst), 2, "asked anew each time");
     assert_eq!(app.connects.load(Ordering::SeqCst), 2);
@@ -865,7 +959,7 @@ async fn a_session_read_only_through_the_gated_reads_still_expires() {
     let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active" }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] }]),
         "{}",
         r.body
     );
@@ -880,4 +974,327 @@ async fn a_session_read_only_through_the_gated_reads_still_expires() {
     app.get("/api/instances", Some(&cookie))
         .await
         .assert_session_required();
+}
+
+// ── The tags of the rows ────────────────────────────────────────────────
+
+/// The app whose manager answers `rows` from `Instances` and `tags` from
+/// `SetInstanceTags`, beside the ids and states of `ids`.
+fn app_tags(
+    ids: &[(&str, InstanceState)],
+    rows: Result<Vec<InstanceInfo>, ClientError>,
+    tags: Result<(), ClientError>,
+) -> App {
+    let owned = ids
+        .iter()
+        .map(|(id, s)| (id.to_string(), s.clone()))
+        .collect::<Vec<_>>();
+    app_at(move |l| FakeManager {
+        rows: rows.clone(),
+        tags: tags.clone(),
+        ..FakeManager::listing(l, &owned)
+    })
+}
+
+/// The row of the list keeps its id, engine and state and gains `port`,
+/// `tags` and `instanceTags`: the tags are the union, the server profile's
+/// list first, then the instance's own, none twice; the port is the row's.
+/// An instance the rows do not mention is answered with port 0 and no tags.
+#[tokio::test]
+async fn the_rows_carry_the_tags_of_the_profile_then_their_own_none_twice() {
+    let rows = Ok(vec![
+        FakeManager::row("default", PORT, &["edge", "v2"], &["v2", "gpu"]),
+        FakeManager::row("coder", 18123, &[], &["bench"]),
+        FakeManager::row("gone", PORT, &["old"], &[]),
+    ]);
+    let app = app_tags(
+        &[
+            ("default", InstanceState::Active),
+            ("coder", InstanceState::Inactive),
+        ],
+        rows,
+        Ok(()),
+    );
+    let r = app.instances().await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(
+        r.json(),
+        json!([
+            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"] },
+            { "id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"] },
+        ]),
+        "the union, the profile's tags first, `v2` once, in the list's order; the port the row carries, not a constant"
+    );
+}
+
+/// Profile and instance both carry tags, one of them shared: `tags` is the
+/// union shown on the page (the profile's first, the shared one once), and
+/// `instanceTags` is the instance's own list alone, in its own order. The
+/// profile-only tags NEVER appear in `instanceTags`: the editor saves that
+/// list back, it must not copy the profile's tags into the instance.
+#[tokio::test]
+async fn the_shown_tags_are_the_union_the_editable_ones_the_instance_s_own() {
+    let rows = Ok(vec![FakeManager::row(
+        "default",
+        PORT,
+        &["edge", "v2", "gpu"],
+        &["v2", "lab"],
+    )]);
+    let app = app_tags(&[("default", InstanceState::Active)], rows, Ok(()));
+    let r = app.instances().await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(
+        r.json(),
+        json!([{
+            "id": "default",
+            "engine": "llama.cpp",
+            "state": "active",
+            "port": 8080,
+            "tags": ["edge", "v2", "gpu", "lab"],
+            "instanceTags": ["v2", "lab"],
+        }]),
+        "the union, then the instance's own list: `edge` and `gpu` are the profile's, they stay out of `instanceTags`"
+    );
+}
+
+/// A manager with no `Instances` (an install of an older protocol): the rows
+/// are answered with no tags, the read still 200: the tags are extra, not a
+/// part of the read that can fail it.
+#[tokio::test]
+async fn a_manager_that_answers_no_rows_shows_no_tags() {
+    let app = app_tags(
+        &[("default", InstanceState::Active)],
+        Err(ClientError::Other("no Instances verb".into())),
+        Ok(()),
+    );
+    let r = app.instances().await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(
+        r.json(),
+        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [] }]),
+        "no rows: port 0, no tags"
+    );
+    assert!(
+        !r.body.contains("Instances verb"),
+        "the client's detail stays out of the body: {}",
+        r.body
+    );
+}
+
+/// A row whose lists are empty is answered with `tags: []` and
+/// `instanceTags: []`, both present, and the row's port: the page renders no
+/// chips for it, it does not read a missing field as a failure.
+#[tokio::test]
+async fn an_instance_with_no_tags_carries_an_empty_list() {
+    let app = app_tags(
+        &[("default", InstanceState::Active)],
+        Ok(vec![FakeManager::row("default", PORT, &[], &[])]),
+        Ok(()),
+    );
+    let r = app.instances().await;
+    assert_eq!(r.json()[0].get("tags"), Some(&json!([])), "{}", r.body);
+    assert_eq!(
+        r.json()[0].get("instanceTags"),
+        Some(&json!([])),
+        "present, not missing: {}",
+        r.body
+    );
+    assert_eq!(
+        r.json()[0].get("port"),
+        Some(&json!(8080)),
+        "present, not missing: {}",
+        r.body
+    );
+}
+
+// ── The tags write ──────────────────────────────────────────────────────
+
+/// With no session, and with the cookie of a session that ended, the write is
+/// 401 `session-required` with no `Set-Cookie`, and the manager is never
+/// connected to.
+#[tokio::test]
+async fn the_tags_write_needs_a_session() {
+    let app = app_tags(&[("default", InstanceState::Active)], Ok(vec![]), Ok(()));
+    app.ask_json(
+        Method::PUT,
+        "/api/instances/default/tags",
+        None,
+        r#"{"tags": ["edge"]}"#,
+    )
+    .await
+    .assert_session_required();
+    app.assert_asked_nothing("PUT /api/instances/default/tags with no session");
+
+    let cookie = app.sign_in().await;
+    app.sign_out(&cookie).await;
+    app.ask_json(
+        Method::PUT,
+        "/api/instances/default/tags",
+        Some(&cookie),
+        r#"{"tags": ["edge"]}"#,
+    )
+    .await
+    .assert_session_required();
+    app.assert_asked_nothing("the write of a cookie of an ended session");
+}
+
+/// The write asks the manager for the instance with the list the body carried,
+/// as the signed-in user, and answers 204 with no body.
+#[tokio::test]
+async fn the_tags_write_sends_the_list_and_answers_no_content() {
+    let app = app_tags(&[("default", InstanceState::Active)], Ok(vec![]), Ok(()));
+    let (r, _cookie) = app.put_tags("default", r#"{"tags": ["edge", "v2"]}"#).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    assert!(r.body.is_empty(), "204 with a body: {:?}", r.body);
+    assert_eq!(
+        app.calls(),
+        ["set_instance_tags default edge,v2"],
+        "the list, in the body's order, of that instance"
+    );
+    assert_eq!(
+        principals_of(&app.principals),
+        vec![Some("alice".to_string())],
+        "the write acts for the signed-in user, as the verbs do"
+    );
+}
+
+/// An empty list is a write of no tags, not a malformed body.
+#[tokio::test]
+async fn an_empty_list_clears_the_tags() {
+    let app = app_tags(&[("default", InstanceState::Active)], Ok(vec![]), Ok(()));
+    let (r, _) = app.put_tags("default", r#"{"tags": []}"#).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    assert_eq!(app.calls(), ["set_instance_tags default"]);
+}
+
+/// The manager's check refuses the list: 422 with the check's key, its values
+/// and `field` "tags", the field the form marks. The manager's own message
+/// stays out of the body, and the session of the writer lives on: a refusal
+/// of a value is no refusal of the user.
+#[tokio::test]
+async fn a_refused_list_is_422_with_the_checks_key() {
+    let refusal = ClientError::Invalid(Refusal {
+        key: "server-bad-tags",
+        values: vec![
+            "bad characters".into(),
+            "Edge".into(),
+            "8".into(),
+            "1".into(),
+            "32".into(),
+        ],
+    });
+    let app = app_tags(
+        &[("default", InstanceState::Active)],
+        Ok(vec![]),
+        Err(refusal),
+    );
+    let (r, cookie) = app.put_tags("default", r#"{"tags": ["Edge"]}"#).await;
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", r.body);
+    assert_eq!(
+        r.json(),
+        json!({
+            "key": "server-bad-tags",
+            "args": ["bad characters", "Edge", "8", "1", "32"],
+            "field": "tags",
+        })
+    );
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
+}
+
+/// No such instance, and an id the manager refuses: 404 `client-no-instance`,
+/// the session of the writer living on.
+#[tokio::test]
+async fn the_tags_of_no_instance_are_404() {
+    for failure in [ClientError::NoInstance, ClientError::InvalidId] {
+        let app = app_tags(
+            &[("default", InstanceState::Active)],
+            Ok(vec![]),
+            Err(failure.clone()),
+        );
+        let (r, cookie) = app.put_tags("lan-9", r#"{"tags": ["edge"]}"#).await;
+        r.assert_error(StatusCode::NOT_FOUND, "client-no-instance");
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
+/// A body the bff cannot read is 400 `tags-malformed` and the manager is not
+/// asked: no `tags` field, a value that is not a list, an entry that is not a
+/// string, a document that is not an object, and no JSON at all. The session
+/// check runs first, so with no session such a body is 401.
+#[tokio::test]
+async fn a_body_that_is_not_a_list_of_strings_is_400_and_asks_nothing() {
+    for body in [
+        r#"{}"#,
+        r#"{"tags": "edge"}"#,
+        r#"{"tags": null}"#,
+        r#"{"tags": ["edge", 5]}"#,
+        r#"{"tags": [null]}"#,
+        r#"{"tags": [["edge"]]}"#,
+        r#"["edge"]"#,
+        r#"tags=edge"#,
+        "",
+    ] {
+        let app = app_tags(&[("default", InstanceState::Active)], Ok(vec![]), Ok(()));
+        let (r, _) = app.put_tags("default", body).await;
+        r.assert_error(StatusCode::BAD_REQUEST, "tags-malformed");
+        app.assert_asked_nothing(&format!("the body {body:?}"));
+    }
+    let app = app_tags(&[("default", InstanceState::Active)], Ok(vec![]), Ok(()));
+    app.ask_json(Method::PUT, "/api/instances/default/tags", None, r#"{}"#)
+        .await
+        .assert_session_required();
+    app.assert_asked_nothing("a malformed body with no session");
+}
+
+/// The manager refuses the signed-in user (they left the `pai` group since
+/// they signed in): 403 `session-not-administrator` and the session ends, as
+/// on the verbs.
+#[tokio::test]
+async fn a_refusal_of_the_signed_in_user_ends_the_session() {
+    let app = app_tags(
+        &[("default", InstanceState::Active)],
+        Ok(vec![]),
+        Err(ClientError::NotAuthorized),
+    );
+    let (r, cookie) = app.put_tags("default", r#"{"tags": ["edge"]}"#).await;
+    r.assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
+    app.get("/api/instances", Some(&cookie))
+        .await
+        .assert_session_required();
+}
+
+/// No manager, and a manager that refuses the connect of the signed-in user:
+/// 503 `client-unavailable` and 403 `session-not-administrator` with the
+/// session ended, as on the verbs: the connect acts as the user, so a refusal
+/// of it is a refusal of them.
+#[tokio::test]
+async fn the_tags_write_of_no_manager_is_unavailable() {
+    let app = app_connecting(|_| Err(ClientError::Unavailable));
+    let cookie = app.sign_in().await;
+    app.ask_json(
+        Method::PUT,
+        "/api/instances/default/tags",
+        Some(&cookie),
+        r#"{"tags": ["edge"]}"#,
+    )
+    .await
+    .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+}
+
+/// The route is the write: `GET` and `DELETE` on it are the router's 405,
+/// which answers before the session is read and asks the manager nothing.
+#[tokio::test]
+async fn the_tags_route_answers_only_the_write() {
+    for method in [Method::GET, Method::DELETE, Method::POST] {
+        let app = app_tags(&[("default", InstanceState::Active)], Ok(vec![]), Ok(()));
+        let r = app
+            .ask_json(method.clone(), "/api/instances/default/tags", None, "{}")
+            .await;
+        assert_eq!(r.status, StatusCode::METHOD_NOT_ALLOWED, "{method}");
+        app.assert_asked_nothing(&format!("{method} /api/instances/default/tags"));
+    }
 }

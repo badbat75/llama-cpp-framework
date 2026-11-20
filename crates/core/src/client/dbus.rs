@@ -3,11 +3,12 @@
 //!
 //! A client [`DbusClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
-//! `SetBootEnabled`, `SetModelProfile` and `SetServerProfile` go as the
+//! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile` and
+//! `SetInstanceTags` go as the
 //! `As` form of the same method, with the user's name as its first argument
 //! (the manager answers a principal for the bff's account alone) and answers
-//! the plain method's shape. The methods that need no right are unchanged: the
-//! name the caller vouches for is no credential.
+//! the plain method's shape. The methods that need no right are unchanged,
+//! `Instances` among them: the name the caller vouches for is no credential.
 //!
 //! ```text
 //! StartAs(s principal, s id)          ReadFileAs(s principal, s name)
@@ -17,10 +18,12 @@
 //! WriteFileIfAs(s principal, s name, s contents, s expected)
 //! SetModelProfileAs(s principal, s instance, s profile, s value)
 //! SetServerProfileAs(s principal, s instance, s profile)
+//! SetInstanceTagsAs(s principal, s instance, as tags)
+//! Instances() -> a(ssqasas)           (id, engine, port, profile tags, instance tags)
 //! Version() -> (s version, u protocol)
 //! ```
 
-use super::{ClientError, InstanceState, ManagerClient, ManagerFile, ManagerVersion};
+use super::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ManagerVersion};
 use zbus::blocking::Connection;
 use zbus::export::serde::Serialize;
 use zbus::message::Message;
@@ -36,6 +39,10 @@ pub const INTERFACE: &str = "org.privateai.Manager1";
 /// The D-Bus error for a method the served object does not have: a manager
 /// built before `Version` answers [`DbusClient::version`] with it.
 const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
+
+/// One row of `Instances`, as the bus answers it: `(s id, s engine, q port,
+/// as profile_tags, as instance_tags)`, the whole list one `a(ssqasas)`.
+type InstanceRow = (String, String, u16, Vec<String>, Vec<String>);
 
 /// The manager's client over one D-Bus connection.
 pub struct DbusClient {
@@ -239,6 +246,28 @@ impl ManagerClient for DbusClient {
         match self.acting() {
             Some(principal) => self.call("SetServerProfileAs", &(principal, instance, profile)),
             None => self.call("SetServerProfile", &(instance, profile)),
+        }
+        .map(|_| ())
+    }
+    fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+        let rows: Vec<InstanceRow> = body(self.call("Instances", &())?)?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, engine, port, profile_tags, instance_tags)| InstanceInfo {
+                    id,
+                    engine,
+                    port,
+                    profile_tags,
+                    instance_tags,
+                },
+            )
+            .collect())
+    }
+    fn set_instance_tags(&self, instance: &str, tags: &[String]) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("SetInstanceTagsAs", &(principal, instance, tags)),
+            None => self.call("SetInstanceTags", &(instance, tags)),
         }
         .map(|_| ())
     }

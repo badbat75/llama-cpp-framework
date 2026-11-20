@@ -46,7 +46,8 @@ pub const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15
 /// system's manager, `/api/session` through the system's authenticator,
 /// `GET /api/instances/{id}/server` and its `PUT`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}`, the boot flag at
-/// `GET`/`PUT /api/instances/{id}/boot`, the web UI's page at `/` and its
+/// `GET`/`PUT /api/instances/{id}/boot`, the instance's tags at
+/// `PUT /api/instances/{id}/tags`, the web UI's page at `/` and its
 /// files under `/assets/`, the model-profile list at `GET /api/profiles/model`, and the
 /// model profile switch at `PUT /api/profiles/model/{id}/enabled`. The revision secret is
 /// drawn from the OS, and a bff that cannot draw one has no
@@ -143,7 +144,8 @@ pub(crate) fn router_with(
 /// session: `GET /api/instances/{id}/server` and its save
 /// `PUT /api/instances/{id}/server`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}` and the boot write
-/// `PUT /api/instances/{id}/boot`, the model-profile list
+/// `PUT /api/instances/{id}/boot`, the instance's tags
+/// `PUT /api/instances/{id}/tags`, the model-profile list
 /// `GET /api/profiles/model`, the model profile save `PUT /api/profiles/model/{id}` and the model profile
 /// switch `PUT /api/profiles/model/{id}/enabled`. The boot read
 /// `GET /api/instances/{id}/boot` is gated by a session too, and reads the
@@ -433,14 +435,21 @@ async fn version(
     axum::Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })).into_response()
 }
 
-/// `GET /api/instances`: `[{"id", "engine", "state"}]` in the manager's
-/// order, to a signed-in reader, or `{"key": <strings key>, "args": []}`,
-/// never the manager's detail. With no live session the answer is 401
-/// `session-required`, the manager is not connected to, and no `Set-Cookie`
-/// goes out. The session gates the read and is not its principal: the list and
-/// the states are what the manager answers of the bff's own account, so
-/// `connect` is handed `None`, and the idle deadline stays where it was (the
-/// page polls this read).
+/// `GET /api/instances`: `[{"id", "engine", "state", "port", "tags",
+/// "instanceTags"}]` in the manager's order, to a signed-in reader, or
+/// `{"key": <strings key>, "args": []}`, never the manager's detail. The
+/// manager's row of the instance carries the port and the two tag lists:
+/// `port` is the configured one, `tags` the union the bff builds of the two
+/// lists (the server profile's first, none twice), `instanceTags` the
+/// instance's own list, the one the editor saves back. With no live session
+/// the answer is 401 `session-required`, the manager is not connected to, and
+/// no `Set-Cookie` goes out. The session gates the read and is not its
+/// principal: the list, the rows and the states are what the manager answers
+/// of the bff's own account, so `connect` is handed `None`, and the idle
+/// deadline stays where it was (the page polls this read). A manager with no
+/// rows to answer (an install of an older protocol) leaves every row with
+/// port 0 and no tags: the rows are extra, not a part of the read that can
+/// fail it.
 async fn instances(
     connect: Connect,
     timeout: std::time::Duration,
@@ -454,13 +463,19 @@ async fn instances(
     }
     let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
         let client = connect(None)?;
+        let ids = client.list_instances()?;
+        let rows = client.instances().unwrap_or_default();
         let mut list = Vec::new();
-        for id in client.list_instances()? {
+        for id in ids {
+            let row = rows.iter().find(|row| row.id == id);
             match client.status(&id) {
                 Ok(state) => list.push(serde_json::json!({
                     "id": id,
                     "engine": ENGINE_LLAMA_CPP,
                     "state": state.name(),
+                    "port": row.map_or(0, |row| row.port),
+                    "tags": tags_of_row(row),
+                    "instanceTags": row.map_or_else(Vec::new, |row| row.instance_tags.clone()),
                 })),
                 Err(ClientError::NoInstance) => {}
                 Err(e) => return Err(e),
@@ -483,6 +498,21 @@ async fn instances(
         axum::Json(serde_json::json!({ "key": key, "args": [] })),
     )
         .into_response()
+}
+
+/// The tags of one row of `Instances`, as the list carries them: the server
+/// profile's list first, then the instance's own, none twice. No row is no
+/// tags.
+fn tags_of_row(row: Option<&pai_core::client::InstanceInfo>) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    if let Some(row) = row {
+        for tag in row.profile_tags.iter().chain(row.instance_tags.iter()) {
+            if !tags.contains(tag) {
+                tags.push(tag.clone());
+            }
+        }
+    }
+    tags
 }
 
 /// The embedded web UI: (path under its directory, bytes, content type) for

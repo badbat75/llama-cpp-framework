@@ -60,6 +60,9 @@ fn data_root_e2e() {
     // ── Manager core: SetServerProfile, the verb that writes instances.ini ─
     crate::manager::service::manager_set_server_profile_e2e();
 
+    // ── Manager core: the tags of an instance, and the list with them ────
+    crate::manager::service::manager_instance_tags_e2e();
+
     // ── Manager core: instances.ini, the instance record, read-only ──────
     crate::manager::service::manager_instances_file_e2e();
 

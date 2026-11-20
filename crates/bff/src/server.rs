@@ -43,7 +43,7 @@ pub(crate) async fn read(
     let user = identity.user;
     let ask = tokio::task::spawn_blocking(move || connect(Some(user.as_str()))?.read_file(&name));
     let (status, code) = match tokio::time::timeout(timeout, ask).await {
-        Ok(Ok(Ok(Some(file)))) => return axum::Json(document(&file, key)).into_response(),
+        Ok(Ok(Ok(Some(file)))) => return axum::Json(document(&file, key, &id)).into_response(),
         Ok(Ok(Ok(None)))
         | Ok(Ok(Err(
             ClientError::NoInstance | ClientError::BadFileName | ClientError::InvalidId,
@@ -65,8 +65,11 @@ pub(crate) async fn read(
 /// manager's `withheld` flag is set, even when the text it sent still names
 /// a key: every signed-in session is a member of the administrators' group
 /// (sign-in refuses anyone else 403), so the bff keeps nothing on its own.
-/// `revision` is the keyed hash of the text under `key`.
-fn document(file: &ManagerFile, key: [u8; 16]) -> Value {
+/// `revision` is the keyed hash of the text under `key`. `id` is the instance
+/// the request names: the `defaults.StateDir` shown is that instance's folder
+/// (the engine's state root joined with the id, as the launch passes it),
+/// never the bare root.
+fn document(file: &ManagerFile, key: [u8; 16], id: &str) -> Value {
     let text = file.text.as_str();
     let mut cfg = server_cfg::from_text(text);
     if file.withheld {
@@ -92,7 +95,7 @@ fn document(file: &ManagerFile, key: [u8; 16]) -> Value {
             "ModelsMemoryMargin": server_cfg::DEFAULT_MODELS_MEMORY_MARGIN,
             "OpencodeBaseUrl": base_url,
             "ModelsDir": paths::instance_models_dir().to_string_lossy(),
-            "StateDir": paths::instance_state_dir().to_string_lossy(),
+            "StateDir": paths::instance_state_dir().join(id).to_string_lossy(),
         },
         "limits": {
             "Port": range("Port"),
@@ -142,6 +145,10 @@ enum Kind {
     Text,
     /// The tri-state's `"on"`/`"off"`, the one key with a third state.
     Tri,
+    /// A list of strings: the profile's tags. The read always sends a list
+    /// (empty when the profile has none), so `null` is not a value of this
+    /// kind.
+    Tags,
 }
 
 impl Kind {
@@ -149,6 +156,11 @@ impl Kind {
     /// for every kind) or a value of this kind. A number that is not a whole
     /// number `i32` can hold is not the type the read gives.
     fn reads(self, value: Option<&Value>) -> bool {
+        if let Kind::Tags = self {
+            return value
+                .and_then(Value::as_array)
+                .is_some_and(|tags| tags.iter().all(Value::is_string));
+        }
         let Some(value) = value.filter(|value| !value.is_null()) else {
             return true;
         };
@@ -157,6 +169,7 @@ impl Kind {
             Kind::Bool => value.as_bool().is_some(),
             Kind::Text => value.is_string(),
             Kind::Tri => matches!(value.as_str(), Some("on") | Some("off")),
+            Kind::Tags => true,
         }
     }
 }
@@ -285,7 +298,27 @@ const FIELDS: &[Field] = &[
         read: |c| json!(c.opencode_api_key),
         write: |c, v| c.opencode_api_key = text(v),
     },
+    Field {
+        key: "Tags",
+        kind: Kind::Tags,
+        read: |c| json!(c.tags),
+        write: |c, v| c.tags = tag_list(v),
+    },
 ];
+
+/// The body's `Tags` list as the config's list: the strings of the array, in
+/// its order. An empty array is no tags, and the file carries no key for it.
+fn tag_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// `value` as the whole number a numeric key holds, None for a fraction or a
 /// number past `i32` (the read never gives one).
@@ -380,6 +413,9 @@ pub(crate) fn field_of(key: &str, args: &[String]) -> String {
     match key {
         "bind-all-with-others" => "Hostname".to_string(),
         "load-on-startup-over-max" | "load-on-startup-unlimited" => "ModelsMax".to_string(),
+        // The tags refusal names the reason first, and the form has one
+        // control for the whole list: the field is the key it is about.
+        "server-bad-tags" => "tags".to_string(),
         _ => args.first().cloned().unwrap_or_default(),
     }
 }
@@ -739,6 +775,7 @@ mod tests {
             state_dir: Some("/srv/state".into()),
             opencode_base_url: Some("http://127.0.0.1:4096".into()),
             opencode_api_key: Some("sk-secret".into()),
+            tags: vec!["edge".into(), "v2".into()],
         }
     }
 
@@ -770,6 +807,7 @@ mod tests {
                 "StateDir": cfg.state_dir,
                 "OpencodeBaseUrl": cfg.opencode_base_url,
                 "OpencodeApiKey": cfg.opencode_api_key,
+                "Tags": cfg.tags,
             },
         })
     }
@@ -949,6 +987,71 @@ mod tests {
         let (key, _, field) = refused(body_with("OpencodeApiKey", json!("sk-;secret")));
         assert_eq!(key, "comment-markers");
         assert_eq!(field, "OpencodeApiKey", "the same mapping on the API key");
+    }
+
+    /// The profile's tags obey the manager's rule (`checks::tags_rule`) on the
+    /// web save too: a list the rule refuses is 422 with the rule's key and
+    /// args, and `field` is the form's control, `tags` (lowercase, the one key
+    /// of the list, as the decision of 2026-11-20 names it). The save writes
+    /// nothing (the 422 answers before the manager is asked).
+    #[test]
+    fn body_to_file_refuses_a_tags_list_the_rule_refuses() {
+        let want = |reason: &str, list: &str| {
+            [
+                reason.to_string(),
+                list.to_string(),
+                checks::TAGS_MAX.to_string(),
+                checks::TAG_MIN.to_string(),
+                checks::TAG_MAX.to_string(),
+            ]
+            .to_vec()
+        };
+        for (tags, reason, list) in [
+            (json!(["Edge"]), "bad characters", "Edge".to_string()),
+            (
+                json!(["gpu", "gpu"]),
+                "the same tag twice",
+                "gpu,gpu".to_string(),
+            ),
+            (
+                json!(["gpu edge"]),
+                "bad characters",
+                "gpu edge".to_string(),
+            ),
+            (json!([""]), "empty tag", String::new()),
+        ] {
+            let (key, args, field) = refused(body_with("Tags", tags));
+            assert_eq!(key, "server-bad-tags", "the rule's one key");
+            assert_eq!(args, want(reason, &list), "the rule's own args");
+            assert_eq!(field, "tags", "the 422 marks the tags control");
+        }
+    }
+
+    /// A tags list of the rule's shape is written, in the body's order; an
+    /// empty list is no tags and the file carries no `Tags` key.
+    #[test]
+    fn body_to_file_writes_a_tags_list_of_the_rules_shape() {
+        let text = file(body_with("Tags", json!(["edge", "v2"])));
+        assert!(text.contains("Tags = edge,v2"), "{text}");
+        let text = file(body_with("Tags", json!([])));
+        assert!(!text.contains("Tags ="), "no tags writes no key: {text}");
+    }
+
+    /// A tags list holding something that is not a string is a body the bff
+    /// cannot read: 400 `server-malformed`, the same answer as a value of the
+    /// wrong type of any other key.
+    #[test]
+    fn body_to_file_refuses_a_tags_list_that_is_not_strings() {
+        assert_malformed(
+            body_with("Tags", json!(["gpu", 7])),
+            "a number among the tags",
+        );
+        assert_malformed(
+            body_with("Tags", json!({"a": "gpu"})),
+            "an object where a list is read",
+        );
+        assert_malformed(body_with("Tags", json!("gpu")), "a bare string");
+        assert_malformed(body_with("Tags", Value::Null), "a null tags list");
     }
 
     /// The base URL is stored as the GUI stores it: a trailing `/` and a
@@ -1202,6 +1305,7 @@ mod tests {
                 "RocprofAttach",
                 "SaveStateOnShutdown",
                 "StateDir",
+                "Tags",
                 "Threads",
                 "ThreadsBatch",
                 "Webui",

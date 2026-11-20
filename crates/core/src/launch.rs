@@ -214,17 +214,20 @@ pub enum LaunchError {
     StateDir(std::path::PathBuf, std::io::ErrorKind),
 }
 
-/// The llama-server launch of instance `id`: the section `id` of
+/// The llama-server launch of instance `instance`: the section `instance` of
 /// `paths::instances_ini()` names the server profile in its `ServerProfile`
 /// key, and `exe` is launched with `server_args()` of that profile's file
 /// `server@<profile>.ini`; the model profiles stay the render of the instance
-/// id, `models@<id>.ini`, with the cwd and env `start()` sets. No log, no
-/// rotation: the service manager captures the output.
+/// id, `models@<id>.ini`, with the cwd and env `start()` sets. Its slot-state
+/// folder, when its server profile leaves `StateDir` unset, is the folder of
+/// the instance below the engine's state folder, so one instance's snapshots
+/// never sit in another's. No log, no rotation: the service manager captures
+/// the output.
 pub fn instance_command(
-    id: &str,
+    instance: &str,
     exe: &std::path::Path,
 ) -> Result<std::process::Command, LaunchError> {
-    if !crate::paths::valid_instance_id(id) {
+    if !crate::paths::valid_instance_id(instance) {
         return Err(LaunchError::InvalidId);
     }
     // The record of the instances, and the server profile its section names:
@@ -232,7 +235,7 @@ pub fn instance_command(
     // value, a name that builds no file: no profile to read, and the refusal
     // names the record.
     let record = crate::paths::instances_ini();
-    let profile = crate::paths::instance_server_profile(id)
+    let profile = crate::paths::instance_server_profile(instance)
         .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
     // The profile's file.
     let ini = crate::paths::instance_ini(&profile)
@@ -240,15 +243,18 @@ pub fn instance_command(
     if !ini.is_file() {
         return Err(LaunchError::NoConfig(ini));
     }
-    let models_path = crate::paths::instance_models(id).ok_or(LaunchError::InvalidId)?;
+    let models_path = crate::paths::instance_models(instance).ok_or(LaunchError::InvalidId)?;
     if !has_model_profiles_in(&models_path) {
         return Err(LaunchError::NoModelProfiles);
     }
+    // The instance's own snapshot folder, below the engine's state root: it is
+    // the default `with_instance_defaults` fills in when the profile leaves
+    // `StateDir` unset, and `ensure_dir` below creates it before the spawn.
     let cfg = with_instance_defaults(
         crate::server_cfg::load_from(&ini),
         cfg!(any(windows, target_os = "linux")),
         &crate::paths::instance_models_dir(),
-        &crate::paths::instance_state_dir(),
+        &crate::paths::instance_state_dir().join(instance),
     );
     // Before the spawn, as in `start()`: llama.cpp refuses a missing
     // `--slot-save-path` directory during argument parsing.
@@ -815,15 +821,17 @@ pub(crate) fn instance_launch_e2e() {
             .any(|w| w[0] == "--slot-save-path" && w[1] == state.to_string_lossy()),
         "the created directory is the one passed: {args:?}"
     );
-    // On with no StateDir: the instance's default one is created, and it is
-    // the one passed. Under the manager (Linux and Windows) that is the
-    // engine's `paths::instance_state_dir()`, the folder the configurator's
-    // Server tab names in its hint, not the launching account's data root.
-    let instance_state = if cfg!(any(windows, target_os = "linux")) {
+    // On with no StateDir: the instance gets a snapshot folder of its own,
+    // named by its id. Under the manager (Linux and Windows) it sits under
+    // the engine's `paths::instance_state_dir()`, the folder the
+    // configurator's Server tab names in its hint, not the launching
+    // account's data root.
+    let state_root = if cfg!(any(windows, target_os = "linux")) {
         crate::paths::instance_state_dir()
     } else {
         default_state.clone()
     };
+    let instance_state = state_root.join("default");
     assert!(
         instance_state.starts_with(dir.path()) && !instance_state.exists(),
         "fixture sanity: {}",
@@ -848,6 +856,51 @@ pub(crate) fn instance_launch_e2e() {
         args.windows(2)
             .any(|w| w[0] == "--slot-save-path" && w[1] == instance_state.to_string_lossy()),
         "the instance's default state directory is the one passed: {args:?}"
+    );
+    // A second instance with no StateDir: its own folder, the same root, and
+    // the first instance's folder untouched: two instances never share the
+    // snapshots.
+    // An instance IS the section of `instances.ini` (pinned above), so the
+    // record gains the `[gpu-1]` section, naming the profile whose file the
+    // block writes. Its render is keyed by the id too (`models@<id>.ini`), so
+    // the fixture writes that as well, with a model profile section.
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\n[gpu-1]\nServerProfile = gpu-1\n",
+    )
+    .expect("instances.ini");
+    std::fs::write(
+        sys.join("models@gpu-1.ini"),
+        "[*]\ntemp = 0.7\n\n[gpu-model]\nmodel = /m/gpu.gguf\n",
+    )
+    .expect("models@gpu-1.ini");
+    std::fs::write(
+        sys.join("server@gpu-1.ini"),
+        "[Server]\nSaveStateOnShutdown = true\n",
+    )
+    .expect("server@gpu-1.ini");
+    let other = state_root.join("gpu-1");
+    let cmd = instance_command("gpu-1", &exe).expect("launch of a second instance");
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        args.windows(2)
+            .any(|w| w[0] == "--slot-save-path" && w[1] == other.to_string_lossy()),
+        "the second instance has its own folder: {args:?}"
+    );
+    assert!(
+        other.is_dir(),
+        "the second folder is created: {}",
+        other.display()
+    );
+    assert_eq!(
+        std::fs::read_dir(&instance_state)
+            .expect("first folder readable")
+            .count(),
+        0,
+        "the first instance's folder carries nothing of the second"
     );
     // A directory that cannot be created (a file is in the way) refuses the
     // launch, as start() returns the error, rather than a server that dies
@@ -1034,6 +1087,9 @@ mod tests {
             state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
+            // Metadata for the web UI, set here so the assertions below can
+            // prove none of it reaches the launch.
+            tags: vec!["edge".into(), "v2".into()],
         };
         let ServerConfig {
             port,
@@ -1070,8 +1126,17 @@ mod tests {
             // Integration-only: not a llama-server flag. Written as apiKey in
             // opencode.json. The GUI edits it on the Server tab (Network section).
             opencode_api_key: _,
+            // Metadata only: the tags of the profile, shown by the web UI.
+            // Never a flag, never in the environment: the assertion below
+            // proves the launch carries none of them.
+            tags,
         } = cfg.clone();
         let a = args_for(&cfg);
+        assert!(
+            a.iter()
+                .all(|x| tags.iter().all(|t| !x.contains(t.as_str()))),
+            "a tag of the profile reached the launch: {a:?}"
+        );
         let pair = |flag: &str, val: String| {
             a.iter()
                 .position(|x| x == flag)
@@ -1289,6 +1354,42 @@ mod tests {
         let cfg = with_instance_defaults(only_models, true, &models, &state);
         assert_eq!(cfg.models_dir.as_deref(), Some(r"E:\models"));
         assert_eq!(cfg.state_dir_or_default(), state.to_string_lossy());
+    }
+
+    /// The state directory the caller hands in is the instance's own: the
+    /// engine's state root with the id under it. Two instances over the same
+    /// root never resolve to one snapshot folder.
+    #[test]
+    fn an_instance_with_no_state_dir_gets_the_folder_named_by_its_id() {
+        let (models, root) = engine_dirs();
+        let cfg =
+            with_instance_defaults(ServerConfig::default(), true, &models, &root.join("gpu-1"));
+        assert_eq!(
+            cfg.state_dir_or_default(),
+            root.join("gpu-1").to_string_lossy()
+        );
+        let other =
+            with_instance_defaults(ServerConfig::default(), true, &models, &root.join("gpu-2"));
+        assert_ne!(
+            cfg.state_dir_or_default(),
+            other.state_dir_or_default(),
+            "two instances share a snapshot folder"
+        );
+    }
+
+    /// What the profile names stays as it is: the id is never appended to a
+    /// folder the user chose.
+    #[test]
+    fn a_state_dir_the_profile_names_never_gains_the_id() {
+        let (models, root) = engine_dirs();
+        let named = ServerConfig {
+            models_dir: Some(r"E:\models".into()),
+            state_dir: Some(r"E:\llama-state".into()),
+            ..ServerConfig::default()
+        };
+        let resolved = with_instance_defaults(named.clone(), true, &models, &root.join("gpu-1"));
+        assert_eq!(resolved, named);
+        assert_eq!(resolved.state_dir_or_default(), r"E:\llama-state");
     }
 
     /// Linux and macOS are unchanged: the service user's home on Linux (the

@@ -320,6 +320,11 @@ export struct ServerForm {
     // api_key_nokey is true, the field is disabled and no key is used.
     opencode_api_key: string,
     api_key_nokey: bool,
+    // The profile's tags (server.ini Tags), the web UI's metadata for the
+    // instance that uses this profile. No widget: the Server tab shows none, so
+    // the list rides the form as the file's own `a,b` spelling and a Save
+    // writes back the line it read (see src/server_form.rs).
+    tags: string,
 }
 
 // One selectable row of the Benchmark tab's model-profile list. The unit of a

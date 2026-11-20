@@ -14,16 +14,19 @@
 //! {"method":"WriteFileIf","name":"models.ini","contents":"...","expected":"..."}
 //! {"method":"BootEnabled","id":"default"}
 //! {"method":"SetBootEnabled","id":"default","enabled":true}
+//! {"method":"Instances"}
+//! {"method":"SetInstanceTags","instance":"default","tags":["edge","v2"]}
 //! {"method":"Authenticate","user":"alice","password":"..."}
 //! {"method":"Version"}
 //! ```
 //!
 //! A client [`PipeClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
-//! `SetBootEnabled`, `SetModelProfile` and `SetServerProfile` go as the
+//! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile` and
+//! `SetInstanceTags` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
 //! (the manager answers a principal for the bff's account alone). The methods
-//! that need no right are unchanged.
+//! that need no right are unchanged, `Instances` among them.
 //!
 //! ```text
 //! {"method":"StartAs","principal":"alice","id":"default"}
@@ -33,6 +36,8 @@
 //!                              "contents":"...","keep_api_key":false}
 //! {"method":"WriteFileIfAs","principal":"alice","name":"models.ini",
 //!                               "contents":"...","expected":"..."}
+//! {"method":"SetInstanceTagsAs","principal":"alice","instance":"default",
+//!                                      "tags":["edge","v2"]}
 //! ```
 //!
 //! A reply is the value or an error with the same (name, message) pair the
@@ -45,16 +50,19 @@
 //!                                           OpencodeApiKey value blanked)
 //! {"ok":null}                               ReadFile, no such file
 //! {"ok":true} or {"ok":false}              BootEnabled
+//! {"ok":[{"id":"default","engine":"llama.cpp","port":8080,
+//!         "profile_tags":["edge"],"instance_tags":[]}]}
+//!                                           Instances
 //! {"ok":{"authenticated":true,"can_configure":false}}
 //!                                           Authenticate
 //! {"ok":null}                               Start, Stop, Restart, WriteFile,
-//!                                           SetBootEnabled
+//!                                           SetBootEnabled, SetInstanceTags
 //! {"ok":{"version":"1.2.3","protocol":1}}   Version (protocol: the methods
 //!                                           this manager speaks)
 //! {"error":{"name":"org.privateai.Manager1.Error.<Kind>","message":"..."}}
 //! ```
 
-use super::{ClientError, InstanceState, ManagerClient, ManagerFile, ManagerVersion};
+use super::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ManagerVersion};
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
 use std::sync::{Arc, Mutex};
@@ -305,6 +313,50 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             &[("instance", json!(instance)), ("profile", json!(profile))],
         ))
     }
+    fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+        let v = self.call(json!({"method": "Instances"}))?;
+        let rows = v
+            .as_array()
+            .ok_or_else(|| ClientError::Other(v.to_string()))?;
+        let text =
+            |row: &Value, key: &str| row.get(key).and_then(Value::as_str).map(str::to_string);
+        let tags = |row: &Value, key: &str| {
+            row.get(key).and_then(Value::as_array).map(|list| {
+                list.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect()
+            })
+        };
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let port = row.get("port").and_then(Value::as_u64);
+            match (
+                text(row, "id"),
+                text(row, "engine"),
+                port,
+                tags(row, "profile_tags"),
+                tags(row, "instance_tags"),
+            ) {
+                (Some(id), Some(engine), Some(port), Some(profile_tags), Some(instance_tags)) => {
+                    out.push(InstanceInfo {
+                        id,
+                        engine,
+                        port: u16::try_from(port).map_err(|_| ClientError::Other(v.to_string()))?,
+                        profile_tags,
+                        instance_tags,
+                    })
+                }
+                _ => return Err(ClientError::Other(v.to_string())),
+            }
+        }
+        Ok(out)
+    }
+    fn set_instance_tags(&self, instance: &str, tags: &[String]) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "SetInstanceTags",
+            &[("instance", json!(instance)), ("tags", json!(tags))],
+        ))
+    }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         let v = self.call(json!({"method": "Authenticate", "user": user, "password": password}))?;
         let ok = v.get("authenticated").and_then(Value::as_bool);
@@ -531,8 +583,14 @@ mod tests {
     /// One client method, its error when it fails.
     type Call = fn(&PipeClient<Script>) -> Option<ClientError>;
 
-    const EVERY_METHOD: [(&str, Call); 13] = [
+    /// The list one tags call sends.
+    fn tags() -> Vec<String> {
+        vec!["edge".to_string(), "v2".to_string()]
+    }
+
+    const EVERY_METHOD: [(&str, Call); 15] = [
         ("list_instances", |c| c.list_instances().err()),
+        ("instances", |c| c.instances().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
         ("stop", |c| c.stop("default").err()),
@@ -550,6 +608,9 @@ mod tests {
         }),
         ("set_server_profile", |c| {
             c.set_server_profile("lan-2", "Qwen 3 (v2) é").err()
+        }),
+        ("set_instance_tags", |c| {
+            c.set_instance_tags("lan-2", &tags()).err()
         }),
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
@@ -719,11 +780,48 @@ mod tests {
         }
     }
 
+    /// The list `Instances` answers, read as it is: the two tag lists kept
+    /// apart and in the order the manager gave them, every row kept, and a
+    /// manager with no instance answered an empty list.
+    #[test]
+    fn the_instances_reply_is_the_list_the_manager_answers() {
+        let (client, _) = client_on(input(&[json!({"ok": [
+            {"id": "default", "engine": "llama.cpp", "port": 8080, "profile_tags": ["edge", "v2"], "instance_tags": []},
+            {"id": "lan-2", "engine": "llama.cpp", "port": 8081, "profile_tags": [], "instance_tags": ["gpu"]},
+        ]})]));
+        assert_eq!(
+            client.instances().expect("the list"),
+            vec![
+                InstanceInfo {
+                    id: "default".into(),
+                    engine: "llama.cpp".into(),
+                    port: 8080,
+                    profile_tags: vec!["edge".into(), "v2".into()],
+                    instance_tags: vec![],
+                },
+                InstanceInfo {
+                    id: "lan-2".into(),
+                    engine: "llama.cpp".into(),
+                    port: 8081,
+                    profile_tags: vec![],
+                    instance_tags: vec!["gpu".into()],
+                },
+            ],
+            "the row's fields, in the manager's order"
+        );
+        let (client, _) = client_on(input(&[json!({"ok": []})]));
+        assert_eq!(
+            client.instances().expect("no instances"),
+            Vec::<InstanceInfo>::new(),
+            "no instance is an empty list"
+        );
+    }
+
     /// A reply that is neither a value nor an error, or the wrong value for
     /// the method, is Other, never a panic.
     #[test]
     fn a_reply_of_the_wrong_shape_is_other() {
-        let cases: [(&str, Call, Value); 13] = [
+        let cases: [(&str, Call, Value); 16] = [
             (
                 "boot_enabled",
                 |c| c.boot_enabled("default").err(),
@@ -776,6 +874,21 @@ mod tests {
                 "start",
                 |c| c.start("default").err(),
                 json!({"error": {"name": "org.privateai.Manager1.Error.NotAuthorized"}}),
+            ),
+            (
+                "instances",
+                |c| c.instances().err(),
+                json!({"ok": "default"}),
+            ),
+            (
+                "instances",
+                |c| c.instances().err(),
+                json!({"ok": [{"id": "default", "engine": "llama.cpp"}]}),
+            ),
+            (
+                "instances",
+                |c| c.instances().err(),
+                json!({"ok": [{"id": "default", "engine": "llama.cpp", "port": 8080, "profile_tags": "edge", "instance_tags": []}]}),
             ),
         ];
         for (method, f, reply) in cases {
@@ -881,7 +994,7 @@ mod tests {
     #[test]
     fn every_method_sends_its_request() {
         let contents = "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n";
-        let cases: [(Call, Value); 14] = [
+        let cases: [(Call, Value); 16] = [
             (
                 |c| c.boot_enabled("lan-2").err(),
                 json!({"method": "BootEnabled", "id": "lan-2"}),
@@ -956,6 +1069,11 @@ mod tests {
             (
                 |c| c.set_server_profile("lan-2", "Qwen 3 (v2) é").err(),
                 json!({"method": "SetServerProfile", "instance": "lan-2", "profile": "Qwen 3 (v2) é"}),
+            ),
+            (|c| c.instances().err(), json!({"method": "Instances"})),
+            (
+                |c| c.set_instance_tags("lan-2", &tags()).err(),
+                json!({"method": "SetInstanceTags", "instance": "lan-2", "tags": ["edge", "v2"]}),
             ),
         ];
         for (f, request) in cases {
@@ -1257,7 +1375,7 @@ mod tests {
     #[test]
     fn an_acting_client_sends_the_as_forms() {
         let refused = error_reply("InvalidId", "InvalidId");
-        let cases: [Case; 9] = [
+        let cases: [Case; 10] = [
             (
                 "start",
                 |c| c.start("default").err(),
@@ -1312,6 +1430,11 @@ mod tests {
                 |c| c.set_server_profile("lan-2", "Qwen 3 (v2) é").err(),
                 json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "lan-2", "profile": "Qwen 3 (v2) é"}),
             ),
+            (
+                "set_instance_tags",
+                |c| c.set_instance_tags("lan-2", &tags()).err(),
+                json!({"method": "SetInstanceTagsAs", "principal": "alice", "instance": "lan-2", "tags": ["edge", "v2"]}),
+            ),
         ];
         for (method, act, request) in cases {
             assert_eq!(
@@ -1327,7 +1450,7 @@ mod tests {
     /// unbound client's.
     #[test]
     fn an_acting_client_sends_the_unguarded_methods_unchanged() {
-        let cases: [Case; 4] = [
+        let cases: [Case; 5] = [
             (
                 "list_instances",
                 |c| c.list_instances().err(),
@@ -1347,6 +1470,11 @@ mod tests {
                 "authenticate",
                 |c| c.authenticate("alice", "s3cret-Pw").err(),
                 json!({"method": "Authenticate", "user": "alice", "password": "s3cret-Pw"}),
+            ),
+            (
+                "instances",
+                |c| c.instances().err(),
+                json!({"method": "Instances"}),
             ),
         ];
         for (method, act, request) in cases {

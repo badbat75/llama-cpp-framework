@@ -210,7 +210,8 @@ pub fn instance_models_dir() -> PathBuf {
 /// `%ProgramData%\llama.cpp\state` on Windows (not the LocalSystem
 /// profile); on Linux the service user's
 /// `/var/lib/private-ai/.local/share/private-ai/state`, whoever asks (the
-/// one the shipped `server@default.ini` names); elsewhere
+/// instance's own folder is this with the id the launch fills in, and the
+/// shipped `server@default.ini` sets no `StateDir`); elsewhere
 /// `slot_state::default_state_dir()`, unchanged. Under the test override it
 /// is `<override>/engine-state` on every OS.
 pub fn instance_state_dir() -> PathBuf {

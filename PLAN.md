@@ -982,8 +982,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
     the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
     collapsible; collapsed it shows, for now, only its engine, its port and its tags, one or more
-    labels the administrator assigns to it (user, 2026-11-17), so `GET /api/instances` gains the port
-    and the tags (today `{id, engine, state}`); where tags are kept and what they drive is to design.
+    labels the administrator assigns to it (user, 2026-11-17). Built on the bff and the manager (slices 11
+    and 12): `GET /api/instances` items `{id, engine, state, port, tags, instanceTags}`, tags in the server
+    profile's `[Server] Tags` (read-only in the web UI until the server profile page, user 2026-11-20) and in
+    the instance's own `Tags`, set by `PUT /api/instances/{id}/tags`; tags are labels only. The web UI part is
+    fe brief 12 (slice T1). Left: a GUI Server save refused for hand-written bad tags has no field to fix
+    them (the CLI or the file does).
     **An About place lists every version** (user, 2026-11-19, replacing "the node's status shows the engine"
     of the same day): behind sign-in, the web UI shows the framework's version and the version of every
     component involved: each installed engine (today llama.cpp, later Strata) and the GPU backend packages

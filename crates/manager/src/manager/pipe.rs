@@ -24,7 +24,9 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// The protocol version this manager answers with, the number `Version`
 /// reports beside the framework version. 2 is the `As` methods; 3 adds
 /// `SetModelProfile`, the assignment verb, and `SetServerProfile`, the switch
-/// of an instance to another server profile, each with its `As` form.
+/// of an instance to another server profile, each with its `As` form, and
+/// `Instances`, the list with each instance's tags, and `SetInstanceTags`
+/// with its `As` form; the protocol stays 3, so these verbs are part of 3.
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -36,6 +38,8 @@ const AS_SUFFIX: &str = "As";
 /// the call is the caller's own.
 enum Request {
     ListInstances,
+    /// Every instance with the tags of its server profile and its own.
+    Instances,
     Status(String),
     Version,
     Start(String, Option<Principal>),
@@ -49,6 +53,8 @@ enum Request {
     SetModelProfile(String, String, String, Option<Principal>),
     /// `instance`, `profile`: point an instance at a server profile.
     SetServerProfile(String, String, Option<Principal>),
+    /// `instance`, `tags`: the record's own tags of an instance.
+    SetInstanceTags(String, Vec<String>, Option<Principal>),
     Authenticate(String, String),
 }
 
@@ -68,8 +74,19 @@ impl Request {
         // A missing principal, or one that is not a string, is no request (the
         // `?` at the use); present, it is the `Some` the `As` request carries.
         let principal = || Some(Principal(v.get("principal")?.as_str()?.to_string()));
+        // The tags list: an array of strings. An entry that is not a string,
+        // or a value that is no array, is no request: the rule of the list is
+        // the manager's, not the frame's.
+        let tags = || {
+            v.get("tags")?
+                .as_array()?
+                .iter()
+                .map(|t| t.as_str().map(str::to_string))
+                .collect::<Option<Vec<String>>>()
+        };
         Some(match method {
             "ListInstances" => Request::ListInstances,
+            "Instances" => Request::Instances,
             "Status" => Request::Status(arg("id")?),
             "Version" => Request::Version,
             "Start" => Request::Start(arg("id")?, None),
@@ -131,6 +148,12 @@ impl Request {
             "SetServerProfileAs" => {
                 Request::SetServerProfile(arg("instance")?, arg("profile")?, principal().map(Some)?)
             }
+            // The tags verb: the instance and the list that replaces the
+            // record's own tags of it.
+            "SetInstanceTags" => Request::SetInstanceTags(arg("instance")?, tags()?, None),
+            "SetInstanceTagsAs" => {
+                Request::SetInstanceTags(arg("instance")?, tags()?, principal().map(Some)?)
+            }
             "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
@@ -163,6 +186,19 @@ where
 {
     let result = match request {
         Request::ListInstances => Ok(json!(manager.list_instances())),
+        // One object per instance, the two tag lists kept apart: the web UI
+        // shows the profile's first and says which is which.
+        Request::Instances => Ok(json!(manager
+            .instances()
+            .iter()
+            .map(|i| json!({
+                "id": i.id,
+                "engine": i.engine,
+                "port": i.port,
+                "profile_tags": i.profile_tags,
+                "instance_tags": i.instance_tags,
+            }))
+            .collect::<Vec<_>>())),
         Request::Status(id) => manager.status(&id).map(|s| json!(state_name(s))),
         // The version asks nothing of anybody: every caller gets it, the
         // empty one included.
@@ -200,6 +236,10 @@ where
         // The switch of an instance to another server profile.
         Request::SetServerProfile(instance, profile, principal) => requester(caller, principal)
             .and_then(|who| manager.set_server_profile(&who, &instance, &profile))
+            .map(|()| Value::Null),
+        // The record's own tags of one instance.
+        Request::SetInstanceTags(instance, tags, principal) => requester(caller, principal)
+            .and_then(|who| manager.set_instance_tags(&who, &instance, &tags))
             .map(|()| Value::Null),
         // The empty caller too goes to the core, which answers only the bff.
         Request::Authenticate(user, password) => manager
@@ -758,6 +798,137 @@ mod tests {
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(replies, vec![error("InvalidId", "InvalidId"); 3]);
         assert_eq!(asked(&c), vec![(alice(), Action::Configure); 3]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `SetInstanceTags` asks the authority for configure as the connection's
+    /// caller; a refused caller changes nothing. Every id here is one the core
+    /// refuses before it reads a record, so nothing reaches `paths::` (this
+    /// unit test does not redirect the data root).
+    #[test]
+    fn the_tags_change_asks_configure_and_a_refused_caller_changes_nothing() {
+        let c = core(false);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "SetInstanceTags", "instance": "a_b", "tags": ["edge"]}),
+                json!({"method": "SetInstanceTags", "instance": "default", "tags": ["edge", "v2"]}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("NotAuthorized", "NotAuthorized"),
+                error("NotAuthorized", "NotAuthorized")
+            ]
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// The refusals of the verb, over the wire: an id that is no id, answered
+    /// first, then a list the rule refuses, its message the encoded refusal the
+    /// client decodes. Nothing is done, and no path is read.
+    #[test]
+    fn the_tags_of_an_invalid_id_or_a_refused_list_are_answered() {
+        let refusal = |list: &[&str]| -> String {
+            pai_core::checks::tags_rule(&list.iter().map(|t| t.to_string()).collect::<Vec<_>>())
+                .expect_err("the rule refuses this list")
+                .encode()
+        };
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "SetInstanceTags", "instance": "a_b", "tags": ["edge"]}),
+                json!({"method": "SetInstanceTags", "instance": "", "tags": ["edge"]}),
+                json!({"method": "SetInstanceTags", "instance": "default", "tags": ["Edge"]}),
+                json!({"method": "SetInstanceTags", "instance": "default", "tags": ["ok", "ok"]}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("InvalidId", "InvalidId"),
+                error("InvalidId", "InvalidId"),
+                error("Invalid", &refusal(&["Edge"])),
+                error("Invalid", &refusal(&["ok", "ok"])),
+            ],
+            "the id first, then the list, the rule's answer encoded as every Invalid reply is"
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 4]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `instance` is a required string and `tags` a required array of strings:
+    /// a frame missing one, carrying one of the wrong type, naming an entry
+    /// that is not a string, a principal that disagrees with the `As`
+    /// spelling, or a method spelled otherwise, is no request.
+    #[test]
+    fn a_malformed_tags_request_is_a_bad_request() {
+        for body in [
+            json!({"method": "SetInstanceTags", "tags": ["edge"]}),
+            json!({"method": "SetInstanceTags", "instance": "default"}),
+            json!({"method": "SetInstanceTags", "instance": 5, "tags": ["edge"]}),
+            json!({"method": "SetInstanceTags", "instance": "default", "tags": "edge"}),
+            json!({"method": "SetInstanceTags", "instance": "default", "tags": null}),
+            json!({"method": "SetInstanceTags", "instance": "default", "tags": ["edge", 5]}),
+            json!({"method": "SetInstanceTags", "instance": "default", "tags": [{"t": "edge"}]}),
+            json!({"method": "SetInstanceTags", "instance": "default", "tags": [null]}),
+            json!({"method": "SetInstanceTagsAs", "principal": "alice", "instance": "default"}),
+            json!({"method": "SetInstanceTags", "principal": "alice", "instance": "default", "tags": ["edge"]}),
+            json!({"method": "setInstanceTags", "instance": "default", "tags": ["edge"]}),
+            json!({"method": "SetInstanceTag", "instance": "default", "tags": ["edge"]}),
+        ] {
+            let c = core(true);
+            let (result, replies) = serve(&c, alice(), requests(std::slice::from_ref(&body)));
+            assert!(result.is_err(), "{body}");
+            assert_eq!(replies.len(), 1, "{body}: {replies:?}");
+            assert_bad_request(&replies[0], &body.to_string());
+            assert_eq!(asked(&c), vec![], "{body}");
+            assert_eq!(calls(&c), vec![], "{body}");
+        }
+    }
+
+    /// The `As` form of the tags verb carries the principal and runs for the
+    /// bff's account alone: a member's call reaches the core's own checks, a
+    /// principal outside `pai` is refused, the membership asked for the name
+    /// sent, polkit never asked for a principal.
+    #[test]
+    fn the_tags_as_form_acts_for_the_principal() {
+        let (c, admins) = principal_core(FakePasswords::new());
+        let (result, replies) = serve(
+            &c,
+            bff(),
+            requests(&[
+                json!({"method": "SetInstanceTagsAs", "principal": "alice", "instance": "../x", "tags": ["edge"]}),
+                json!({"method": "SetInstanceTagsAs", "principal": "bob", "instance": "../x", "tags": ["edge"]}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("InvalidId", "InvalidId"),
+                error("NotAuthorized", "NotAuthorized")
+            ],
+            "a member reaches the core's own checks, a caller outside `pai` is refused"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            vec!["alice".to_string(), "bob".to_string()],
+            "the membership of the name the request vouches for, once per call"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "polkit asked, so the call ran as the bff's own, not for the principal"
+        );
+        assert_eq!(asked_bff(&c), vec![bff(); 2]);
         assert_eq!(calls(&c), vec![]);
     }
 

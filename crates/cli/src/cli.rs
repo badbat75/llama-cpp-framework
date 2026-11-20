@@ -824,8 +824,9 @@ fn run_bench_query(q: BenchQuery) -> Result<()> {
 /// StateDir prints the folder the instance really uses with "(default)":
 /// under the manager on Linux and Windows the instance's defaults
 /// `instance_models` and `instance_state` (`paths::instance_models_dir`,
-/// `paths::instance_state_dir`), not the user's own. A key the manager
-/// withheld (`api_key_withheld`) prints as "(set, withheld)".
+/// `paths::instance_state_dir` with the instance's id joined), not the
+/// user's own. A key the manager withheld (`api_key_withheld`) prints as
+/// "(set, withheld)".
 fn show_lines_for(
     cfg: &server_cfg::ServerConfig,
     kind: server_control::Kind,
@@ -938,6 +939,17 @@ fn show_lines_for(
             }
         }),
     );
+    // The profile's tags: metadata for the web UI, never a llama-server flag.
+    // The value is the file's own spelling, the `a,b` of `Tags = a,b`, so what
+    // is read back is what the profile carries.
+    row(
+        "Tags:",
+        if cfg.tags.is_empty() {
+            "-".into()
+        } else {
+            cfg.tags.join(",")
+        },
+    );
     out
 }
 
@@ -951,6 +963,10 @@ fn run_server(c: ServerCmd) -> Result<()> {
         ServerCmd::Show => {
             let cfg = server_cfg::load();
             println!("server.ini: {}", config_path(ConfigFile::Server).display());
+            // The StateDir shown as the default is the folder of the instance
+            // this command drives: the engine's state root joined with its id,
+            // as the launch passes it.
+            let instance_state = crate::paths::instance_state_dir().join("default");
             print!(
                 "{}",
                 show_lines_for(
@@ -958,7 +974,7 @@ fn run_server(c: ServerCmd) -> Result<()> {
                     server_control::backend().kind(),
                     server_control::Os::current(),
                     &crate::paths::instance_models_dir(),
-                    &crate::paths::instance_state_dir(),
+                    &instance_state,
                     server_control::backend().api_key_withheld(),
                 )
             );
@@ -2410,7 +2426,12 @@ mod tests {
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
         };
-        let mut cfg = ServerConfig::default();
+        // The tags arrive from the file, not from a flag: `server set` has no
+        // `--tags`, so `apply` must leave the list it was handed untouched.
+        let mut cfg = ServerConfig {
+            tags: vec!["edge".into(), "v2".into()],
+            ..Default::default()
+        };
         set.apply(&mut cfg);
         // Whole-struct equality against a second exhaustive literal: the
         // compiler forces a value for a new field in BOTH literals, and the
@@ -2436,6 +2457,8 @@ mod tests {
             state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
+            // No flag sets them: the list the config file had, kept.
+            tags: vec!["edge".into(), "v2".into()],
         };
         assert_eq!(cfg, expected);
     }
@@ -2465,6 +2488,9 @@ mod tests {
             state_dir: Some(r"E:\llama-state".into()),
             opencode_base_url: Some("https://llm.example.com".into()),
             opencode_api_key: Some("sk-test-key".into()),
+            // The profile's tags: a list the CLI reads and shows, never one it
+            // passes to llama-server.
+            tags: vec!["edge".into(), "v2".into()],
         };
         // The exhaustive destructure breaks compilation the moment a field is
         // added, until this test decides what to do with it, but the
@@ -2491,6 +2517,7 @@ mod tests {
             state_dir,
             opencode_base_url,
             opencode_api_key,
+            tags,
         } = cfg.clone();
         let needles = [
             ("Port:", port.unwrap().to_string()),
@@ -2527,6 +2554,9 @@ mod tests {
             ("StateDir:", state_dir.unwrap()),
             ("OpencodeBaseUrl:", opencode_base_url.unwrap()),
             ("OpencodeApiKey:", opencode_api_key.unwrap()),
+            // The list prints with the file's own spelling (`Tags = a,b` in the
+            // ini), the text the user reads back in the profile.
+            ("Tags:", tags.join(",")),
         ];
         let out = show_lines_for(
             &cfg,
@@ -2742,6 +2772,18 @@ mod tests {
         ] {
             assert!(show.contains(want), "server show has no {want}:\n{show}");
         }
+        // The state folder shown as the default is the folder of the instance
+        // the command drives, as the launch passes it: the engine's state root
+        // joined with the instance's id, never the bare root (the root holds
+        // the folders of every instance).
+        let state = &show[show
+            .find("instance_state_dir()")
+            .expect("instance_state_dir()")..];
+        let arg = &state[..state.find(',').expect("the end of the state-dir argument")];
+        assert!(
+            arg.contains(".join("),
+            "the state default is the engine's root, not the instance's folder:\n{show}"
+        );
     }
 
     // The tri-state's own clearing rule: `--rocblas-use-hipblaslt default` is the

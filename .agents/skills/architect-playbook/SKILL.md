@@ -115,3 +115,9 @@ description: What the architect has learned about this project's components, int
 - Error keys: one rule, one key (`server-bad-tags` serves the profile's and the instance's tags); a
   `*-malformed` key names the route's body (`server-malformed`, `tags-malformed`). Before a slice,
   grep the tester's keys and wire fields against the record: the tests often land first and differ.
+- Since `instances.ini` (slice 5) an instance's server file is `server@<ServerProfile>.ini`, not
+  `server@<id>.ini`: in a review, check every new reader goes through `paths::instance_server_profile`,
+  and that its test names a profile different from the instance id (fixtures with `[gpu-1]
+  ServerProfile = gpu-1` hide the wrong lookup; slice 12's `instances()` had it).
+- Windows' shipped `server@default.ini` (`crates/core/defaults/windows/`) sets no `ModelsDir` or
+  `StateDir`, Linux's sets both: a change to an instance default moves `default`'s folders on Windows only.

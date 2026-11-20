@@ -1,11 +1,14 @@
 //! The control routes: `POST /api/instances/{id}/start`, `/stop` and
-//! `/restart`, and `GET`/`PUT /api/instances/{id}/boot`. The verbs answer 204
+//! `/restart`, and `GET`/`PUT /api/instances/{id}/boot`, and the instance's
+//! tags at `PUT /api/instances/{id}/tags`. The verbs answer 204
 //! once the manager's job is accepted: the state right after can still be the
 //! previous one, so the web UI polls `GET /api/instances` and the reply carries
-//! no state. The boot flag is read by a signed-in user, as its write is.
+//! no state. The boot flag is read by a signed-in user, as its write is, and
+//! the tags are written by one.
 //!
-//! The verbs, the boot read and the boot write sit behind a session. The verbs
-//! and the write act for the signed-in user: the session's user is the
+//! The verbs, the boot read, the boot write and the tags write sit behind a
+//! session. The verbs, the write and the tags
+//! act for the signed-in user: the session's user is the
 //! principal of the connect, taken from the session alone, and the manager
 //! re-checks their right at every call. A refusal is 403 and ends the session
 //! that acted, as the server read does (`server.rs`). `GET .../boot` reads the
@@ -33,9 +36,9 @@ use std::time::Duration;
 type Verb = fn(&Client, &str) -> Result<(), ClientError>;
 
 /// The control routes over the seams: the three verbs and the boot flag, read
-/// and written, all three behind a session. The body of the route that reads
-/// one, the boot write, is capped by the one layer in front of the whole
-/// router (`lib.rs`).
+/// and written, and the tags write, all behind a session. The body of the
+/// routes that read one, the boot write and the tags write, is capped by the
+/// one layer in front of the whole router (`lib.rs`).
 pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions>) -> axum::Router {
     let verb = |v: Verb| {
         let (connect, sessions) = (connect.clone(), sessions.clone());
@@ -64,6 +67,21 @@ pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions
             )
         }
     };
+    let set_tags = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |Path(id): Path<String>,
+              headers: HeaderMap,
+              body: Result<axum::body::Bytes, BytesRejection>| {
+            tags_write(
+                connect.clone(),
+                timeout,
+                sessions.clone(),
+                id,
+                headers,
+                body,
+            )
+        }
+    };
     axum::Router::new()
         .route(
             "/api/instances/{id}/start",
@@ -78,6 +96,7 @@ pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions
             "/api/instances/{id}/boot",
             axum::routing::get(boot).put(set_boot),
         )
+        .route("/api/instances/{id}/tags", axum::routing::put(set_tags))
 }
 
 fn start(client: &Client, id: &str) -> Result<(), ClientError> {
@@ -186,6 +205,77 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
     json_body(headers, body)?
         .get("enabled")
         .and_then(Value::as_bool)
+}
+
+/// `PUT /api/instances/{id}/tags` `{"tags": [<string>, ...]}`: 204 with no
+/// body once the manager wrote the list. The list is the manager's to judge: a
+/// list its check refuses is 422 with the check's key, its values and `field`
+/// "tags", the field the form marks, and the session of the writer lives on
+/// (a refusal of a value is no refusal of the user). A body the bff cannot
+/// read is 400 `tags-malformed` and the manager is not asked; the session
+/// check runs first, so with no session such a body is 401. A body over
+/// `origin::MAX_BODY` is the extractor's 413, which this handler answers as
+/// its second step, before the manager is connected to.
+async fn tags_write(
+    connect: Connect,
+    timeout: Duration,
+    sessions: Arc<Sessions>,
+    id: String,
+    headers: HeaderMap,
+    body: Result<axum::body::Bytes, BytesRejection>,
+) -> Response {
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_refusal(&rejection, "tags-malformed"),
+    };
+    let Some(tags) = tag_list(&headers, &body) else {
+        return error(StatusCode::BAD_REQUEST, "tags-malformed", &[]);
+    };
+    let user = identity.user;
+    let ask = tokio::task::spawn_blocking(move || {
+        connect(Some(user.as_str()))?.set_instance_tags(&id, &tags)
+    });
+    match tokio::time::timeout(timeout, ask).await {
+        Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(Err(failure))) => tags_failure(&sessions, &session, failure),
+        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+    }
+}
+
+/// The `tags` of a JSON body `{"tags": [<string>, ...]}`, or None: the list
+/// alone, every entry a string. An empty list is no tags, and a body of any
+/// other shape (no `tags`, a list with a value that is not a string, a
+/// document that is not an object, no JSON) is None.
+fn tag_list(headers: &HeaderMap, body: &[u8]) -> Option<Vec<String>> {
+    json_body(headers, body)?
+        .get("tags")?
+        .as_array()?
+        .iter()
+        .map(|tag| tag.as_str().map(str::to_string))
+        .collect()
+}
+
+/// The answer to a tags write that failed: the verbs' failures
+/// ([`action_failure`]), plus the refusal of the list: 422 with the check's
+/// key, its values and `field` "tags", the manager's own message left out of
+/// the body and the session left alive.
+fn tags_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+    if let ClientError::Invalid(refusal) = failure {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            axum::Json(json!({
+                "key": refusal.key,
+                "args": refusal.values,
+                "field": "tags",
+            })),
+        )
+            .into_response();
+    }
+    action_failure(sessions, session, failure)
 }
 
 /// The answer to a verb or a boot write that failed: 404 for no such instance

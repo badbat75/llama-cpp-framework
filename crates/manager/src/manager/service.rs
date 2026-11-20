@@ -1159,6 +1159,102 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
+    /// Replaces the `Tags` key of the instance's own section of the record:
+    /// the record's tags, which the web UI shows beside the tags of the
+    /// server profile the instance points at. Guarded as `set_server_profile`
+    /// is: the principal and the `configure` gate, the `writing` lock, and one
+    /// action record for the whole call, done or refused. The rule is
+    /// `pai_core::checks::tags_rule`, applied to the list before the record is
+    /// read: a list it refuses leaves every file untouched.
+    pub fn set_instance_tags<W: AsRequester>(
+        &self,
+        who: &W,
+        instance: &str,
+        tags: &[String],
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            valid_id(instance)?;
+            pai_core::checks::tags_rule(tags).map_err(ManagerError::Invalid)?;
+            let dir = crate::paths::engine_config_dir();
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let record = read_record(&dir.join(INSTANCES_FILE)).map_err(io)?;
+            if !pai_core::ini::parse_sections(&record)
+                .iter()
+                .any(|section| section.id == instance)
+            {
+                return Err(ManagerError::NoInstance);
+            }
+            let text = pai_core::ini::text::set_key(&record, instance, "Tags", &tags.join(","));
+            write_served_file(
+                &dir.join(INSTANCES_FILE),
+                &ConfigFile::Models,
+                &text,
+                &*self.group,
+            )
+            .map_err(io)
+        };
+        let answer = run();
+        self.record_action("set_instance_tags", instance, Some(&who), &answer);
+        answer
+    }
+
+    /// Every instance the record lists, in the record's order, each with the
+    /// port and the tags of the server profile its section names (the
+    /// `ServerProfile` of the section, the file the launch reads), and the
+    /// tags of its own section. A section naming no profile, or a profile
+    /// whose file is not there, answers port 0 and no profile tags: the web
+    /// UI shows 0 as "no port", and a read of a missing file is not a failure
+    /// that drops the list. Answered to any caller, as `list_instances`
+    /// is: the tags are what the web UI shows, and the manager passes none of
+    /// them to the engine.
+    pub fn instances(&self) -> Vec<pai_core::client::InstanceInfo> {
+        use pai_core::client::InstanceInfo;
+        // The engine every instance runs today.
+        const ENGINE: &str = "llama.cpp";
+        let dir = crate::paths::engine_config_dir();
+        let record = read_record(&dir.join(INSTANCES_FILE)).unwrap_or_default();
+        let list = |value: Option<&String>| {
+            value
+                .map(|v| {
+                    v.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        pai_core::ini::parse_sections(&record)
+            .iter()
+            .map(|section| {
+                let profile =
+                    profile_file(&section.id).and_then(|file| std::fs::read_to_string(file).ok());
+                let (port, profile_tags) = match profile {
+                    Some(text) => {
+                        let cfg = crate::server_cfg::from_text(&text);
+                        (
+                            u16::try_from(cfg.port.unwrap_or(crate::server_cfg::DEFAULT_PORT))
+                                .unwrap_or(0),
+                            cfg.tags,
+                        )
+                    }
+                    None => (0, Vec::new()),
+                };
+                InstanceInfo {
+                    id: section.id.clone(),
+                    engine: ENGINE.to_string(),
+                    port,
+                    profile_tags,
+                    instance_tags: list(section.keys.get("Tags")),
+                }
+            })
+            .collect()
+    }
+
     /// Writes the render of every instance and answers with the instances
     /// whose render did not land, in id order, each with the failure that
     /// stopped it: empty when every render landed. The manager's start calls
@@ -5268,11 +5364,11 @@ pub(crate) fn manager_set_model_profile_e2e() {
     let seeded =
         "# the manager's own record\n[default]\nb = off\nnote = keep me\n\n[lan-2]\n* = inherit\n";
 
-    // ── Protocol 3 ships with this method ─────────────────────────────────
+    // ── The protocol these verbs came with stays 3 ────────────────────────
     assert_eq!(
         crate::manager::pipe::PROTOCOL,
         3,
-        "the version `Version` reports, 3 with the first assignment verb"
+        "the version `Version` reports: 3 came with the first assignment verb, and with `Instances` and `SetInstanceTags` (the protocol stays 3, so they are part of 3)"
     );
 
     // ── Each value writes its key, and re-renders every instance ─────────
@@ -8496,6 +8592,366 @@ pub(crate) fn manager_memory_check_e2e() {
             "a save that grows a profile asks the GPUs once"
         );
         // 10B-PIN-6 END
+    }
+}
+/// The tags of an instance, the two lists apart: the `Tags` key of the
+/// instance's own section of `instances.ini`, and the `Tags` key of the server
+/// profile its section names. `Instances` answers both, beside the id, the
+/// engine and the port, to any caller as the list of ids is; `SetInstanceTags`
+/// replaces the record's own list, guarded as a write of a served file is:
+/// `configure` first, the `As` form answered only for the bff's account and a
+/// current member of `pai`, and one record of the action log per call, done or
+/// refused. A list the rule refuses (`server-bad-tags`) answers before the
+/// record is read and writes nothing, and so does an id that is no instance.
+/// The lists are metadata: the manager passes none of them to the engine.
+#[cfg(test)]
+pub(crate) fn manager_instance_tags_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core = |allow: bool, passwords: FakePasswords, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(log)
+    };
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    let keys_of = |text: &str, id: &str, key: &str| -> Vec<String> {
+        section(text, id)
+            .lines()
+            .filter(|line| line.trim_start().starts_with(&format!("{key} ")))
+            .map(|line| line.trim_end().to_string())
+            .collect()
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    let tags = |list: &[&str]| -> Vec<String> { list.iter().map(|t| t.to_string()).collect() };
+    let refused = |reason: &str, list: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::Invalid(pai_core::checks::Refusal {
+            key: "server-bad-tags",
+            values: vec![
+                reason.to_string(),
+                list.to_string(),
+                pai_core::checks::TAGS_MAX.to_string(),
+                pai_core::checks::TAG_MIN.to_string(),
+                pai_core::checks::TAG_MAX.to_string(),
+            ],
+        }))
+    };
+    // The record: `default`'s profile carries the tags, `gpu-1` carries a list
+    // of its own, hand-spaced, beside a comment and a key of its own, and
+    // `lan-2` points at `default`'s profile: the row must carry that profile's
+    // port and tags, never the ones of the file named after the instance.
+    const SEEDED: &str = "# the manager's own record\n[default]\nServerProfile = default\n\n[gpu-1]\nServerProfile = gpu-1\nTags = gpu , edge \n; a note\nnote = keep me\n\n[lan-2]\nServerProfile = default\nTags = lan\n";
+    std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\nTags = edge,v2\n",
+    )
+    .expect("default profile");
+    std::fs::write(
+        sys.join("server@gpu-1.ini"),
+        "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+    )
+    .expect("gpu-1 profile");
+    // A file named after `lan-2`, holding a port and tags no instance runs:
+    // a render of a profile the launch never reads, and no row of `Instances`.
+    std::fs::write(
+        sys.join("server@lan-2.ini"),
+        "[Server]\nPort = 8099\nHostname = 127.0.0.1\nTags = unused,file\n",
+    )
+    .expect("lan-2 render");
+
+    {
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let rows = m.instances();
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["default", "gpu-1", "lan-2"],
+            "the record's order, every section of it"
+        );
+        assert_eq!(rows[0].engine, "llama.cpp");
+        assert_eq!(
+            rows[0].port, 8080,
+            "the port of the profile the section names"
+        );
+        assert_eq!(
+            rows[0].profile_tags,
+            tags(&["edge", "v2"]),
+            "the profile's list, in the order it was written"
+        );
+        assert_eq!(
+            rows[0].instance_tags,
+            Vec::<String>::new(),
+            "a section with no Tags key"
+        );
+        assert_eq!(
+            rows[1].profile_tags,
+            Vec::<String>::new(),
+            "a profile with no Tags key"
+        );
+        assert_eq!(
+            rows[1].instance_tags,
+            tags(&["gpu", "edge"]),
+            "the hand-spaced list, trimmed, in order"
+        );
+        assert_eq!(rows[1].port, 8081);
+        assert_eq!(
+            rows[2].id, "lan-2",
+            "the record's order, every section of it"
+        );
+        assert_eq!(
+            rows[2].port, 8080,
+            "the port of the profile the section names, not the one of the file named after the instance"
+        );
+        assert_eq!(
+            rows[2].profile_tags,
+            tags(&["edge", "v2"]),
+            "the tags of that profile, not the ones of the file named after the instance"
+        );
+        assert_eq!(
+            rows[2].instance_tags,
+            tags(&["lan"]),
+            "the section's own list beside the profile's"
+        );
+    }
+
+    {
+        // A section naming a profile whose file is not there: the read of a
+        // file that is not there is no tags and no port, not a failure that
+        // drops the whole list, and never the default port: 0 is what the web
+        // UI shows as "no port".
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            format!("{SEEDED}\n[lan-3]\nServerProfile = gone\n"),
+        )
+        .expect(INSTANCES_FILE);
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let rows = m.instances();
+        assert_eq!(rows.len(), 4, "the section of a missing profile is listed");
+        assert_eq!(rows[3].id, "lan-3");
+        assert_eq!(rows[3].profile_tags, Vec::<String>::new());
+        assert_eq!(rows[3].port, 0, "no profile file is no port");
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        let before = listing();
+
+        assert_eq!(
+            m.set_instance_tags(&desktop, "default", &tags(&["edge", "a-1"])),
+            Ok(()),
+            "a list of the rule's own shape"
+        );
+        let written = text_of(INSTANCES_FILE);
+        assert_eq!(
+            keys_of(&written, "default", "Tags"),
+            vec!["Tags = edge,a-1".to_string()],
+            "one key, the list joined with a comma"
+        );
+        assert_eq!(
+            section(&written, "gpu-1"),
+            section(SEEDED, "gpu-1"),
+            "the section of another instance, its comment and its own key, as they were: {written:?}"
+        );
+        assert_eq!(
+            m.instances()[0].instance_tags,
+            tags(&["edge", "a-1"]),
+            "the write reads back, in order"
+        );
+
+        assert_eq!(
+            m.set_instance_tags(&desktop, "default", &tags(&["x"])),
+            Ok(())
+        );
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "default", "Tags"),
+            vec!["Tags = x".to_string()],
+            "one key after two writes, not two"
+        );
+
+        // The empty list clears the record's tags: the key stays, with nothing
+        // in it, and reads back as no tags.
+        assert_eq!(m.set_instance_tags(&desktop, "default", &[]), Ok(()));
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "default", "Tags"),
+            vec!["Tags =".to_string()],
+            "an empty list keeps the key, empty"
+        );
+        assert_eq!(
+            m.instances()[0].instance_tags,
+            Vec::<String>::new(),
+            "the empty key is no tags"
+        );
+
+        // The limits are inclusive: 8 tags, each 32.
+        let at_limits: Vec<String> = (0..8).map(|i| format!("{i}{}", "t".repeat(31))).collect();
+        assert_eq!(
+            m.set_instance_tags(&desktop, "default", &at_limits),
+            Ok(()),
+            "the two limits at once"
+        );
+        assert_eq!(m.instances()[0].instance_tags, at_limits);
+        assert_eq!(
+            listing(),
+            before,
+            "the verb writes the record and no file of its own"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_instance_tags" target="default" caller=":1.42" principal=- outcome=ok"#
+                    .to_string();
+                4
+            ],
+            "one record per call: the verb's action, the instance as its target, the caller, no principal as a bare -, ok"
+        );
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        let seed = text_of(INSTANCES_FILE);
+        let before = listing();
+
+        assert_eq!(
+            m.set_instance_tags(&desktop, "lan-3", &tags(&["gpu"])),
+            Err(ManagerError::NoInstance),
+            "an id that is no section of the record"
+        );
+        for id in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                m.set_instance_tags(&desktop, id, &tags(&["gpu"])),
+                Err(ManagerError::InvalidId),
+                "not an instance id at all: {id:?}"
+            );
+        }
+
+        let long = "t".repeat(33);
+        let many: Vec<String> = (0..9).map(|i| format!("t{i}")).collect();
+        for (list, reason) in [
+            (tags(&[""]), "empty tag"),
+            (tags(&[&long]), "too long"),
+            (tags(&["Edge"]), "bad characters"),
+            (tags(&["a b"]), "bad characters"),
+            (tags(&["ok", "ok"]), "the same tag twice"),
+            (many, "too many tags"),
+        ] {
+            let joined = list.join(",");
+            assert_eq!(
+                m.set_instance_tags(&desktop, "default", &list),
+                refused(reason, &joined),
+                "{list:?}"
+            );
+        }
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "every refusal above wrote nothing"
+        );
+        assert_eq!(listing(), before, "and created no file");
+        let mut want = vec![
+            r#"action="set_instance_tags" target="lan-3" caller=":1.42" principal=- outcome="NoInstance""#.to_string(),
+            r#"action="set_instance_tags" target="" caller=":1.42" principal=- outcome="InvalidId""#.to_string(),
+            r#"action="set_instance_tags" target="../x" caller=":1.42" principal=- outcome="InvalidId""#.to_string(),
+            r#"action="set_instance_tags" target="Default" caller=":1.42" principal=- outcome="InvalidId""#.to_string(),
+            r#"action="set_instance_tags" target="a_b" caller=":1.42" principal=- outcome="InvalidId""#.to_string(),
+        ];
+        want.extend(vec![
+            r#"action="set_instance_tags" target="default" caller=":1.42" principal=- outcome="Invalid""#.to_string();
+            6
+        ]);
+        assert_eq!(
+            records(&lines),
+            want,
+            "one record per refused call, the refusals of the rule all as Invalid"
+        );
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, FakePasswords::new(), log);
+        let seed = text_of(INSTANCES_FILE);
+        assert_eq!(
+            m.set_instance_tags(&desktop, "default", &tags(&["gpu"])),
+            Err(ManagerError::NotAuthorized),
+            "a caller the authority refuses"
+        );
+        assert_eq!(text_of(INSTANCES_FILE), seed, "the refusal wrote nothing");
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_instance_tags" target="default" caller=":1.42" principal=- outcome=refused"#
+                    .to_string()
+            ],
+            "the guard's refusal is recorded"
+        );
+
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        assert_eq!(
+            m.set_instance_tags(&member, "default", &tags(&["gpu"])),
+            Ok(()),
+            "the bff's account, for a member of `pai`"
+        );
+        assert_eq!(
+            m.set_instance_tags(&outsider, "default", &tags(&["gpu"])),
+            Err(ManagerError::NotAuthorized),
+            "the bff's account, for a caller outside `pai`"
+        );
+        let vouching = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.set_instance_tags(&vouching, "default", &tags(&["gpu"])),
+            Err(ManagerError::NotAuthorized),
+            "a caller that is not the bff vouches for nobody"
+        );
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "default", "Tags"),
+            vec!["Tags = gpu".to_string()],
+            "only the accepted call wrote"
+        );
     }
 }
 /// the node's server profiles (protocol 3, its `As` form and the same name over

@@ -170,6 +170,19 @@ pub struct ManagerVersion {
     pub protocol: u32,
 }
 
+/// One instance, as `instances()` answers it: the id, the engine it runs, the
+/// port its server profile answers on, the tags of that profile and the tags
+/// of the record. The two lists stay apart: the web UI shows the profile's
+/// first, and says which is which.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceInfo {
+    pub id: String,
+    pub engine: String,
+    pub port: u16,
+    pub profile_tags: Vec<String>,
+    pub instance_tags: Vec<String>,
+}
+
 /// What the configurator asks the manager.
 pub trait ManagerClient {
     fn list_instances(&self) -> Result<Vec<String>, ClientError>;
@@ -232,6 +245,33 @@ pub trait ManagerClient {
         let _ = (instance, profile);
         Err(ClientError::Other(
             "this transport of the manager has no SetServerProfile".into(),
+        ))
+    }
+    /// The instances the manager knows, each with the tags of the server
+    /// profile it points at and the tags of the record itself. Answered to any
+    /// caller, as the list of ids is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+        Err(ClientError::Other(
+            "this transport of the manager has no Instances".into(),
+        ))
+    }
+    /// Replaces the tags of the instance `instance`: the record's own list,
+    /// shown by the web UI beside the tags of its server profile. Guarded as a
+    /// write of a served file is: a caller who may not configure is
+    /// [`ClientError::NotAuthorized`], and a list the rule refuses is
+    /// [`ClientError::Invalid`], with nothing written.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn set_instance_tags(&self, instance: &str, tags: &[String]) -> Result<(), ClientError> {
+        let _ = (instance, tags);
+        Err(ClientError::Other(
+            "this transport of the manager has no SetInstanceTags".into(),
         ))
     }
     /// Whether `password` is `user`'s OS password, and whether that user may

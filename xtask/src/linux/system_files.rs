@@ -3152,7 +3152,10 @@ exit 0
     /// /usr/share/private-ai/llama.cpp: `server@default.ini`, the engine's
     /// starting values, checked in as
     /// `crates/core/defaults/server@default.ini` (pai-core pins its content),
-    /// and an empty `models.ini`. No header: the copy
+    /// and an empty `models.ini`. The server file names the shared models
+    /// folder and no state folder: an instance's snapshots go in
+    /// `paths::instance_state_dir()/<id>`, which the launch fills in. The
+    /// files carry no header: the copy
     /// in /etc/llama.cpp is the administrator's and the manager's, never
     /// overwritten.
     #[test]
@@ -3164,6 +3167,19 @@ exit 0
         let server = file(DEFAULT_SERVER);
         assert_eq!(server, want);
         assert!(server.contains("[Server]"), "{server}");
+        assert!(
+            !server
+                .lines()
+                .any(|l| l.trim_start().starts_with("StateDir")),
+            "the shipped file sets no StateDir, every instance gets a folder \
+             of its own: {server}"
+        );
+        assert!(
+            server
+                .lines()
+                .any(|l| l.trim() == concat!("ModelsDir = /var/lib/llama", ".cpp/models")),
+            "the shared models folder is kept: {server}"
+        );
         assert_eq!(file(DEFAULT_MODELS), "");
         for path in [DEFAULT_SERVER, DEFAULT_MODELS] {
             assert_eq!(components::of(path), Component::Llama, "{path}");

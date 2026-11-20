@@ -104,11 +104,15 @@ fn a_peer_without_the_manager_object_is_unavailable() {
     let c = core(true, &[]);
     let (_server, client) = serve_at(&c, "/org/privateai/Elsewhere", Some(":1.42"));
     let client = Arc::new(client);
-    let each: [(&str, ClientCall); 13] = [
+    let each: [(&str, ClientCall); 15] = [
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
         }),
         ("list_instances", |c| c.list_instances().err()),
+        ("instances", |c| c.instances().err()),
+        ("set_instance_tags", |c| {
+            c.set_instance_tags("default", &["edge".into()]).err()
+        }),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
         ("stop", |c| c.stop("default").err()),
@@ -802,6 +806,158 @@ pub(crate) fn manager_dbus_client_e2e() {
         let _ = std::fs::remove_file(sys.join("server@web.ini"));
         let _ = std::fs::remove_file(sys.join("server@alt.ini"));
         std::fs::write(sys.join("instances.ini"), before.as_bytes()).expect("restore instances");
+    }
+
+    // ── The tags of an instance, over the wire ───────────────────────────
+    // `Instances` answers the port and the two lists, one row per section of
+    // the record: the port and the tags of the server profile the section
+    // names (its `ServerProfile`, the file the launch reads), and the tags of
+    // the section itself. A profile whose file is not there is no port and no
+    // profile tags. `SetInstanceTags` is the plain verb `(sas)`: the accepted
+    // call writes the record, every refusal is the core's own error and
+    // writes nothing.
+    {
+        let tagged = "[default]\nServerProfile = gpu\nTags = gpu , edge \n\n[lan-2]\nServerProfile = nowhere\n";
+        std::fs::write(sys.join("instances.ini"), tagged).expect("record");
+        std::fs::write(
+            sys.join("server@gpu.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nTags = edge,v2\n",
+        )
+        .expect("gpu profile");
+        std::fs::write(
+            sys.join("server@nowhere.ini"),
+            "[Server]\nPort = 8099\nHostname = 127.0.0.1\n",
+        )
+        .expect("nowhere profile");
+        let c = core(true, &[]);
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let rows = client.instances().expect("instances");
+        assert_eq!(
+            rows.iter()
+                .map(|i| (i.id.as_str(), i.engine.as_str(), i.port))
+                .collect::<Vec<_>>(),
+            vec![("default", "llama.cpp", 8080), ("lan-2", "llama.cpp", 8099)],
+            "the record's order, each row with the port of the profile the section names"
+        );
+        assert_eq!(
+            rows.iter()
+                .map(|i| (i.profile_tags.join(","), i.instance_tags.join(",")))
+                .collect::<Vec<_>>(),
+            vec![
+                ("edge,v2".to_string(), "gpu,edge".to_string()),
+                (String::new(), String::new()),
+            ],
+            "the profile's list and the section's own, the hand-spaced one trimmed"
+        );
+        // A section naming a profile whose file is not there is listed too:
+        // no port and no tags, not a failure that drops the list.
+        std::fs::write(
+            sys.join("instances.ini"),
+            format!("{tagged}\n[lan-9]\nServerProfile = absent\n"),
+        )
+        .expect("record");
+        let rows = client.instances().expect("instances");
+        assert_eq!(rows.len(), 3, "the section of a missing profile is listed");
+        assert_eq!(
+            (
+                rows[2].id.as_str(),
+                rows[2].port,
+                rows[2].profile_tags.as_slice(),
+                rows[2].instance_tags.as_slice()
+            ),
+            ("lan-9", 0, &[][..], &[][..]),
+            "a profile with no file is no port and no tags"
+        );
+        std::fs::write(sys.join("instances.ini"), tagged).expect("record");
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "the list is answered with no identity, as the list of ids is"
+        );
+
+        assert_eq!(
+            client.set_instance_tags("default", &["edge".into(), "a-1".into()]),
+            Ok(()),
+            "a list of the rule's own shape"
+        );
+        let record = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
+        assert_eq!(
+            record,
+            "[default]\nServerProfile = gpu\nTags = edge,a-1\n\n[lan-2]\nServerProfile = nowhere\n",
+            "the section's own Tags replaced in place, the other section as it was"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure)],
+            "the guarded call a write is: configure asked of the sender"
+        );
+        assert_eq!(calls(&c), vec![], "a tags change touches no unit");
+
+        assert_eq!(
+            client.set_instance_tags("default", &[]),
+            Ok(()),
+            "the empty list clears them"
+        );
+        assert!(
+            std::fs::read_to_string(sys.join("instances.ini"))
+                .unwrap()
+                .contains("Tags = \n"),
+            "the key stays, empty: an empty value is rendered as `Tags = `"
+        );
+
+        assert_eq!(
+            client.set_instance_tags("lan-3", &["gpu".into()]),
+            Err(ClientError::NoInstance),
+            "lan-3 is no instance"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                client.set_instance_tags(bad, &["gpu".into()]),
+                Err(ClientError::InvalidId),
+                "id {bad:?}"
+            );
+        }
+        for list in [
+            vec!["".to_string()],
+            vec!["t".repeat(33)],
+            vec!["Edge".to_string()],
+            vec!["a b".to_string()],
+            vec!["ok".to_string(), "ok".to_string()],
+            (0..9).map(|i| format!("t{i}")).collect(),
+        ] {
+            let got = client
+                .set_instance_tags("default", &list)
+                .expect_err("the rule");
+            let want = pai_core::checks::tags_rule(&list).expect_err("the rule refuses it too");
+            match got {
+                ClientError::Invalid(refusal) => assert_eq!(
+                    (refusal.key, refusal.values.as_slice()),
+                    (want.key, want.values.as_slice()),
+                    "{list:?}: the client decodes the rule's own refusal"
+                ),
+                other => panic!("{list:?}: {other:?}"),
+            }
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = gpu\nTags = \n\n[lan-2]\nServerProfile = nowhere\n",
+            "refused calls write nothing"
+        );
+
+        // A client with no sender is refused, as every guarded call is.
+        let (_server, anonymous) = connect(&c, None);
+        assert_eq!(
+            anonymous.set_instance_tags("default", &["gpu".into()]),
+            Err(ClientError::NotAuthorized)
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = gpu\nTags = \n\n[lan-2]\nServerProfile = nowhere\n",
+            "the refused write left the record"
+        );
+        let _ = std::fs::remove_file(sys.join("server@gpu.ini"));
+        let _ = std::fs::remove_file(sys.join("server@nowhere.ini"));
+        let _ = std::fs::remove_file(sys.join("server@lan-2.ini"));
     }
 }
 
