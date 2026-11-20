@@ -957,6 +957,283 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         hang_up(server, client);
     }
+
+    // ── Creating, listing and deleting a server profile, end to end ──────
+    // The three new verbs as the client methods of slice 14, over the frame:
+    // the file a create writes, the answers of every refusal, and the rows of
+    // the list, with `instance` read from the empty string.
+    {
+        let c = core(true, &[]);
+        let (server, client) = connect(&c, &alice);
+        let seed = std::fs::read_to_string(sys.join("instances.ini")).expect("seed");
+        type Row = (String, String, u16, Vec<String>, Option<String>);
+        let rows = |client: &PipeClient<UnixStream>| -> Vec<Row> {
+            client
+                .server_profiles()
+                .expect("server_profiles")
+                .iter()
+                .map(|r| {
+                    (
+                        r.id.clone(),
+                        r.engine.clone(),
+                        r.port,
+                        r.tags.clone(),
+                        r.instance.clone(),
+                    )
+                })
+                .collect()
+        };
+        let bytes = |name: &str| std::fs::read_to_string(sys.join(name)).expect("profile");
+        use std::os::unix::fs::PermissionsExt;
+
+        assert_eq!(
+            client.create_server_profile("llama.cpp", "pipe-p", Some(8123)),
+            Ok(()),
+            "a name that is nothing yet"
+        );
+        assert!(
+            bytes("server@pipe-p.ini").contains("Port = 8123"),
+            "the port of the call, in the file: {:?}",
+            bytes("server@pipe-p.ini")
+        );
+        assert_eq!(
+            std::fs::metadata(sys.join("server@pipe-p.ini"))
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o640,
+            "the mode of a served profile, over the stream as over the bus"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).expect("record"),
+            seed,
+            "a create writes no instance record"
+        );
+        assert_eq!(
+            client
+                .server_profiles()
+                .expect("server_profiles")
+                .iter()
+                .find(|r| r.id == "pipe-p")
+                .map(|r| (r.engine.clone(), r.port, r.instance.clone())),
+            Some(("llama.cpp".to_string(), 8123u16, None)),
+            "the new file is a row of the list, and an unused one: the client reads \
+             the empty instance of the frame as None"
+        );
+        assert_eq!(
+            client.create_server_profile("llama.cpp", "pipe-p", Some(9001)),
+            Err(ClientError::ServerProfileExists("pipe-p".into())),
+            "a second create of the same name, the message naming it"
+        );
+        assert!(
+            bytes("server@pipe-p.ini").contains("Port = 8123"),
+            "the file kept its bytes"
+        );
+        assert_eq!(
+            client.create_server_profile("llama.cpp", "pipe-zero", None),
+            Ok(()),
+            "port None is 0 on the wire"
+        );
+        assert!(
+            !bytes("server@pipe-zero.ini")
+                .lines()
+                .any(|l| l.trim_start().starts_with("Port ")),
+            "port 0 leaves no Port key: {:?}",
+            bytes("server@pipe-zero.ini")
+        );
+
+        // The refusals, over the frame: the engine, the name, and the delete's
+        // own answers.
+        assert_eq!(
+            client.create_server_profile("vllm", "pipe-q", Some(8123)),
+            Err(ClientError::Invalid(Refusal {
+                key: "unknown-engine",
+                values: vec!["vllm".into()],
+            })),
+            "the engine the manager does not serve"
+        );
+        for name in ["../x", "X", "a_b", ""] {
+            assert_eq!(
+                client.create_server_profile("llama.cpp", name, Some(8123)),
+                Err(ClientError::Invalid(Refusal {
+                    key: "server-profile-bad-id",
+                    values: vec![name.into()],
+                })),
+                "name {name:?}"
+            );
+        }
+        assert!(
+            !sys.join("server@pipe-q.ini").exists() && !sys.join("x.ini").exists(),
+            "a refused create created nothing, and no path outside the engine's directory"
+        );
+        assert_eq!(
+            client.delete_server_profile("llama.cpp", "default"),
+            Err(ClientError::ServerProfileInUse(
+                "default".into(),
+                "default".into()
+            )),
+            "the profile the section names, and the instance naming it"
+        );
+        assert_eq!(
+            client.delete_server_profile("llama.cpp", "nope"),
+            Err(ClientError::NoServerProfile("nope".into())),
+            "no file, no profile"
+        );
+        assert_eq!(
+            client.delete_server_profile("vllm", "default"),
+            Err(ClientError::Invalid(Refusal {
+                key: "unknown-engine",
+                values: vec!["vllm".into()],
+            })),
+            "the engine, before the file"
+        );
+        assert_eq!(
+            client.delete_server_profile("llama.cpp", "pipe-p"),
+            Ok(()),
+            "an unused profile goes"
+        );
+        assert!(
+            !sys.join("server@pipe-p.ini").exists(),
+            "its file is gone: the create and the delete round trip over the frame"
+        );
+        assert!(
+            !rows(&client)
+                .iter()
+                .any(|r| r.0 == "pipe-p" || r.0 == "pipe-q" || r.0 == "as-p"),
+            "the list is the files that are profiles, after the delete"
+        );
+        std::fs::write(sys.join("server@X.ini"), "[Server]\nPort = 1\n").expect("bad name");
+        let ids = rows(&client)
+            .iter()
+            .map(|r| r.0.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            !ids.contains(&"X".to_string()),
+            "a name the engine refuses is no row: {ids:?}"
+        );
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(ids, sorted, "the rows are sorted by id");
+        assert_eq!(
+            rows(&client)
+                .iter()
+                .find(|r| r.0 == "broken")
+                .map(|r| (r.2, r.4.clone())),
+            Some((8090u16, Some("broken".to_string()))),
+            "the used profile carries its port and its instance"
+        );
+        assert_eq!(
+            rows(&client)
+                .iter()
+                .find(|r| r.0 == "pipe-zero")
+                .map(|r| (r.2, r.4.clone())),
+            Some((
+                u16::try_from(pai_core::server_cfg::DEFAULT_PORT).expect("DEFAULT_PORT"),
+                None
+            )),
+            "a file with no Port is the default port, and an unused profile no instance"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).expect("record"),
+            seed,
+            "a delete of an unused profile writes no record"
+        );
+        let _ = std::fs::remove_file(sys.join("server@pipe-zero.ini"));
+        let _ = std::fs::remove_file(sys.join("server@X.ini"));
+        hang_up(server, client);
+    }
+
+    // ── The `As` names of the new verbs: the bound client picks them ──────
+    {
+        let passwords = crate::manager::service::fakes::FakePasswords::new();
+        let asked_admin = passwords.asked_admin.clone();
+        let (c, _) = auth_core(passwords);
+        let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .create_server_profile("llama.cpp", "as-p", Some(8123)),
+            Ok(()),
+            "the member's create, vouched for by the bff"
+        );
+        assert!(
+            sys.join("server@as-p.ini").is_file(),
+            "the file the member's create wrote"
+        );
+        assert_eq!(
+            client
+                .acting_for("bob")
+                .create_server_profile("llama.cpp", "as-q", Some(8123)),
+            Err(ClientError::NotAuthorized),
+            "bob is no member of the administrators"
+        );
+        assert!(
+            !sys.join("server@as-q.ini").exists(),
+            "the refused `As` create wrote nothing"
+        );
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .delete_server_profile("llama.cpp", "as-p"),
+            Ok(()),
+            "and the member's delete of it"
+        );
+        assert_eq!(
+            client
+                .acting_for("bob")
+                .delete_server_profile("llama.cpp", "default"),
+            Err(ClientError::NotAuthorized),
+            "the same for a delete"
+        );
+        assert!(
+            sys.join("server@default.ini").is_file(),
+            "the refused `As` delete removed nothing"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec![
+                "alice".to_string(),
+                "bob".into(),
+                "alice".into(),
+                "bob".into()
+            ],
+            "the membership of the vouched name, per call"
+        );
+        hang_up(server, client);
+    }
+    // A caller that is not the bff, vouching for a member: the `As` name is
+    // sent, and refused.
+    {
+        let passwords = crate::manager::service::fakes::FakePasswords::new();
+        let asked_admin = passwords.asked_admin.clone();
+        let (c, _) = auth_core(passwords);
+        let (server, client) = connect(&c, &alice);
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .create_server_profile("llama.cpp", "as-r", Some(8123)),
+            Err(ClientError::NotAuthorized),
+            "only the bff vouches"
+        );
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .delete_server_profile("llama.cpp", "default"),
+            Err(ClientError::NotAuthorized),
+            "the same for a delete"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            Vec::<String>::new(),
+            "the caller gate refused before any membership question"
+        );
+        assert!(
+            !sys.join("server@as-r.ini").exists() && sys.join("server@default.ini").is_file(),
+            "a caller that is not the bff writes and removes nothing"
+        );
+        hang_up(server, client);
+    }
 }
 
 /// The bff's account on Windows, `NT SERVICE\private-ai-bff`, by its

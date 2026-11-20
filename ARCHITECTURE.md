@@ -1661,6 +1661,11 @@ version. Each crate's clippy and fmt green.
   page is (c)'s web UI and needs the designer's brief, so it is slice 17's; that slice switches the fe
   to `/api/profiles/server/{id}` and removes the old route in the same window. Slice 14 is backend only.
 - **GUI and `pai`**: nothing now ((g')).
+- *As built (2026-11-20 review, accepted):* a `server@<x>.ini` that cannot be read lists with port 0
+  and no tags (`service.rs` `server_profiles`), as `Instances()` answers a missing file; the bff
+  checks a create's `port` as an integer (`as_i64`), so a string or fraction is 400
+  `server-profile-malformed`, not 422; a create or delete that outlives the write timeout answers 503
+  `client-unavailable` (`server_profiles.rs`), as `control.rs` does, with no 504 split.
 
 **Slice 14 done when** (test first; Linux, the Windows code type-checked): `pai-manager`, on D-Bus and
 the pipe: Create writes `server@x.ini` with the given port (port 0: no `Port` line), mode 0640 group

@@ -968,6 +968,190 @@ pub(crate) fn manager_dbus_client_e2e() {
         let _ = std::fs::remove_file(sys.join("server@nowhere.ini"));
         let _ = std::fs::remove_file(sys.join("server@lan-2.ini"));
     }
+
+    // ── Creating, listing and deleting a server profile, over the bus ─────
+    // The three new client methods against the interface: the file a create
+    // writes, the answers of every refusal decoded by the client, and the
+    // rows of the list with `instance` read from the frame's empty string.
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let record = "[default]\nServerProfile = default\n\n[broken]\nServerProfile = broken\n";
+        std::fs::write(sys.join("instances.ini"), record).expect("record");
+        let c = core(true, &[]);
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let text = |name: &str| std::fs::read_to_string(sys.join(name)).expect("profile");
+        type Row = (String, String, u16, Vec<String>, Option<String>);
+        let rows = |client: &DbusClient| -> Vec<Row> {
+            client
+                .server_profiles()
+                .expect("server_profiles")
+                .iter()
+                .map(|r| {
+                    (
+                        r.id.clone(),
+                        r.engine.clone(),
+                        r.port,
+                        r.tags.clone(),
+                        r.instance.clone(),
+                    )
+                })
+                .collect()
+        };
+
+        assert_eq!(
+            client.create_server_profile("llama.cpp", "bus-p", Some(8123)),
+            Ok(()),
+            "a name that is nothing yet"
+        );
+        assert!(
+            text("server@bus-p.ini").contains("Port = 8123"),
+            "the port of the call, in the file: {:?}",
+            text("server@bus-p.ini")
+        );
+        assert_eq!(
+            std::fs::metadata(sys.join("server@bus-p.ini"))
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o640,
+            "the mode of a served profile"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).expect("record"),
+            record,
+            "a create writes no instance record"
+        );
+        assert_eq!(
+            rows(&client)
+                .iter()
+                .find(|r| r.0 == "bus-p")
+                .map(|r| (r.1.clone(), r.2, r.4.clone())),
+            Some(("llama.cpp".to_string(), 8123u16, None)),
+            "the new file is a row, and an unused one: the empty instance of the bus \
+             answer is None to the client"
+        );
+        assert_eq!(
+            client.create_server_profile("llama.cpp", "bus-p", Some(9001)),
+            Err(ClientError::ServerProfileExists("bus-p".into())),
+            "a second create of the same name"
+        );
+        assert!(
+            text("server@bus-p.ini").contains("Port = 8123"),
+            "the file kept its bytes"
+        );
+        assert_eq!(
+            client.create_server_profile("llama.cpp", "bus-zero", None),
+            Ok(()),
+            "None is port 0 on the wire"
+        );
+        assert!(
+            !text("server@bus-zero.ini")
+                .lines()
+                .any(|l| l.trim_start().starts_with("Port ")),
+            "port 0 leaves no Port key: {:?}",
+            text("server@bus-zero.ini")
+        );
+        assert_eq!(
+            client.create_server_profile("vllm", "bus-q", Some(8123)),
+            Err(ClientError::Invalid(Refusal {
+                key: "unknown-engine",
+                values: vec!["vllm".into()],
+            })),
+            "the engine the manager does not serve"
+        );
+        for name in ["../x", "X", "a_b", ""] {
+            assert_eq!(
+                client.create_server_profile("llama.cpp", name, Some(8123)),
+                Err(ClientError::Invalid(Refusal {
+                    key: "server-profile-bad-id",
+                    values: vec![name.into()],
+                })),
+                "name {name:?}"
+            );
+        }
+        assert!(
+            !sys.join("server@bus-q.ini").exists() && !sys.join("x.ini").exists(),
+            "a refused create created nothing, and no path outside the engine's directory"
+        );
+        assert_eq!(
+            client.delete_server_profile("llama.cpp", "default"),
+            Err(ClientError::ServerProfileInUse(
+                "default".into(),
+                "default".into()
+            )),
+            "in use: the client splits the profile and the instance the bus's message carries"
+        );
+        assert!(
+            sys.join("server@default.ini").is_file(),
+            "the file of an in-use profile is kept"
+        );
+        assert_eq!(
+            client.delete_server_profile("llama.cpp", "nope"),
+            Err(ClientError::NoServerProfile("nope".into())),
+            "no file, no profile"
+        );
+        assert_eq!(
+            client.delete_server_profile("vllm", "default"),
+            Err(ClientError::Invalid(Refusal {
+                key: "unknown-engine",
+                values: vec!["vllm".into()],
+            })),
+            "the engine, before the file"
+        );
+        assert_eq!(
+            client.delete_server_profile("llama.cpp", "bus-p"),
+            Ok(()),
+            "an unused profile goes"
+        );
+        assert!(
+            !sys.join("server@bus-p.ini").exists(),
+            "its file is gone: the create and the delete round trip over the bus"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).expect("record"),
+            record,
+            "neither the create nor the delete of an unused profile writes the record"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure); 12],
+            "every verb asked configure of the sender, once per call, the list never"
+        );
+
+        // The list needs no sender; the two verbs do.
+        let (_server, anonymous) = connect(&c, None);
+        assert_eq!(
+            anonymous.create_server_profile("llama.cpp", "bus-anon", Some(8123)),
+            Err(ClientError::NotAuthorized),
+            "no sender, no create"
+        );
+        assert_eq!(
+            anonymous.delete_server_profile("llama.cpp", "bus-zero"),
+            Err(ClientError::NotAuthorized),
+            "no sender, no delete"
+        );
+        assert!(
+            !sys.join("server@bus-anon.ini").exists() && sys.join("server@bus-zero.ini").is_file(),
+            "the refused calls wrote and removed nothing"
+        );
+        assert_eq!(
+            rows(&anonymous)
+                .iter()
+                .filter(|r| r.0.starts_with("bus-"))
+                .map(|r| (r.0.clone(), r.2, r.4.clone()))
+                .collect::<Vec<_>>(),
+            vec![("bus-zero".to_string(), u16::try_from(pai_core::server_cfg::DEFAULT_PORT).expect("DEFAULT_PORT"), None)],
+            "the list is answered to a caller with no sender, the portless file at the default port"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure); 12],
+            "a call with no identity asks nobody, and the list asks nobody"
+        );
+        let _ = std::fs::remove_file(sys.join("server@bus-zero.ini"));
+    }
 }
 
 /// A core taking `bff` for the bff's account over the fake accounts (alice
@@ -1608,5 +1792,102 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
         );
         let _ = std::fs::remove_file(sys.join("server@alt.ini"));
         std::fs::write(sys.join("instances.ini"), before.as_bytes()).expect("restore instances");
+    }
+
+    // ── The member's create and delete of a server profile, through the client ──
+    // The bound client picks the `As` name of the two new verbs: the member's
+    // call is done, a principal outside `pai` and a caller that is not the bff
+    // are refused with nothing written, and polkit is never asked for a
+    // principal.
+    {
+        let admins_before = asked_admin(&admins).len();
+        let bff_before = bff_checks(&c).len();
+        let quiet_before = polkit_quiet(&c).len();
+        assert_eq!(
+            on("create_server_profile", &client, move |c| c
+                .acting_for("alice")
+                .create_server_profile("llama.cpp", "as-bus", Some(8123))),
+            Ok(()),
+            "a member creates a server profile"
+        );
+        assert!(
+            sys.join("server@as-bus.ini").is_file(),
+            "the member's create wrote the file"
+        );
+        assert_eq!(
+            on("create_server_profile", &client, move |c| c
+                .acting_for("bob")
+                .create_server_profile("llama.cpp", "as-bob", Some(8123))),
+            Err(ClientError::NotAuthorized),
+            "a principal outside pai is refused"
+        );
+        assert!(
+            !sys.join("server@as-bob.ini").exists(),
+            "the refused create wrote nothing"
+        );
+        assert_eq!(
+            on("delete_server_profile", &client, move |c| c
+                .acting_for("alice")
+                .delete_server_profile("llama.cpp", "as-bus")),
+            Ok(()),
+            "and the member deletes what it created"
+        );
+        assert!(!sys.join("server@as-bus.ini").exists(), "its file is gone");
+        let before = text_of("server@default.ini");
+        assert_eq!(
+            on("delete_server_profile", &client, move |c| c
+                .acting_for("bob")
+                .delete_server_profile("llama.cpp", "default")),
+            Err(ClientError::NotAuthorized),
+            "the same for a delete by a principal outside pai"
+        );
+        assert_eq!(
+            text_of("server@default.ini"),
+            before,
+            "the refused delete removed nothing"
+        );
+        assert_eq!(
+            asked_admin(&admins).len(),
+            admins_before + 4,
+            "the membership of the vouched name, asked once per call"
+        );
+        assert_eq!(
+            bff_checks(&c).len(),
+            bff_before + 4,
+            "the caller checked once per principal call"
+        );
+        assert_eq!(
+            polkit_quiet(&c).len(),
+            quiet_before,
+            "a call for a member runs as the bff's own: polkit is not asked"
+        );
+        // A caller that is not the bff, vouching for a member: refused, the
+        // membership never looked up.
+        let admins_here = asked_admin(&admins).len();
+        let (_server, other) = connect(&c, Some(OTHER));
+        let other = Arc::new(other);
+        assert_eq!(
+            on("create_server_profile", &other, move |c| c
+                .acting_for("alice")
+                .create_server_profile("llama.cpp", "as-other", Some(8123))),
+            Err(ClientError::NotAuthorized),
+            "a caller that is not the bff does not vouch"
+        );
+        assert_eq!(
+            on("delete_server_profile", &other, move |c| c
+                .acting_for("alice")
+                .delete_server_profile("llama.cpp", "default")),
+            Err(ClientError::NotAuthorized),
+            "the same for a delete"
+        );
+        assert_eq!(
+            asked_admin(&admins).len(),
+            admins_here,
+            "the caller gate refused before any membership question"
+        );
+        assert!(
+            !sys.join("server@as-other.ini").exists() && sys.join("server@default.ini").is_file(),
+            "a caller that is not the bff writes and removes nothing"
+        );
     }
 }

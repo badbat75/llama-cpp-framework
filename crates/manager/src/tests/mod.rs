@@ -63,6 +63,9 @@ fn data_root_e2e() {
     // ── Manager core: the tags of an instance, and the list with them ────
     crate::manager::service::manager_instance_tags_e2e();
 
+    // ── Manager core: creating and deleting the node's server profiles ────
+    crate::manager::service::manager_server_profile_crud_e2e();
+
     // ── Manager core: instances.ini, the instance record, read-only ──────
     crate::manager::service::manager_instances_file_e2e();
 
@@ -87,6 +90,10 @@ fn data_root_e2e() {
     // ── Manager over D-Bus: a refused write's key and values ─────────────
     #[cfg(target_os = "linux")]
     crate::manager::dbus::manager_dbus_checks_e2e();
+
+    // ── Manager over D-Bus: creating and deleting the node's profiles ────
+    #[cfg(target_os = "linux")]
+    crate::manager::dbus::manager_dbus_server_profiles_e2e();
 
     // ── pai-core's client of the manager over D-Bus ─────────────────────
     // pai_core::client::dbus against the interface, peer to peer, no bus.

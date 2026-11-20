@@ -57,6 +57,9 @@ pub enum Error {
     /// The message is the profile and the instance, split at the separator
     /// `Refusal::encode` uses.
     ServerProfileInUse(String),
+    /// A create found an entry already at the profile's name; its message is
+    /// the profile.
+    ServerProfileExists(String),
     UnresolvableHost(String),
     Service(String),
     Io(String),
@@ -79,6 +82,7 @@ impl From<ManagerError> for Error {
             ManagerError::AddressInUse(_) => Error::AddressInUse(message),
             ManagerError::NoServerProfile(_) => Error::NoServerProfile(message),
             ManagerError::ServerProfileInUse(_, _) => Error::ServerProfileInUse(message),
+            ManagerError::ServerProfileExists(_) => Error::ServerProfileExists(message),
             ManagerError::UnresolvableHost(_) => Error::UnresolvableHost(message),
             ManagerError::Service(_) => Error::Service(message),
             ManagerError::Io(_) => Error::Io(message),
@@ -147,6 +151,12 @@ fn requester_as(
     })
 }
 
+/// The port of `CreateServerProfile`: `0` on the wire is no port, the file
+/// written with no `Port` key at all.
+fn port_of(port: u16) -> Option<u16> {
+    (port != 0).then_some(port)
+}
+
 #[zbus::interface(name = "org.privateai.Manager1")]
 impl<S, A, R> ManagerInterface<S, A, R>
 where
@@ -174,6 +184,28 @@ where
                         i.port,
                         i.profile_tags,
                         i.instance_tags,
+                    )
+                })
+                .collect()
+        })
+        .await
+    }
+
+    /// `ServerProfiles`: one row per server profile of the node, `a(ssqass)`,
+    /// the last field the id of the instance that runs it (the empty string
+    /// when no instance does). Answered to any caller, as the list of instances
+    /// is.
+    async fn server_profiles(&self) -> Vec<(String, String, u16, Vec<String>, String)> {
+        self.core(|m| {
+            m.server_profiles()
+                .into_iter()
+                .map(|p| {
+                    (
+                        p.id,
+                        p.engine,
+                        p.port,
+                        p.tags,
+                        p.instance.unwrap_or_default(),
                     )
                 })
                 .collect()
@@ -416,6 +448,67 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.set_instance_tags(&who, &instance, &tags))
+            .await?)
+    }
+
+    /// `CreateServerProfile`: writes a new server profile, `(ssq)`, the engine,
+    /// the name and the port (`0` leaves the file no `Port` key). Its reply is
+    /// the unit.
+    async fn create_server_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        engine: String,
+        profile: String,
+        port: u16,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.create_server_profile(&who, &engine, &profile, port_of(port)))
+            .await?)
+    }
+
+    /// `CreateServerProfile` for `principal`, the principal first as every `As`
+    /// method has it (`sssq`).
+    async fn create_server_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        engine: String,
+        profile: String,
+        port: u16,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.create_server_profile(&who, &engine, &profile, port_of(port)))
+            .await?)
+    }
+
+    /// `DeleteServerProfile`: removes an unused server profile, `(ss)`, the
+    /// engine and the name.
+    async fn delete_server_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        engine: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.delete_server_profile(&who, &engine, &profile))
+            .await?)
+    }
+
+    /// `DeleteServerProfile` for `principal`, the principal first as every `As`
+    /// method has it (`sss`).
+    async fn delete_server_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        engine: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.delete_server_profile(&who, &engine, &profile))
             .await?)
     }
 
@@ -2610,6 +2703,350 @@ pub(crate) fn manager_dbus_principal_e2e() {
     }
 }
 
+/// The node's server profiles over D-Bus (slice 14): the signatures of the three
+/// verbs and their `As` forms, and the answers on the wire. `CreateServerProfile`
+/// is `(ssq)` and its reply is the unit; a name that is anything already answers
+/// the new `ServerProfileExists` with the name, and a rule's refusal carries its
+/// encoded key, as a write's does. `DeleteServerProfile` is `(ss)`, its in-use
+/// refusal the profile and the instance split by the separator. `ServerProfiles`
+/// answers `a(ssqass)`, sorted, to a caller with no sender. A body that is not
+/// the signature is zbus's own error, never one of the manager's, and writes
+/// nothing.
+#[cfg(test)]
+pub(crate) fn manager_dbus_server_profiles_e2e() {
+    use super::service::fakes::{FakeAuthority, FakeGroup, FakeResolver, FakeService};
+    use pai_core::checks::Refusal;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    use zbus::blocking::connection::Builder;
+    use zbus::blocking::Connection;
+
+    type Core = Manager<FakeService, FakeAuthority, FakeResolver>;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    let default_ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nTags = edge,v2\n";
+    std::fs::write(sys.join("server@default.ini"), default_ini).expect("default profile");
+    std::fs::write(
+        sys.join("server@spare.ini"),
+        "[Server]\nHostname = 127.0.0.1\n",
+    )
+    .expect("spare profile");
+    std::fs::write(sys.join("server@X.ini"), "[Server]\nPort = 1\n").expect("bad name");
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n",
+    )
+    .expect("record");
+
+    // Serve `core` peer to peer on a socket pair, the client stamping `sender`
+    // when given: the bus would stamp it.
+    let connect = |core: &Arc<Core>, sender: Option<&str>| -> (Connection, Connection) {
+        let (s0, s1) = UnixStream::pair().expect("socket pair");
+        let iface = ManagerInterface::new(core.clone());
+        let server = std::thread::spawn(move || {
+            Builder::async_io_unix_stream(s0)
+                .server(zbus::Guid::generate())
+                .expect("server guid")
+                .p2p()
+                .serve_at(OBJECT_PATH, iface)
+                .expect("serve_at")
+                .build()
+                .expect("server connection")
+        });
+        let client = Builder::async_io_unix_stream(s1)
+            .p2p()
+            .method_timeout(Duration::from_secs(10))
+            .build()
+            .expect("client connection");
+        if let Some(name) = sender {
+            client.inner().set_unique_name(name).expect("unique name");
+        }
+        (server.join().expect("server thread"), client)
+    };
+    let core = || -> Arc<Core> {
+        Arc::new(
+            Manager::new(
+                FakeService::new(),
+                FakeAuthority::new(true),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new()),
+        )
+    };
+    // A method call: Ok(reply), or Err((error name, message)).
+    fn call<B>(conn: &Connection, method: &str, body: &B) -> Result<zbus::Message, (String, String)>
+    where
+        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    {
+        conn.call_method(None::<&str>, OBJECT_PATH, Some(INTERFACE), method, body)
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                zbus::Error::FDO(e) => {
+                    use zbus::DBusError;
+                    (
+                        e.name().to_string(),
+                        e.description().unwrap_or_default().to_string(),
+                    )
+                }
+                other => panic!("{method}: not a method error reply: {other:?}"),
+            })
+    }
+    fn body<T: for<'de> zbus::zvariant::DynamicDeserialize<'de>>(m: &zbus::Message) -> T {
+        m.body().deserialize().expect("reply body")
+    }
+    let err_name = |kind: &str| format!("org.privateai.Manager1.Error.{kind}");
+    let refusal = |key: &'static str, values: &[&str]| Refusal {
+        key,
+        values: values.iter().map(|v| v.to_string()).collect(),
+    };
+    let profile_text = |name: &str| {
+        std::fs::read_to_string(sys.join(format!("server@{name}.ini"))).expect("profile")
+    };
+    // A key of the `[Server]` section, counting only real keys: the render
+    // leaves a commented hint line for a key the file does not set.
+    let key_line = |text: &str, key: &str| -> bool {
+        text.lines()
+            .any(|line| line.trim_start().starts_with(&format!("{key} ")))
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+
+    // ── A caller with no sender: the verbs refused, the list answered ─────
+    {
+        let c = core();
+        let (_server, client) = connect(&c, None);
+        let e = call(
+            &client,
+            "CreateServerProfile",
+            &("llama.cpp", "db-1", 8123u16),
+        )
+        .expect_err("CreateServerProfile");
+        assert_eq!(e.0, err_name("NotAuthorized"), "a create with no sender");
+        let e = call(&client, "DeleteServerProfile", &("llama.cpp", "spare"))
+            .expect_err("DeleteServerProfile");
+        assert_eq!(e.0, err_name("NotAuthorized"), "a delete with no sender");
+        assert!(
+            !sys.join("server@db-1.ini").exists(),
+            "the refused create wrote nothing"
+        );
+        assert!(
+            sys.join("server@spare.ini").exists(),
+            "the refused delete removed nothing"
+        );
+
+        let r = call(&client, "ServerProfiles", &()).expect("ServerProfiles with no sender");
+        assert_eq!(
+            r.body().signature().to_string(),
+            "a(ssqass)",
+            "an array of a struct of the id, the engine, a uint16, the tags and the instance"
+        );
+        assert_eq!(
+            body::<Vec<(String, String, u16, Vec<String>, String)>>(&r),
+            vec![
+                (
+                    "default".to_string(),
+                    "llama.cpp".to_string(),
+                    8080u16,
+                    vec!["edge".to_string(), "v2".to_string()],
+                    "default".to_string(),
+                ),
+                (
+                    "spare".to_string(),
+                    "llama.cpp".to_string(),
+                    u16::try_from(pai_core::server_cfg::DEFAULT_PORT).expect("DEFAULT_PORT"),
+                    Vec::new(),
+                    String::new(),
+                ),
+            ],
+            "sorted, the empty string for a profile no section names, and no row for \
+             `server@X.ini`: a name the engine refuses is no profile"
+        );
+    }
+
+    // ── An authorized caller: the verbs, their answers and their signatures ─
+    {
+        let c = core();
+        let (_server, client) = connect(&c, Some(":1.42"));
+
+        let r = call(
+            &client,
+            "CreateServerProfile",
+            &("llama.cpp", "db-1", 8123u16),
+        )
+        .expect("CreateServerProfile of a new name");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert!(
+            key_line(&profile_text("db-1"), "Port") && profile_text("db-1").contains("Port = 8123"),
+            "the port of the call, in the file: {}",
+            profile_text("db-1")
+        );
+        call(
+            &client,
+            "CreateServerProfile",
+            &("llama.cpp", "zero-d", 0u16),
+        )
+        .expect("port 0");
+        assert!(
+            !key_line(&profile_text("zero-d"), "Port"),
+            "port 0 on the wire leaves no Port key at all: {}",
+            profile_text("zero-d")
+        );
+
+        let e = call(
+            &client,
+            "CreateServerProfile",
+            &("llama.cpp", "db-1", 9001u16),
+        )
+        .expect_err("a second create of the same name");
+        assert_eq!(e.0, err_name("ServerProfileExists"), "{e:?}");
+        assert_eq!(e.1, "db-1", "the message names the profile");
+        assert!(
+            profile_text("db-1").contains("Port = 8123"),
+            "and the file kept its bytes"
+        );
+
+        let e = call(&client, "CreateServerProfile", &("vllm", "db-2", 8123u16))
+            .expect_err("an engine the manager does not serve");
+        assert_eq!(e.0, err_name("Invalid"), "the engine, as a check's refusal");
+        assert_eq!(
+            Refusal::decode(&e.1),
+            Some(refusal("unknown-engine", &["vllm"])),
+            "{:?}",
+            e.1
+        );
+        for name in ["../x", "X", "a_b", ""] {
+            let e = call(
+                &client,
+                "CreateServerProfile",
+                &("llama.cpp", name, 8123u16),
+            )
+            .expect_err("a name that is no profile");
+            assert_eq!(e.0, err_name("Invalid"), "{name:?}");
+            assert_eq!(
+                Refusal::decode(&e.1),
+                Some(refusal("server-profile-bad-id", &[name])),
+                "{name:?}: {:?}",
+                e.1
+            );
+        }
+        assert!(
+            !sys.join("server@db-2.ini").exists() && !sys.join("x.ini").exists(),
+            "a refused create created nothing, and no path outside the engine's directory"
+        );
+
+        // The delete: in use, missing, unused.
+        let e = call(&client, "DeleteServerProfile", &("llama.cpp", "default"))
+            .expect_err("a profile a section names");
+        assert_eq!(e.0, err_name("ServerProfileInUse"), "{e:?}");
+        assert_eq!(
+            e.1, "default\u{1f}default",
+            "the profile and the instance, split by the separator Refusal::encode uses"
+        );
+        assert!(
+            sys.join("server@default.ini").is_file(),
+            "the file of an in-use profile is kept"
+        );
+        let e = call(&client, "DeleteServerProfile", &("llama.cpp", "nope"))
+            .expect_err("a profile that is no file");
+        assert_eq!(e.0, err_name("NoServerProfile"), "{e:?}");
+        assert_eq!(e.1, "nope", "the message names the profile");
+        call(&client, "DeleteServerProfile", &("llama.cpp", "db-1"))
+            .expect("the delete of an unused profile");
+        assert!(
+            !sys.join("server@db-1.ini").exists(),
+            "its file is gone: the create and the delete round-trip over the bus"
+        );
+
+        // The `As` forms are there, with the principal first, and gated: this
+        // caller is not the bff's account.
+        let e = call(
+            &client,
+            "CreateServerProfileAs",
+            &("alice", "llama.cpp", "db-as", 8123u16),
+        )
+        .expect_err("CreateServerProfileAs from a caller that is not the bff");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        let e = call(
+            &client,
+            "DeleteServerProfileAs",
+            &("alice", "llama.cpp", "spare"),
+        )
+        .expect_err("DeleteServerProfileAs from a caller that is not the bff");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        assert!(
+            !sys.join("server@db-as.ini").exists() && sys.join("server@spare.ini").is_file(),
+            "a refused `As` form writes and removes nothing"
+        );
+
+        // The signatures: no less, no more, and of the agreed types. zbus
+        // answers a shape mismatch with its own error, never one of the
+        // manager's.
+        let before = listing();
+        for e in [
+            call(&client, "CreateServerProfile", &("llama.cpp", "db-3")).expect_err("one string"),
+            call(
+                &client,
+                "CreateServerProfile",
+                &("llama.cpp", "db-3", "8080"),
+            )
+            .expect_err("a string where a uint16 belongs"),
+            call(
+                &client,
+                "CreateServerProfile",
+                &("llama.cpp", "db-3", 8123u16, "more"),
+            )
+            .expect_err("four arguments"),
+            call(&client, "DeleteServerProfile", &("llama.cpp",)).expect_err("one argument"),
+            call(
+                &client,
+                "DeleteServerProfile",
+                &("llama.cpp", "spare", "more"),
+            )
+            .expect_err("three arguments"),
+            // `ServerProfiles` takes nothing, so an extra argument is no rule of
+            // ours: zbus answers a 0-parameter method with an argument of its own
+            // accord. The shape the design fixes is pinned where the list is
+            // answered: a call of no argument, answering `a(ssqass)`.
+            call(
+                &client,
+                "CreateServerProfileAs",
+                &("alice", "llama.cpp", "db-3"),
+            )
+            .expect_err("the port missing"),
+            call(
+                &client,
+                "DeleteServerProfileAs",
+                &("alice", "llama.cpp", "spare", "more"),
+            )
+            .expect_err("four arguments"),
+        ] {
+            assert!(
+                !e.0.starts_with("org.privateai.Manager1."),
+                "not the manager's error: {e:?}"
+            );
+        }
+        assert_eq!(listing(), before, "a call of the wrong shape wrote nothing");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2674,6 +3111,10 @@ mod tests {
                 "Invalid",
             ),
             (ManagerError::Changed, "Changed"),
+            (
+                ManagerError::ServerProfileExists("big café".into()),
+                "ServerProfileExists",
+            ),
         ];
         for (error, kind) in cases {
             let (name, message) = error_reply(&error);
@@ -3127,7 +3568,7 @@ mod tests {
     }
 
     /// The `As` methods, each with its own arguments after the principal.
-    fn as_methods() -> [(&'static str, AsCall); 8] {
+    fn as_methods() -> [(&'static str, AsCall); 10] {
         [
             ("StartAs", |c, p| call(c, "StartAs", &(p, "default"))),
             ("StopAs", |c, p| call(c, "StopAs", &(p, "default"))),
@@ -3146,6 +3587,16 @@ mod tests {
             }),
             ("SetServerProfileAs", |c, p| {
                 call(c, "SetServerProfileAs", &(p, "default", "default"))
+            }),
+            ("CreateServerProfileAs", |c, p| {
+                call(
+                    c,
+                    "CreateServerProfileAs",
+                    &(p, "llama.cpp", "db-p", 8123u16),
+                )
+            }),
+            ("DeleteServerProfileAs", |c, p| {
+                call(c, "DeleteServerProfileAs", &(p, "llama.cpp", "db-p"))
             }),
         ]
     }
@@ -3211,7 +3662,7 @@ mod tests {
             if let Some(name) = sender {
                 assert_eq!(
                     asked_bff(&c),
-                    vec![Caller(name.to_string()); 8],
+                    vec![Caller(name.to_string()); 10],
                     "{sender:?}: the caller is checked first, once per call"
                 );
             }

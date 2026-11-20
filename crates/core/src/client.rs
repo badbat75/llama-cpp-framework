@@ -69,6 +69,9 @@ pub enum ClientError {
     /// the profile and the instance, in that order, split on `SEP`, as a
     /// refusal's values are.
     ServerProfileInUse(String, String),
+    /// A server profile with that name is already there: a create overwrites
+    /// nothing.
+    ServerProfileExists(String),
     /// The host that does not resolve.
     UnresolvableHost(String),
     /// The service manager's own message.
@@ -114,6 +117,7 @@ impl ClientError {
             // it: both name the profile, the second names the holder too,
             // after the separator `checks::SEP` (the manager's `encode`).
             "NoServerProfile" => ClientError::NoServerProfile(message.to_string()),
+            "ServerProfileExists" => ClientError::ServerProfileExists(message.to_string()),
             "ServerProfileInUse" => {
                 const SEP: char = '\u{1f}';
                 message
@@ -139,6 +143,9 @@ impl ClientError {
             ClientError::NoServerProfile(_) => strings::t("client-no-server-profile"),
             ClientError::ServerProfileInUse(profile, instance) => {
                 strings::fill("client-server-profile-in-use", &[profile, instance])
+            }
+            ClientError::ServerProfileExists(profile) => {
+                strings::fill("client-server-profile-exists", &[profile])
             }
             ClientError::UnresolvableHost(host) => {
                 strings::fill("client-unresolvable-host", &[host])
@@ -187,6 +194,20 @@ pub struct InstanceInfo {
     pub port: u16,
     pub profile_tags: Vec<String>,
     pub instance_tags: Vec<String>,
+}
+
+/// One server profile, as `server_profiles()` answers it: the name of its file
+/// (`server@<id>.ini`), the engine it serves, the port its `Port` answers (the
+/// default when the file names none), the tags of its `[Server]` section, and
+/// the first instance whose `instances.ini` section points at it (`None` when
+/// no section does).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProfileInfo {
+    pub id: String,
+    pub engine: String,
+    pub port: u16,
+    pub tags: Vec<String>,
+    pub instance: Option<String>,
 }
 
 /// What the configurator asks the manager.
@@ -265,6 +286,51 @@ pub trait ManagerClient {
             "this transport of the manager has no Instances".into(),
         ))
     }
+    /// Writes the server profile `profile` of the engine `engine`: a new
+    /// `server@<profile>.ini` with the server config's defaults and `port`
+    /// (`None` leaves the file no `Port`, so the default port answers). An
+    /// entry already at that name is [`ClientError::ServerProfileExists`], and
+    /// nothing is written. Guarded as a write of a served file is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn create_server_profile(
+        &self,
+        engine: &str,
+        profile: &str,
+        port: Option<u16>,
+    ) -> Result<(), ClientError> {
+        let _ = (engine, profile, port);
+        Err(ClientError::Other(
+            "this transport of the manager has no CreateServerProfile".into(),
+        ))
+    }
+    /// Removes the server profile `profile` of the engine `engine`, when no
+    /// instance points at it: one a section names is
+    /// [`ClientError::ServerProfileInUse`], one that is no file
+    /// [`ClientError::NoServerProfile`]. Guarded as a write of a served file is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn delete_server_profile(&self, engine: &str, profile: &str) -> Result<(), ClientError> {
+        let _ = (engine, profile);
+        Err(ClientError::Other(
+            "this transport of the manager has no DeleteServerProfile".into(),
+        ))
+    }
+    /// The node's server profiles, each with the instance that points at it.
+    /// Answered to any caller, as the list of instances is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn server_profiles(&self) -> Result<Vec<ServerProfileInfo>, ClientError> {
+        Err(ClientError::Other(
+            "this transport of the manager has no ServerProfiles".into(),
+        ))
+    }
     /// Replaces the tags of the instance `instance`: the record's own list,
     /// shown by the web UI beside the tags of its server profile. Guarded as a
     /// write of a served file is: a caller who may not configure is
@@ -304,7 +370,7 @@ mod tests {
     }
 
     /// The error keys of the client, with how many `{N}` each takes.
-    const KEYS: [(&str, usize); 13] = [
+    const KEYS: [(&str, usize); 14] = [
         ("client-not-authorized", 0),
         ("client-invalid-id", 0),
         ("client-no-instance", 0),
@@ -312,6 +378,7 @@ mod tests {
         ("client-address-in-use", 1),
         ("client-no-server-profile", 0),
         ("client-server-profile-in-use", 2),
+        ("client-server-profile-exists", 1),
         ("client-unresolvable-host", 1),
         ("client-service-failed", 1),
         ("client-io-failed", 1),
@@ -566,6 +633,26 @@ mod tests {
         ] {
             assert_eq!(error.text(), expected, "{error:?}");
         }
+    }
+
+    /// The reply of a create that found the file already there: its own error,
+    /// named, with the profile in its text. A client that does not know the
+    /// reply lands it in `Other`, and the web service answers a clash as a
+    /// broken manager (502) instead of a conflict (409).
+    #[test]
+    fn a_server_profile_that_exists_decodes_to_its_own_error() {
+        let e = ClientError::from_reply(&format!("{ERROR_PREFIX}ServerProfileExists"), "big");
+        assert!(
+            !matches!(e, ClientError::Other(_)),
+            "a known reply must not land in Other: {e:?}"
+        );
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        let text = gui
+            .get("client-server-profile-exists")
+            .expect("client-server-profile-exists in en_US.toml")
+            .replace("{0}", "big");
+        assert_eq!(e.text(), text, "{e:?}");
+        assert!(e.text().contains("big"), "the text names the profile");
     }
 
     /// The address-in-use sentence names the holder of the address and

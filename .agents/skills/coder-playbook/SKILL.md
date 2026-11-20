@@ -210,6 +210,11 @@ Lessons only: the rules are in `AGENTS.md`.
   own `*-malformed` 400 answers with no client call), then `session_user`, then the client in
   `spawn_blocking` under `timeout`. Map the checks refusal through the boot route's ONE
   `action_failure(422, field)`; a 403 from the client ends the session like the boot write's.
+- A save's post-write state read: never `ok().flatten()` the record read. `None` means "no
+  instance runs it", which answers `running: false`; a record read that FAILED is a state the
+  bff cannot name, answered `running: true` like a failed status. A 3-arm `match` on the
+  `Result<Option<String>, _>` keeps them apart, and the test pins it by the calls list
+  (`read, write-if, instances`: no `status` of an instance the record cannot name).
 - A list item whose extra fields come from a row looked up by id: `find` the row once per id ABOVE the
   status `match`, then answer a missing row with the field's own default (`row.map_or(0, |r| r.port)`,
   `row.map_or_else(Vec::new, |r| r.list.clone())`: no `||`, and the closure fixes the `Vec`'s type). The
@@ -782,6 +787,28 @@ Lessons only: the rules are in `AGENTS.md`.
 - The coder runs `format:check`, so the tester's unformatted new test files are yours to format. Prove
   prettier writes whitespace and quotes only: copy each file, run `prettier <file>` into a second copy,
   `diff` them, then `prettier --write`. Rerun the suite after.
+
+## Slice 14 (2026-11-20): the manager's new verbs, and the bff's new routes
+
+- `cargo test -p pai-bff` needs `PAI_BFF_FE_DIR=<repo>/crates/bff/fe-fixture` (the build script's
+  embedded-UI directory: without it the crate does not build). It runs 19 targets and prints 19
+  `test result:` lines: sum them (`awk '/^test result:/{p+=$4; f+=$6} END{...}'`, fields 4 and 6), the
+  last line alone, of the target that happened to finish last, says nothing about the slice.
+- A method added to `ManagerClient` with a default body keeps every older fake compiling untouched: the
+  siblings' body is `Err(ClientError::Other("<method>: ..."))` (the bff's `tests/instances.rs` fake
+  answers `Unimplemented` for the new verbs and needs no edit). The two transports override it.
+- Windows GNU clippy on the manager's e2e: a `let mut` whose only `push` sits in a `#[cfg(unix)]` block
+  is `unused_mut` on windows-gnu. The fix that keeps Linux green is `#[cfg_attr(not(unix),
+  allow(unused_mut))]` above the binding; removing the `mut` reddens the unix build.
+- `--all-targets` lints the tester's new file, and three fixes change no assertion: a
+  `let mut fixture = Fixture::default(); fixture.x = ..` is `field_reassign_with_default` (write
+  `Fixture { x: .., ..Fixture::default() }`), a `&[s.clone()]` of one element is
+  `cloned_ref_to_slice_refs` (write `std::slice::from_ref(&s)`), and a closure returning a 5-tuple
+  `Vec` is `type_complexity` (a local `type Row = (...)` right above it). Report the file you touched.
+- To prove what a count assertion in a long e2e really holds, without editing the test: a temporary
+  `eprintln!` in your OWN function, `cargo test -p <crate> --lib <test> -- --nocapture`, read the line,
+  remove the line, then rerun fmt, clippy and the test. The manager's list holds
+  `big, default, ghost, lan-2, secret, shared, spare, zero` at `service.rs:9721`, where the test wants 5.
 
 ## xtask: the runtime closure and the loader
 

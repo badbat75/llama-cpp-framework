@@ -40,6 +40,8 @@ pub const KEYS: &[&str] = &[
     "model-profile-model-missing",
     "model-profile-over-memory",
     "server-bad-tags",
+    "unknown-engine",
+    "server-profile-bad-id",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -115,6 +117,8 @@ impl Refusal {
             "server-bad-tags" => {
                 strings::fill("server-bad-tags", &[&v(0), &v(1), &v(2), &v(3), &v(4)])
             }
+            "unknown-engine" => strings::fill("unknown-engine", &[&v(0)]),
+            "server-profile-bad-id" => strings::fill("server-profile-bad-id", &[&v(0)]),
             other => other.to_string(),
         }
     }
@@ -2116,6 +2120,40 @@ top-p = 0.95\r\n";
                 assert!(text.contains(v), "{key}: {v:?} not in {text:?}");
             }
             assert_eq!(Refusal::decode(&r.encode()), Some(r.clone()), "{key}");
+        }
+    }
+
+    /// The keys of the server profile verbs (ARCHITECTURE.md, slice 14): each in
+    /// `KEYS`, so the manager's refusal crosses the wire; in both strings files,
+    /// with the one value its rule passes (`unknown-engine` the engine it was
+    /// asked for, `server-profile-bad-id` the name it was given); and with a text
+    /// arm that fills it in.
+    #[test]
+    fn the_server_profile_keys_are_known_and_worded() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        for (key, values) in [
+            ("unknown-engine", vec!["vllm"]),
+            ("server-profile-bad-id", vec!["../x"]),
+        ] {
+            assert!(KEYS.contains(&key), "{key} missing from checks::KEYS");
+            for (name, table) in [("cli.toml", &cli), ("en_US.toml", &gui)] {
+                let text = table
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{key} missing from {name}"));
+                assert_eq!(placeholders(text), 1, "{name} {key}: {text:?}");
+            }
+            let r = refusal(key, &values);
+            let text = r.text();
+            assert!(!text.starts_with(key), "{key} has no text arm: {text:?}");
+            for v in &values {
+                assert!(text.contains(v), "{key}: {v:?} not in {text:?}");
+            }
+            assert_eq!(
+                Refusal::decode(&r.encode()),
+                Some(r.clone()),
+                "{key} round-trips on the wire"
+            );
         }
     }
 

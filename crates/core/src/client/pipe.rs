@@ -16,17 +16,22 @@
 //! {"method":"SetBootEnabled","id":"default","enabled":true}
 //! {"method":"Instances"}
 //! {"method":"SetInstanceTags","instance":"default","tags":["edge","v2"]}
+//! {"method":"CreateServerProfile","engine":"llama.cpp","profile":"big","port":8123}
+//! {"method":"DeleteServerProfile","engine":"llama.cpp","profile":"big"}
+//! {"method":"ServerProfiles"}
 //! {"method":"Authenticate","user":"alice","password":"..."}
 //! {"method":"Version"}
 //! ```
 //!
 //! A client [`PipeClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
-//! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile` and
+//! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
+//! `CreateServerProfile`, `DeleteServerProfile` and
 //! `SetInstanceTags` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
 //! (the manager answers a principal for the bff's account alone). The methods
-//! that need no right are unchanged, `Instances` among them.
+//! that need no right are unchanged, `Instances` and `ServerProfiles` among
+//! them.
 //!
 //! ```text
 //! {"method":"StartAs","principal":"alice","id":"default"}
@@ -38,6 +43,10 @@
 //!                               "contents":"...","expected":"..."}
 //! {"method":"SetInstanceTagsAs","principal":"alice","instance":"default",
 //!                                      "tags":["edge","v2"]}
+//! {"method":"CreateServerProfileAs","principal":"alice","engine":"llama.cpp",
+//!                                         "profile":"big","port":8123}
+//! {"method":"DeleteServerProfileAs","principal":"alice","engine":"llama.cpp",
+//!                                         "profile":"big"}
 //! ```
 //!
 //! A reply is the value or an error with the same (name, message) pair the
@@ -53,16 +62,26 @@
 //! {"ok":[{"id":"default","engine":"llama.cpp","port":8080,
 //!         "profile_tags":["edge"],"instance_tags":[]}]}
 //!                                           Instances
+//! {"ok":[{"id":"big","engine":"llama.cpp","port":8080,
+//!         "tags":["edge"],"instance":"default"}]}
+//!                                           ServerProfiles (instance: the
+//!                                           empty string when no instance
+//!                                           points at the profile)
 //! {"ok":{"authenticated":true,"can_configure":false}}
 //!                                           Authenticate
 //! {"ok":null}                               Start, Stop, Restart, WriteFile,
-//!                                           SetBootEnabled, SetInstanceTags
+//!                                           SetBootEnabled, SetInstanceTags,
+//!                                           CreateServerProfile,
+//!                                           DeleteServerProfile
 //! {"ok":{"version":"1.2.3","protocol":1}}   Version (protocol: the methods
 //!                                           this manager speaks)
 //! {"error":{"name":"org.privateai.Manager1.Error.<Kind>","message":"..."}}
 //! ```
 
-use super::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ManagerVersion};
+use super::{
+    ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ManagerVersion,
+    ServerProfileInfo,
+};
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
 use std::sync::{Arc, Mutex};
@@ -313,6 +332,32 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             &[("instance", json!(instance)), ("profile", json!(profile))],
         ))
     }
+    fn create_server_profile(
+        &self,
+        engine: &str,
+        profile: &str,
+        port: Option<u16>,
+    ) -> Result<(), ClientError> {
+        // No port is 0 on the wire: the file the manager writes carries no
+        // `Port` key.
+        let port = port.unwrap_or(0);
+        self.call_unit(self.guarded(
+            "CreateServerProfile",
+            &[
+                ("engine", json!(engine)),
+                ("profile", json!(profile)),
+                ("port", json!(port)),
+            ],
+        ))
+    }
+
+    fn delete_server_profile(&self, engine: &str, profile: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "DeleteServerProfile",
+            &[("engine", json!(engine)), ("profile", json!(profile))],
+        ))
+    }
+
     fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
         let v = self.call(json!({"method": "Instances"}))?;
         let rows = v
@@ -361,6 +406,44 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                         port: u16::try_from(port).map_err(|_| ClientError::Other(v.to_string()))?,
                         profile_tags,
                         instance_tags,
+                    })
+                }
+                _ => return Err(ClientError::Other(v.to_string())),
+            }
+        }
+        Ok(out)
+    }
+    fn server_profiles(&self) -> Result<Vec<ServerProfileInfo>, ClientError> {
+        let v = self.call(json!({"method": "ServerProfiles"}))?;
+        let rows = v
+            .as_array()
+            .ok_or_else(|| ClientError::Other(v.to_string()))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let port = row.get("port").and_then(Value::as_u64);
+            let tags = row.get("tags").and_then(Value::as_array).map(|list| {
+                list.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect::<Vec<String>>()
+            });
+            // The instance is the empty string when no section points at the
+            // profile: the profile serves nothing, and the client reads it as
+            // none.
+            let instance = row.get("instance").and_then(Value::as_str);
+            match (
+                row.get("id").and_then(Value::as_str),
+                row.get("engine").and_then(Value::as_str),
+                port,
+                tags,
+                instance,
+            ) {
+                (Some(id), Some(engine), Some(port), Some(tags), Some(instance)) => {
+                    out.push(ServerProfileInfo {
+                        id: id.to_string(),
+                        engine: engine.to_string(),
+                        port: u16::try_from(port).map_err(|_| ClientError::Other(v.to_string()))?,
+                        tags,
+                        instance: (!instance.is_empty()).then(|| instance.to_string()),
                     })
                 }
                 _ => return Err(ClientError::Other(v.to_string())),

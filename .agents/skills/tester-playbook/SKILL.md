@@ -97,6 +97,12 @@ Lessons only: the rules are in `AGENTS.md`.
   the files: that passes without the seam.
 - "Nothing left in the user tree" is a state of the tree, not of the process: assert it at the END of a
   phase, where it belongs, not as an isolated mid-phase probe.
+- A multi-block phase shares ONE tree: by a late block, earlier blocks have added files and removed others,
+  so an absolute `len() == N` and an "the refusal removed nothing" naming a file a previous block deleted are
+  both stale fixtures. Before fixing one, walk the phase's own blocks and write down the names the tree
+  holds at that line; then pin names (the row list by id, present and absent), never a count, and split the
+  list with a `cfg(unix)` insert for a row only a symlink creates. A name pin reds naming the row; a count
+  reds naming nothing.
 - The GUI e2e is one `#[test]`, so a production line that half-did a rename kills it at its first phase
   and the later phases report nothing. Prove a pre-existing red predates your edit (`cp` the pristine
   file from your own backup, run, restore, `grep -c` to confirm the restore), name the production line
@@ -286,6 +292,42 @@ Lessons only: the rules are in `AGENTS.md`.
   report the line for the coder (a tester edits no `src`), and quote a clean `clippy` to show the tests
   needed no source change to compile.
 
+## A bff route family (a new resource under `/api`)
+
+- A new verb of `ManagerClient` handed to a bff test's own fake goes in that fake's
+  `impl ManagerClient for FakeManager` block, so the file's red is COMPILE red: one
+  `E0407 ... is not a member of trait` per verb, `E0432` for the row type the trait returns,
+  `E0599` for a new `ClientError` variant. Count them and list them: a red list that names ONLY
+  missing slice items is also the proof the tests carry no typo.
+- Which account a route acts for is pinned on the connect log: `principals_of(..)` is
+  `vec![None]` for a read the bff answers with its own rights, `vec![Some("alice")]` for a write
+  that acts for the signed-in user. One entry per manager connect (the session routes connect
+  never), so a route that connects twice is visible.
+- A route gated with `Sessions::current` MOVES the idle deadline: sign in, advance the fake clock
+  just under the timeout, and assert the answer is not 401. Assert "not 401", not a status: the
+  body's code is the rest of the slice's business, and the deadline pin stays green when it moves.
+- A document's `revision` is a keyed hash under the router's own secret: a save's body takes it
+  from the GET of the SAME router (a helper that reads, edits one value, saves), never from a
+  constant. To pin the revision the save ANSWERS, recompute SipHash-2-4 with
+  `SipHasher::new_with_key(&[u8; 16])` and `format!("{:016x}")` over the text the fake recorded.
+- A fake that answers a pool AND a record keeps them consistent: a profile the record says is used
+  must carry that `instance` in its own row too, else the fake answers "used" and "unused" in the
+  same call and the pin proves nothing.
+- A hand-built server save body is 400 `server-malformed` unless `values` carries `Tags` as an
+  array (`Kind::Tags`'s `reads` is false for an absent key, unlike every other kind): add
+  `"Tags": []` beside the keys the test edits.
+- To reach a save whose record read fails, skip the document read (it fails too): the PUT body is
+  `{"revision": revision_of(&profile_text(port), &REVISION_KEY), "values": {...}}`, the revision of
+  the text the fake holds, so the write lands and only the record read fails, after it. A `rows`
+  cell that answers `Err` is enough: the save asks `instances` once, after the write.
+- Format test code with `rustfmt --edition 2021 <the files you wrote>`, never
+  `cargo fmt -p <crate>` (no `--check`): that rewrites `src/` of the crate too. Map the
+  `cargo fmt -p <crate> --check` diff's `Diff in <file>:<line>` ranges against
+  `grep -n "^#\[cfg(test)\]" <file>`: `crates/manager/src/manager/service.rs` has one `#[cfg(test)]`
+  per e2e phase (not one `mod tests`), so a diff at line 9075 is test code.
+- A `///` doc comment on a local `let` closure inside a test fn warns `unused_doc_comments`, which
+  kills the coder's `cargo clippy --all-targets -- -D warnings`: write those comments with `//`.
+
 ## Behaviour that cannot run here (Windows, xtask, packages, CI)
 
 - The manager's Windows decisions are OS-neutral in `crates/manager/src/manager/windows.rs`, so
@@ -433,6 +475,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - Pin a row's signature as `<Row as Type>::SIGNATURE.to_string()`: this zvariant has NO `as_str` on
   `Signature`, so comparing `SIGNATURE` with a `&str` is a compile error, not a red. The red of a new field
   prints `(ssqasas)` vs `(sssqasas)`, which names exactly the field the transport must carry.
+- zbus does NOT refuse a 0-parameter method called with an extra argument, so an `expect_err` on that call is
+  a red the coder cannot pass. Where the design gives a method no input, pin the no-argument call and its
+  reply signature (`ServerProfiles` with `&()`, answering `a(ssqass)`), and drop the extra-arg case: the shape
+  of a call the design never fixes is zbus's business, not a rule of ours. Prove the shape loop you keep is
+  not vacuous by dropping one case's bad argument: a legal call answers and the `expect_err` panics naming
+  that case.
 - `Refusal` is public in `pai_core::checks` (`key: &'static str`, `values: Vec<String>`), NOT re-exported by
   `pai_core::client`: import it from `checks`, and write the key as a bare literal.
 - One `data_root_e2e` runs every phase in one process over one tree: a phase that writes the record must
@@ -970,3 +1018,40 @@ Lessons only: the rules are in `AGENTS.md`.
 - Clean up a test's leftover process by its exact PID (have the script write it to a file), never with
   `pkill -f <words>`: on 2026-11-19 `pkill -f "sleep 600"` also matched the coordinator's launcher, whose
   command line carried the brief's text, and killed it.
+
+## Mutants of a security rule (slice 14 close, 2026-11-20)
+
+- A mutant is a one-line break of the rule, run, then `cp` from your own backup and `cmp` (the next mutant
+  starts from the identical bytes). Back up every file you touch first, and `sed -i "<line>s/../../"` by
+  line number where the text is not unique in the file (five identical `session-required` guards in the
+  bff's `server_profiles.rs`); print the line back to prove the mutation landed.
+- Pick the mutation that reds the rule's OWN pin. Inverting an existence check (`is_ok()` to `is_err()`)
+  reds the first success assert, which proves only that the check runs; `is_ok() && false` reds the rule's
+  own assert ("a second create of the same name: left `Ok(())`"). Report both when you ran both.
+- A `FakeAuthority` answers every `Action` the same, so an allow-list refusal never tells `Configure` from
+  `Control`: the mutant that swaps the gate's action is caught ONLY by a pin of the asked list
+  (`asked(&c) == vec![(caller, Action::Configure); N]`). Where such a pin is absent, write it.
+- The record read of a delete: `read_record(..).map_err(io)?` to `.unwrap_or_default()` reds the Io pin
+  (`the read's own failure, not "unused": Ok(())`); `record_holder(&record, profile)` to a name no section
+  names reds the in-use pin. Those two are the smallest breaks and each reds one assert.
+- The pipe's `port()` closure answers `Option<u16>` and `port()?` is a `u16` (the frame's `Request` carries
+  `u16`, not `Option<u16>`), so a parse mutant keeps that shape
+  (`u16::try_from(v.get("port").and_then(|p| p.as_u64()).unwrap_or(0)).ok()`); a mutant of the wrong type is
+  a COMPILE red, which is not a mutant.
+- The manager's wire rules (the `configure` gate, the name rule, the port parse, the `As` forms) are pinned
+  by `#[test]`s in `manager/pipe.rs`, so they are filterable (`cargo test -p pai-manager --lib <name>`) and
+  run OUTSIDE `data_root_e2e`: a mutant there needs no harness change. The core's rules (never-overwrite,
+  in-use, Io) live only in the `data_root_e2e` phase.
+- A name-rule bypass in a `pipe.rs` unit test resolves the REAL `/etc/llama.cpp` (those tests set no
+  `PRIVATE_AI_DATA_ROOT`), so the mutant answers `Io` (`entity not found`, `permission denied`) and the
+  refusals red. Prove no file landed (`ls /etc/x.ini`); the EACCES is the only thing keeping the machine.
+- zbus rejects an arity mismatch on a method that DECLARES parameters, and IGNORES an extra argument on a
+  zero-parameter one: a D-Bus pin that `ServerProfiles("llama.cpp")` is an error reds with the array
+  answered. Pin such a rule on the pipe (`BadRequest`) and, for D-Bus, pin that the verb ran
+  (nothing asked), never zbus's strictness.
+- An absolute row/file COUNT pin inside a shared-tree e2e phase reds on the phase's own earlier blocks (the
+  crud phase's 14 blocks create `big`, `zero`, `ghost`, `spare`: a later block's `len() == 5` saw 8). Take
+  a baseline in the block and assert a delta, as for a call log.
+- To map the phases behind an e2e red, comment the red phase's call in `tests/mod.rs` with a `// DIAG:`
+  marker (`sed -i '<line>s|^    |    // DIAG: |'`), run, restore with `cp` + `cmp`: one DIAG run showed the
+  second red (masked by the first), the second showed the rest of the e2e green.

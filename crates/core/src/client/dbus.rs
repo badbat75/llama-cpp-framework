@@ -3,7 +3,8 @@
 //!
 //! A client [`DbusClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
-//! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile` and
+//! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
+//! `CreateServerProfile`, `DeleteServerProfile` and
 //! `SetInstanceTags` go as the
 //! `As` form of the same method, with the user's name as its first argument
 //! (the manager answers a principal for the bff's account alone) and answers
@@ -18,12 +19,18 @@
 //! WriteFileIfAs(s principal, s name, s contents, s expected)
 //! SetModelProfileAs(s principal, s instance, s profile, s value)
 //! SetServerProfileAs(s principal, s instance, s profile)
+//! CreateServerProfileAs(s principal, s engine, s profile, q port)
+//! DeleteServerProfileAs(s principal, s engine, s profile)
 //! SetInstanceTagsAs(s principal, s instance, as tags)
-//! Instances() -> a(ssqasas)           (id, engine, port, profile tags, instance tags)
+//! Instances() -> a(sssqasas)          (id, engine, port, profile tags, instance tags)
+//! ServerProfiles() -> a(ssqass)       (id, engine, port, tags, instance)
 //! Version() -> (s version, u protocol)
 //! ```
 
-use super::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ManagerVersion};
+use super::{
+    ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ManagerVersion,
+    ServerProfileInfo,
+};
 use zbus::blocking::Connection;
 use zbus::export::serde::Serialize;
 use zbus::message::Message;
@@ -45,6 +52,12 @@ const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
 /// list one `a(sssqasas)`. A section naming no server profile is the empty
 /// string, which the client reads as none.
 type InstanceRow = (String, String, String, u16, Vec<String>, Vec<String>);
+
+/// One row of `ServerProfiles`, as the bus answers it: `(s id, s engine,
+/// q port, as tags, s instance)`, the whole list one `a(ssqass)`. A profile no
+/// instance runs names no instance: the empty string, which the client reads
+/// as none.
+type ServerProfileRow = (String, String, u16, Vec<String>, String);
 
 /// The manager's client over one D-Bus connection.
 pub struct DbusClient {
@@ -251,6 +264,30 @@ impl ManagerClient for DbusClient {
         }
         .map(|_| ())
     }
+    fn create_server_profile(
+        &self,
+        engine: &str,
+        profile: &str,
+        port: Option<u16>,
+    ) -> Result<(), ClientError> {
+        // No port is 0 on the wire: the file the manager writes carries no
+        // `Port` key.
+        let port = port.unwrap_or(0);
+        match self.acting() {
+            Some(principal) => {
+                self.call("CreateServerProfileAs", &(principal, engine, profile, port))
+            }
+            None => self.call("CreateServerProfile", &(engine, profile, port)),
+        }
+        .map(|_| ())
+    }
+    fn delete_server_profile(&self, engine: &str, profile: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("DeleteServerProfileAs", &(principal, engine, profile)),
+            None => self.call("DeleteServerProfile", &(engine, profile)),
+        }
+        .map(|_| ())
+    }
     fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
         let rows: Vec<InstanceRow> = body(self.call("Instances", &())?)?;
         Ok(rows
@@ -269,6 +306,19 @@ impl ManagerClient for DbusClient {
                     instance_tags,
                 },
             )
+            .collect())
+    }
+    fn server_profiles(&self) -> Result<Vec<ServerProfileInfo>, ClientError> {
+        let rows: Vec<ServerProfileRow> = body(self.call("ServerProfiles", &())?)?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, engine, port, tags, instance)| ServerProfileInfo {
+                id,
+                engine,
+                port,
+                tags,
+                instance: (!instance.is_empty()).then_some(instance),
+            })
             .collect())
     }
     fn set_instance_tags(&self, instance: &str, tags: &[String]) -> Result<(), ClientError> {

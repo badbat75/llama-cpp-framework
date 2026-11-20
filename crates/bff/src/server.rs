@@ -51,7 +51,9 @@ pub(crate) async fn read(
         client.read_file(&name)
     });
     let (status, code) = match tokio::time::timeout(timeout, ask).await {
-        Ok(Ok(Ok(Some(file)))) => return axum::Json(document(&file, key, &id)).into_response(),
+        Ok(Ok(Ok(Some(file)))) => {
+            return axum::Json(document(&file, key, Owner::Instance(&id))).into_response()
+        }
         Ok(Ok(Ok(None)))
         | Ok(Ok(Err(
             ClientError::NoInstance | ClientError::BadFileName | ClientError::InvalidId,
@@ -93,7 +95,7 @@ fn profile_file(client: &dyn ManagerClient, id: &str) -> Result<String, ClientEr
 /// the request names: the `defaults.StateDir` shown is that instance's folder
 /// (the engine's state root joined with the id, as the launch passes it),
 /// never the bare root.
-fn document(file: &ManagerFile, key: [u8; 16], id: &str) -> Value {
+pub(crate) fn document(file: &ManagerFile, key: [u8; 16], owner: Owner<'_>) -> Value {
     let text = file.text.as_str();
     let mut cfg = server_cfg::from_text(text);
     if file.withheld {
@@ -110,6 +112,16 @@ fn document(file: &ManagerFile, key: [u8; 16], id: &str) -> Value {
         .into_iter()
         .map(|i| json!({ "value": i.value, "label": i.label }))
         .collect();
+    let state_dir: Value = match &owner {
+        // Whichever instance runs the profile owns its state folder: the
+        // document shows none for a profile no instance names.
+        Owner::Profile(None) => Value::Null,
+        Owner::Profile(Some(id)) | Owner::Instance(id) => paths::instance_state_dir()
+            .join(id)
+            .to_string_lossy()
+            .into_owned()
+            .into(),
+    };
     let mut doc = json!({
         "revision": revision(text, &key),
         "values": values(&cfg),
@@ -119,7 +131,7 @@ fn document(file: &ManagerFile, key: [u8; 16], id: &str) -> Value {
             "ModelsMemoryMargin": server_cfg::DEFAULT_MODELS_MEMORY_MARGIN,
             "OpencodeBaseUrl": base_url,
             "ModelsDir": paths::instance_models_dir().to_string_lossy(),
-            "StateDir": paths::instance_state_dir().join(id).to_string_lossy(),
+            "StateDir": state_dir,
         },
         "limits": {
             "Port": range("Port"),
@@ -130,10 +142,29 @@ fn document(file: &ManagerFile, key: [u8; 16], id: &str) -> Value {
         },
         "interfaces": interfaces,
     });
+    if let Owner::Profile(instance) = owner {
+        doc["instance"] = match instance {
+            Some(id) => json!(id),
+            None => Value::Null,
+        };
+    }
     if file.withheld {
         doc["withheld"] = json!(["OpencodeApiKey"]);
     }
     doc
+}
+
+/// Whose folder the document's `defaults.StateDir` shows, and whether the
+/// document names the profile's user: the state root joined with the id, the
+/// folder the launch passes that instance.
+pub(crate) enum Owner<'a> {
+    /// The instance the request names, the form of the instance's Server
+    /// route: that document has always named the instance in the folder, so it
+    /// carries no `instance` member.
+    Instance(&'a str),
+    /// A server profile, the form of the profile's route: `instance` is the
+    /// instance whose record names the profile, `null` when none does.
+    Profile(Option<&'a str>),
 }
 
 /// The `values` object of the read's document: every key of [`FIELDS`], each as

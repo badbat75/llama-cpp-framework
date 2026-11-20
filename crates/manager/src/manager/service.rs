@@ -202,6 +202,9 @@ pub enum ManagerError {
     NoServerProfile(String),
     /// The server profile of this name is the one the instance of this id runs.
     ServerProfileInUse(String, String),
+    /// A server profile of this name is already there: a create writes over
+    /// nothing.
+    ServerProfileExists(String),
     /// This host name of the file being written does not resolve.
     UnresolvableHost(String),
     /// The service manager failed.
@@ -233,6 +236,7 @@ pub fn error_reply(e: &ManagerError) -> (String, String) {
         ManagerError::ServerProfileInUse(name, id) => {
             ("ServerProfileInUse", format!("{name}\u{1f}{id}"))
         }
+        ManagerError::ServerProfileExists(name) => ("ServerProfileExists", name.clone()),
         ManagerError::UnresolvableHost(host) => ("UnresolvableHost", host.clone()),
         ManagerError::Service(e) => ("Service", e.0.clone()),
         ManagerError::Io(kind) => ("Io", kind.to_string()),
@@ -255,6 +259,7 @@ fn error_kind(e: &ManagerError) -> &'static str {
         ManagerError::AddressInUse(_) => "AddressInUse",
         ManagerError::NoServerProfile(_) => "NoServerProfile",
         ManagerError::ServerProfileInUse(_, _) => "ServerProfileInUse",
+        ManagerError::ServerProfileExists(_) => "ServerProfileExists",
         ManagerError::UnresolvableHost(_) => "UnresolvableHost",
         ManagerError::Service(_) => "Service",
         ManagerError::Io(_) => "Io",
@@ -339,6 +344,11 @@ pub const ASSIGNMENTS_FILE: &str = "assignments.ini";
 /// `ServerProfile`. The manager owns it, so a client reads it and never
 /// writes it.
 pub const INSTANCES_FILE: &str = "instances.ini";
+
+/// The engine this manager serves, the one every instance and every server
+/// profile names: the only value `CreateServerProfile` and `DeleteServerProfile`
+/// accept.
+const ENGINE: &str = "llama.cpp";
 
 /// The `models_max` of the pool checks: the `load-on-startup` count is judged
 /// per instance, against that instance's own `ModelsMax` and its own render,
@@ -1202,6 +1212,106 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
+    /// Writes a new server profile of the engine `engine`: `server@<profile>.ini`
+    /// rendered from the server config's defaults with `port` (`None` leaves the
+    /// file no `Port` key, so the default port answers), written as a save
+    /// writes it ([`write_served_file`]: mode [`file_mode`], group
+    /// [`INSTANCE_GROUP`]). Nothing is ever overwritten: any entry already at
+    /// that name, a dangling link included (the check is
+    /// [`std::fs::symlink_metadata`], so the link's target is never created), is
+    /// [`ManagerError::ServerProfileExists`], and the bytes that are there stay.
+    /// The new file is judged by no address and no cap: it binds nothing (the
+    /// design of `check_address`: a profile no instance runs is judged against
+    /// nothing) and loads no model. The check for an entry and the write are
+    /// safe together because every manager write holds `writing`. Guarded as a
+    /// write of a served file is: the principal and `configure` gates, the
+    /// `writing` lock, and one action record for the whole call, done or
+    /// refused, with the profile as its target.
+    pub fn create_server_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        engine: &str,
+        profile: &str,
+        port: Option<u16>,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            known_engine(engine)?;
+            // The name rule `config_file` applies to `server@<x>.ini`: no name
+            // builds a path outside the engine's directory.
+            let path = crate::paths::instance_ini(profile)
+                .ok_or_else(|| one_value_refusal("server-profile-bad-id", profile))?;
+            if std::fs::symlink_metadata(&path).is_ok() {
+                return Err(ManagerError::ServerProfileExists(profile.to_string()));
+            }
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            std::fs::create_dir_all(crate::paths::engine_config_dir()).map_err(io)?;
+            let cfg = crate::server_cfg::ServerConfig {
+                port: port.map(i32::from),
+                ..Default::default()
+            };
+            write_served_file(
+                &path,
+                &ConfigFile::ServerProfile(profile.to_string()),
+                &crate::server_cfg::render_for(&cfg, true),
+                &*self.group,
+            )
+            .map_err(io)
+        };
+        let answer = run();
+        self.record_action("create_server_profile", profile, Some(&who), &answer);
+        answer
+    }
+
+    /// Removes the server profile `profile` of the engine `engine`, when no
+    /// instance points at it. A name the id rule refuses and a name with no
+    /// file answer [`ManagerError::NoServerProfile`] (the name first, so a bad
+    /// name never looks at a file); the record is read with [`read_record`], so
+    /// a record that is not there names no instance and a record that cannot be
+    /// read is [`ManagerError::Io`] rather than "unused": a profile a running
+    /// instance reads is never removed on a read failure. The first section
+    /// naming it is [`ManagerError::ServerProfileInUse`], naming that instance,
+    /// and the file stays. Guarded as a write of a served file is: the
+    /// principal and `configure` gates, the `writing` lock, and one action
+    /// record for the whole call, done or refused, with the profile as its
+    /// target. `default` is no special case: in use it is refused like any
+    /// other, and unused it serves nothing.
+    pub fn delete_server_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        engine: &str,
+        profile: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            known_engine(engine)?;
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let no_profile = || ManagerError::NoServerProfile(profile.to_string());
+            let path = crate::paths::instance_ini(profile).ok_or_else(no_profile)?;
+            if std::fs::symlink_metadata(&path).is_err() {
+                return Err(no_profile());
+            }
+            let record =
+                read_record(&crate::paths::engine_config_dir().join(INSTANCES_FILE)).map_err(io)?;
+            if let Some(holder) = record_holder(&record, profile) {
+                return Err(ManagerError::ServerProfileInUse(
+                    profile.to_string(),
+                    holder,
+                ));
+            }
+            std::fs::remove_file(&path).map_err(io)
+        };
+        let answer = run();
+        self.record_action("delete_server_profile", profile, Some(&who), &answer);
+        answer
+    }
+
     /// Every instance the record lists, in id order as `list_instances`
     /// answers it, each with the server profile its section names (the
     /// `ServerProfile` of the section, verbatim: the file the launch reads is
@@ -1215,8 +1325,6 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// them to the engine.
     pub fn instances(&self) -> Vec<pai_core::client::InstanceInfo> {
         use pai_core::client::InstanceInfo;
-        // The engine every instance runs today.
-        const ENGINE: &str = "llama.cpp";
         let dir = crate::paths::engine_config_dir();
         let record = read_record(&dir.join(INSTANCES_FILE)).unwrap_or_default();
         let list = |value: Option<&String>| {
@@ -1260,6 +1368,57 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 }
             })
             .collect();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        rows
+    }
+
+    /// Every server profile the engine's directory holds: each
+    /// `server@<id>.ini` whose name the id rule accepts, in id order, with the
+    /// port and the tags of its `[Server]` section (no `Port` key is
+    /// `server_cfg::DEFAULT_PORT`, as `instances` reads a profile) and the first
+    /// section of `instances.ini` naming it, `None` when no section does: the
+    /// profile serves nothing. A section naming a file that is not there is no
+    /// row, the list being of files. Answered to any caller, as `instances` is:
+    /// it names ports, tags and the unused profiles of a node, the class of data
+    /// `instances` already gives for the used ones, and reads nothing past the
+    /// `[Server]` keys, so a key the file holds stays behind a read of it.
+    pub fn server_profiles(&self) -> Vec<pai_core::client::ServerProfileInfo> {
+        use pai_core::client::ServerProfileInfo;
+        let dir = crate::paths::engine_config_dir();
+        let record = read_record(&dir.join(INSTANCES_FILE)).unwrap_or_default();
+        let mut rows: Vec<ServerProfileInfo> = std::fs::read_dir(&dir)
+            .map(|rd| {
+                rd.flatten()
+                    .filter_map(|entry| {
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        let id = match config_file(&name) {
+                            Some(ConfigFile::ServerProfile(id)) => id,
+                            _ => return None,
+                        };
+                        // A file that cannot be read answers as `instances`
+                        // answers a profile whose file is not there.
+                        let cfg = std::fs::read_to_string(dir.join(&name))
+                            .ok()
+                            .map(|text| crate::server_cfg::from_text(&text));
+                        let (port, tags) = match cfg {
+                            Some(cfg) => (
+                                u16::try_from(cfg.port.unwrap_or(crate::server_cfg::DEFAULT_PORT))
+                                    .unwrap_or(0),
+                                cfg.tags,
+                            ),
+                            None => (0, Vec::new()),
+                        };
+                        Some(ServerProfileInfo {
+                            id: id.clone(),
+                            engine: ENGINE.to_string(),
+                            port,
+                            tags,
+                            instance: record_holder(&record, &id),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         rows.sort_by(|a, b| a.id.cmp(&b.id));
         rows
     }
@@ -1556,6 +1715,34 @@ fn read_record(path: &std::path::Path) -> std::io::Result<String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e),
     }
+}
+
+/// `engine` if this manager serves it ([`ENGINE`], the one engine of a node),
+/// else the refusal naming the engine it was asked for.
+fn known_engine(engine: &str) -> Result<(), ManagerError> {
+    if engine == ENGINE {
+        Ok(())
+    } else {
+        Err(one_value_refusal("unknown-engine", engine))
+    }
+}
+
+/// The refusal of a rule that carries one value: the key, and the name the
+/// rule refused.
+fn one_value_refusal(key: &'static str, value: &str) -> ManagerError {
+    ManagerError::Invalid(pai_core::checks::Refusal {
+        key,
+        values: vec![value.to_string()],
+    })
+}
+
+/// The first section of the record text `text` that names the server profile
+/// `profile`: the instance running it, `None` when no section does.
+fn record_holder(text: &str, profile: &str) -> Option<String> {
+    pai_core::ini::parse_sections(text)
+        .into_iter()
+        .find(|section| section.keys.get("ServerProfile").map(|name| name.trim()) == Some(profile))
+        .map(|section| section.id)
 }
 
 /// The content checks of `file` for `contents`, against the files on disk:
@@ -8998,6 +9185,676 @@ pub(crate) fn manager_instance_tags_e2e() {
             keys_of(&text_of(INSTANCES_FILE), "default", "Tags"),
             vec!["Tags = gpu".to_string()],
             "only the accepted call wrote"
+        );
+    }
+}
+/// Creating and deleting the node's server profiles, the files beside the
+/// instances (ARCHITECTURE.md, slice 14). `CreateServerProfile(engine, profile,
+/// port)` writes `server@<profile>.ini` the way a save writes it (`render_for`
+/// with the directories left unset, mode 0640, group [`INSTANCE_GROUP`], port 0
+/// no port), and overwrites nothing: any entry already at that name, a dangling
+/// link included (the check is `symlink_metadata`), is the new
+/// `ServerProfileExists`. `DeleteServerProfile` removes a file no section of
+/// `instances.ini` names, refuses one a section names (`ServerProfileInUse`,
+/// naming it) and one that is no file (`NoServerProfile`, a name the id rule
+/// refuses included), and answers the record read's own `Io` rather than
+/// "unused" when `instances.ini` cannot be read. `ServerProfiles` lists the
+/// files, sorted, to any caller as `Instances` does: id, engine, port, tags and
+/// the first section naming it, and nothing of the rest of the file. Both verbs
+/// are guarded as a write of a served file is: `configure` first, the `As` form
+/// answered only for the bff's account and a current member of `pai`, and one
+/// record of the action log per call, done or refused.
+#[cfg(test)]
+pub(crate) fn manager_server_profile_crud_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core_in = |allow: bool, group: FakeGroup, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(group)
+        .with_passwords(FakePasswords::new())
+        .with_log(log)
+    };
+    let core = |allow: bool, log: FakeActionLog| core_in(allow, FakeGroup::new(), log);
+    let profile_path = |name: &str| sys.join(format!("server@{name}.ini"));
+    let profile = |name: &str, text: &str| {
+        std::fs::write(profile_path(name), text).expect("server profile");
+    };
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let bytes_of = |name: &str| std::fs::read(sys.join(name)).expect("bytes");
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    let keys_of = |text: &str, id: &str, key: &str| -> Vec<String> {
+        section(text, id)
+            .lines()
+            .filter(|line| line.trim_start().starts_with(&format!("{key} ")))
+            .map(|line| line.trim_end().to_string())
+            .collect()
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    let tags = |list: &[&str]| -> Vec<String> { list.iter().map(|t| t.to_string()).collect() };
+    // The file a create is meant to write: the same render a save of a server
+    // config with that port writes, its directories left unset.
+    let render = |port: Option<i32>| -> String {
+        pai_core::server_cfg::render_for(
+            &pai_core::server_cfg::ServerConfig {
+                port,
+                ..Default::default()
+            },
+            true,
+        )
+    };
+    let exists = |name: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::ServerProfileExists(name.to_string()))
+    };
+    let no_profile = |name: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::NoServerProfile(name.to_string()))
+    };
+    let in_use = |name: &str, id: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::ServerProfileInUse(
+            name.to_string(),
+            id.to_string(),
+        ))
+    };
+    let refused = |key: &'static str, value: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::Invalid(pai_core::checks::Refusal {
+            key,
+            values: vec![value.to_string()],
+        }))
+    };
+
+    // The record: `default` and `lan-2` name a profile of their own, `lan-3`
+    // names a file that is not there (a section is no row of the list of files).
+    const SEEDED: &str = "# the manager's own record\n[default]\nServerProfile = default\n; a note\nnote = keep me\n\n[lan-2]\nServerProfile = lan-2\n\n[lan-3]\nServerProfile = gone\n";
+    std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+    profile(
+        "default",
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\nTags = edge,v2\n",
+    );
+    profile("lan-2", "[Server]\nPort = 8081\nHostname = 127.0.0.1\n");
+    profile("noport", "[Server]\nHostname = 127.0.0.1\n");
+    profile(
+        "secret",
+        "[Server]\nPort = 8090\nOpencodeApiKey = sk-local-3f9a\n",
+    );
+    // A file whose name the engine refuses, and a file that is no profile at
+    // all: neither is a row of the list.
+    std::fs::write(sys.join("server@X.ini"), "[Server]\nPort = 1\n").expect("bad name");
+    std::fs::write(sys.join("stray.ini"), "[Server]\nPort = 2\n").expect("stray");
+
+    // ── The list ──────────────────────────────────────────────────────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let rows = m.server_profiles();
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["default", "lan-2", "noport", "secret"],
+            "the files whose name is a profile, sorted: `gone` is a section with \
+             no file, `server@X.ini` a name the engine refuses, `stray.ini` no profile"
+        );
+        assert_eq!(
+            rows[0].engine, "llama.cpp",
+            "the one engine the manager serves"
+        );
+        assert_eq!(rows[0].port, 8080);
+        assert_eq!(
+            rows[0].tags,
+            tags(&["edge", "v2"]),
+            "the profile's own tags"
+        );
+        assert_eq!(
+            rows[0].instance.as_deref(),
+            Some("default"),
+            "the section that names it"
+        );
+        assert_eq!(
+            rows[1].tags,
+            Vec::<String>::new(),
+            "a file with no Tags key"
+        );
+        assert_eq!(
+            rows[2].port,
+            u16::try_from(pai_core::server_cfg::DEFAULT_PORT).expect("DEFAULT_PORT"),
+            "a file with no Port is the default port, as Instances reads it"
+        );
+        assert_eq!(
+            rows[2].instance, None,
+            "a profile no section names serves no instance"
+        );
+        let line = format!("{rows:?}");
+        assert!(
+            !line.contains("sk-local-3f9a"),
+            "the row carries the port and the tags, and nothing else of the file: {line}"
+        );
+        assert_eq!(
+            records(&lines),
+            Vec::<String>::new(),
+            "the list is a read: no action record"
+        );
+
+        let m = core(false, FakeActionLog::new());
+        assert_eq!(
+            m.server_profiles().len(),
+            4,
+            "a caller the authority refuses reads the list as any other: the list is \
+             the class of data Instances answers to anyone"
+        );
+    }
+
+    // ── A create writes the file a save writes ─────────────────────────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let group = FakeGroup::new();
+        let calls = group.calls.clone();
+        let m = core_in(true, group, log);
+        let before = listing();
+        let seed = text_of(INSTANCES_FILE);
+        let default_bytes = bytes_of("server@default.ini");
+
+        assert_eq!(
+            m.create_server_profile(&desktop, "llama.cpp", "big", Some(8123)),
+            Ok(()),
+            "a name that is nothing yet, of the engine the manager serves"
+        );
+        let written = text_of("server@big.ini");
+        assert_eq!(
+            written,
+            render(Some(8123)),
+            "the file a save of a server config with that port writes, directories \
+             left unset, and nothing beside it"
+        );
+        assert_eq!(
+            keys_of(&written, "Server", "Port"),
+            vec!["Port = 8123".to_string()],
+            "the port of the call, as one key"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "a create writes no instance record: the file serves nothing until a section names it"
+        );
+        let mut want = before.clone();
+        want.push("server@big.ini".to_string());
+        want.sort();
+        assert_eq!(listing(), want, "one new file, and no temp file left");
+        let g = calls.lock().unwrap().clone();
+        assert_eq!(g.len(), 1, "the group set once, on the way in");
+        assert_eq!(g[0].group, INSTANCE_GROUP, "the group of a served file");
+        assert_eq!(
+            g[0].path.file_name().and_then(|n| n.to_str()),
+            Some("server@big.ini.tmp"),
+            "the group is set on the temp file, before the rename"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(profile_path("big"))
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o640,
+                "the mode of a served profile"
+            );
+            assert_eq!(
+                g[0].mode, 0o640,
+                "the temp file had the mode when its group was set: the key of a \
+                 profile is never world readable"
+            );
+        }
+        assert_eq!(
+            m.server_profiles()
+                .iter()
+                .find(|r| r.id == "big")
+                .map(|r| (r.port, r.instance.clone())),
+            Some((8123u16, None)),
+            "the new file is a row, and an unused one"
+        );
+
+        assert_eq!(
+            m.create_server_profile(&desktop, "llama.cpp", "zero", None),
+            Ok(()),
+            "port 0 on the wire is no port"
+        );
+        assert_eq!(
+            text_of("server@zero.ini"),
+            render(None),
+            "the file of no port"
+        );
+        assert_eq!(
+            keys_of(&text_of("server@zero.ini"), "Server", "Port"),
+            Vec::<String>::new(),
+            "no Port key at all"
+        );
+
+        // The never-overwrite: a name that is anything already is refused.
+        assert_eq!(
+            m.create_server_profile(&desktop, "llama.cpp", "big", Some(9001)),
+            exists("big"),
+            "a second create of the same name"
+        );
+        assert_eq!(
+            m.create_server_profile(&desktop, "llama.cpp", "default", Some(9001)),
+            exists("default"),
+            "a name that is an existing profile with other bytes"
+        );
+        assert_eq!(
+            bytes_of("server@default.ini"),
+            default_bytes,
+            "the bytes of the file that was there stay"
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(sys.join("nowhere.ini"), profile_path("ghost"))
+                .expect("symlink");
+            assert_eq!(
+                m.create_server_profile(&desktop, "llama.cpp", "ghost", Some(8123)),
+                exists("ghost"),
+                "a dangling link is an entry: the create would write through it"
+            );
+            assert!(
+                !sys.join("nowhere.ini").exists(),
+                "and the link's target was not created"
+            );
+            assert!(
+                std::fs::symlink_metadata(profile_path("ghost"))
+                    .expect("symlink_metadata")
+                    .file_type()
+                    .is_symlink(),
+                "the link itself is still a link"
+            );
+        }
+
+        // The `mut` is only used on unix, where the dangling link's record is
+        // pushed.
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut want = vec![
+            r#"action="create_server_profile" target="big" caller=":1.42" principal=- outcome=ok"#
+                .to_string(),
+            r#"action="create_server_profile" target="zero" caller=":1.42" principal=- outcome=ok"#
+                .to_string(),
+            r#"action="create_server_profile" target="big" caller=":1.42" principal=- outcome="ServerProfileExists""#.to_string(),
+            r#"action="create_server_profile" target="default" caller=":1.42" principal=- outcome="ServerProfileExists""#.to_string(),
+        ];
+        #[cfg(unix)]
+        want.push(
+            r#"action="create_server_profile" target="ghost" caller=":1.42" principal=- outcome="ServerProfileExists""#
+                .to_string(),
+        );
+        assert_eq!(
+            records(&lines),
+            want,
+            "one record per call, the profile as its target"
+        );
+    }
+
+    // ── A create the rules refuses writes nothing, anywhere ───────────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let before = listing();
+        let seed = text_of(INSTANCES_FILE);
+        let long = "t".repeat(33);
+        for (engine, name) in [
+            ("vllm", "fine-name"),
+            ("llama.cpp", "../x"),
+            ("llama.cpp", "X"),
+            ("llama.cpp", "a_b"),
+            ("llama.cpp", ""),
+            ("llama.cpp", long.as_str()),
+        ] {
+            let want = if engine != "llama.cpp" {
+                refused("unknown-engine", engine)
+            } else {
+                refused("server-profile-bad-id", name)
+            };
+            assert_eq!(
+                m.create_server_profile(&desktop, engine, name, Some(8123)),
+                want,
+                "create of engine {engine:?}, profile {name:?}"
+            );
+        }
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "a refused create writes no record"
+        );
+        assert_eq!(listing(), before, "and creates nothing, anywhere");
+        assert!(
+            !sys.join("x.ini").exists() && !dir.path().join("x.ini").exists(),
+            "the name rule holds: `../x` builds no path outside the engine's directory"
+        );
+        let want = vec![
+            r#"action="create_server_profile" target="fine-name" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            r#"action="create_server_profile" target="../x" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            r#"action="create_server_profile" target="X" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            r#"action="create_server_profile" target="a_b" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            r#"action="create_server_profile" target="" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            format!(
+                r#"action="create_server_profile" target="{long}" caller=":1.42" principal=- outcome="Invalid""#
+            ),
+        ];
+        assert_eq!(
+            records(&lines),
+            want,
+            "one record per refused call, both rules as Invalid"
+        );
+    }
+
+    // ── A delete: unused goes, in use stays ───────────────────────────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let default_bytes = bytes_of("server@default.ini");
+
+        assert_eq!(
+            m.delete_server_profile(&desktop, "llama.cpp", "default"),
+            in_use("default", "default"),
+            "the instance whose section names it"
+        );
+        assert_eq!(
+            bytes_of("server@default.ini"),
+            default_bytes,
+            "the file of an in-use profile stays, byte for byte"
+        );
+        assert_eq!(
+            m.delete_server_profile(&desktop, "llama.cpp", "lan-2"),
+            in_use("lan-2", "lan-2"),
+            "the same for the other instance"
+        );
+        assert_eq!(
+            m.delete_server_profile(&desktop, "llama.cpp", "noport"),
+            Ok(()),
+            "a profile no section names"
+        );
+        assert!(!profile_path("noport").exists(), "its file is gone");
+        assert_eq!(
+            m.delete_server_profile(&desktop, "llama.cpp", "gone"),
+            no_profile("gone"),
+            "a section naming a file that is not there: the refusal is about the file"
+        );
+        for name in ["nope", "../x", "X", "a_b", ""] {
+            assert_eq!(
+                m.delete_server_profile(&desktop, "llama.cpp", name),
+                no_profile(name),
+                "a name with no file, and a name the rule refuses, answer the same: {name:?}"
+            );
+        }
+        assert!(
+            profile_path("X").exists(),
+            "a name the rule refuses is refused before the file is looked at"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            SEEDED,
+            "a delete writes no record: a section is left naming a file, never the other way"
+        );
+        let mut want = vec![
+            r#"action="delete_server_profile" target="default" caller=":1.42" principal=- outcome="ServerProfileInUse""#.to_string(),
+            r#"action="delete_server_profile" target="lan-2" caller=":1.42" principal=- outcome="ServerProfileInUse""#.to_string(),
+            r#"action="delete_server_profile" target="noport" caller=":1.42" principal=- outcome=ok"#
+                .to_string(),
+            r#"action="delete_server_profile" target="gone" caller=":1.42" principal=- outcome="NoServerProfile""#.to_string(),
+        ];
+        want.extend(
+            ["nope", "../x", "X", "a_b", ""]
+                .iter()
+                .map(|name| {
+                    format!(
+                        r#"action="delete_server_profile" target="{name}" caller=":1.42" principal=- outcome="NoServerProfile""#
+                    )
+                }),
+        );
+        assert_eq!(records(&lines), want, "one record per call");
+    }
+
+    // ── A profile two sections name: the first of them ────────────────────
+    {
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            "[default]\nServerProfile = shared\n\n[lan-3]\nServerProfile = shared\n",
+        )
+        .expect(INSTANCES_FILE);
+        profile("shared", "[Server]\nPort = 8091\nHostname = 127.0.0.1\n");
+        let m = core(true, FakeActionLog::new());
+        assert_eq!(
+            m.delete_server_profile(&desktop, "llama.cpp", "shared"),
+            in_use("shared", "default"),
+            "refused for the first section that names it"
+        );
+        assert_eq!(
+            m.server_profiles()
+                .iter()
+                .find(|r| r.id == "shared")
+                .and_then(|r| r.instance.clone()),
+            Some("default".to_string()),
+            "and the list names that same section"
+        );
+    }
+
+    // ── A record the manager cannot read is never answered "unused" ───────
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        profile("keepme", "[Server]\nPort = 8092\nHostname = 127.0.0.1\n");
+        let kept = bytes_of("server@keepme.ini");
+        // Bytes that are no text: the read of the record fails, and "no section
+        // names it" would delete a profile a running instance reads.
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            b"[default]\nServerProfile = default\n\xed\xa0\xbf\n",
+        )
+        .expect("broken record");
+        let m = core(true, FakeActionLog::new());
+        let e = m.delete_server_profile(&desktop, "llama.cpp", "keepme");
+        assert!(
+            matches!(e, Err(ManagerError::Io(_))),
+            "the read's own failure, not \"unused\": {e:?}"
+        );
+        assert_eq!(bytes_of("server@keepme.ini"), kept, "the file stays");
+
+        std::fs::remove_file(sys.join(INSTANCES_FILE)).expect("no record");
+        assert_eq!(
+            m.delete_server_profile(&desktop, "llama.cpp", "keepme"),
+            Ok(()),
+            "a record that is not there is no section naming it: the profile is unused"
+        );
+        assert!(!profile_path("keepme").exists(), "and its file goes");
+    }
+
+    // ── A caller without configure, and the `As` form ─────────────────────
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        profile("spare", "[Server]\nPort = 8093\nHostname = 127.0.0.1\n");
+        let spare = bytes_of("server@spare.ini");
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, log);
+        let before = listing();
+        assert_eq!(
+            m.create_server_profile(&desktop, "llama.cpp", "new-one", Some(8123)),
+            Err(ManagerError::NotAuthorized),
+            "a caller the authority refuses for configure"
+        );
+        assert_eq!(
+            m.delete_server_profile(&desktop, "llama.cpp", "spare"),
+            Err(ManagerError::NotAuthorized),
+            "the same for a delete"
+        );
+        // The rows, by name, never a count: this phase's own blocks put files
+        // in the tree, so any absolute number reds on a row a block adds. What
+        // is pinned is the set of names this phase leaves: the profiles it
+        // seeded and kept, the ones its creates wrote (`big`, `zero`, `shared`,
+        // `spare`), `ghost` the dangling link (the list is of entries, as the
+        // create's `symlink_metadata` check is), and `noport` absent, the
+        // profile whose delete landed.
+        let rows = m.server_profiles();
+        let ids = rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>();
+        let mut want = vec![
+            "big", "default", "lan-2", "secret", "shared", "spare", "zero",
+        ];
+        #[cfg(unix)]
+        want.insert(2, "ghost");
+        assert_eq!(
+            ids, want,
+            "the list is answered to a caller the authority refuses for configure, in \
+             full: it is a read, the gate does not shrink it"
+        );
+        assert!(
+            ids.contains(&"spare"),
+            "the profile this block wrote is one of its rows"
+        );
+        assert!(
+            !ids.contains(&"noport"),
+            "the profile an earlier block deleted is not"
+        );
+        assert_eq!(
+            rows,
+            core(true, FakeActionLog::new()).server_profiles(),
+            "the same rows an authorized caller sees: the list is the class of data \
+             Instances answers to anyone, and a fresh log records no read"
+        );
+        assert_eq!(listing(), before, "a refused caller creates nothing");
+        assert_eq!(bytes_of("server@spare.ini"), spare, "and removes nothing");
+        assert_eq!(text_of(INSTANCES_FILE), SEEDED, "and writes no record");
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="create_server_profile" target="new-one" caller=":1.42" principal=- outcome=refused"#.to_string(),
+                r#"action="delete_server_profile" target="spare" caller=":1.42" principal=- outcome=refused"#.to_string(),
+            ],
+            "the guard's refusals are recorded, the read of the list is not"
+        );
+    }
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let vouching = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.create_server_profile(&member, "llama.cpp", "alice-p", Some(8123)),
+            Ok(()),
+            "the bff's account, for a member of `pai`"
+        );
+        assert_eq!(
+            m.delete_server_profile(&member, "llama.cpp", "alice-p"),
+            Ok(()),
+            "and the member's delete of it"
+        );
+        assert_eq!(
+            m.create_server_profile(&outsider, "llama.cpp", "bob-p", Some(8123)),
+            Err(ManagerError::NotAuthorized),
+            "the bff's account, for a caller outside `pai`"
+        );
+        assert_eq!(
+            m.delete_server_profile(&outsider, "llama.cpp", "noport"),
+            Err(ManagerError::NotAuthorized),
+            "the same for a delete"
+        );
+        assert_eq!(
+            m.create_server_profile(&vouching, "llama.cpp", "x", Some(8123)),
+            Err(ManagerError::NotAuthorized),
+            "a caller that is not the bff vouches for nobody"
+        );
+        assert_eq!(
+            m.delete_server_profile(&vouching, "llama.cpp", "lan-2"),
+            Err(ManagerError::NotAuthorized),
+            "and cannot delete through one either"
+        );
+        assert!(
+            !profile_path("bob-p").exists() && !profile_path("x").exists(),
+            "the refused `As` calls created nothing"
+        );
+        // The tree's own profiles survive the refusals, pinned by name, never
+        // by a count of the directory (this phase's blocks write and remove
+        // files): `lan-2` is the target of the refused vouching delete, an
+        // in-use profile of the seeded record; `spare` is a profile the tree
+        // holds that no refused call names.
+        assert!(
+            profile_path("spare").exists() && profile_path("lan-2").exists(),
+            "and removed nothing"
+        );
+        assert!(
+            !profile_path("alice-p").exists(),
+            "the two accepted calls did: the create, then the delete"
+        );
+        let got = records(&lines);
+        assert_eq!(got.len(), 6, "one record per call");
+        for (line, want) in [
+            (
+                got[0].as_str(),
+                r#"action="create_server_profile" target="alice-p" caller=":1.9""#,
+            ),
+            (
+                got[1].as_str(),
+                r#"action="delete_server_profile" target="alice-p" caller=":1.9""#,
+            ),
+            (
+                got[2].as_str(),
+                r#"action="create_server_profile" target="bob-p" caller=":1.9""#,
+            ),
+            (
+                got[3].as_str(),
+                r#"action="delete_server_profile" target="noport" caller=":1.9""#,
+            ),
+            (
+                got[4].as_str(),
+                r#"action="create_server_profile" target="x" caller=":1.42""#,
+            ),
+            (
+                got[5].as_str(),
+                r#"action="delete_server_profile" target="lan-2" caller=":1.42""#,
+            ),
+        ] {
+            assert!(line.starts_with(want), "{line} is not the record of {want}");
+        }
+        assert_eq!(
+            got.iter()
+                .map(|l| l.rsplit_once("outcome=").expect("outcome").1.to_string())
+                .collect::<Vec<_>>(),
+            vec!["ok", "ok", "refused", "refused", "refused", "refused"],
+            "the accepted calls ok, every `As` refusal recorded as refused"
         );
     }
 }

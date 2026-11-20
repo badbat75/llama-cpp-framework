@@ -26,7 +26,9 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// `SetModelProfile`, the assignment verb, and `SetServerProfile`, the switch
 /// of an instance to another server profile, each with its `As` form, and
 /// `Instances`, the list with each instance's tags, and `SetInstanceTags`
-/// with its `As` form; the protocol stays 3, so these verbs are part of 3.
+/// with its `As` form; 3 also carries `CreateServerProfile` and
+/// `DeleteServerProfile`, each with its `As` form, and `ServerProfiles`, the
+/// list of the node's profiles.
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -55,6 +57,13 @@ enum Request {
     SetServerProfile(String, String, Option<Principal>),
     /// `instance`, `tags`: the record's own tags of an instance.
     SetInstanceTags(String, Vec<String>, Option<Principal>),
+    /// `engine`, `profile`, `port`: writes a new server profile (`0` leaves
+    /// the file no `Port` key).
+    CreateServerProfile(String, String, u16, Option<Principal>),
+    /// `engine`, `profile`: removes a server profile no instance points at.
+    DeleteServerProfile(String, String, Option<Principal>),
+    /// Every server profile of the node, with the instance running it.
+    ServerProfiles,
     Authenticate(String, String),
 }
 
@@ -84,6 +93,11 @@ impl Request {
                 .map(|t| t.as_str().map(str::to_string))
                 .collect::<Option<Vec<String>>>()
         };
+        // The port of a create: an integer 0 to 65535, 0 for no port. A
+        // string, a fraction, a sign, a number out of range, or no field, is
+        // no request: the shape of the frame is the frame's rule, what a port
+        // means is the core's.
+        let port = || u16::try_from(v.get("port")?.as_u64()?).ok();
         Some(match method {
             "ListInstances" => Request::ListInstances,
             "Instances" => Request::Instances,
@@ -154,6 +168,28 @@ impl Request {
             "SetInstanceTagsAs" => {
                 Request::SetInstanceTags(arg("instance")?, tags()?, principal().map(Some)?)
             }
+            // The create of a server profile: the engine, the name and the port.
+            "CreateServerProfile" => {
+                Request::CreateServerProfile(arg("engine")?, arg("profile")?, port()?, None)
+            }
+            "CreateServerProfileAs" => Request::CreateServerProfile(
+                arg("engine")?,
+                arg("profile")?,
+                port()?,
+                principal().map(Some)?,
+            ),
+            // Its removal.
+            "DeleteServerProfile" => {
+                Request::DeleteServerProfile(arg("engine")?, arg("profile")?, None)
+            }
+            "DeleteServerProfileAs" => Request::DeleteServerProfile(
+                arg("engine")?,
+                arg("profile")?,
+                principal().map(Some)?,
+            ),
+            // The list, like `Instances`, with no `As` form: it is answered to
+            // any caller.
+            "ServerProfiles" => Request::ServerProfiles,
             "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
@@ -244,6 +280,37 @@ where
         Request::SetInstanceTags(instance, tags, principal) => requester(caller, principal)
             .and_then(|who| manager.set_instance_tags(&who, &instance, &tags))
             .map(|()| Value::Null),
+        // A new server profile. The port travels as an integer and 0 is no
+        // port, so the file the core writes carries no `Port` key.
+        Request::CreateServerProfile(engine, profile, port, principal) => {
+            requester(caller, principal)
+                .and_then(|who| {
+                    manager.create_server_profile(
+                        &who,
+                        &engine,
+                        &profile,
+                        (port != 0).then_some(port),
+                    )
+                })
+                .map(|()| Value::Null)
+        }
+        // Its removal.
+        Request::DeleteServerProfile(engine, profile, principal) => requester(caller, principal)
+            .and_then(|who| manager.delete_server_profile(&who, &engine, &profile))
+            .map(|()| Value::Null),
+        // One object per server profile, the instance that runs it the empty
+        // string when no instance does: the same answer the bus gives.
+        Request::ServerProfiles => Ok(json!(manager
+            .server_profiles()
+            .iter()
+            .map(|p| json!({
+                "id": p.id,
+                "engine": p.engine,
+                "port": p.port,
+                "tags": p.tags,
+                "instance": p.instance.clone().unwrap_or_default(),
+            }))
+            .collect::<Vec<_>>())),
         // The empty caller too goes to the core, which answers only the bff.
         Request::Authenticate(user, password) => manager
             .authenticate(caller, &user, &password)
@@ -998,6 +1065,196 @@ mod tests {
         }
     }
 
+    /// A rule's refusal as the wire carries it: the key, then its values.
+    fn refusal(key: &'static str, values: &[&str]) -> String {
+        pai_core::checks::Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }
+        .encode()
+    }
+
+    /// Creating and deleting a server profile ask `configure` as every write of
+    /// a served file does; a caller the authority refuses is answered
+    /// NotAuthorized with nothing done. The names here are all ones the core
+    /// refuses before it resolves a path, so nothing reaches `paths::` (this
+    /// unit test does not redirect the data root).
+    #[test]
+    fn the_server_profile_create_and_delete_ask_configure_and_a_refused_caller_changes_nothing() {
+        let c = core(false);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": 8123}),
+                json!({"method": "DeleteServerProfile", "engine": "llama.cpp", "profile": "big"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("NotAuthorized", "NotAuthorized"),
+                error("NotAuthorized", "NotAuthorized")
+            ]
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// The refusals of the two verbs, over the wire: the engine the manager
+    /// does not serve and a name that is no profile, each with its own key
+    /// encoded as every `Invalid` reply is; a name with no file, and a bad
+    /// name on a delete, answer `NoServerProfile` with the name.
+    #[test]
+    fn the_server_profile_verbs_answer_the_rules_refusals() {
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "CreateServerProfile", "engine": "vllm", "profile": "fine", "port": 8123}),
+                json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "../x", "port": 8123}),
+                json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "X", "port": 8123}),
+                json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "a_b", "port": 8123}),
+                json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "", "port": 8123}),
+                json!({"method": "DeleteServerProfile", "engine": "vllm", "profile": "fine"}),
+                json!({"method": "DeleteServerProfile", "engine": "llama.cpp", "profile": "../x"}),
+                json!({"method": "DeleteServerProfile", "engine": "llama.cpp", "profile": "nope"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("Invalid", &refusal("unknown-engine", &["vllm"])),
+                error("Invalid", &refusal("server-profile-bad-id", &["../x"])),
+                error("Invalid", &refusal("server-profile-bad-id", &["X"])),
+                error("Invalid", &refusal("server-profile-bad-id", &["a_b"])),
+                error("Invalid", &refusal("server-profile-bad-id", &[""])),
+                error("Invalid", &refusal("unknown-engine", &["vllm"])),
+                error("NoServerProfile", "../x"),
+                error("NoServerProfile", "nope"),
+            ],
+            "the engine, then the name, both as the check's key; a name with no file \
+             is the profile that is not there"
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 8]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `engine`, `profile` and `port` are all required and of their own types:
+    /// `port` is an integer 0 to 65535, so a string, a fraction, a sign, a
+    /// number out of range, a missing field, a principal that disagrees with
+    /// the `As` spelling, or a method spelled otherwise, is no request.
+    #[test]
+    fn a_malformed_server_profile_create_request_is_a_bad_request() {
+        for body in [
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big"}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "port": 8123}),
+            json!({"method": "CreateServerProfile", "profile": "big", "port": 8123}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": "8123"}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": null}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": 8123.5}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": true}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": []}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": 65536}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": -1}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": 4294967296i64}),
+            json!({"method": "CreateServerProfile", "engine": 5, "profile": "big", "port": 8123}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": 5, "port": 8123}),
+            json!({"method": "CreateServerProfileAs", "principal": "alice", "engine": "llama.cpp", "profile": "big"}),
+            json!({"method": "CreateServerProfileAs", "engine": "llama.cpp", "profile": "big", "port": 8123}),
+            json!({"method": "CreateServerProfile", "principal": "alice", "engine": "llama.cpp", "profile": "big", "port": 8123}),
+            json!({"method": "createServerProfile", "engine": "llama.cpp", "profile": "big", "port": 8123}),
+            json!({"method": "CreateServerProfiles", "engine": "llama.cpp", "profile": "big", "port": 8123}),
+            json!({"method": "DeleteServerProfile", "engine": "llama.cpp"}),
+            json!({"method": "DeleteServerProfile", "profile": "nope"}),
+            json!({"method": "DeleteServerProfile", "engine": "llama.cpp", "profile": 5}),
+            json!({"method": "DeleteServerProfileAs", "principal": "alice", "engine": "llama.cpp"}),
+            json!({"method": "DeleteServerProfile", "engine": "llama.cpp", "profile": "nope", "principal": "alice"}),
+            json!({"method": "DeleteServerProfileAs", "engine": "llama.cpp", "profile": "nope"}),
+            json!({"method": "ServerProfilesAs", "principal": "alice"}),
+        ] {
+            let c = core(true);
+            let (result, replies) = serve(&c, alice(), requests(std::slice::from_ref(&body)));
+            assert!(result.is_err(), "{body}");
+            assert_eq!(replies.len(), 1, "{body}: {replies:?}");
+            assert_bad_request(&replies[0], &body.to_string());
+            assert_eq!(asked(&c), vec![], "{body}");
+            assert_eq!(calls(&c), vec![], "{body}");
+        }
+    }
+
+    /// The edges of the port are requests, not refusals of the frame: 0 (no
+    /// port) and 65535 reach the core, which here answers the name it was
+    /// given, before any path.
+    #[test]
+    fn the_ports_edges_are_a_request() {
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "X", "port": 0}),
+                json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "X", "port": 65535}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![error("Invalid", &refusal("server-profile-bad-id", &["X"])); 2],
+            "not BadRequest: the frame is well formed, the name is the core's to refuse"
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 2]);
+    }
+
+    /// The `As` forms carry the principal and run for the bff's account alone:
+    /// a member's call reaches the core's own checks, a principal outside `pai`
+    /// is refused, the membership asked for the name sent, polkit never asked.
+    #[test]
+    fn the_server_profile_crud_as_forms_act_for_the_principal() {
+        let (c, admins) = principal_core(FakePasswords::new());
+        let (result, replies) = serve(
+            &c,
+            bff(),
+            requests(&[
+                json!({"method": "CreateServerProfileAs", "principal": "alice", "engine": "llama.cpp", "profile": "../x", "port": 8123}),
+                json!({"method": "DeleteServerProfileAs", "principal": "alice", "engine": "llama.cpp", "profile": "../x"}),
+                json!({"method": "CreateServerProfileAs", "principal": "bob", "engine": "llama.cpp", "profile": "../x", "port": 8123}),
+                json!({"method": "DeleteServerProfileAs", "principal": "bob", "engine": "llama.cpp", "profile": "../x"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("Invalid", &refusal("server-profile-bad-id", &["../x"])),
+                error("NoServerProfile", "../x"),
+                error("NotAuthorized", "NotAuthorized"),
+                error("NotAuthorized", "NotAuthorized"),
+            ],
+            "a member reaches the core's own checks, a caller outside `pai` is refused"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            vec![
+                "alice".to_string(),
+                "alice".into(),
+                "bob".into(),
+                "bob".into()
+            ],
+            "the membership of the name the request vouches for, once per call"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "polkit asked, so the call ran as the bff's own, not for the principal"
+        );
+        assert_eq!(asked_bff(&c), vec![bff(); 4]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
     /// The raw replies, as pinned in `pai_core::client::pipe`'s header:
     /// requests on one connection answered in order.
     #[test]
@@ -1114,6 +1371,10 @@ mod tests {
                 ManagerError::ServerProfileInUse("lan 2 (café)".into(), "lan-2".into()),
                 "ServerProfileInUse",
             ),
+            (
+                ManagerError::ServerProfileExists("big café".into()),
+                "ServerProfileExists",
+            ),
         ]
     }
 
@@ -1135,6 +1396,7 @@ mod tests {
                 ManagerError::ServerProfileInUse(n, id) => {
                     ClientError::ServerProfileInUse(n.clone(), id.clone())
                 }
+                ManagerError::ServerProfileExists(n) => ClientError::ServerProfileExists(n.clone()),
                 ManagerError::UnresolvableHost(h) => ClientError::UnresolvableHost(h.clone()),
                 ManagerError::Service(s) => ClientError::Service(s.0.clone()),
                 ManagerError::Io(k) => ClientError::Io(k.to_string()),
@@ -1335,6 +1597,8 @@ mod tests {
                 json!({"method": "WriteFileAs", "principal": "alice", "name": "server.ini", "contents": "x", "keep_api_key": false}),
                 json!({"method": "WriteFileIfAs", "principal": "alice", "name": "server.ini", "contents": "x", "expected": ""}),
                 json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "../x", "profile": "big"}),
+                json!({"method": "CreateServerProfileAs", "principal": "alice", "engine": "llama.cpp", "profile": "../x", "port": 8123}),
+                json!({"method": "DeleteServerProfileAs", "principal": "alice", "engine": "llama.cpp", "profile": "../x"}),
             ]),
         );
         assert!(result.is_ok(), "{result:?}");
@@ -1347,12 +1611,14 @@ mod tests {
                 error("BadFileName", "BadFileName"),
                 error("BadFileName", "BadFileName"),
                 error("InvalidId", "InvalidId"),
+                error("Invalid", &refusal("server-profile-bad-id", &["../x"])),
+                error("NoServerProfile", "../x"),
             ]
         );
         assert_eq!(calls(&c), vec![Call::Stop("default".into())]);
         assert_eq!(
             asked_admin(&admins),
-            vec!["alice".to_string(); 6],
+            vec!["alice".to_string(); 8],
             "the membership of the name the request vouches for, once per call"
         );
         assert_eq!(
@@ -1360,7 +1626,7 @@ mod tests {
             vec![],
             "polkit asked, so the call ran as the bff's own, not for the principal"
         );
-        assert_eq!(asked_bff(&c), vec![bff(); 6]);
+        assert_eq!(asked_bff(&c), vec![bff(); 8]);
     }
 
     /// A caller that is not the bff naming a principal: NotAuthorized for
@@ -1371,7 +1637,7 @@ mod tests {
     fn an_as_method_from_a_caller_that_is_not_the_bff_is_refused_unasked() {
         for caller in [alice(), Caller("S-1-5-18".into()), Caller(String::new())] {
             let (c, admins) = principal_core(FakePasswords::new());
-            let mut expected = vec![error("NotAuthorized", "NotAuthorized"); 8];
+            let mut expected = vec![error("NotAuthorized", "NotAuthorized"); 10];
             expected.push(json!({"ok": "active"}));
             let (result, replies) = serve(
                 &c,
@@ -1385,6 +1651,8 @@ mod tests {
                     json!({"method": "WriteFileIfAs", "principal": "alice", "name": "models.ini", "contents": "", "expected": ""}),
                     json!({"method": "SetBootEnabledAs", "principal": "alice", "id": "default", "enabled": true}),
                     json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "default", "profile": "big"}),
+                    json!({"method": "CreateServerProfileAs", "principal": "alice", "engine": "llama.cpp", "profile": "big", "port": 8123}),
+                    json!({"method": "DeleteServerProfileAs", "principal": "alice", "engine": "llama.cpp", "profile": "big"}),
                     json!({"method": "Status", "id": "default"}),
                 ]),
             );
@@ -1411,7 +1679,7 @@ mod tests {
             if !caller.0.is_empty() {
                 assert_eq!(
                     asked_bff(&c),
-                    vec![caller.clone(); 8],
+                    vec![caller.clone(); 10],
                     "{caller:?}: the caller is checked first, once per call"
                 );
             }
@@ -1432,17 +1700,19 @@ mod tests {
                     json!({"method": "StopAs", "principal": user, "id": "default"}),
                     json!({"method": "SetBootEnabledAs", "principal": user, "id": "../x", "enabled": true}),
                     json!({"method": "WriteFileIfAs", "principal": user, "name": "server.ini", "contents": "x", "expected": ""}),
+                    json!({"method": "CreateServerProfileAs", "principal": user, "engine": "llama.cpp", "profile": "big", "port": 8123}),
+                    json!({"method": "DeleteServerProfileAs", "principal": user, "engine": "llama.cpp", "profile": "big"}),
                 ]),
             );
             assert!(result.is_ok(), "{user}: {result:?}");
             assert_eq!(
                 replies,
-                vec![error("NotAuthorized", "NotAuthorized"); 3],
+                vec![error("NotAuthorized", "NotAuthorized"); 5],
                 "{user}"
             );
             assert_eq!(
                 asked_admin(&admins),
-                vec![user.to_string(); 3],
+                vec![user.to_string(); 5],
                 "{user}: the membership asked for the name sent"
             );
             assert_eq!(asked(&c), vec![], "{user}: polkit asked");
@@ -1484,6 +1754,13 @@ mod tests {
             json!({"method": "SetServerProfileAs", "principal": "alice", "instance": "default"}),
             json!({"method": "SetServerProfileAs", "principal": 5, "instance": "default", "profile": "big"}),
             json!({"method": "SetServerProfileAs", "principal": null, "instance": "default", "profile": "big"}),
+            json!({"method": "CreateServerProfileAs", "principal": "alice", "engine": "llama.cpp", "profile": "big"}),
+            json!({"method": "CreateServerProfileAs", "engine": "llama.cpp", "profile": "big", "port": 8123}),
+            json!({"method": "CreateServerProfileAs", "principal": 5, "engine": "llama.cpp", "profile": "big", "port": 8123}),
+            json!({"method": "CreateServerProfileAs", "principal": null, "engine": "llama.cpp", "profile": "big", "port": 8123}),
+            json!({"method": "DeleteServerProfileAs", "principal": "alice", "engine": "llama.cpp"}),
+            json!({"method": "DeleteServerProfileAs", "engine": "llama.cpp", "profile": "big"}),
+            json!({"method": "DeleteServerProfileAs", "principal": 5, "engine": "llama.cpp", "profile": "big"}),
             // The name says it carries a principal: the plain spelling is
             // unknown with one, and the `As` spelling is unknown without.
             json!({"method": "startAs", "principal": "alice", "id": "default"}),
@@ -1521,6 +1798,9 @@ mod tests {
             json!({"method": "BootEnabled", "id": "default", "principal": "alice"}),
             json!({"method": "SetBootEnabled", "id": "default", "enabled": true, "principal": "alice"}),
             json!({"method": "SetServerProfile", "instance": "default", "profile": "big", "principal": "alice"}),
+            json!({"method": "CreateServerProfile", "engine": "llama.cpp", "profile": "big", "port": 8123, "principal": "alice"}),
+            json!({"method": "DeleteServerProfile", "engine": "llama.cpp", "profile": "big", "principal": "alice"}),
+            json!({"method": "ServerProfiles", "principal": "alice"}),
             json!({"method": "Authenticate", "user": "alice", "password": "s3cret-Pw", "principal": "alice"}),
             json!({"method": "Version", "principal": "alice"}),
             json!({"method": "Start", "id": "default", "principal": 5}),

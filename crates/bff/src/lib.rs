@@ -9,6 +9,7 @@ pub mod node;
 mod origin;
 pub mod serve;
 mod server;
+mod server_profiles;
 pub mod session;
 
 use pai_core::client::ClientError;
@@ -144,7 +145,9 @@ pub(crate) fn router_with(
 /// The routes of [`router_with`] plus the session routes, signing in
 /// through `auth` and reading the time from `clock`, and those that need a
 /// session: `GET /api/instances/{id}/server` and its save
-/// `PUT /api/instances/{id}/server`, the control verbs
+/// `PUT /api/instances/{id}/server`, the server profile pool
+/// (`GET`/`POST /api/profiles/server`, the document, the save and the delete at
+/// `/api/profiles/server/{id}`, `server_profiles::routes`), the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}` and the boot write
 /// `PUT /api/instances/{id}/boot`, the instance's tags
 /// `PUT /api/instances/{id}/tags`, the model-profile list
@@ -318,6 +321,13 @@ fn router_with_policy(
             "/api/instances/{id}/server",
             axum::routing::get(read).put(save),
         )
+        .merge(server_profiles::routes(
+            connect.clone(),
+            timeout,
+            write_timeout,
+            sessions.clone(),
+            key,
+        ))
         .route("/api/profiles/model", axum::routing::get(model_profiles))
         .route(
             "/api/profiles/model/{id}",
