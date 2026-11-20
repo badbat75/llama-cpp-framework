@@ -550,8 +550,9 @@ Each is one React component, reused by every page.
   each way, [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)) and its State badge, which
   wraps under the id when the row is narrow; the engine line when it tells instances apart; and for
   a signed-in visitor a `dl.tile-facts` as the last child, one `div` per fact (`dt` in `--muted`,
-  `dd` at weight 600 with no margin, label and value at the two ends, wrapping onto two lines when
-  narrow, a 1px `--line` hairline above as decoration). The facts, in order: Port, Tags (T1:
+  `dd` at weight 600 with no margin and `overflow-wrap: anywhere` (a flex item: a 32-character tag
+  would otherwise push the tile out at 320 px, T1 review), label and value at the two ends, wrapping
+  onto two lines when narrow, a 1px `--line` hairline above as decoration). The facts, in order: Port, Tags (T1:
   from the list itself, so shown at once; no row for port 0 or no tags) and Start at boot
   ("On" / "Off", words, never colour alone), read once per tile when it mounts; no row while the
   read is pending or after any failure, no `dl` when no fact has a row, and nothing announced when rows appear. Rows arriving after

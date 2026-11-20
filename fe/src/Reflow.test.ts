@@ -160,11 +160,12 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
   ).toBe('break-word')
   // The whole sheet: the rules that set overflow-wrap, with their value. The
   // twelve of H1a, H5a, H6a, H8a, H9a and 2d keep theirs (an element's own
-  // declaration beats the inherited one, whatever the specificity), and
-  // R1.2 adds the notice. A thirteenth is a break the brief did not ask for.
+  // declaration beats the inherited one, whatever the specificity), R1.2 adds
+  // the notice and brief 12 section 3 adds the tile's facts. A rule beside
+  // these that sets it is a break no brief asked for.
   expect(
     sets('overflow-wrap'),
-    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, the rest are unchanged',
+    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, the rest are unchanged',
   ).toEqual(
     [
       'body = break-word',
@@ -177,6 +178,7 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
       '.model-profiles th = normal',
       '.model-profiles td:nth-child(2) = normal',
       '.tile-id = anywhere',
+      '.tile-facts dd = anywhere',
       '.model-profile-summary = anywhere',
       '.jump ul button = anywhere',
       '.full-value = anywhere',
@@ -356,14 +358,17 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 
 // ── R1.8: nothing else ────────────────────────────────────────────────────
 
-// Every class the stylesheet selects today, sorted, in the sheet's own words.
-// R1.8 allows exactly one new one: table-scroll.
+// Every class the stylesheet selects, sorted, in the sheet's own words. R1.8
+// froze the list at one new class, table-scroll; brief 12 section 3 (the T1
+// review, 2026-11-20) amended that freeze with exactly six more: port,
+// tags-profile, tags-save, tags-status, tags-alert, tags-sign-in. A class
+// beside these is a look no brief asked for.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skip-link stacked subgroup theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skip-link stacked subgroup tags-alert tags-profile tags-save tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden`.split(
     /\s+/,
   )
 
-test('10 R1.8: the only class the stylesheet gains is table-scroll, and the only id a selector names is the mount point #root', () => {
+test('10 R1.8 (as brief 12 section 3 amends it): the classes the sheet gains are table-scroll and the six of brief 12, and the only id a selector names is the mount point #root', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -373,10 +378,29 @@ test('10 R1.8: the only class the stylesheet gains is table-scroll, and the only
     }
   expect(
     [...used].sort(),
-    'the classes of the sheet, with table-scroll added and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
+    'the classes of the sheet, with table-scroll and the six of brief 12 section 3 added and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(
     [...ids].sort(),
     'no rule selects an element by an id, beside the #root the app mounts on (R1.8)',
   ).toEqual(['#root'])
+})
+
+// ── 12 T1 layout: the tile's facts break (brief 12 section 3, T1 review) ───
+
+test('12 T1 layout (brief 12 section 3): .tile-facts dd declares overflow-wrap: anywhere, keeping its margin and weight', () => {
+  // The facts of a tile are flex items, and a flex item keeps its longest word
+  // as its minimum width under the inherited break-word, so a 32-character tag
+  // scrolled the Overview sideways at 320 px. The same rule as R1.2's notice,
+  // for the same reason (CSS Text 3, overflow-wrap).
+  declares(
+    topBy('.tile-facts dd', "the value of a tile's fact"),
+    'the tile fact value',
+    [
+      ['margin', '0'],
+      ['font-weight', '600'],
+      ['overflow-wrap', 'anywhere'],
+    ],
+    'the two of H6b.6 plus the break brief 12 section 3 asks for: no min-width and no flex property, the break is what lowers the item (.tile-id already carries min-width: 0, this is the value cell)',
+  )
 })

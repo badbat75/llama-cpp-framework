@@ -8,20 +8,26 @@ import {
   useId,
   useRef,
   useState,
+  type FormEvent,
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Dialog from './Dialog.tsx'
-import { CheckboxField, GroupField } from './Field.tsx'
+import { CheckboxField, GroupField, TextField } from './Field.tsx'
 import { Icon, type IconName } from './Icon.tsx'
 import {
   errorText,
+  sameTags,
+  tagsFrom,
+  writeTags,
   type Answer,
   type Instance,
   type InstancesStore,
+  type TagsRefusal,
 } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
+import { useWarnOnLeave } from './SaveBar.tsx'
 import type { Runs } from './ServerForm.tsx'
 import ServerSection, { InstanceNotFound } from './ServerSection.tsx'
 import type { Session, SignedOut } from './session.ts'
@@ -147,6 +153,39 @@ function failureText(id: string, key: string): string {
   }
 }
 
+/** The text of a refusal the tags route answered (12 T1.9, T1.10): the 422 of
+ * the rule is the field's error, a key the contract has a text for its own
+ * text, a 422 with a key nobody knows `api-other` with that key, and anything
+ * else a request that did not go through. */
+function refusalText(id: string, refusal: TagsRefusal): string {
+  const { key, args, status } = refusal
+  switch (key) {
+    case 'server-bad-tags':
+      return t('api-server-bad-tags', ...args)
+    case 'client-not-authorized':
+      return t('api-client-not-authorized')
+    case 'client-no-instance':
+      return t('instance-not-found', args[0] ?? id)
+    case 'client-unavailable':
+      return t('api-client-unavailable')
+    default:
+      return status === 422 ? t('api-other', key) : t('request-failed')
+  }
+}
+
+/** The text of the tags field's alert when the answer is not a refusal body:
+ * an ended session asks for a sign-in (12 T1.10, T1.11). */
+function alertText(key: string): string {
+  switch (key) {
+    case 'signed-out':
+      return t('session-ended-retry')
+    case 'revoked':
+      return t('session-revoked')
+    default:
+      return t('request-failed')
+  }
+}
+
 /** This page's instance in a successful answer, undefined otherwise. */
 function find(answer: Answer, id: string): Instance | undefined {
   return Array.isArray(answer) ? answer.find((i) => i.id === id) : undefined
@@ -183,17 +222,23 @@ export default function InstancePage({
     null,
   )
   // The Sign in whose dialog is open (43a, 45e).
-  const [asking, setAsking] = useState<'run' | 'boot' | null>(null)
+  const [asking, setAsking] = useState<'run' | 'boot' | 'tags' | null>(null)
   const [runs, setRuns] = useState<Runs>({ started: 0, settled: 0 })
-  // Sign-ins in the page's dialogs (43b): the Server section is read again
-  // (remounted) after each one as another session.
+  // Sign-ins in the page's dialogs (43b): after each one as another session,
+  // the Server section and the tags field are remounted (each keyed by
+  // `rereads`), so both show what the page reads for the new session.
   const [signIns, setSignIns] = useState({
     rereads: 0,
     dropped: false,
     kept: 0,
   })
   const clicked = useRef<Action>('start')
+  // The page's unsaved changes: the Server form's and the tags field's (12
+  // T1.13): leaving asks for either, and a sign-in that drops them is what
+  // `renewed` reports (43b).
   const dirty = useRef(false)
+  const serverDirty = useRef(false)
+  const tagsDirty = useRef(false)
 
   useEffect(() => {
     let live = true
@@ -270,13 +315,38 @@ export default function InstancePage({
     }
   }, [next, store, id])
 
-  const trackDirty = useCallback(
-    (d: boolean) => {
-      dirty.current = d
-      onDirty(d)
+  /** One section's unsaved changes: the page is dirty while either the Server
+   * form or the tags field has any (12 T1.13), and the app hears about it only
+   * when the page's own state changes. The Server form arms the browser's own
+   * ask for itself, so the page arms it for the tags: one section, one
+   * listener. */
+  const [warnTags, setWarnTags] = useState(false)
+  useWarnOnLeave(warnTags)
+  const report = useCallback(
+    (section: 'server' | 'tags', d: boolean) => {
+      if (section === 'server') serverDirty.current = d
+      else {
+        tagsDirty.current = d
+        setWarnTags(d)
+      }
+      const any = serverDirty.current || tagsDirty.current
+      if (dirty.current === any) return
+      dirty.current = any
+      onDirty(any)
     },
     [onDirty],
   )
+  const trackServer = useCallback((d: boolean) => report('server', d), [report])
+  const trackTags = useCallback((d: boolean) => report('tags', d), [report])
+
+  /** A save wrote the tags: the page reads the list again, so the profile
+   * line, the nav and the Overview follow the file (12 T1.8). */
+  const reread = useCallback(() => {
+    store.fresh().then((a) => {
+      const found = find(a, id)
+      if (found !== undefined) setInstance(found)
+    })
+  }, [store, id])
 
   const inactive = (action: Action) =>
     busy !== null ||
@@ -325,7 +395,12 @@ export default function InstancePage({
   function closeAsking() {
     const from = asking
     flushSync(() => setAsking(null))
-    const signIn = from === 'boot' ? `${uid}-boot-sign-in` : `${uid}-sign-in`
+    const signIn =
+      from === 'boot'
+        ? `${uid}-boot-sign-in`
+        : from === 'tags'
+          ? `${uid}-tags-sign-in`
+          : `${uid}-sign-in`
     document.getElementById(signIn)?.focus()
   }
 
@@ -334,8 +409,14 @@ export default function InstancePage({
     const kept = renewed(session)
     flushSync(() => setAsking(null))
     if (!kept) return
+    // Back on the control the sign-in answers for: the run button that was
+    // clicked, Start at boot's checkbox, the tags field's Save tags (12 T1.11).
     const control =
-      from === 'boot' ? `${uid}-boot-control` : `${uid}-${clicked.current}`
+      from === 'boot'
+        ? `${uid}-boot-control`
+        : from === 'tags'
+          ? `${uid}-tags-save`
+          : `${uid}-${clicked.current}`
     document.getElementById(control)?.focus()
   }
 
@@ -347,6 +428,11 @@ export default function InstancePage({
           <>
             <div className="instance-header">
               <p className="engine">{t('instance-engine', instance.engine)}</p>
+              {instance.port > 0 && (
+                <p className="port">
+                  {t('instance-port', String(instance.port))}
+                </p>
+              )}
               <p>
                 <StateShape state={instance.state} />
                 {t('instance-state', stateLabel(instance.state))}
@@ -391,6 +477,16 @@ export default function InstancePage({
                 onSignIn={() => setAsking('boot')}
               />
             </div>
+            <TagsField
+              key={`tags-${signIns.rereads}`}
+              id={id}
+              fieldId={`${uid}-tags`}
+              instance={instance}
+              renewals={signIns.rereads + signIns.kept}
+              onSignIn={() => setAsking('tags')}
+              onSaved={reread}
+              onDirty={trackTags}
+            />
             <ServerSection
               key={signIns.rereads}
               id={id}
@@ -399,7 +495,7 @@ export default function InstancePage({
               runs={runs}
               onSignedOut={onSignedOut}
               onRenewed={renewed}
-              onDirty={trackDirty}
+              onDirty={trackServer}
             />
           </>
         )}
@@ -613,5 +709,191 @@ function Boot({
         </button>
       )}
     </CheckboxField>
+  )
+}
+
+/**
+ * The instance's own tags (fe/briefs/12-instance-tags.md, 12 T1.5 to T1.14):
+ * one text box, outside the Server form, in a `form` of its own: Save tags or
+ * Enter writes it with `PUT /api/instances/<id>/tags`. The box is the user's:
+ * filled by the first read of the page, never rewritten by a poll or by the
+ * answer of a save; only the profile line follows the reads. The page keys it
+ * by its sign-ins, so a sign-in as another account mounts a box holding the
+ * tags of the read (12 T1.11). Its controls are
+ * `<fieldId>-control`, `<fieldId>-save` and `<fieldId>-sign-in`.
+ */
+function TagsField({
+  id,
+  fieldId,
+  instance,
+  renewals,
+  onSignIn,
+  onSaved,
+  onDirty,
+}: {
+  id: string
+  fieldId: string
+  /** The instance as the page last read it: its own tags, and the union. */
+  instance: Instance
+  /** Raised by every sign-in that kept the page: a session alert goes. */
+  renewals: number
+  onSignIn: () => void
+  /** Raised after a 204: the page reads the list again. */
+  onSaved: () => void
+  /** Whether the box holds a list other than the one read or last saved. */
+  onDirty: (dirty: boolean) => void
+}) {
+  // The box's text: null while nothing was typed, so the box holds the list
+  // the page opened with (T1.12).
+  const [text, setText] = useState<string | null>(null)
+  // The list of the read that opened the page, latched at mounting: the box is
+  // filled from it and no later read rewrites it (decision 7, T1.12).
+  const [base] = useState(() => instance.instanceTags.join(', '))
+  // The list a 204 wrote, null while nothing has been saved on this page.
+  const [saved, setSaved] = useState<string[] | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState('')
+  // The 422 of the rule, under the box; one keystroke clears it.
+  const [error, setError] = useState<string | undefined>(undefined)
+  const [stored, setAlert] = useState<{
+    text: string
+    signIn: boolean
+    at: number
+  } | null>(null)
+  const alert = stored?.signIn && stored.at !== renewals ? null : stored
+  const value = text ?? base
+  // The tags the profile brings: the union's ones that are not in the list
+  // this read reports (T1.5), in their order.
+  const profile = instance.tags.filter(
+    (tag) => !instance.instanceTags.includes(tag),
+  )
+
+  // The tags are unsaved while the box, split as the manager reads it, differs
+  // from the list read at opening or last saved with a 204, so `v2,gpu` is
+  // `v2, gpu` (12 T1.13). It is said at once, in the turn that changed it:
+  // the page's guard for leaving is the app's (38), and an answer that lands
+  // outside a render has to reach it before the answer is over. Null while
+  // nothing has been said, so the mounting says it too: the page remounts the
+  // field at a sign-in as another account (12 T1.11), and the box it fills
+  // from the read is clean.
+  const reported = useRef<boolean | null>(null)
+  const report = useCallback(
+    (text: string, savedList: string[] | null) => {
+      const d = !sameTags(tagsFrom(text), savedList ?? tagsFrom(base))
+      if (reported.current === d) return
+      reported.current = d
+      onDirty(d)
+    },
+    [base, onDirty],
+  )
+
+  // What the box holds and what a 204 wrote are all the judgement reads: the
+  // list of the opening read is latched, so a page read moves nothing, and the
+  // box of a field nobody typed in is the list it was filled with (T1.12).
+  useEffect(() => {
+    report(value, saved)
+  }, [value, saved, report])
+
+  // Read by a send's answer: the sign-in count when the answer arrives (43b).
+  const renewalsNow = useRef(renewals)
+  useEffect(() => {
+    renewalsNow.current = renewals
+  }, [renewals])
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (saving) return
+    const tags = tagsFrom(value)
+    setError(undefined)
+    setAlert(null)
+    setStatus(t('instance-tags-saving'))
+    setSaving(true)
+    const result = await writeTags(id, tags)
+    if (typeof result === 'object' && result.key === 'server-bad-tags') {
+      // The rule's refusal is the field's error, and the focus goes to the box
+      // the error describes (12 T1.9). The answer's state lands at once: the
+      // page's unsaved changes are what the answer left, and the app hears
+      // about them in the same turn.
+      flushSync(() => {
+        setSaving(false)
+        setStatus('')
+        setError(refusalText(id, result))
+      })
+      document.getElementById(`${fieldId}-control`)?.focus()
+      return
+    }
+    if (result === 'saved') {
+      // The list written is the box's own from now on, so the tags are saved
+      // and the page's unsaved changes go with them (12 T1.14).
+      flushSync(() => {
+        setSaving(false)
+        setStatus(t('instance-tags-saved'))
+        setSaved(tags)
+        report(tags.join(', '), tags)
+      })
+      onSaved()
+      return
+    }
+    flushSync(() => {
+      setSaving(false)
+      setStatus('')
+      setAlert({
+        text:
+          typeof result === 'object'
+            ? refusalText(id, result)
+            : alertText(result),
+        signIn: result === 'signed-out' || result === 'revoked',
+        at: renewalsNow.current,
+      })
+    })
+  }
+
+  return (
+    <form onSubmit={(e) => void submit(e)}>
+      <TextField
+        id={fieldId}
+        label={t('instance-tags-own')}
+        hint={t('instance-tags-hint')}
+        placeholder=""
+        value={value}
+        error={error}
+        onChange={(v) => {
+          setText(v)
+          setError(undefined)
+          report(v, saved)
+        }}
+      />
+      {profile.length > 0 && (
+        <p className="tags-profile muted">
+          {t('instance-tags-profile', profile.join(', '))}
+        </p>
+      )}
+      <button
+        id={`${fieldId}-save`}
+        type="submit"
+        className="secondary tags-save"
+        aria-disabled={saving || undefined}
+      >
+        {t('instance-tags-save')}
+      </button>
+      <p role="status" className="tags-status">
+        {status}
+      </p>
+      {alert !== null && (
+        <p role="alert" className="tags-alert">
+          {alert.text}
+        </p>
+      )}
+      {alert?.signIn && (
+        <button
+          id={`${fieldId}-sign-in`}
+          type="button"
+          className="secondary tags-sign-in"
+          onClick={onSignIn}
+        >
+          {t('session-sign-in')}
+        </button>
+      )}
+    </form>
   )
 }

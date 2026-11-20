@@ -2375,6 +2375,14 @@ test('1b 6: Tab reaches the run buttons, Start at boot, the enabled controls fie
     ['Restart', run('run-restart')],
     ['About Start at boot', about(en('boot-label'))],
     ['Start at boot', check(main, en('boot-label'), en('boot-toggle'))],
+    // fe/briefs/12-instance-tags.md, section 5: the Instance tags form follows
+    // Start at boot: its About toggle, the textbox, Save tags.
+    ['About Instance tags', about(en('instance-tags-own'))],
+    [
+      'Instance tags',
+      within(main).getByRole('textbox', { name: en('instance-tags-own') }),
+    ],
+    ['Save tags', run('instance-tags-save')],
     ['About Port', about('Port')],
     ['Port default', check(main, 'Port', en('field-default'))],
     ['Port', box(main, 'Port')],

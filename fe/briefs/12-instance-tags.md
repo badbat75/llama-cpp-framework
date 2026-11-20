@@ -113,6 +113,13 @@ existing keys (criterion 10). No other key is added or changed.
 - **320 px**: the input takes the control column's width, the button sits under it; nothing new
   needs a style beyond reusing these. Tags of 32 characters and 8 tags wrap inside the tile and the
   profile line.
+- **Classes (T1 review, 2026-11-20).** The spacing does need rules: the stylesheet may gain exactly
+  `port` (with `.instance-header .engine`), `tags-profile`, `tags-save`, `tags-status`, `tags-alert`
+  and `tags-sign-in`, margins and the alert's `--danger` 600 only, `.tags-status` with no
+  `min-height` (as `.boot-status`); `10 R1.8`'s class list is a freeze that a brief amends, so it
+  gains these six. `.tile-facts dd` gains `overflow-wrap: anywhere`: a flex item keeps its longest
+  word as its minimum width under `break-word`, and a 32-character tag scrolled the Overview 18 px
+  sideways at 320 px (decision 3 was wrong on this).
 
 ## 4. States and behaviour
 

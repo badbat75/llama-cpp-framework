@@ -48,6 +48,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - `cargo test -p <crate>` runs no target when one target fails to compile (`--no-fail-fast` only unrolls
   the run). Report which binaries did not run, and run the untouched binaries in a second invocation
   (`--lib --test a --test b`) to show them green.
+- A red target's TEST FAILURE also stops the run (cargo: `error: test failed, to rerun pass --lib`), so the
+  later files never report. Use `--no-fail-fast` for the slice's map: one run, every target's
+  `test result:` line, and `awk '/^---- /{name=$2} /panicked at/{print name" | "$0}'` for one line per red.
 - `cargo test -p <crate> <word>` filters test names, never target names: `cargo test -p pai-bff listen`
   skipped most of `tests/listen.rs`. Run a file with `--test <name>` and account for every
   `N filtered out` line in the report.
@@ -98,6 +101,10 @@ Lessons only: the rules are in `AGENTS.md`.
   and the later phases report nothing. Prove a pre-existing red predates your edit (`cp` the pristine
   file from your own backup, run, restore, `grep -c` to confirm the restore), name the production line
   the coder must flip, and say which of your asserts the red blocks.
+- To show the red of a phase that a blocked one sits behind, flip the value the earlier assert pins for
+  one run (a `sed` of the pinned constant, e.g. `PROTOCOL`), read the later phase's panic line, then sed
+  it back and prove the restore with `grep -n` of the line and `git diff --stat` of that file. Report the
+  line as "seen with the protocol pin flipped", never as a green of the current tree.
 
 ## The cargo harness in this repo
 
@@ -116,6 +123,11 @@ Lessons only: the rules are in `AGENTS.md`.
   is not built" until `xtask build framework` has run; to test the bff without it, set
   `PAI_BFF_FE_DIR=<repo>/crates/bff/fe-fixture` (a stub `index.html`). `tests/fe.rs` needs the real
   `fe/dist`.
+- A route that validates the instance id against the record answers `no_instance` for every id the fake
+  does not list, so a second instance needs a list the test can set: in `crates/bff/tests/server.rs` that
+  is `Live::instances` (empty = the one `default`) behind `App::set_instances`. Each `tests/*.rs` has its
+  OWN fake, so the cell exists in one file only, and a route whose id is unknown is the red that proves the
+  gate, not a broken harness.
 - The manager's D-Bus unit tests are slow and flaky on a loaded machine: green on an idle one, reds at
   0..1800 ms (the 10 ms bound of the token probe) under load. Run them alone, then judge:
   `cargo test -p pai-manager --lib -- --test-threads=1 data_root_e2e` (`dbus_client` is a module of that
@@ -248,6 +260,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - A gate keeps its place in the order in front of it. Pin a refusal that answers earlier (a foreign
   `Host`, an `Origin`, a 404, a 405) WITH a valid cookie, so it stays its own code, and the gate's 401
   with none. A guard that answers after the gate is a behaviour change nobody asked for.
+- A route the bff does not route yet answers axum's bare 404 with an empty body and an empty content type,
+  so the first red of EVERY test that goes through the shared `assert_error` / `assert_session_required`
+  helper prints `content-type ""` and reads like a harness typo. Say in the report that each of those reds
+  is the unrouted path, and pin `the route answers only the write` (GET/POST/DELETE 405, the router before
+  the session) as its own test: it is a 404 today and greens with the route.
 - Where signing in is impossible (the binary's real authenticator is the machine's manager, 503 under the
   test redirect), pin the gate at the socket (401, the exact body, no `Set-Cookie`) and keep the answer's
   shape pinned at router level with a fake authenticator. Say which level pins what.
@@ -306,6 +323,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - A source lint scans the file's TEXT, not its behaviour, and it drops comments: a needle in a doc comment
   is not a scan hit. Pin production needles (a bare `ConfigFile::X` reference, not a `use`), and report
   comments as not scanned, so the gate lands in the code.
+- To pin that one ARGUMENT is a derived value (the state folder joined with the instance's id), take the
+  text from the needle to the argument's own separator: `let rest = &arm[arm.find(needle)..]`, then
+  `&rest[..rest.find(',').expect(..)]`, and require `.join(` inside THAT. A `contains` over the whole arm is
+  green for a join of anything beside the needle, and over the whole file for a join in an unrelated
+  function; say in the report that the lint pins the shape, not the id.
 - A method extractor (an `fn` indented in an `impl`) must stop at the method's OWN closing brace, the
   column-4 `\n    }`: one that stops at the next column-0 brace swallows every method beside it and passes
   on a needle in a neighbour. The brace is written `"\n    }"`: in an escaping context a doubled `}}` is a
@@ -321,6 +343,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - A source lint whose name list AND its scan cases are flipped together stays GREEN by construction (the
   scan is generic over the list): report it as the guard that the rule now covers the new names, not as a
   red.
+- A refusal key of `checks::KEYS` is counted as USED by `crates/config`'s `binding_lint` only where a
+  `strings::fill` names it, and for a check key that place is its OWN arm of `Refusal::text` in core: a key
+  in `en_US.toml` with no arm is that lint's red (`in en_US.toml but used nowhere ...`), and the arm is the
+  coder's, never the tester's. Pin the missing arm with a loop over `KEYS` asserting
+  `Refusal { key, .. }.text() != key` and that no `{0}` survives: it names the red the coder can pass, and
+  catches every later key added with no arm.
 - A rule that lives only in CSS, or only in a script, is pinned by reading the file's text (comments
   stripped, rules parsed). It is green the day it is written: report it as a guard and say which half of
   the criterion it cannot reach (jsdom has no layout).
@@ -349,10 +377,36 @@ Lessons only: the rules are in `AGENTS.md`.
   gitignored `resources/llama.ico` and `llama-brand-logo.svg`, set
   `PRIVATE_AI_LLAMA_CPP_DIR=<repo>/build/linux/llama.cpp` and a separate `CARGO_TARGET_DIR`.
 - A new `ManagerClient` method needs an impl in every `impl ManagerClient for` (grep it: `DbusClient`,
-  pai-app's `FakeClient` and `DiskClient`, the `FakeManager` of each `crates/bff/tests/*.rs`).
+  pai-app's `FakeClient` and `DiskClient`, the `FakeManager` of each `crates/bff/tests/*.rs`). The way out
+  is a DEFAULT body on the trait saying "this transport has no such verb" (`ClientError::Other`): no fake
+  breaks, the bff's read pins the fallback row, and only the fake that must answer gains a body. Report the
+  default as the bridge to an older manager, the coder keeps it.
+- A new field of `ServerConfig` reds the bff's own unit tests first (they build the struct literally:
+  `src/server.rs::rich_cfg`, its `body_of`, and the three `body_to_file_*` compares), and a new key of the
+  Server page's document reds four pins spread over two files (`the_values_keys_are_the_web_s_field_names`
+  in `src`, `values_are_typed_by_ini_key` and `unset_keys_are_null_in_the_shipped_file` in `tests`). Grep
+  the key list literals, they are the map.
+- A whole-page form writes the file from the document it was handed, so a field the document does not carry
+  is ERASED by a save of the page that never shows it. That is a real criterion: pin it as "a save of the
+  document read unchanged keeps the value", not as an absence.
 - A fake's shared log in a returned tuple trips `type_complexity`: alias it in `fakes` (`Checked`).
+- A stale pin retargeted to a settled rule greens on day one (the code already has the rule), so its teeth
+  are the report: prove it by moving the FIXTURE's value (the port of the profile file the section names, not
+  the one named after the instance) and by moving the expected constant of the missing-file case (the rule is
+  0, never the default port), one run each, restoring with `cp` + `cmp -s` between the two.
 - zbus runs every task of a connection on one executor thread: a sync `fn` method blocks every other call
   on that connection.
+- zbus types come from Rust shapes, not from the signature you meant: a fixed-size array
+  `["x".to_string()]` serializes as a STRUCT `(s)`, so an `as` argument needs `vec![...]`; a Rust tuple is
+  a struct, so a rows method answers `a(ssqasas)`. A `Vec<Vec<String>>` never compares against a
+  `[(&str, &str)]` table: join each list with `,` in the assertion.
+- `Refusal` is public in `pai_core::checks` (`key: &'static str`, `values: Vec<String>`), NOT re-exported by
+  `pai_core::client`: import it from `checks`, and write the key as a bare literal.
+- One `data_root_e2e` runs every phase in one process over one tree: a phase that writes the record must
+  restore it at its own end, else the next phase's "a refused call wrote nothing" assert reds on the
+  previous phase's bytes, and the red names a file nobody touched in that phase.
+- `ini::text::set_key` with an empty value writes the key with a trailing space (`Tags = `): assert
+  `contains("Tags = \n")`; `"Tags =\n"` never matches.
 - To probe a phase past a red one in an e2e `#[test]`, comment its call in `tests/mod.rs` with a marker
   (`// DIAG:`), and restore with `cp` from a backup plus `diff`, never `git checkout`.
 - A "the rule does not exist yet" pin is a COUNT, not a declaration: a helper that throws
@@ -369,8 +423,11 @@ Lessons only: the rules are in `AGENTS.md`.
   `{ method, path, body }` (no `"GET /path"` string to match), `to(method, path)` answers an ARRAY
   (`expect(bff.to(..)).toHaveLength(1)`, `toBe(1)` never), and every answer override (`session`,
   `instances`, `boot`, `version`, `signIn`.) is a CONSTRUCTOR option with no handle to change it after,
-  each one a `Response` (`reply(200, {...})`) or a fn returning one, never a plain object. So a page
-  helper that renders takes the bff and returns `{ bff, view }`, not one of them, and a test that needs
+  each one a `Response` (`reply(200, {...})`) or a fn returning one, never a plain object. The stub
+  records EVERY route in `calls` before routing it, session routes included, so
+  `to('POST', '/api/session')` counts a sign-in answered by a plain `Answer`: never extend the harness
+  for that. So a page helper that renders takes the bff and returns `{ bff, view }`, not one of them,
+  and a test that needs
   both destructures. `held()` is `{ answer, resolve, signals }` (`answer(init)` IS the fetch body, it
   honours the abort signal); `deferred()` is the `{ promise, resolve }` one.
 - The bff's route spellings: the instance page href is `#/instances/<encoded id>` (plural,
@@ -401,6 +458,15 @@ Lessons only: the rules are in `AGENTS.md`.
   `getByRole(.., { name })` reading as a guard. Retarget every role-by-name query of the suite in the same
   step and report them as collateral reds of the reword: a hidden label reaches an assistive technology,
   never a layout test, so the visible reading is the UX pass's.
+- Under `vi.useFakeTimers()` (the list pages), `findByText(new text)` for a text the code does not render
+  yet never settles: the test dies at the 5 s vitest timeout, which reads as a broken harness. A guard
+  criterion (an existing behaviour pinned for a new key) must not wait for the new text: `flush()` inside
+  the mount helper, then assert the alert's COUNT (`queryAllByRole('alert')` length, the element's class),
+  so its green means the guard and not the absence of a wait.
+- A new user string is a two-step red: put the key and the brief's English (verbatim, backticks included)
+  in the `EN` table of `fe/src/test/bff.ts` ONLY, and pin the same text against `en_US.json` in
+  `strings.test.ts`. `App.test.tsx`'s "1a strings" pin then reds with `keys missing or with other text:
+  expected [ …(N) ]` naming the keys: that is the coder's hook, report it as such.
 - Making an EXISTING card editable is done in the shared table, not in a page test: its label keys in
   `EDITABLE_FIELDS`, and for a number field with a default box, its label key in `BOXED_FIELDS`.
   `fieldTabStops` and `controlEnabled` derive from it, so the collateral reds before the coder are the
@@ -453,7 +519,15 @@ Lessons only: the rules are in `AGENTS.md`.
 - A time limit needs no new clock: `api.ts` aborts a non-GET at 120 000 ms, so a `held()` request plus
   `advance(119_999)` / `advance(1)` (the `fakeClock`/`flush`/`advance` pattern of `Timeout.test.tsx`:
   fake timers only, so the microtasks stay real) shows the abort is wired while the red is the message
-  the page renders. `afterEach` needs `vi.useRealTimers()` beside `vi.unstubAllGlobals()`.
+  the page renders. `afterEach` needs `vi.useRealTimers()` beside `vi.unstubAllGlobals()`, and BEFORE any
+  awaited flush: a test that dies under the fake clock leaves an act queue open, so every LATER test of
+  the file dies in its own `afterEach` as `Error: Test timed out in 5000ms`, which reads as three broken
+  tests. The tell is a file whose duration triples: `grep -c "Test timed out"` over the log must be 0
+  before a red is reported.
+- A file that needs BOTH the page's 5 s poll and the leave guard keeps them apart: only the poll test
+  passes the clock to the mount helper, the guard tests stay on real timers (`pressBack` is
+  `act` + two `await new Promise((r) => setTimeout(r, 0))`, the `LeaveGuard.test.tsx` shape), and the
+  clocked mount uses `flush()` + synchronous queries, never `findBy*`.
 - A new strings key reds two existing pins, report both: `App.test.tsx` "the English the brief gives"
   lists every `EN` key `src/strings/en_US.json` lacks (the coder's key pin), and the same file's reverse
   lint scans the source, so the key goes in the test's `EN` table ONLY in the red step: adding it to
@@ -470,9 +544,10 @@ Lessons only: the rules are in `AGENTS.md`.
   `within(findX(main))` is TS2345 until awaited, in the helper and at every call site.
 - `act` comes from `@testing-library/react`, not from vitest (importing it from vitest dies "act is not a
   function"): import it in any file that dispatches an event the app's own listener installs outside
-  React's tree. `fireEvent.click` on an `<a>` makes jsdom print `Not implemented: navigation`, and a
-  focus assertion still passes under it, so the noise hides: use `userEvent.click` when the activation
-  matters.
+  React's tree. `fireEvent.click` on an `<a href="#/...">` (an in-app link) navigates in jsdom and
+  settles, no `Not implemented: navigation` (only a real URL prints that), so a nav-link leave is
+  `await act(async () => { fireEvent.click(navLink(name)); await new Promise((r) => setTimeout(r, 0)) })`:
+  that is how the router sees it. `@testing-library/user-event` is NOT a dependency of `fe/`.
 - A button named by `aria-label` is pinned without a labelling helper: `computeAccessibleName` is not
   exported by this `@testing-library/dom` and jsdom computes no accessible name, so pair
   `getByRole('button', { name })` (it honours `aria-label`) with `not.toHaveAttribute('aria-label')`.
@@ -663,6 +738,61 @@ Lessons only: the rules are in `AGENTS.md`.
 - `test.each` over array items APPENDS the arguments past the `%s` placeholders to the title, so a builder
   function in the tuple prints as source text in the test name. Order the tuple so every value the title
   shows has its placeholder and the builders come last, and type the tuple with all its elements.
+- A query for an element the app adds in a task of its own (the Sign in beside an alert that arrives with
+  the save's reply) must NOT be synchronous: `within(form).getAllByRole('button', { name })` right after the
+  click dies "Unable to find an accessible element with the role button and name X", and the DOM it prints is
+  the state BEFORE the reply landed, with no `role="alert"` in it, which reads as an implementation gap. Await
+  the first observable (`await screen.findByText(text)`) and only then take the element after it. A throwaway
+  probe (`ZzProbe*.test.tsx`, run solo, deleted after) that prints the form's `outerHTML` settles in one run
+  whether the code is missing the control or the test read too early; in a probe, `JSON.stringify` of an
+  element array dies "Converting circular structure to JSON" (React's fiber hangs off the node): map to
+  `textContent` first.
+- A test of the browser's Back needs a history entry behind the page: a mount helper that starts AT the
+  page's hash has nothing to go back to, and the leave guard never fires, so the dialog pin dies "Unable to
+  find role=dialog". Build the history the way `LeaveGuard.test.tsx` does (start on the Overview, then a
+  typed hash inside `act`). The same helper breaks the next mount in the same test: a clean save that
+  navigates away leaves the bar on the Overview, so `startAt` back on the page before mounting again, else
+  the second mount dies "Unable to find role=heading and name <id>".
+- "A clean save asks nothing when leaving" is pinned as the guard ABSENT (`queryAllByRole('dialog')` empty,
+  no `preventDefault` on a dispatched `beforeunload`), never as a hidden dialog: the app puts no guard in the
+  document at all when the form is clean (LeaveGuard 1b.38a, 38e), so a pin that waits for a `hidden` dialog
+  is a red no coder can pass.
+- A new `<p role="status">` anywhere in the instance page's header reds every "one run status" pin of the
+  suite (53 tests in `RunControls`, `SessionRevoked`, `Timeout` fail `expected [...] to have a length of 1
+  but got 2`), a new CSS class reds the class allowlist of `Reflow.test.ts` and the size pins of
+  `HearthTokens.test.ts`, a new control reds every whole-page tab list (`Boot`, `InstancePage`,
+  `ServerSave`), and a page-wide key scan reds `InstancePage.test.tsx` `1a.27e` (a withheld key rendered
+  nowhere: it finds the tags box). Count them per file as collateral reds of the coder's change; the fix is
+  the coder's retarget, never the tester's, in the red step.
+- When the coordinator briefs the retarget: a shared helper copied into several files (`runStatus` lives in
+  `RunControls`, `SessionRevoked`, `Timeout`, `Boot`, each its own, one with the boot filter inlined) means
+  FOUR edits, so grep the helper's name for the copies, and mirror the existing exemption (an
+  `inTags(main, el)` found by the new field's accessible name + `closest('form')`, beside `inBoot`'s group).
+  Add the exclusion to the status helper ONLY: a brief whose alert renders only with text keeps
+  `runAlerts`/`runSignIns` whole, and widening them hides a real second alert.
+- A document-wide `querySelectorAll('input')` type scan is retargeted to the region whose absence it pins
+  (`getByRole('heading', { level: 2 }).closest('section')`, expect `[]`), and the edit must keep every
+  OTHER assert of that test: an `oldString` that spans them deletes them (found by re-reading the test
+  body after the edit, not by the run).
+- The CSS pins are per-slice LEDGERS, and a brief that says "nothing new needs a style" makes them the red
+  the coder must pass, not a list to extend: `Reflow` R1.8 is every class the sheet selects (plus the one
+  its brief allowed), `HearthTokens` H1a.12 every `min-height`/`min-width` pair as
+  `selector: prop: value` in sheet order. Measure the exact delta with a scratch node script that copies
+  the test's own parser and takes the expected list FROM the test source by regex, never retyped (vitest
+  truncates the arrays in the message).
+- A `sets('<property>')` ledger (Reflow R1.1: every rule that sets overflow-wrap, as `selector = value`)
+  is the red for a rule that ADDS the declaration, so a brief asking for a new break updates that ledger
+  AND gains its own `declares` test in the same step; the class freeze (R1.8 `CLASSES`) is the pin that
+  goes GREEN the day the sheet carries the classes, so it is an update-pins item, not a red, and what
+  names the amending brief is its title and comment, never a count (a count comment goes stale next slice).
+- A field outside the Server form is NOT remounted by a sign-in as another account (the page keys only
+  `ServerSection` on `signIns.rereads`), so its box keeps its text and its dirty flag: that one missing
+  rule is three reds in a row (the box's value, the `beforeunload` ask, the discard dialog on a nav
+  click). Prove the two behind the first by flipping its expected value with a `DIAG` marker, then restore
+  with `cp` + `diff` (byte-identical), and report the notice's Server-form half as a green guard.
+- A suite-load flake to expect: `HearthTheme` H4.7's `document.title` lags the page's h1 by a tick, so it
+  reds in a full-suite run and passes solo. Prove it with three solo runs plus a second full suite before
+  naming it; report it as a flake, not as a red.
 - One line per red, with the reason: `npx vitest run src/<file> --reporter=json --outputFile=/tmp/opencode/<name>.json`
   (vitest 5 accepts `--outputFile` for the json reporter), then read the file with node: each
   `testResults[].assertionResults[]` carries `status`, `title` and `failureMessages`, so print the status,
@@ -740,7 +870,9 @@ Lessons only: the rules are in `AGENTS.md`.
   as `''` so a missing rule is a miss, never a pass.
 - Run `npx prettier --write` on your new fe test files BEFORE editing them further: prettier rewraps, and
   an edit built from the pre-format text misses. A `write` that "succeeded" may not be what the disk
-  holds after a formatter pass: re-read the file before judging which draft is live.
+  holds after a formatter pass: re-read the file before judging which draft is live. A `test()` name or a
+  message with an apostrophe is written in DOUBLE quotes: in single quotes it breaks prettier's parse and
+  the file never formats, which reads as a broken file.
 - `within()` needs an `HTMLElement`, not the `Element` a `querySelector` gives: cast at the query, not at
   each `within`. The fe gates reject `toHaveAttribute` and friends (no setupFiles, no jest-dom): pin with
   `getAttribute(...)` / `toBe`.

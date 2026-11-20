@@ -223,6 +223,10 @@ export const EN: Record<string, string> = {
     '`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB. To make it fit, lower its Context size, or pick a smaller K-cache type or V-cache type (cards Resource / context and KV cache).',
   'api-model-profile-model-missing':
     '`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`. Put the file at that path on the server machine, or change the Model file in pai-config there.',
+  // Brief 12 (fe/briefs/12-instance-tags.md, section 2): the bff's refusal of
+  // tags. The English is crates/core/strings/en_US.toml's, verbatim.
+  'api-server-bad-tags':
+    '{0}: the tags {1} are not a list of at most {2} tags, each of {3} to {4} characters of a-z, 0-9 and -, none twice',
   'server-edits-dropped':
     'Your unsaved changes were dropped: you signed in with a different account. The form shows the saved settings.',
   // Slice 1c (section 5.7): run controls and live state.
@@ -258,6 +262,18 @@ export const EN: Record<string, string> = {
   'boot-on': 'llama-server will start when the system starts.',
   'boot-off': 'llama-server will no longer start when the system starts.',
   'boot-load-failed': 'Whether llama-server starts at boot could not be read.',
+  // Brief 12 (fe/briefs/12-instance-tags.md, slice T1): the instance's port on
+  // its page, and its own tags. Each English is section 2's, verbatim; the tile's
+  // Port row reuses server-port, its Tags row instance-tags.
+  'instance-port': 'Port {0}',
+  'instance-tags': 'Tags',
+  'instance-tags-own': 'Instance tags',
+  'instance-tags-hint':
+    'Labels you give this instance to tell it apart; they change nothing in how it runs or which requests reach it. Separate them with commas or spaces, using a-z, 0-9 and -. The tags of its server profile are shown with them and are not changed here.',
+  'instance-tags-profile': 'From the server profile: {0}',
+  'instance-tags-save': 'Save tags',
+  'instance-tags-saving': 'Saving tags…',
+  'instance-tags-saved': 'Tags saved.',
   // Slice 1c (section 5.7, 4.8): a save that timed out.
   'save-timeout':
     'Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure.',
@@ -673,8 +689,21 @@ export function held(): {
   }
 }
 
-/** One instance as /api/instances lists it. */
-export type Instance = { id: string; engine: string; state: string }
+/**
+ * One instance as /api/instances lists it. Brief 12 (slice T1): `port` is the
+ * port it listens on (0 when the manager has none), `tags` the union of the
+ * server profile's tags and its own, `instanceTags` the ones its page edits.
+ * A real answer can leave any of them out or spell it badly: the page reads
+ * them forgivingly.
+ */
+export type Instance = {
+  id: string
+  engine: string
+  state: string
+  port?: number
+  tags?: string[]
+  instanceTags?: string[]
+}
 
 export const INSTANCES: Instance[] = [
   { id: 'default', engine: 'llama.cpp', state: 'active' },
@@ -875,6 +904,18 @@ export type BffOptions = {
       init?: RequestInit,
     ) => Response | Promise<Response>
   }
+  /**
+   * PUT /api/instances/{id}/tags: the reply to the n-th save of the instance's
+   * own tags (from 1), given the parsed body and the decoded id. Brief 12
+   * (fe/briefs/api-contract.md): the body is `{"tags": [...]}`, the answer
+   * 204. Default 204.
+   */
+  instanceTags?: (
+    body: unknown,
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
 }
 
 export type Call = { method: string; path: string; body: unknown }
@@ -1024,6 +1065,18 @@ export function fakeBff(options: BffOptions = {}) {
         options.boot?.write
           ? options.boot.write(body, id, n, init)
           : reply(200, { enabled }),
+      )
+    }
+    const instanceTags = /^PUT \/api\/instances\/([^/]+)\/tags$/.exec(route)
+    if (instanceTags) {
+      const id = decodeURIComponent(instanceTags[1]!)
+      const n = calls.filter(
+        (c) => c.method === 'PUT' && c.path.endsWith('/tags'),
+      ).length
+      return Promise.resolve(
+        options.instanceTags
+          ? options.instanceTags(body, id, n, init)
+          : reply(204),
       )
     }
     return Promise.reject(new TypeError(`unexpected ${route}`))

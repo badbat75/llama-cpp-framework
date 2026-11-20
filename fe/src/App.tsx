@@ -88,7 +88,8 @@ export default function App() {
   // Raised on every page change: the new page's h1 takes the focus.
   const [focus, setFocus] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
-  // The page holds unsaved changes.
+  // The page holds unsaved changes, from whichever section of it has them:
+  // the Server form, the model profile, the instance's tags (12 T1.13).
   const [dirty, setDirty] = useState(false)
   // The session ended and the sign-in page says why: see `Notice`. The ref is
   // the word as it stands right now, so several reads answering 401 at once

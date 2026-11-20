@@ -158,13 +158,23 @@ function button(main: HTMLElement, key: string): HTMLButtonElement {
   return within(main).getByRole('button', { name: en(key) })
 }
 
-/** The run status: the header's status outside Start at boot. */
+/** The run status: the header's status outside Start at boot and outside the
+ * Instance tags form (brief 12, 12 T1.5: its Action feedback is its own). */
 function runStatus(main: HTMLElement): HTMLElement {
   const h2 = serverTitle(main)
   const boot = within(main).queryByRole('group', { name: en('boot-label') })
+  const form =
+    within(main)
+      .queryByRole('textbox', { name: en('instance-tags-own') })
+      ?.closest('form') ?? null
   const all = within(main)
     .getAllByRole('status')
-    .filter((s) => before(s, h2) && !(boot?.contains(s) ?? false))
+    .filter(
+      (s) =>
+        before(s, h2) &&
+        !(boot?.contains(s) ?? false) &&
+        !(form?.contains(s) ?? false),
+    )
   expect(all, 'one run status').toHaveLength(1)
   return all[0]!
 }
@@ -1009,13 +1019,24 @@ function tabbable(main: HTMLElement): HTMLElement[] {
   )
 }
 
-test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, then the Server section', async () => {
+test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, the textbox, Save tags, then the Server section', async () => {
   const { main } = await loaded({
     run: SESSION_ENDED,
     boot: boot(false, SESSION_ENDED),
   })
   const aboutPort = within(main).getByRole('button', {
     name: `${en('field-about')} Port`,
+  })
+  // Brief 12, section 5: the Instance tags form follows Start at boot, so its
+  // three stops come before the Server form's first field.
+  const tagsAbout = within(main).getByRole('button', {
+    name: `${en('field-about')} ${en('instance-tags-own')}`,
+  })
+  const tagsBox = within(main).getByRole('textbox', {
+    name: en('instance-tags-own'),
+  })
+  const tagsSave = within(main).getByRole('button', {
+    name: en('instance-tags-save'),
   })
   const names = (expected: [string, HTMLElement][]) => {
     const map = new Map(expected.map(([n, el]) => [el as Element, n]))
@@ -1029,6 +1050,9 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['Restart', button(main, 'run-restart')],
     ['About Start at boot', aboutBoot(main)],
     ['Start at boot', bootBox(main)],
+    ['About Instance tags', tagsAbout],
+    ['Instance tags', tagsBox],
+    ['Save tags', tagsSave],
     ['About Port', aboutPort],
   ]
   expect(names(expected)).toEqual(expected.map(([n]) => n))
@@ -1045,6 +1069,9 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['About Start at boot', aboutBoot(main)],
     ['Start at boot', bootBox(main)],
     ['boot Sign in', bootSignIns(main)[0]!],
+    ['About Instance tags', tagsAbout],
+    ['Instance tags', tagsBox],
+    ['Save tags', tagsSave],
     ['About Port', aboutPort],
   ]
   expect(names(expected)).toEqual(expected.map(([n]) => n))

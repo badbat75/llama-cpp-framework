@@ -1035,16 +1035,38 @@ test('1a.27e (2.8): a withheld key is rendered nowhere, even when the bff sends 
   const html = document.documentElement.outerHTML
   expect(html).not.toContain('sk-test')
   expect(html).not.toContain('•')
-  // Nothing holds the key: no F4 group, no input that could show it, no
-  // paragraph standing in for it.
   expect(
     within(main).queryByRole('group', { name: en('server-api-key') }),
   ).toBeNull()
   expect(document.querySelector('[id$="-withheld"]')).toBeNull()
+  // Nothing holds the key: no F4 group, no input that could show it, no
+  // paragraph standing in for it. The scan is the Server section's, the part of
+  // the page the form renders in: brief 12 (section 3) put the Instance tags
+  // textbox in the header, outside it, and it holds no key.
+  const serverSection = within(main)
+    .getByRole('heading', { level: 2, name: en('server-title') })
+    .closest('section')
   expect(
-    [...main.querySelectorAll('input')].map((i) => i.type),
+    serverSection !== null,
+    'the Server section is there, its form is not',
+  ).toBe(true)
+  expect(
+    [...serverSection!.querySelectorAll('input')].map((i) => i.type),
     'no key box',
-  ).toEqual(['checkbox'])
+  ).toEqual([])
+  // Page-wide (brief 12 section 3 moved the Instance tags textbox into the
+  // header): the page has exactly two inputs, and the scan names which.
+  const inputs = [...main.querySelectorAll<HTMLInputElement>('input')]
+  expect(
+    inputs.map((i) => i.type),
+    'the page-wide inputs are exactly the Start at boot checkbox and the Instance tags textbox: no box anywhere on the page can hold a key',
+  ).toEqual(['checkbox', 'text'])
+  expect(inputs[0], "the checkbox is the header's Start at boot").toBe(
+    within(main).getByRole('checkbox', { name: en('boot-toggle') }),
+  )
+  expect(inputs[1], "the textbox is the header's Instance tags").toBe(
+    within(main).getByRole('textbox', { name: en('instance-tags-own') }),
+  )
 })
 
 // 27c rewritten by "Administrators only" (R2): the read-only shape of the field is
@@ -1138,6 +1160,11 @@ const TAB_PATH = [
   en('run-restart'),
   about(en('boot-label')),
   en('boot-toggle'),
+  // fe/briefs/12-instance-tags.md, section 5: the Instance tags form follows
+  // Start at boot: its About toggle, the textbox, Save tags.
+  about(en('instance-tags-own')),
+  en('instance-tags-own'),
+  en('instance-tags-save'),
   ...[
     [about('Port'), en('option-default'), 'Port'],
     [

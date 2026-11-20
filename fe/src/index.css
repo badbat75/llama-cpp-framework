@@ -900,7 +900,8 @@ tr:last-child td {
   margin-top: calc((1lh - 1.25em) / 2);
 }
 
-.instance-header .engine {
+.instance-header .engine,
+.instance-header .port {
   color: var(--muted);
   margin-bottom: var(--space-1);
 }
@@ -992,9 +993,13 @@ tr:last-child td {
   color: var(--muted);
 }
 
+/* The value is a flex item, and a flex item keeps its longest word as its
+   minimum width under the inherited break-word: a tag of 32 characters
+   scrolled the Overview sideways at 320 px (brief 12 section 3, CSS Text 3). */
 .tile-facts dd {
   margin: 0;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 /* State badge: the shape beside the state's text. */
@@ -2013,6 +2018,31 @@ html:has(.save-bar) {
 .boot-alert {
   color: var(--danger);
   font-weight: 600;
+}
+
+/* The instance's own tags (12-instance-tags.md 3): the field is the page's
+   TextField, so these are only the profile line under it, the save button
+   under that, and the feedback under the button. */
+.tags-profile {
+  margin: var(--space-1) 0 0;
+}
+
+.tags-save {
+  margin-top: var(--space-3);
+}
+
+.tags-status {
+  margin: var(--space-2) 0 0;
+}
+
+.tags-alert {
+  margin: var(--space-2) 0 0;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.tags-sign-in {
+  margin-top: var(--space-2);
 }
 
 /* Its checkbox while the write runs: focusable, drawn as the disabled

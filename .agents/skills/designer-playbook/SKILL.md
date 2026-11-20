@@ -64,3 +64,8 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   `/__set?pput=json&pcode=422&pbody=<json>` (it matches every `PUT /api/profiles/model/...`);
   `build/ux-review/m1.js` drives both surfaces in 3 engines at 1280 and 320 px and logs alerts, focus,
   `aria-invalid`, the re-read and sideways scroll. Do not run it beside the UX check: it doubles its time.
+- Before writing "wraps by the body's `break-word`" in a brief, check the parent: in a flex or grid
+  item `break-word` leaves the min-content at the longest word (`fe/DESIGN.md` section on wrapping),
+  so a long unbroken value needs `anywhere` on that item (T1: `.tile-facts dd`, 18 px sideways at
+  320). `build/ux-review/t1stub.py` (the UX stub plus a scriptable `PUT .../tags`, `/__reqs`) and
+  `t1.js`/`t1p.js` drive the tags field and measure the tiles.

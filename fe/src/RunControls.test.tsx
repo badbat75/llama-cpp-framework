@@ -182,12 +182,26 @@ function inBoot(main: HTMLElement, el: HTMLElement): boolean {
   return boot !== null && boot.contains(el)
 }
 
-/** The run status: the one status line of the header (before the Server h2). */
+/**
+ * True when `el` is in the Instance tags form (brief 12, 12 T1.5), whose own
+ * status, alert and Sign in (the Action feedback of fe/DESIGN.md 5.2) are not
+ * the run controls'.
+ */
+function inTags(main: HTMLElement, el: HTMLElement): boolean {
+  const box = within(main).queryByRole('textbox', {
+    name: en('instance-tags-own'),
+  })
+  const form = box?.closest('form') ?? null
+  return form !== null && form.contains(el)
+}
+
+/** The run status: the one status line of the header (before the Server h2),
+ * outside Start at boot and outside the Instance tags form. */
 function runStatus(main: HTMLElement): HTMLElement {
   const h2 = serverTitle(main)
   const all = within(main)
     .getAllByRole('status')
-    .filter((s) => before(s, h2) && !inBoot(main, s))
+    .filter((s) => before(s, h2) && !inBoot(main, s) && !inTags(main, s))
   expect(all, 'one run status in the header').toHaveLength(1)
   return all[0]!
 }

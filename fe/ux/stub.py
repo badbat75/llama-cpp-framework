@@ -31,13 +31,16 @@ USER = "abcdefghijklmnopqrstuvwxyz012345"
 # GET /api/instances with list=many (08-hearth-h6-overview.md section 3): the
 # tiles' shapes. One tile per state shape, a second engine so the engine line
 # shows, and an id of 40 characters with no break point, which has to break
-# inside its tile.
+# inside its tile. The port and the two lists of tags (brief 12) give the rows
+# the tile shows: one tile with no port and no tags, and one with the highest
+# port and eight tags of 32 characters, the widest facts at 320 px.
 MANY_ID = "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890123"
+LONG_TAG = "abcdefghijklmnopqrstuvwxyz01234"  # 31 characters
 INSTANCES_MANY = [
-    {"id": "default", "engine": "llama.cpp", "state": "active"},
-    {"id": "coder", "engine": "llama.cpp", "state": "inactive"},
-    {"id": "embed", "engine": "llama.cpp", "state": "failed"},
-    {"id": MANY_ID, "engine": "strata", "state": "activating"},
+    {"id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"]},
+    {"id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 8580, "tags": ["coding", "fast"], "instanceTags": ["coding"]},
+    {"id": "embed", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": []},
+    {"id": MANY_ID, "engine": "strata", "state": "activating", "port": 65535, "tags": [LONG_TAG + str(n) for n in range(8)], "instanceTags": [LONG_TAG + str(n) for n in range(2)]},
 ]
 
 # GET /api/profiles/model: rows with every engine shape the list shows.
@@ -125,7 +128,9 @@ class Handler(SimpleHTTPRequestHandler):
         if p == "/api/instances":
             if STATE["list"] == "many":
                 return self.json(200, INSTANCES_MANY)
-            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"]}])
+            # The one instance of the page the check opens: its port, and tags
+            # where the profile brings one the instance does not carry (12).
+            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"]}])
         # The boot row of the tiles and the instance page's boot field
         # (08-hearth-h6-overview.md section 3): on for default, off for every
         # other instance.

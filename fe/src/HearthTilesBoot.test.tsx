@@ -611,6 +611,7 @@ describe('H6b.6: the boot row, in the stylesheet', () => {
     ['.tile-facts dt', 'color', 'var(--muted)'],
     ['.tile-facts dd', 'margin', '0'],
     ['.tile-facts dd', 'font-weight', '600'],
+    ['.tile-facts dd', 'overflow-wrap', 'anywhere'],
   ]
   for (const [sel, name, want] of wanted)
     test(`H6b.6: ${sel} declares ${name} as ${want}`, () => {
