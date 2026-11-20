@@ -2181,6 +2181,66 @@ top-p = 0.95\r\n";
         );
     }
 
+    /// The memory refusal whole, byte for byte in both strings files, next
+    /// step included: the window names the cards of its page, `pai` names the
+    /// keys of the file. The first sentence is the web's too (the `api-` key of
+    /// `fe/src/strings/en_US.json`), and the sentence `text()` renders with the
+    /// four values the rule passes is the GUI's, whole.
+    #[test]
+    fn the_over_memory_refusal_says_the_next_step_in_both_files() {
+        const GUI: &str = "`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB. To make it fit, lower its Context size, or pick a smaller K-cache type or V-cache type.";
+        const CLI: &str = "`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB. To make it fit, lower its ctx-size, or pick a smaller cache-type-k or cache-type-v.";
+        for (name, file, expected) in [
+            ("en_US.toml", include_str!("../strings/en_US.toml"), GUI),
+            ("cli.toml", include_str!("../strings/cli.toml"), CLI),
+        ] {
+            let table = crate::strings::parse(file);
+            assert_eq!(
+                table
+                    .get("model-profile-over-memory")
+                    .expect("model-profile-over-memory in the strings file"),
+                expected,
+                "{name}: model-profile-over-memory"
+            );
+        }
+        assert_eq!(
+            refusal("model-profile-over-memory", &["qwen3.8-27b", "lan-2", "1446", "512"]).text(),
+            "`qwen3.8-27b` does not fit the GPU memory of instance `lan-2`: it needs 1446 MiB, the node has 512 MiB. To make it fit, lower its Context size, or pick a smaller K-cache type or V-cache type."
+        );
+    }
+
+    /// The missing model file refusal whole, byte for byte in both strings
+    /// files, next step included: the window names the field of its page, `pai`
+    /// names the key of the file. The first sentence is the web's too (the
+    /// `api-` key of `fe/src/strings/en_US.json`), and the sentence `text()`
+    /// renders with the three values the rule passes is the GUI's, whole.
+    #[test]
+    fn the_model_missing_refusal_says_the_next_step_in_both_files() {
+        const GUI: &str = "`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`. Put the file at that path on the server machine, or pick another Model file for the profile.";
+        const CLI: &str = "`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`. Put the file at that path on the server machine, or set the profile's model to another file.";
+        for (name, file, expected) in [
+            ("en_US.toml", include_str!("../strings/en_US.toml"), GUI),
+            ("cli.toml", include_str!("../strings/cli.toml"), CLI),
+        ] {
+            let table = crate::strings::parse(file);
+            assert_eq!(
+                table
+                    .get("model-profile-model-missing")
+                    .expect("model-profile-model-missing in the strings file"),
+                expected,
+                "{name}: model-profile-model-missing"
+            );
+        }
+        assert_eq!(
+            refusal(
+                "model-profile-model-missing",
+                &["big", "default", "/models/big-00002-of-00003.gguf"]
+            )
+            .text(),
+            "`big` names a model file that is not there: `/models/big-00002-of-00003.gguf` is missing for instance `default`. Put the file at that path on the server machine, or pick another Model file for the profile."
+        );
+    }
+
     /// The files a `model` value names, the whole list the model-file check
     /// stats: the one file as written; every shard of a split model, in index
     /// order, named from the value's own directory, extension and separator,

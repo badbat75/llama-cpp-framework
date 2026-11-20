@@ -2401,6 +2401,58 @@ mod tests {
         );
     }
 
+    /// The two refusals a model profile save can end on, byte for byte in the
+    /// file `pai` reads, next step included: the sentence names the keys of
+    /// `models.ini`, the file the command edits. And the text `main` prints when
+    /// a write is refused carries that next step (a test has no entry point to
+    /// pick `cli.toml`, so the printed text is the window's file: the next step
+    /// is the same step in both).
+    #[test]
+    fn the_two_resource_refusals_say_the_next_step_pai_prints() {
+        use pai_core::client::ClientError;
+        const CLI_OVER_MEMORY: &str = "`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB. To make it fit, lower its ctx-size, or pick a smaller cache-type-k or cache-type-v.";
+        const CLI_MODEL_MISSING: &str = "`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`. Put the file at that path on the server machine, or set the profile's model to another file.";
+        let cli = pai_core::strings::parse(include_str!("../../core/strings/cli.toml"));
+        assert_eq!(
+            cli.get("model-profile-over-memory")
+                .expect("model-profile-over-memory in cli.toml"),
+            CLI_OVER_MEMORY,
+            "cli.toml: model-profile-over-memory"
+        );
+        assert_eq!(
+            cli.get("model-profile-model-missing")
+                .expect("model-profile-model-missing in cli.toml"),
+            CLI_MODEL_MISSING,
+            "cli.toml: model-profile-model-missing"
+        );
+        let printed = |key: &'static str, values: &[&str]| {
+            let r = pai_core::checks::Refusal {
+                key,
+                values: values.iter().map(|s| s.to_string()).collect(),
+            };
+            ClientError::Invalid(r).text()
+        };
+        let over = printed(
+            "model-profile-over-memory",
+            &["qwen", "default", "1446", "512"],
+        );
+        assert!(
+            over.starts_with("`qwen` does not fit the GPU memory of instance `default`: it needs 1446 MiB, the node has 512 MiB. ")
+                && over.contains("To make it fit, lower its"),
+            "the refused save prints no next step: {over:?}"
+        );
+        let missing = printed(
+            "model-profile-model-missing",
+            &["qwen", "default", "/models/qwen.gguf"],
+        );
+        assert!(
+            missing.starts_with(
+                "`qwen` names a model file that is not there: `/models/qwen.gguf` is missing for instance `default`. "
+            ) && missing.contains("Put the file at that path on the server machine"),
+            "the refused save prints no next step: {missing:?}"
+        );
+    }
+
     #[test]
     fn server_set_apply_copies_every_field() {
         let set = ServerSet {

@@ -286,6 +286,63 @@ mod tests {
         parse_args(&args)
     }
 
+    /// The two refusals the manager answers for a model profile, byte for byte
+    /// in both strings files, next step included: the manager sends the key and
+    /// the values, and the client's text is the file's whole sentence (the CLI's
+    /// file names the keys of `models.ini`, the window's the fields of its
+    /// page). A test has no entry point to pick `cli.toml`, so the decoded
+    /// refusal renders the window's file.
+    #[test]
+    fn the_two_resource_refusals_carry_their_next_step() {
+        use crate::manager::service::ManagerError;
+        const GUI_OVER_MEMORY: &str = "`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB. To make it fit, lower its Context size, or pick a smaller K-cache type or V-cache type.";
+        const CLI_OVER_MEMORY: &str = "`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB. To make it fit, lower its ctx-size, or pick a smaller cache-type-k or cache-type-v.";
+        const GUI_MODEL_MISSING: &str = "`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`. Put the file at that path on the server machine, or pick another Model file for the profile.";
+        const CLI_MODEL_MISSING: &str = "`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`. Put the file at that path on the server machine, or set the profile's model to another file.";
+        for (name, file, over_memory, model_missing) in [
+            (
+                "cli.toml",
+                include_str!("../../core/strings/cli.toml"),
+                CLI_OVER_MEMORY,
+                CLI_MODEL_MISSING,
+            ),
+            (
+                "en_US.toml",
+                include_str!("../../core/strings/en_US.toml"),
+                GUI_OVER_MEMORY,
+                GUI_MODEL_MISSING,
+            ),
+        ] {
+            let table = crate::strings::parse(file);
+            assert_eq!(
+                table
+                    .get("model-profile-over-memory")
+                    .expect("model-profile-over-memory in the strings file"),
+                over_memory,
+                "{name}: model-profile-over-memory"
+            );
+            assert_eq!(
+                table
+                    .get("model-profile-model-missing")
+                    .expect("model-profile-model-missing in the strings file"),
+                model_missing,
+                "{name}: model-profile-model-missing"
+            );
+        }
+        let over = ManagerError::Invalid(pai_core::checks::Refusal {
+            key: "model-profile-over-memory",
+            values: ["qwen", "default", "1446", "512"]
+                .map(String::from)
+                .to_vec(),
+        });
+        let back = pai_core::checks::Refusal::decode(&service::error_reply(&over).1)
+            .expect("the refusal crosses the wire");
+        assert_eq!(
+            back.text(),
+            "`qwen` does not fit the GPU memory of instance `default`: it needs 1446 MiB, the node has 512 MiB. To make it fit, lower its Context size, or pick a smaller K-cache type or V-cache type."
+        );
+    }
+
     #[test]
     fn parse_args_refuses_no_command() {
         assert_eq!(parse(&[]), Err(ArgsError::NoCommand));
