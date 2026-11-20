@@ -121,3 +121,9 @@ description: What the architect has learned about this project's components, int
   ServerProfile = gpu-1` hide the wrong lookup; slice 12's `instances()` had it).
 - Windows' shipped `server@default.ini` (`crates/core/defaults/windows/`) sets no `ModelsDir` or
   `StateDir`, Linux's sets both: a change to an instance default moves `default`'s folders on Windows only.
+- Installed versions (slice 13, checked 2026-11-20): the Linux runtime packages' versions are the
+  SDK's (`components::dist_version` of the dist path, e.g. `llama.cpp-rocm 10.1.0`), the engine's
+  `1:<release>+pai<n>`; Windows bundles the runtimes inside llama.cpp's one MSI, so nothing installed
+  records their versions unless the package writes it. This machine has both dpkg and `/usr/bin/rpm`.
+- The bff's server document is still at `/api/instances/{id}/server` (`crates/bff/src/server.rs`); the
+  move to `/api/profiles/server/{id}` of (f') is slice 14's, whatever slice 4's text says.

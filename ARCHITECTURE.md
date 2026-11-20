@@ -1166,7 +1166,7 @@ hints and the bff server document's `defaults.StateDir` (`crates/bff/src/server.
 cwd and the model-file and memory checks keep the root (`instance_current_dir`).
 
 **(f) The bff.** Every node-scoped route sits under the node's prefix `api` (`GET /api/node`, behind a session like every read since a600a46:
-`{"name": <host name>, "api": "/api"}`; hub mode answers `GET /api/nodes` with the same objects and
+`{"name": <host name>, "api": "/api"}`, plus `version` and `engines` since slice 13 (after (g')); hub mode answers `GET /api/nodes` with the same objects and
 `api` = `/api/nodes/<node>`): `instances` and everything below it, `presets` and everything below it,
 `engines`. At `/api` in every mode: `version`, `session`, `node`, `nodes`.
 
@@ -1388,7 +1388,7 @@ recorded:
 
 | Method (pipe name = D-Bus name) | D-Bus signature | Refusals |
 | --- | --- | --- |
-| `Instances()`, no authorization | `-> a(ssqasas)`: `(id, engine, port, profile_tags, instance_tags)`, the state left to `Status`; pipe objects `{id, engine, port, profile_tags, instance_tags}` (slice 12, 2026-11-20; `server_profile` joins after `engine`, `a(sssqasas)`, with the server-profile slice, while no release carries 3) | none; port 0 and no profile tags when the profile file is missing |
+| `Instances()`, no authorization | `-> a(ssqasas)`: `(id, engine, port, profile_tags, instance_tags)`, the state left to `Status`; pipe objects `{id, engine, port, profile_tags, instance_tags}` (slice 12, 2026-11-20; `server_profile` joins after `engine`, `a(sssqasas)`, in slice 13, while no release carries 3) | none; port 0 and no profile tags when the profile file is missing |
 | `SetInstanceTags(instance, tags)` | `(sas)` | `NoInstance`, `server-bad-tags` (the rule of (c), one key for both lists: decision 2026-11-20 below); writes `Tags = ...` in the instance's `instances.ini` section, `[]` writes the key empty (as built; read as no tags) |
 | `SetModelProfile(instance, profile, value)` (slice 4's `SetAssignment`, renamed) | `(sss)` | `NoInstance`, `no-model-profile-named` (exact id; not for `*`), `model-profile-bad-value` `[value]` (none/inherit/on/off; `*` takes none/inherit), `Io` when a file it reads cannot be read (only an absent file is empty), checks 1 and 3 of (b), model file and memory once built. `ModelsMax` is judged only when the call raises the instance's `load-on-startup` count, and not when its server profile cannot be read. Renders every instance, as every other write does |
 | `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `UnresolvableHost`, `load-on-startup-over-max` (the new cap against the instance's render, even when the count does not rise), `Io` when a file it reads cannot be read. The profile the instance already names answers Ok and writes nothing. Never restarts the instance: the switch applies at its next start, and until then the old address stays bound while the checks judge the new one, so another instance given the old address fails at its start, not at the save |
@@ -1415,7 +1415,7 @@ bind address) and create or delete unused profiles, as it can already rewrite th
 | `GET`/`PUT /api/profiles/server/{id}` (was `/api/instances/{id}/server`) | today's server document and save, unchanged (`values`, `revision`, `defaults`, `limits`, `interfaces`, `withheld`; 200 `{revision, running}`, `running` for the instance using it) | `client-no-server-profile` 404 `[id]`, `server-changed-elsewhere` 409, `server-malformed` 400, check keys 422 |
 | `POST /api/profiles/server` `{"engine", "id", "port"?}` | 201 `{id}` | `server-profile-bad-id` 422 `field` `id`, `unknown-engine` 422, `client-server-profile-exists` 409 `[id]` |
 | `DELETE /api/profiles/server/{id}` | 204 | 404 `client-no-server-profile`, 409 `client-server-profile-in-use` `[id, instance]` |
-| `GET /api/instances` | items `{id, engine, state, port, tags, instanceTags}` (slice 12); `serverProfile` and `removable` join with the slices that switch a server profile and create or remove instances: `tags` is what is shown (the profile's tags first, then the instance's, duplicates dropped, first kept), `instanceTags` the instance's own for editing (never the union: saving it back must not copy the profile's tags into the instance) | as (f) |
+| `GET /api/instances` | items `{id, engine, state, port, tags, instanceTags}` (slice 12), `boot` (slice 13); `serverProfile` and `removable` join with the slices that switch a server profile and create or remove instances: `tags` is what is shown (the profile's tags first, then the instance's, duplicates dropped, first kept), `instanceTags` the instance's own for editing (never the union: saving it back must not copy the profile's tags into the instance) | as (f) |
 | `PUT /api/instances/{id}/tags` `{"tags": [string]}` | 204 | 404 `client-no-instance`, 422 `server-bad-tags` `field` `tags`, 400 `tags-malformed` |
 | `PUT /api/instances/{id}/profiles/server` `{"serverProfile": <profile>}` | 200 `{running}` (true when the instance runs: restart to apply) | 404 `client-no-instance`, 404 `client-no-server-profile`, 409 `client-server-profile-in-use`, 422 `client-address-in-use`, `client-unresolvable-host` and `load-on-startup-over-max` (`field` `serverProfile` each) |
 | `GET /api/instances/{id}/profiles/model` (was `.../presets`) | `{"all": "inherit" \| "none", "profiles": [rows]}` (field `presets` renamed `profiles`; rows as (j) 2) | as (j) 2 |
@@ -1515,6 +1515,84 @@ again (same-version upgrades are allowed) or the next llama.cpp release raises t
 names (read through `Instances()`), its model profiles the pool as today; choosing an instance or a
 profile waits until asked.
 
+*Slice 13's decisions (2026-11-20, architect; each a preference unless sourced).* The slice also
+carries two user requirements of 2026-11-19 (`PLAN.md` item 13): the About place (every installed
+version) and a navigation of hosts holding their instances.
+
+- **`Instances()` gains `server_profile`** now, after `engine` (D-Bus `a(sssqasas)`, pipe field
+  `server_profile`), the `ServerProfile` of the instance's `instances.ini` section verbatim, also when
+  its file is missing (then port 0, as today). It is protocol 3, which no release carries (the last tag
+  is 2.4.0), so no version bump. Every client that needs an instance's server file asks `Instances()`
+  and reads `server@<server_profile>.ini`:
+  - `pai-app` `ServerControl` (`ConfigFile::Server`, `server_control.rs` 154) for `INSTANCE`, so the
+    GUI and `pai`; and the import's target (`migration.rs` 74), which writes the per-user `server.ini`
+    to that name and judges "the manager already has it" on that name. `Direct` (macOS) keeps
+    `server.ini`.
+  - The bff's server document, `GET`/`PUT /api/instances/{id}/server` (`crates/bff/src/server.rs` 42,
+    616): the route stays where it is (its move to `/api/profiles/server/{id}` is slice 14's).
+  - Failures, closed: `default` (or `{id}`) not in the list is `NoInstance` (the bff's 404
+    `client-no-instance`); an `Instances()` that fails is its error (unreachable 503, an older
+    manager's `Other` 502 `client-other`, the GUI its usual refusal), never a fall back to
+    `server@<id>.ini`, which would read or write a file the instance does not use.
+- **The installed versions are files the packages ship**, read by the bff. Each engine package and
+  each GPU runtime package installs one file, `versions/<package>`, holding its own package version
+  (one line, as `xtask package` gives it to the package): Linux
+  `/usr/share/private-ai/llama.cpp/versions/{llama.cpp,llama.cpp-rocm,llama.cpp-cuda,llama.cpp-vulkan}`,
+  each file owned by its own package (`components::of` maps `versions/<package>` to the component whose
+  `package()` it is, ahead of the `usr/share/private-ai/llama.cpp/` rule); Windows
+  `<InstallDir>\share\versions\` in llama.cpp's one MSI (`InstallDir` from `HKLM\Software\llama.cpp`,
+  `paths::engine_install_dir`): `llama.cpp` with the MSI's version, and one file per runtime the
+  package bundles, named as the Linux package (`llama.cpp-rocm`, `-cuda`, `-vulkan`), holding
+  `components::dist_version` of the dist it was bundled from (empty when the dist is outside the
+  layout). macOS: none (no bff). The framework's version is the bff's own (`CARGO_PKG_VERSION`, as
+  `GET /api/version`): the packages pin the framework to one version.
+
+  | Option for reading the versions | Cost | Risk | Verdict |
+  | --- | --- | --- | --- |
+  | **A. One version file per package, the bff reads the directory** | xtask writes the files (Linux, Windows), one `of` rule, a pure reader in `pai-core` | A file can only say what our build shipped: a hand-copied library is not seen (not a package, not in scope); packages built before this slice show no engine until reinstalled | **Chosen**: one mechanism on both OSes, no process spawned, no deb or rpm question, tested on a temp dir |
+  | B. The package database (`dpkg-query -W`, `rpm -q --qf`) on Linux, registry values the MSI writes on Windows | No Linux packaging change | Two mechanisms; a machine can have both tools (this one has `/usr/bin/rpm` beside dpkg), so which database owns the install is a guess; rpm renders epoch and release apart from dpkg; a process per request | Rejected |
+  | C. The manager reads, behind a new unauthenticated `Versions()` | Ready for the hub's remote nodes | A protocol method for public data the bff can read itself (Linux `/usr/share` under `ProtectSystem=strict` stays readable, systemd.exec(5); Windows' `Program Files` and `HKLM\Software` are readable by Users) | Waits for step 14: the reader lives in `pai-core`, so the remote node's manager wraps it then |
+
+  The reader (`pai_core::versions::installed(dir)`): every regular file whose name is `llama.cpp` or
+  `llama.cpp-<a-z0-9>+`, at most 128 bytes, its first line trimmed, printable ASCII, else the entry is
+  skipped; empty is `null`. No directory (a tree build, an older package, no engine installed) gives
+  no engine. The engine is listed only when its own file `llama.cpp` is there; its backends are the
+  other files, sorted by name. Read at each request (an engine upgrade does not restart the bff). Trust:
+  the directory is root's (Windows: the MSI's, under `Program Files`), the same trust as the binaries
+  beside it; the reply is public package data, shown only to a session.
+- **`GET /api/node`** (behind a session, 401 `session-required`, asks the manager nothing, moves no idle
+  deadline, as `GET /api/version`):
+
+      {"name": "<host name>", "api": "/api", "version": "2.99.1",
+       "engines": [{"engine": "llama.cpp", "version": "1:1.0.0+pai2",
+                    "backends": [{"name": "cuda", "version": "13.5.0+nccl.2.32.3"},
+                                 {"name": "rocm", "version": "10.1.0"},
+                                 {"name": "vulkan", "version": "1.4.363.1"}]}]}
+
+  `name` is `listen::hostname()` (the DNS host name on Windows), `localhost` when it is empty; a
+  backend's `name` is the package suffix (the display names are the fe's strings); `engines` is `[]`
+  when none is found, `backends` `[]` for a CPU-only engine. No error case but 401: a missing or
+  unreadable file is left out. Versions live here, not in a route of their own: About and the
+  navigation read one document; whether hub mode's `GET /api/nodes` carries `engines` is step 14's.
+- **`GET /api/instances` items gain `boot`**: `true`/`false` from `BootEnabled(id)` (unauthenticated,
+  as the list's `Status`), `null` when that one read fails; a failed boot read never fails or shortens
+  the list. `GET /api/instances/{id}/boot` stays (the instance page and after a `PUT`).
+
+**Slice 13 done when** (test first; Linux, the Windows code type-checked):
+`pai-manager`: an instance whose section names `big` lists `server_profile` `big` with `big`'s port, on
+D-Bus and the pipe; a missing profile file lists the name with port 0. `pai-app`: with a fake client
+whose `Instances()` names `big` for `default`, the server read and save go to `server@big.ini` and no
+call names `server@default.ini`; `Instances()` failing reads and writes nothing; `default` absent is
+`NoInstance`; the import writes `server.ini` to `server@big.ini`. `pai-bff`: `GET`/`PUT
+/api/instances/default/server` read and write `server@big.ini`; an id absent from `Instances()` is 404,
+`Instances()` unavailable 503; `GET /api/node` is 401 without a session and, from a versions-directory
+seam, the document above; a missing directory gives `engines: []`, a file over 128 bytes, with a
+control character or a foreign name is skipped, an engine file alone gives `backends: []`; list items
+carry `boot`, `null` when one `BootEnabled` fails, the list still 200. `xtask`: the `.deb` and `.rpm` of
+`llama.cpp` and of each runtime hold their own `versions/<package>` file with the package's version;
+the Windows staging holds `share\versions\llama.cpp` and one file per bundled runtime with its dist
+version. Each crate's clippy and fmt green.
+
 **Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
 
 4. **The rename** (13a), no behaviour change, across `pai-core`, `pai-manager`, `pai-app`, `pai-cli`,
@@ -1573,7 +1651,8 @@ profile waits until asked.
     deduplicated.
 13. **`Instances()`**, `GET /api/instances` and `GET /api/node` (old 9); the GUI, the CLI and the bff's
     server document stop assuming `default`'s profile is named `default` and read it through
-    `Instances()` ((g')), before slice 15 gives clients a way to switch it.
+    `Instances()` ((g')), before slice 15 gives clients a way to switch it; with it the About versions
+    in `GET /api/node`, `boot` in the list (decisions and "done when" after (g')).
 14. **`CreateServerProfile`, `DeleteServerProfile`** and the bff's `GET`/`POST`/`DELETE /api/profiles/server`.
 15. **The bff's association routes**: `PUT .../profiles/server`, the model-profile routes under an
     instance, the pool rows' `assignments`, `restart`, resource refusals (old 10). The manager's
