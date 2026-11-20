@@ -990,18 +990,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     the instance's own `Tags`, set by `PUT /api/instances/{id}/tags`; tags are labels only. The web UI part is
     fe brief 12 (slice T1). Left: a GUI Server save refused for hand-written bad tags has no field to fix
     them (the CLI or the file does).
-    **An About place lists every version** (user, 2026-11-19, replacing "the node's status shows the engine"
-    of the same day): behind sign-in, the web UI shows the framework's version and the version of every
-    component involved: each installed engine (today llama.cpp, later Strata) and the GPU backend packages
-    installed with their versions (today ROCm/HIP, CUDA with NCCL, Vulkan; OpenCL is not built). What is
-    installed, not what a running instance loaded. With slice 13 (`GET /api/node`); where the manager or the
-    bff reads it, and on Windows, is the architect's; where About sits in the web UI, the designer's. The same
-    slice can carry each instance's start at boot inside `GET /api/instances` (the fe designer: the Overview
-    reads `GET /api/instances/{id}/boot` once per tile today).
-    **The navigation lists hosts, each holding its instances** (user, 2026-11-19, restating an earlier
-    requirement): where the web UI lists instances on the left, it lists the hosts by the name they are
-    registered under (`GET /api/node` `name`, the host name; in hub mode every node of `GET /api/nodes`),
-    and each host holds all its instances. With slice 13; the layout is the designer's.
+    The About page, the host name in the navigation and each instance's start at boot in
+    `GET /api/instances` are done (slices 13 and N, 2026-11-20). Left from their reviews: the bff reads every
+    instance's boot flag inside the list's one read timeout, so many instances or a slow service manager
+    turn the whole list into a 503 instead of per-item nulls; `GET /api/node` reads its folder in the async
+    handler (tiny, not `spawn_blocking`); `installer/llama.cpp.wxs` ~121 describes the payload without
+    `share\versions`; `fe/briefs/api-contract.md` still calls `/api/node` and `boot` "being built".
     **Presets are a shared pool per node, assigned to instances** (user, 2026-11-17, a requirement
     change that replaces "a model belongs to one instance" of the same day): a preset is assigned to
     one or more instances; removing an instance removes only its assignments; editing a preset applies
