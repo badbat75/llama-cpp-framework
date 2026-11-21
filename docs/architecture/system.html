@@ -147,6 +147,12 @@ those disagree, they win.</p>
   <text x="572" y="74" class="t-small">same manager protocol</text>
   <line class="edge-plan" x1="480" y1="70" x2="558" y2="60"/>
   <line class="edge-plan" x1="640" y1="90" x2="480" y2="215"/>
+  <rect class="plan" x="780" y="110" width="110" height="56" rx="5"/>
+  <text x="790" y="130" class="t-title t-planned">huggingface.co</text>
+  <text x="790" y="146" class="t-small">repo file list,</text>
+  <text x="790" y="160" class="t-small">HTTPS, no redirect</text>
+  <line class="edge-plan" x1="480" y1="118" x2="778" y2="138"/>
+  <text x="660" y="122" class="t-small t-planned">curl, repo id only</text>
 
   <!-- libraries -->
   <rect class="lib" x="20" y="370" width="200" height="80"/>
@@ -190,6 +196,7 @@ signed-in user; the manager answers it only to the bff's account and only for a 
 <tr><td>Run</td><td><code>Start</code>, <code>Stop</code>, <code>Restart</code></td><td><code>control</code></td></tr>
 <tr><td>Writes</td><td><code>WriteFile</code>, <code>WriteFileIf</code>, <code>SetBootEnabled</code>, <code>SetModelProfile</code>, <code>SetServerProfile</code>, <code>SetInstanceTags</code>, <code>CreateInstance</code>, <code>RemoveInstance</code>, <code>CreateServerProfile</code>, <code>DeleteServerProfile</code></td><td><code>configure</code>: a <code>pai</code> member (Linux: polkit, own password)</td></tr>
 <tr><td>bff only</td><td><code>Authenticate</code> and every <code>&lt;Method&gt;As</code></td><td>the bff's account (uid on Linux, service SID on Windows)</td></tr>
+<tr><td class="planned">Accepted, not built</td><td><code>ModelFiles</code> and <code>ModelFilesAs</code>: the GGUF files of every models folder of the node's server profiles, by absolute path, bounded walk</td><td><code>configure</code>; the <code>As</code> form for a current <code>pai</code> member</td></tr>
 <tr><td class="planned">Planned (13d)</td><td><code>Metrics</code>, <code>MetricsHistory</code>, <code>ReadLog</code> and their <code>As</code> forms</td><td>proposed: <code>control</code> for metrics, <code>pai</code> for logs</td></tr>
 </table>
 
@@ -204,6 +211,7 @@ every other route is 401 <code>session-required</code> without one. Errors are <
 <tr><td>Server profiles</td><td><code>GET|POST /api/profiles/server</code>, <code>GET|PUT|DELETE /api/profiles/server/{id}</code></td></tr>
 <tr><td>Model profiles</td><td><code>GET /api/profiles/model</code>, <code>GET|PUT /api/profiles/model/{id}</code>, <code>PUT .../{id}/enabled</code></td></tr>
 <tr><td>Associations</td><td><code>PUT /api/instances/{id}/profiles/server</code>, <code>GET|PUT /api/instances/{id}/profiles/model</code>, <code>PUT .../model/{profile}</code></td></tr>
+<tr><td class="planned">Accepted, not built</td><td><code>GET /api/hf/files?repo=</code> (the bff calls huggingface.co itself, public repos only), <code>GET /api/node/model-files</code> (through <code>ModelFilesAs</code>); step 14: <code>GET /api/store/files</code>, the same shape with <code>"source":"store"</code></td></tr>
 <tr><td class="planned">Planned</td><td>13d: <code>/api/node/metrics/stream</code>, <code>/api/node/metrics/history</code>, <code>/api/instances/{id}/log</code>; step 14: the same routes under <code>/api/nodes/{node}/</code>; item 14: the OpenAI-compatible router</td></tr>
 </table>
 
@@ -284,6 +292,39 @@ verifies only the calling user's own password, and the bff runs unprivileged.</f
 </svg>
 </figure>
 
+<h2>Choosing the model file <span class="planned">(accepted, not built)</span></h2>
+<figure>
+<svg viewBox="0 0 900 200" role="img" aria-label="Model file picker flow, accepted">
+  <rect class="usr" x="10" y="40" width="150" height="70" rx="5"/>
+  <text x="22" y="62" class="t-title">Model profile page</text>
+  <text x="22" y="80" class="t-small">hf-repo picker,</text>
+  <text x="22" y="94" class="t-small">model picker</text>
+  <rect class="plan" x="200" y="20" width="180" height="110" rx="5"/>
+  <text x="212" y="42" class="t-title t-planned">pai-bff</text>
+  <text x="212" y="60" class="t-small">session; valid_repo_id first</text>
+  <text x="212" y="76" class="t-small">10 min cache, 2 calls at once</text>
+  <text x="212" y="92" class="t-mono">GET /api/hf/files</text>
+  <text x="212" y="108" class="t-mono">GET /api/node/model-files</text>
+  <rect class="plan" x="440" y="10" width="200" height="60" rx="5"/>
+  <text x="452" y="32" class="t-title t-planned">huggingface.co</text>
+  <text x="452" y="50" class="t-small">refs, then tree; fixed endpoint</text>
+  <rect class="plan" x="440" y="90" width="200" height="60" rx="5"/>
+  <text x="452" y="112" class="t-title t-planned">pai-manager: ModelFilesAs</text>
+  <text x="452" y="130" class="t-small">configure, principal in pai</text>
+  <rect class="lib" x="690" y="90" width="200" height="60"/>
+  <text x="702" y="112" class="t-title">models folders</text>
+  <text x="702" y="130" class="t-small">each server profile's ModelsDir</text>
+  <line class="edge" x1="160" y1="75" x2="198" y2="75"/>
+  <line class="edge-plan" x1="380" y1="45" x2="438" y2="40"/>
+  <text x="384" y="36" class="t-small">HTTPS</text>
+  <line class="edge-plan" x1="380" y1="110" x2="438" y2="120"/>
+  <line class="edge-plan" x1="640" y1="120" x2="688" y2="120"/>
+  <line class="trust" x1="410" y1="10" x2="410" y2="80"/>
+  <text x="10" y="172" class="t-small">Replies carry "source" (hf, local; store at step 14). curl: --proto =https, no -L, 10 s connect, 20 s total, 16 MiB cap. No token yet:</text>
+  <text x="10" y="188" class="t-small">a gated, private or missing repo is hf-repo-unavailable. The walk: .gguf, depth 6, 5000 entries, no symlinked folders, dot-folders skipped.</text>
+</svg>
+</figure>
+
 <h2>Start and stop</h2>
 <figure>
 <svg viewBox="0 0 900 170" role="img" aria-label="Start and stop flow">
@@ -316,7 +357,9 @@ log reads, through new manager methods and bff routes.</li>
 <li><span class="planned">Item 14, the router</span>: one OpenAI-compatible endpoint in the bff that sends
 each request to the instance serving the model, logging every request.</li>
 <li><span class="planned">Step 14, the super-manager</span>: nodes governed over mutual TLS with the
-manager protocol unchanged; the bff in hub mode.</li>
+manager protocol unchanged; the bff in hub mode; a model store the nodes pull from (accepted 2026-11-21).</li>
+<li><span class="planned">The model file pickers</span> (accepted 2026-11-21): the bff lists a Hugging Face
+repo itself, the manager lists the node's models folders.</li>
 </ul>
 </body>
 </html>

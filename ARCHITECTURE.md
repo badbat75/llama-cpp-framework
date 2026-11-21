@@ -2669,7 +2669,7 @@ RAM and CPU counts are read by root and given only to callers the gate admits.
 4. **RAM**: shown in the inventory, no budget yet; or a budget the check reads (allowing a CPU share and
    relaxing the strict full-GPU rule); or a limit the OS enforces (`MemoryMax=`, a job object).
 
-### Choosing the model file on the web (step 10, "Choosing the model file"): proposed 2026-11-21
+### Choosing the model file on the web (step 10, "Choosing the model file"): accepted (user, 2026-11-21)
 
 The requirement (user, 2026-11-21): on the web model profile page, `hf-repo` offers the GGUF files
 (quants) of the Hugging Face repo instead of free text, and `model` offers the GGUF files already in
@@ -2777,13 +2777,62 @@ no cache; the walk is cheap and the page asks when the picker opens.
 - **Later**: the token (item 13's state), the store source (Part 2), `mmproj` and drafter pickers from
   M3's `category`.
 
-**(8) Questions for the user** (recommendation first).
+**(8) Decisions (user, 2026-11-21): the recommended answer to each.** 1. Public repos only now; the
+token with item 13's machine-wide state. 2. Every models folder of the node's server profiles, grouped
+by folder. 3. Hugging Face only, a fixed endpoint, no mirror. The questions as they were asked:
 
 1. **The token**: public repos only now, the token with item 13's machine-wide state (one secret the
    manager owns, given to the instances and the bff); or the token in this step already.
 2. **Which folders**: every models folder of the node's server profiles, grouped by folder; or only the
    folder of the `default` instance's server profile.
 3. **A mirror**: Hugging Face only (fixed endpoint); or an endpoint the administrator sets in `bff.ini`.
+
+**(9) M5: the Hugging Face token by authentication (proposed, 2026-11-21).** The user's words
+(translated): "Of course the token towards Hugging Face will then be handled through authentication."
+
+What Hugging Face offers (huggingface.co/docs/hub/oauth and huggingface.co/.well-known/openid-configuration,
+read 2026-11-21): the authorization code flow with PKCE (`S256` only), the **device code** flow
+(`/oauth/device`, then `/oauth/token`), the `refresh_token` grant, and public apps with no client secret.
+A `redirect_uri` must match a registered one exactly, except an `http` loopback URI, where any port is
+accepted. The scopes this needs: `gated-repos` (public gated repos the user was granted) and, only
+for private repos, `read-repos` (the user's own, and those of the organizations picked at consent). The
+metadata names **no revocation endpoint**, and the page states no access token lifetime for these
+flows (the token exchange's is 8 hours, with no refresh token).
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. "Sign in with Hugging Face" by the device code flow**, from the web UI: the bff asks `/oauth/device` with a public client id, the page shows the code and the link, the administrator approves on huggingface.co from any device, the bff polls `/oauth/token` | Two HF calls and a poll in the bff; one public OAuth app (no secret) | No redirect URI, so it works on any `[Bff] Listen` address, plain HTTP on a LAN included; a code phished to another person grants that person's repos, not ours (the page names the app and the scopes) | **Recommended** |
+| B. Authorization code + PKCE, callback `/api/hf/oauth/callback` | A callback route, `state` bound to the session | The redirect URI must match exactly: a LAN address needs an OAuth app registered per installation; only `http://localhost` works with one shared app | Only if A is refused |
+| C. An administrator pastes a token (a fine-grained read token) | One form | No refresh, no consent screen, the token's scope is whatever was pasted | Fallback, not "authentication" |
+
+- **Where it lives**: one secret per node, item 13's machine-wide state, written only by the manager
+  (`SetHfTokenAs`, `configure`, a current `pai` member): `[Hf]` `AccessToken`, `RefreshToken`,
+  `ExpiresAt`, `Scopes`, `Account` (from `/api/whoami-v2`), in `/etc/private-ai/hf.ini` mode 0640
+  `root:private-ai-bff` (Windows: `%ProgramData%\private-ai\config\hf.ini`, SYSTEM and Administrators
+  full, the bff's service SID read). A new file, so `bff.ini`'s mode and readers do not change.
+- **Who uses it**: the bff's listing (M2, on curl's stdin as today in `hf.rs`) and the instances'
+  downloads of an `hf-repo` (llama-server reads `HF_TOKEN`): the template unit passes the file with
+  `LoadCredential=` and `run-instance` sets `HF_TOKEN` for llama-server from it (Windows: the manager
+  grants the instance's service SID read at create). Never in an argv, a log, a profile or bench.db.
+- **Never to the browser**: `GET /api/hf/account` answers `{connected, account, scopes, expiresAt,
+  state: ok|expired}` only; `POST /api/hf/account` starts the device flow (`{userCode, verificationUri,
+  expiresIn}`) and its poll; `DELETE /api/hf/account` disconnects.
+- **Refresh and revocation**: the bff refreshes shortly before `ExpiresAt` and once on a 401, writing
+  the new pair through the manager; a failed refresh leaves `state: expired` (`hf-token-expired`) and
+  the listing falls back to public repos. A disconnect deletes the file through the manager; since HF
+  lists no revocation endpoint, the page tells the administrator to remove the app in their Hugging
+  Face settings too. A running instance keeps the token it started with until its next start (known
+  limit: a download after expiry is a 401 until a restart).
+- **Slices**: M5a the manager's `hf.ini` and `SetHfTokenAs`/`ClearHfTokenAs` (modes, `pai` only);
+  M5b the bff's device flow, refresh and `/api/hf/account` against a fake HF; M5c `LoadCredential=` and
+  `HF_TOKEN` in `run-instance`; M5d the designer's brief and the page. Each done when its tests pin the
+  above, the token absent from every reply and argv.
+- **Questions for the user** (recommendation first): 1. **Flow**: device code; or authorization code
+  with PKCE (one OAuth app per installation for a LAN address); or a pasted token. 2. **Scopes**:
+  `gated-repos` only; or with `read-repos` for private repos. 3. **The OAuth app**: one public app the
+  project registers, its client id the default in `bff.ini` and overridable; or each administrator
+  registers their own. 4. **Whose account**: one Hugging Face account per node, shared by every
+  administrator; or one per administrator (needs per-user state, which item 13 rules out).
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
@@ -2951,7 +3000,7 @@ them) and it cannot impersonate the super-manager to other nodes.
   `manager::pipe`). The super-manager supports the current and the previous major; upgrade it first.
   The join state lives in the node's config directory and survives package upgrades.
 
-### The model store (R13, user 2026-11-21): proposed
+### The model store (R13, user 2026-11-21): accepted (user, 2026-11-21), the nodes pull
 
 The user's words (2026-11-21, translated): "The super-manager will host the models for all the nodes
 and offer an endpoint to the hosts to download them locally."
@@ -2968,7 +3017,7 @@ and offer an endpoint to the hosts to download them locally."
 
   | Option | Cost | Risk | Verdict |
   | --- | --- | --- | --- |
-  | **A. The node pulls: HTTPS `GET /store/<name>` on a super-manager listener, TLS 1.3 mutual, each side pinning the other's SPKI from the join** | A listener in the super-manager (unprivileged, its own port); HTTP range requests give resume for free (RFC 9110, "Range Requests") | The super-manager must be reachable from the nodes, the reverse of the answer to question 1 | **Recommended**: it is what the user asked ("an endpoint to download"), and a big transfer is a plain stream, not 1 MiB JSON frames |
+  | **A. The node pulls: HTTPS `GET /store/<name>` on a super-manager listener, TLS 1.3 mutual, each side pinning the other's SPKI from the join** | A listener in the super-manager (unprivileged, its own port, a proposal: 8593); HTTP range requests give resume for free (RFC 9110, "Range Requests") | The super-manager must be reachable from the nodes, the reverse of the answer to question 1 | **Recommended**: it is what the user asked ("an endpoint to download"), and a big transfer is a plain stream, not 1 MiB JSON frames |
   | B. The super-manager pushes over the node's listener (`StoreWrite{name, offset, bytes}` frames) | No new listener | Base64 in 1 MiB JSON frames (a third larger), a long-held connection on the node's manager, resume by offset hand-made | Fallback if nodes cannot reach the super-manager |
 
   The node's manager (root, LocalSystem) does the transfer, since only it holds the node key
@@ -3069,3 +3118,5 @@ The model store (2026-11-21), recommendation first: 5. **Direction**: the nodes 
 the super-manager (it must be reachable from them); or the super-manager pushes over the node's
 listener. 6. **Ingestion**: the store takes files from Hugging Face (sha256 checked against the tree)
 and by upload; or Hugging Face only. 7. **Quota**: one cap on the store; or a cap per node as well.
+Answers (user, 2026-11-21): 5. the nodes pull; 6. from Hugging Face (sha256 checked) and by upload;
+7. one cap on the store, no per-node quota.

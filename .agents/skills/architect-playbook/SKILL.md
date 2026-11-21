@@ -178,3 +178,7 @@ description: What the architect has learned about this project's components, int
   `lfs.oid` is the file's sha256 (read in `files_from_tree`). `paths::instance_models_dir()` on Linux
   is `/var/lib/llama.cpp/models`, while root `AGENTS.md` still says `/var/lib/private-ai/.llama.cpp`:
   trust the code.
+- Hugging Face OAuth (huggingface.co/docs/hub/oauth and its openid-configuration, 2026-11-21): device
+  code, authorization code with PKCE S256 and refresh_token grants; public apps without a secret;
+  redirect URIs exact except `http` loopback (any port); no revocation endpoint; scopes `gated-repos`
+  (public gated, granted) and `read-repos` (private). A bff on a LAN address fits the device flow.
