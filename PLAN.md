@@ -996,6 +996,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     turn the whole list into a 503 instead of per-item nulls; `GET /api/node` reads its folder in the async
     handler (tiny, not `spawn_blocking`); `installer/llama.cpp.wxs` ~121 describes the payload without
     `share\versions`; `fe/briefs/api-contract.md` still calls `/api/node` and `boot` "being built".
+    **Tags as chips** (user, 2026-11-21): the instance tags field becomes a row of chips: a round "+"
+    that, clicked, opens an oval input for one label; confirmed, it becomes a chip and a new "+"
+    follows. While typing, the labels already used (on any instance or server profile) are suggested.
+    No edit of a chip: remove it and add it again. How a chip is removed is the designer's (the user
+    had no preference). Web UI only (`PUT /api/instances/{id}/tags` unchanged); designer's brief first.
     **GPU distribution on the model profile page** (user, 2026-11-20: "Non vedo gli slider per la
     spartizione dei layer"): the web UI edits `device`, `split-mode` and `tensor-split` as the GUI's GPU
     table does (fe slice 2f of brief 02, never scheduled until now). Built beside slice 14: first the
