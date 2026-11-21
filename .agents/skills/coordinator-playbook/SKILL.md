@@ -129,3 +129,11 @@ A designer review left its stub servers running, so its task showed as running f
 noticed). Every designer brief says: stop the stubs you started, answer with SendMessage, no
 background job to wait on. After a review, `ps -eo pid,etime,cmd | grep stub.py` and stop the
 orphans by pid; `TaskStop` an agent whose task is still "waiting on its own background work".
+
+## Deploy after every closed slice
+
+Standing go-ahead (user, 2026-11-22, AGENTS.md "Actions with real effects"): after a slice's commit,
+once no agent builds, run `cargo run -q -p xtask -- build framework && cargo run -q -p xtask -- package
+framework`, then `cargo run -q -p xtask -- install`; check `systemctl is-active private-ai-manager
+private-ai-bff`, `/` 200 and `/api/instances` 401 on :8590, a CSS or route the slice added, and that
+Strata on :8580 still answers. Report it in the slice's message.
