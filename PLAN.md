@@ -1034,7 +1034,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     patterns in `fe/DESIGN.md` and every brief from C1 on applies them. Then the whole GUI (user,
     2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
-    designer's audit of what is basic today and a phased brief, built in slices after C1 and before 17.
+    designer's audit of what is basic today and a phased brief, built in slices after C1 and before 17
+    (fe brief 17: U17a skeletons built; left U17c, U17b, U17h, U17e, U17d, U17f, U17g in that order).
     **One models folder for every engine** (user, 2026-11-21: "usa una folder unica per i modelli tra i
     differenti motori"; asked whether a server profile may still name another: "unica e basta"): one
     models folder per node, shared by llama.cpp and later Strata, owned by the framework rather than an

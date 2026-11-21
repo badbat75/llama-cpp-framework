@@ -26,7 +26,14 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import App from './App.tsx'
-import { deferred, en, fakeBff, isHidden, startAt } from './test/bff.ts'
+import {
+  INSTANCES,
+  deferred,
+  en,
+  fakeBff,
+  isHidden,
+  startAt,
+} from './test/bff.ts'
 
 /** The localStorage key of the brief (section 0). */
 const KEY = 'pai-theme'
@@ -467,6 +474,14 @@ describe('H4: the light/dark theme switch', () => {
   test('H4.7: a press leaves the focus on the button, keeps the name, and announces, routes and retitles nothing', async () => {
     render(<App />)
     await screen.findByRole('heading', { level: 1, name: en('overview-title') })
+    // Settle the Overview's read before the precondition: 17a.2 puts the
+    // page's loading status in the section from the first frame, so a pending
+    // read is a live region by design now. The intent here is the settled
+    // page: a press adds none to it.
+    const tiles = await screen.findAllByRole('link', {
+      name: INSTANCES[0]!.id,
+    })
+    expect(tiles.some((a) => a.closest('.tile'))).toBe(true)
     const btn = themeButton()
     expect(liveRegions(), 'the page has no live region to start with').toEqual(
       [],

@@ -124,6 +124,7 @@
   "version-label": "Version {0}",
   "version-unavailable": "The version could not be read from the service.",
   "instances-title": "Instances",
+  "instances-loading": "Loading the instances…",
   "instances-empty": "No instances are configured.",
   "instances-failed": "The instances could not be read.",
   "instances-manager-unavailable": "The manager is not running or does not answer.",

@@ -987,6 +987,11 @@ test('section 4 (1.4.12): every fixed height is a box without text, and the cont
     // draws, it holds no text (pinned in HearthIcons.test.tsx), so the 1.25em
     // square the brief gives it is a box without text.
     '.icon',
+    // The skeleton blocks of 17-ux-pass.md U17a: spans under an
+    // aria-hidden="true" root, they carry no text; the heights (1lh, 8rem)
+    // follow the text size (the brief's own 1.4.4 note).
+    '.skeleton',
+    '.skeleton-box',
     "input[type='checkbox']",
     "input[type='checkbox']::before",
     "input[role='switch']",

@@ -13,6 +13,7 @@
 # are set with GET /__set?name=value, and read back as JSON.
 import json
 import sys
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -24,14 +25,23 @@ PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 # when the bff hides OpencodeApiKey from the reader; list: "one" (today's single
 # instance) or "many" (the four tiles of 08-hearth-h6-overview.md section 3);
 # tags: "few" (the three of brief 12) or "long" (the widest the rule allows, the
-# 8 tags of 32 characters of brief 15 section 7).
+# 8 tags of 32 characters of brief 15 section 7); load: "fast" (every read
+# answers at once, every state beside the two loading ones), "slow" (the page's
+# reads are held, the session answering: the page shows the skeleton of its
+# first read) or "session" (only the session read is held: the boot skeleton).
 STATE = {
     "session": "admin",
     "inst": "active",
     "key": "withheld",
     "list": "one",
     "tags": "few",
+    "load": "fast",
 }
+
+# How long a held read stays open, for the loading states of brief 17 U17a:
+# long past the 300 ms the skeleton needs, and long past the axe run, so the
+# page is the same page from the marker to the last reading.
+HOLD_S = 8.0
 
 # A long unbroken name: the banner has to hold it at 320 px.
 USER = "abcdefghijklmnopqrstuvwxyz012345"
@@ -180,6 +190,17 @@ class Handler(SimpleHTTPRequestHandler):
             for k, v in parse_qs(url.query).items():
                 STATE[k] = v[0]
             return self.json(200, STATE)
+        # The loading states of brief 17 U17a: `load=slow` holds every read of
+        # the page, so the page is the skeleton of its first read;
+        # `load=session` holds only the session one, so the page is the boot
+        # skeleton. Every other state answers at once.
+        if p.startswith("/api/"):
+            page_read = p != "/api/session"
+            held = (STATE["load"] == "slow" and page_read) or (
+                STATE["load"] == "session" and not page_read
+            )
+            if held:
+                time.sleep(HOLD_S)
         # The bff from item 13a (fe/briefs/api-contract.md): with no session,
         # every route beside the session one answers 401 session-required, so
         # the signed-out pages can only be the sign-in page.

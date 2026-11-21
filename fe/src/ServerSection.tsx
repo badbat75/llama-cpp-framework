@@ -3,6 +3,7 @@
 // the form, or the message saying why not.
 import { useEffect, useRef, useState } from 'react'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+import { CardBox, Loading, LoadingText } from './Skeleton.tsx'
 import ServerForm, {
   type Runs,
   type ServerDoc,
@@ -160,8 +161,12 @@ function Body({
   onReload: () => void
   onRenewed: (session: Session) => boolean
 }) {
-  if (answer === undefined || answer === 'signed-out' || answer === 'revoked') {
-    return <p role="status">{t('server-loading')}</p>
+  if (answer === undefined) {
+    // The form's skeleton (17a.4): the card the fields will fill.
+    return <Loading text={t('server-loading')} shape={<CardBox />} />
+  }
+  if (answer === 'signed-out' || answer === 'revoked') {
+    return <LoadingText text={t('server-loading')} />
   }
   if ('doc' in answer) {
     // A withheld key (27d): the form would show No key, and a save would

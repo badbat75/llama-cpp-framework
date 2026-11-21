@@ -2358,3 +2358,55 @@ html:has(.save-bar) {
     display: none;
   }
 }
+
+/* ── Skeleton (DESIGN.md 5.2) ─────────────────────────────────────────── */
+
+/* Brief 17 U17a: the shape of the page to come, shown when its first read has
+   been open for 300 ms. The block is the lifted box of the page, its edge the
+   transparent border forced colours draw, its corner the card's. The heights
+   follow the text size (WCAG 1.4.4): a line of text, and a block of them.
+   Nothing here moves: the shape is still, and U17g fades the content that
+   replaces it, not it. */
+.skeleton {
+  display: block;
+  height: 1lh;
+  max-width: 100%;
+  background: var(--bg);
+  border: var(--border-w) solid transparent;
+  border-radius: var(--radius);
+}
+
+/* The first line of a shape is the page's heading, which is shorter than the
+   lines under it (U17a's boot row). */
+.skeleton:first-child {
+  width: 40%;
+}
+
+.skeleton + .skeleton {
+  margin-top: var(--space-2);
+}
+
+.skeleton-box {
+  display: block;
+  height: 8rem;
+  max-width: 100%;
+  background: var(--bg);
+  border: var(--border-w) solid transparent;
+  border-radius: var(--radius);
+}
+
+/* The fill the block stands on (the U17a review): the page is --page, all but
+   the same colour as a lifted box, so --surface on the page is a blank page in
+   light mode. A block on the page therefore takes the box's colour, --bg, and
+   inside a box, whose fill is --bg, it takes --surface. */
+.card .skeleton,
+.card .skeleton-box,
+.tile .skeleton {
+  background: var(--surface);
+}
+
+/* The card under a header's lines starts at the line's own gap, so the last
+   line does not touch the card (the U17a review, minor). */
+.skeleton + .card {
+  margin-top: var(--space-2);
+}

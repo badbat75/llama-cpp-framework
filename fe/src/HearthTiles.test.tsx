@@ -251,17 +251,26 @@ test.each(stateCases)(
 
 // ── H6a.3: the states the list does not have ───────────────────────────────
 
-test('H6a.3: while the read runs, nothing is under the heading and there is no list', async () => {
+test('H6a.3 (17a.2): while the read runs the section holds the loading status, visually hidden, and no list', async () => {
   const gate = deferred()
   fakeBff({ instances: () => gate.promise })
   render(<App />)
 
   const section = await instancesSection()
-  // as today: an empty section, no place held, no message
+  // Brief 17 U17a.2 closes the gap of DESIGN.md 6: the section is no longer
+  // empty, it holds the page's own loading text, kept out of sight. The
+  // skeleton of 17a.3 needs 300 ms, and this read answers sooner.
   await Promise.resolve()
-  expect(section.textContent).toBe(en('instances-title'))
+  const status = within(section)
+    .getAllByRole('status')
+    .find((el) => el.textContent?.trim() === en('instances-loading'))
+  expect(status, 'the section holds the loading status').not.toBeUndefined()
+  const hidden =
+    status!.closest('.visually-hidden') ??
+    status!.querySelector('.visually-hidden')
+  expect(hidden, 'the loading text is in the DOM and not shown').not.toBeNull()
   expect(within(section).queryByRole('list')).toBeNull()
-  expect(within(section).queryAllByRole('paragraph')).toEqual([])
+  expect(section.querySelectorAll('.tile'), 'no tile').toHaveLength(0)
   gate.resolve(reply(200, INSTANCES))
 })
 
@@ -320,13 +329,15 @@ test('H6a.4 with H6b.5: the three table-header keys are gone, only the two boot 
 
   // the tile says the same things the table said, with the keys the table had:
   // the section, its messages, the engine line and the state labels. H6b adds
-  // exactly two keys, the words of the boot row (H6b.5), no other.
+  // exactly two keys, the words of the boot row (H6b.5); brief 17a.1 adds the
+  // Overview's own loading word. No other.
   const overview = keys.filter((key) => key.startsWith('instances-')).sort()
   expect(overview).toEqual(
     [
       'instances-boot-off',
       'instances-boot-on',
       'instances-empty',
+      'instances-loading',
       'instances-failed',
       'instances-manager-unavailable',
       'instances-not-authorized',

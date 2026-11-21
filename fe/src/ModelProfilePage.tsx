@@ -88,6 +88,7 @@ import {
 import { modelProfileIdUnreadable } from './route.ts'
 import { SignInDialog, useSignInDialog } from './SignIn.tsx'
 import type { Session, SignedOut } from './session.ts'
+import { CardBox, Loading, LoadingText } from './Skeleton.tsx'
 import { t } from './strings.ts'
 
 /** One model profile as the read gives it, the shape of criterion 81 with the
@@ -362,8 +363,22 @@ function Body({
   if (modelProfileIdUnreadable(id)) {
     return <p>{t('model-profile-not-found', id)}</p>
   }
-  if (answer === undefined || answer === 'signed-out' || answer === 'revoked') {
-    return <p role="status">{t('model-profile-loading')}</p>
+  if (answer === undefined) {
+    // The cards' skeleton (17a.4): two cards, the shape of the page's form.
+    return (
+      <Loading
+        text={t('model-profile-loading')}
+        shape={
+          <>
+            <CardBox />
+            <CardBox />
+          </>
+        }
+      />
+    )
+  }
+  if (answer === 'signed-out' || answer === 'revoked') {
+    return <LoadingText text={t('model-profile-loading')} />
   }
   if ('doc' in answer)
     return (

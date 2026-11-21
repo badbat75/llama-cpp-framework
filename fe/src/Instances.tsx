@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { apiError, call, sessionEnded, sessionRevoked } from './api.ts'
 import { instanceHref } from './route.ts'
 import type { SignedOut } from './session.ts'
+import { Loading, Lines } from './Skeleton.tsx'
 import { StateShape, stateLabel } from './StateBadge.tsx'
 import { t } from './strings.ts'
 
@@ -249,7 +250,26 @@ function manyEngines(instances: Instance[]): boolean {
 /** The instances as a list of tiles, or the message in their place. */
 function Body({ answer }: { answer: Answer | undefined }) {
   if (answer === undefined) {
-    return null
+    // The tiles' skeleton (17a.3): the shape of the list to come, two tiles of
+    // three lines, so the section is no longer empty while the read runs.
+    return (
+      <Loading
+        text={t('instances-loading')}
+        shape={
+          // The `.tiles` grid of the answer (17a.3, the U17a review): the two
+          // skeleton tiles sit in the same grid, so the answer is not a jump in
+          // width and count.
+          <div className="tiles">
+            <div className="tile">
+              <Lines n={3} />
+            </div>
+            <div className="tile">
+              <Lines n={3} />
+            </div>
+          </div>
+        }
+      />
+    )
   }
   if (!Array.isArray(answer)) {
     return <p>{errorText(answer.error)}</p>

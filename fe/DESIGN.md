@@ -613,8 +613,8 @@ Each is one React component, reused by every page.
   new group never reads as one more row of the list before it. Nothing in it takes focus ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
   technique [H40](https://www.w3.org/WAI/WCAG22/Techniques/html/H40)).
 - **Skeleton** (a page's first read pending, brief 17 U17a): `aria-hidden` blocks in the shape of
-  the content to come, `.skeleton` (one line, `1lh`) and `.skeleton-box` (`8rem`), `--surface` with a
-  transparent border for forced colours, `--radius`, never animated; shown only after 300 ms, so a
+  the content to come, `.skeleton` (one line, `1lh`) and `.skeleton-box` (`8rem`), `--bg` on the page and `--surface`
+  inside a card or tile (the pairs that show in both themes), with a transparent border for forced colours, `--radius`, never animated; shown only after 300 ms, so a
   fast reply shows no flash. The page's loading text stays the `role="status"`, visually hidden.
 - **Sortable table** (brief 17 U17c): a sortable column's `th` holds a native button with the
   header's text and an `aria-hidden` arrow icon; the sorted `th` carries `aria-sort`; clicks cycle

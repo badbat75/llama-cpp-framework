@@ -31,6 +31,7 @@ import {
 } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
 import { useDirtyReport, useWarnOnLeave } from './SaveBar.tsx'
+import { CardBox, Lines, Loading } from './Skeleton.tsx'
 import type { Runs } from './ServerForm.tsx'
 import ServerSection, { InstanceNotFound } from './ServerSection.tsx'
 import type { Session, SignedOut } from './session.ts'
@@ -525,7 +526,19 @@ function Body({
   children: ReactNode
 }) {
   if (answer === undefined) {
-    return <p role="status">{t('loading')}</p>
+    // The header's skeleton (17a.4): three lines where the instance's name and
+    // its facts will be, and the card the Server form will fill.
+    return (
+      <Loading
+        text={t('loading')}
+        shape={
+          <>
+            <Lines n={3} />
+            <CardBox />
+          </>
+        }
+      />
+    )
   }
   if (!Array.isArray(answer)) {
     return <p>{errorText(answer.error)}</p>

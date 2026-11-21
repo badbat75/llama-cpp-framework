@@ -4,6 +4,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { readNode, type NodeInfo } from './node.ts'
 import PageHeading from './PageHeading.tsx'
+import { Lines, Loading } from './Skeleton.tsx'
 import type { SignedOut } from './session.ts'
 import { t } from './strings.ts'
 
@@ -95,7 +96,8 @@ export default function About({
     <>
       <PageHeading text={t('about-title')} />
       {node === undefined ? (
-        <p role="status">{t('about-loading')}</p>
+        // The versions' skeleton (17a.4): four lines, the rows to come.
+        <Loading text={t('about-loading')} shape={<Lines n={4} />} />
       ) : node === null ? (
         // Nobody acted to bring the failure about, so it is no alert (13 N.10).
         <p>{t('about-failed')}</p>

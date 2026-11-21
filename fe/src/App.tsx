@@ -35,6 +35,7 @@ import {
   type SignedOut,
 } from './session.ts'
 import SignIn from './SignIn.tsx'
+import { Box, Line, Loading } from './Skeleton.tsx'
 import { ThemeSwitch } from './ThemeSwitch.tsx'
 import { t } from './strings.ts'
 
@@ -637,7 +638,20 @@ function Page({
   onDirty: (dirty: boolean) => void
 }) {
   if (session === undefined) {
-    return <p role="status">{t('loading')}</p>
+    // The boot skeleton (17a.4): the heading line and two cards, the shape of
+    // the page the session read brings.
+    return (
+      <Loading
+        text={t('loading')}
+        shape={
+          <>
+            <Line />
+            <Box />
+            <Box />
+          </>
+        }
+      />
+    )
   }
   if (route.page === 'overview' || route.page === 'sign-in') {
     // Signed in, #/sign-in is an alias of #/ (09 S1a.10); the alias effect

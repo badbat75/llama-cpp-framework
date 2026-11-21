@@ -74,8 +74,10 @@ const AS_OF = S['model-profile-gpu-probed-at'].split('{0}')[0]
 // selectors (with the text they carry) only that state shows, the optional
 // click: selectors clicked in order once the state is rendered (each one only
 // when it is visible, and then awaited open), the optional open: one control
-// clicked and the element its click brings awaited, and the optional hover: the
-// pointer entering one element and the element its cut text brings awaited. A page
+// clicked and the element its click brings awaited, the optional hover: the
+// pointer entering one element and the element its cut text brings awaited, and
+// the optional hold: the stub keeps its reads open (stub.py `load=`) so the
+// state is the page while it waits, where no idle network exists to wait for. A page
 // that is blank, still loading, showing an error or the wrong route has no axe
 // violation, so each state proves itself rendered before it is read.
 const STATES = [
@@ -115,6 +117,33 @@ const STATES = [
     expect: [
       { selector: '#page-heading', text: S['overview-title'] },
       { selector: 'div.session span', text: USER },
+    ],
+  },
+  {
+    name: 'loading-boot',
+    // Brief 17 U17a: the session read held, so the page is the skeleton of 300
+    // ms of waiting (fe/DESIGN.md 5.2 Skeleton): a line and two boxes in main,
+    // with the loading text in the DOM and out of sight.
+    set: 'session=admin&load=session',
+    hash: '#/',
+    hold: true,
+    expect: [
+      { selector: 'main .skeleton' },
+      { selector: 'main .skeleton-box' },
+      { selector: '[role="status"]' },
+      { selector: '.visually-hidden' },
+    ],
+  },
+  {
+    name: 'loading-overview',
+    // The instances read held, the session answering: the tiles' skeleton, the
+    // shape of the list to come (17a.3), aria-hidden.
+    set: 'session=admin&load=slow',
+    hash: '#/',
+    hold: true,
+    expect: [
+      { selector: '.tile .skeleton', count: 3 },
+      { selector: '[aria-hidden="true"] .skeleton' },
     ],
   },
   {
@@ -375,20 +404,26 @@ async function hovered(page, state) {
 
 /** The state on the page: the stub's set, then the route. The stub keeps every
  *  key a /__set did not carry, so the state's own set goes after a reset to
- *  the default list of instances and the default tags: the two tile states ask
- *  for list=many themselves, the tags state for tags=long, and a state that ran
- *  before them leaves neither behind for the pages after it. A hash change does
+ *  the default list of instances, the default tags and the fast reads: the two
+ *  tile states ask for list=many themselves, the tags state for tags=long and
+ *  the loading ones for load=session or load=slow, and a state that ran before
+ *  them leaves none of them behind for the pages after it. A hash change does
  *  not reload the app, so every state starts from a blank page. */
 async function load(page, state) {
   const found = []
-  for (const q of ['list=one&tags=few', state.set]) {
+  for (const q of ['list=one&tags=few&load=fast', state.set]) {
     const res = await fetch(`${BASE}/__set?${q}`)
     if (!res.ok) {
       found.push(`set request: ${res.status} ${res.statusText}`)
     }
   }
   await page.goto('about:blank')
-  await page.goto(`${BASE}${state.hash}`, { waitUntil: 'networkidle' })
+  // A `hold` state: the stub keeps its reads open for seconds, so the network
+  // never goes idle and 'networkidle' would only end at the navigation timeout.
+  // The page is at rest once it is parsed: its skeleton is the state to read.
+  await page.goto(`${BASE}${state.hash}`, {
+    waitUntil: state.hold === true ? 'domcontentloaded' : 'networkidle',
+  })
   return found
 }
 

@@ -125,6 +125,9 @@ export const EN: Record<string, string> = {
   'version-label': 'Version {0}',
   'version-unavailable': 'The version could not be read from the service.',
   'instances-title': 'Instances',
+  // Brief 17, U17a.1: the Overview has a loading text of its own, its status
+  // while GET /api/instances is pending.
+  'instances-loading': 'Loading the instances…',
   'instances-empty': 'No instances are configured.',
   'instances-failed': 'The instances could not be read.',
   'instances-manager-unavailable':

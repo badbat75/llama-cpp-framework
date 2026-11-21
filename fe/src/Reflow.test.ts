@@ -382,13 +382,16 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // chips-row, chips, chip, chips-profile, tag-add and tag-new (the chip's x is
 // styled as `.chip button`, it has no class of its own), and drops tags-save,
 // the button the chips replaced; its section 10 R5 adds the seventh, chip-full,
-// the pill a cut chip opens. A class beside these is a look no brief asked for.
+// the pill a cut chip opens. Brief 17, slice U17a (the skeleton while a page's
+// first read is pending), adds the eighth and ninth: skeleton (a line of the
+// shape to come) and skeleton-box (the same, a box tall). A class beside these
+// is a look no brief asked for.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skip-link stacked subgroup tag-add tag-new tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14 and the six of brief 15 with its R5 pill, and the only id a selector names is the mount point #root', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5 and brief 17 U17a amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and the two of brief 17 U17a, and the only id a selector names is the mount point #root', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -398,7 +401,7 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5 amend its section 3 list): the c
     }
   expect(
     [...used].sort(),
-    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14 and the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), tags-save gone, and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
+    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class) and the skeleton of brief 17 U17a, tags-save gone, and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(
     [...ids].sort(),

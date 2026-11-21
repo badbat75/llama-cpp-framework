@@ -102,6 +102,25 @@ still in the DOM). Tests that assert the Overview renders nothing while pending
 (`Instances*.test.tsx`, if any) now expect the status. `fe/ux/check.js` gains a "loading" state
 (replies held) for the UX check; the designer runs it.
 
+### U17a review (designer, 2026-11-21)
+
+- **Defect, the fill**: `--surface` (#f5efe6) on the page's `--page` (#f7f1e8) is all but invisible
+  in light mode, so the boot skeleton, the instance header's lines and the Model profiles rows read
+  as a blank page (dark mode shows them). The brief's token was wrong. Ruling: `.skeleton` and
+  `.skeleton-box` take `--bg` (the card colour on the page); inside a `.card` or `.tile` (whose fill
+  is `--bg`) they take `--surface`: `.card .skeleton, .card .skeleton-box, .tile .skeleton
+  { background: var(--surface) }`.
+- **Defect, the tiles**: the Overview's two skeleton tiles are not in a `.tiles` grid
+  (`Instances.tsx` ~258), so they span the column, touching, and the answer replaces them with the
+  grid of 15rem tiles: a jump in width and count. Wrap them in an element with class `tiles`.
+- **Accepted**: the 40 % first line (`.skeleton:first-child`) everywhere `Lines` starts a shape. It is
+  a heading in the boot, the instance header, a tile (the id) and About (the host), and reads as the
+  table's head row in Model profiles. The heights (`1lh`, `8rem`): the content is always taller, so
+  it grows downward from the same top and nothing above it moves. A jump downward is the
+  content arriving, not a layout shift of what was read.
+- Minor, coder's call: the instance header's last line touches the card box under it; a
+  `margin-top: var(--space-2)` on a box after a line would match the lines' gap.
+
 ## U17c. Sort the Model profiles list
 
 React: `useDeferredValue` for the filter text feeding the filtered and sorted rows (`memo` on the

@@ -6,14 +6,18 @@ that starts, at 1280 and 320 px, in light and dark, reads each page with
 `wcag21aa`, `wcag22aa` tags) and compares `scrollWidth` with the viewport. The
 states: the sign-in page at the home address, a protected address that shows
 the sign-in form with the notice saying why, the sign-in route, Overview signed
-in, Overview with the tiles of four instances, the instance page with the Server
+in, the Overview and the boot screen while their first read is still open (the
+two `load=` states of brief 17 U17a, the skeleton pages), Overview with the
+tiles of four instances, the instance page with the Server
 form, the Model profiles list, a model profile page that is there, the same page
 with its jump list and its Assets card opened, a model profile page that is not.
 Each state names an `expect`: the selectors, with the text they carry, only that
 state shows; a state may also name a `click`, the selectors to click in order
 once it has rendered, each one only where it is visible and then awaited open
 (`aria-expanded="true"`), so the page is read at rest with the disclosures
-done. The page is waited for up to 5 s, so a blank page, a page still loading,
+done, or a `hold`, which waits for the page parsed and not for the network idle
+(a held read never ends, so the page at rest IS the page waiting). The page is
+waited for up to 5 s, so a blank page, a page still loading,
 an error banner or the wrong route is reported as `not rendered` and not read as
 a clean page. Once per browser the check also proves the dark colour scheme
 changes the page (the computed background of `body` must differ from the light

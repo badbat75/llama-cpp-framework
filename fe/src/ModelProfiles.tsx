@@ -17,6 +17,7 @@ import PageHeading from './PageHeading.tsx'
 import { modelProfileHref, modelProfileIdUnreadable } from './route.ts'
 import type { Session, SignedOut } from './session.ts'
 import SignIn from './SignIn.tsx'
+import { Lines, Loading, LoadingText } from './Skeleton.tsx'
 import { t } from './strings.ts'
 
 type ModelProfile = {
@@ -214,8 +215,14 @@ function Body({
   onRenewed: (session: Session) => boolean
   onReread: () => void
 }) {
-  if (answer === undefined || answer === 'signed-out' || answer === 'revoked') {
-    return <p role="status">{t('model-profiles-loading')}</p>
+  if (answer === undefined) {
+    // The rows' skeleton (17a.4): three lines in the table's place.
+    return (
+      <Loading text={t('model-profiles-loading')} shape={<Lines n={3} />} />
+    )
+  }
+  if (answer === 'signed-out' || answer === 'revoked') {
+    return <LoadingText text={t('model-profiles-loading')} />
   }
   if (!Array.isArray(answer)) {
     if (answer.error === 'client-not-authorized') {

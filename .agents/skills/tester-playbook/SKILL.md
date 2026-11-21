@@ -189,6 +189,26 @@ vitest` from the repo root resolves a different config and lies about the files 
   its value in a deliberately failing assert (`expect(shown).toBe('the probe answer')`): the red line
   carries the string. Write the probe as a `.test.tsx` in `src/`, run it, `rm` it, prove with
   `ls src | grep -c`.
+- `role="status"` is a name-from-AUTHOR role (ARIA), so `getByRole('status', { name: the text })` finds
+  nothing for `<p role="status">the text</p>` and the red reads "Unable to find an accessible element with
+  the role status" on markup that is there. Find it as
+  `getAllByRole('status').find((el) => el.textContent?.trim() === text)` (the existing fe tests do exactly
+  this). The same is true of an absence pin: `queryAllByRole('status')` plus the text filter, never
+  `queryByRole(.., { name })`.
+- A page's delay rule (the skeleton after 300 ms, U17a) needs the test's own clock: `vi.useFakeTimers`
+  with `toFake` listing `setTimeout/clearTimeout/setInterval/clearInterval/Date` (React's scheduling stays
+  real), a `flush()` of `act(() => advanceTimersByTimeAsync(0))` x20 to land the microtasks, and the
+  answer's own `setTimeout` inside the fake clock (a `late(answer, 500)` wrapper) so it lands when the
+  test advances it. Pin the boundary tight: `advance(299)` absent, `advance(1)` present.
+- jsdom applies no stylesheet, so "the text is in the DOM and not shown" is two pins: the element's link to
+  `.visually-hidden` (accept BOTH nestings, `el.closest('.visually-hidden') ??
+  el.querySelector('.visually-hidden')`, so the coder's markup shape stays free), and the CSS text of the
+  `.visually-hidden` rule, which the sheet test already pins.
+- A new `fe/ux` state whose reads the stub holds needs two things the existing states do not: the
+  navigation's `waitUntil` must be `domcontentloaded` (the network never goes idle, `networkidle` only
+  ends at the navigation timeout), and the reset query in `load()` must carry EVERY key a state can set,
+  since the stub keeps keys a `/__set` did not carry: a key missing from the reset leaves every later
+  state with a held read, and each of them reports `not rendered`.
 - jsdom's `closest` answers a COMPLEX selector (`el.closest('li > *')`): the element's own parent is the
   `li` gives the element ITSELF, a nested one gives the li's child. So a "these sit in one wrapper" pin by
   that locator is testable today, and the shape of the red is the field itself: pin
@@ -219,6 +239,29 @@ vitest` from the repo root resolves a different config and lies about the files 
 - In an ordered min-size allowlist, the entries of ONE rule follow the test loop's order
   (`min-height` then `min-width`), NOT the lines of the sheet: `.tag-new input` writes `min-width` above
   `min-height`, and the list must name min-height first.
+- A token swap inside existing classes (17a's review: `.skeleton` `--surface` to `--bg`, plus
+  `.card .skeleton, .card .skeleton-box, .tile .skeleton { background: var(--surface) }`) touches NONE of
+  the three fe allowlists: R1.8 lists classes, R1.1 `overflow-wrap`, H2a `TEXT_FREE` heights. Say that in
+  the report, it is the answer to "which Hearth list moves".
+- Pin a descendant CSS rule per WHOLE selector, not as one rule the brief's text spells: match the
+  whitespace-dropped form against `compact.split(',')`, and that form KEEPS THE LEADING DOT (the reader is
+  `m[1].replace(/\s+/g, '')`): `.card .skeleton` compacts to `.card.skeleton`, so a selector written
+  `card.skeleton` matches nothing and the pin reds on a rule that is in the sheet. Its `readable` is
+  `compact.split('.').join(' .').trim()` (a leading-dot split starts with `''`, so no `.` prefix: that
+  yields `..card .skeleton`). The coder's one rule or three both pass; pin `!compact.includes('@')`
+  beside it: a media-scoped rule greens the selector at one width only. The top-level class keeps its own
+  `valueFor(cls, ..)` pin, which reads only the exact-`.cls` rules, so the pair (page fill, box fill) is
+  two reds naming each other.
+- The teeth of a CSS-text pin are proven on a copy of the SHEET, not on the real one (the rule exists, so
+  the pin is green and vacuous-looking): a scratch test in `src/` that reads a scratch css in `src/` (same
+  dir, so `join(import.meta.dirname, ..)` needs one string swap) with the rule cut out of it; the red
+  reads `expected 0 to be greater than 0` naming the selector. `rm` both and prove with
+  `ls src | grep -c`.
+- A missing wrapper element (17a's review: the skeleton tiles not in `.tiles`) has an ORDER: pin the
+  WRAPPER count first (`section.querySelectorAll('.tiles').length === 1`), then each child's
+  `closest('.tiles')` against that one node, then the wrapper's own child count, then that the wrapper sits
+  under the state's `aria-hidden` root. A `closest` pin first is vacuous when there is no wrapper at all,
+  and a wrapper outside the hidden root would make the shape a list to read.
 - A red the coordinator reports in a file whose area is NOT in the coder's diff (a routing/sign-in test,
   no routing file touched): run it solo three times and read the full-suite map. Three green solos plus a
   green in the full run is a flake, and the report says so with the runs; editing production code to
@@ -1743,3 +1786,30 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
   resolve), `BROWSERS = ['webkit']`, run twice: 0 failing solo is a flake, say so. The per-browser
   `catch` in `main` is what makes it visible at all: with a bare throw the run loses chromium's and
   firefox's lines with it.
+
+## A whole-document save round trip (the Server form's unedited keys, 2026-11-21)
+
+- A "every key the read returned goes back as read" loop over `doc.values` reds on the switches whose
+  read `null` the form writes as `false` (`RocprofAttach`, `AttnRotDisable`: `toValues` answers a
+  boolean, the contract says the two write the same). Set them `false` in the fixture, so the loop's
+  only reds are the keys the form really drops; a loop over a stock `serverDoc()` is a red the coder
+  cannot pass.
+- The read's `Tags` is ALWAYS a list (`crates/bff/src/server.rs` `"Tags": cfg.tags`) and a save body
+  carrying `Tags: null` is 400 `server-malformed` (its own test `assert_malformed(body_with("Tags",
+  Value.Null), ..)`), so the preservation pin for an empty list is `Array.isArray(sent.Tags)` +
+  `toEqual([])`, never `toBeNull()`; `Devices` is the opposite (a string, `null` = the key absent).
+- A key-preserving pin must also assert the KEY (`Object.keys(sent) toContain 'Tags'`) before its
+  value: an absent key reads as `undefined to deeply equal [...]` which hides that the save sent 19
+  keys, while the key assert prints the whole sent list (`['Port', 'Hostname', …(17)]`), the defect's
+  evidence.
+- Do NOT pin the rule with an invented key the form does not know: the contract ignores unknown keys
+  in a save body and the render drops them (`The file is rendered whole from the values`), so the fe
+  sending one back is promised by nothing, and the pin forces one implementation (merge-every-read-key)
+  over another (carry the two named keys). Pin the general rule as the read's key set and values.
+- The Server page's own test file copies `ServerSave.test.tsx`'s `loaded` / `box` / `saveButton` /
+  `save` helpers and its `stubDialog()` in `beforeEach` with the `dialogs.restore()` in `afterEach`
+  (a page-wide locator that counts `role="status"` needs the same teardown); a new file keeps the
+  coder's edits out of the slice, and `npm --prefix fe test -- <NewFileName>` runs it alone.
+- The server-profile routes (`GET|PUT /api/profiles/server/{id}`) have NO page: no `fe/src` code
+  fetches them, so a defect that names "the server profile routes" is pinnable only on the bff side.
+  Report the fe's reach, and never add a route to the shared fake to fake the coverage.

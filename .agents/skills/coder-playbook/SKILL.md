@@ -19,6 +19,9 @@ Lessons only: the rules are in `AGENTS.md`.
   tree without your slice, so the only proof is a rerun on the current tree.
 - A mid-task history rewrite deletes the base commit (`git diff <sha>` answered "Not a valid object
   name") and moves files. Re-survey before editing (`git log --oneline -3`, `git status`).
+- The reverse: a test file the coordinator says "landed" is sometimes not in the tree at all (twice in
+  one task: `fe/src/ServerFieldOrder.test.tsx`). `ls` for the name before starting; a slice with no test
+  file has nothing to turn green, so report that and write no test.
 - Verify your whole set with `git diff <paths>` right before the test run, not only the file you are in.
 - A failure that quotes an identifier your own edit removed is the tree moving, not a logic bug: re-read
   the whole file, apply what is left in one scripted pass (python, exact old text, print the result),
@@ -79,6 +82,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - A CSS-reading test's block helper must start counting braces AFTER the opening `{` at depth 1. One that starts
   at depth 0 stops at the first INNER `}`, so a media block with ONE rule reads as holding none, and its
   "the one rule it holds" assertion can never go green: report it, do not pad the sheet with an empty rule.
+- The same shape in a descendant-selector helper: the sheet's rule selector, read as text, has its whitespace
+  dropped (`.card .skeleton` becomes `.card.skeleton`), so a helper matching that part against a name written
+  WITHOUT the leading dot (`'card.skeleton'`) finds 0 rules for every real selector, and its
+  `toBeGreaterThan(0)` is red by construction. The only sheet spelling that passes is `card .skeleton`,
+  an element named `card`, which matches nothing. Fix it in the helper (strip `^[.]` from each part) or in
+  the loop's names: a CSS test's selector names must be spelled WITH the dot.
 - A wrapping chip list capped by `max-width: 100%` on the chip is capped by its PARENT, so the `ul` of a flex row
   needs `min-width: 0` too: with the list uncapped the widest item grows the document's `scrollWidth` and the
   ux check reports `overflow: scrollWidth N > 320`.
@@ -1010,6 +1019,28 @@ Lessons only: the rules are in `AGENTS.md`.
 - `tests::data_root_e2e` runs every e2e phase in sequence in ONE test, so its first panic hides every
   later phase: the manager's "262 passed" says nothing about the pins of the D-Bus and pipe phases.
   Enumerate them in the copy, one patch at a time.
+- `expect(el.querySelectorAll(x)).toEqual([])` never passes in vitest: a `NodeList` is not an `Array`, so
+  an empty one answers `expected [] to deeply equal []` with `Received: NodeList []`. It reddens whatever
+  the code does: prove it with a selector that matches nothing, and report the line (`.toHaveLength(0)`,
+  or spread it into an Array, the way the shipped tests do).
+- A helper documented "the status, when there is one" built on `getAllByRole` THROWS where it should
+  answer nothing, so every later "the status is gone" assertion reddens the whole test
+  (`U17aSkeletons.test.tsx`'s `statusReading`: 7 of its 19 reds, all of them the helper, not the page).
+  Prove it by copying the file with `queryAllByRole` and running the copy: 19/19 green is the evidence.
+- A page whose first read now announces (a `role="status"`, brief 17 U17a) reddens any shipped test whose
+  precondition is "the page has no live region" read right after the h1: the read is open in the first
+  painted frame, so the region is there by design. Settle the read first (`await
+  within(screen.getByRole('main')).findByRole('list')`) and the test keeps its intent (`H4.7`).
+  `screen.findByRole('list')` alone is ambiguous: the nav's `ul` answers the same role.
+- A test that must be settled needs the fixture's default to have content: `fakeBff()`'s default instance
+  list decides whether a `list` role exists at all.
+- A passing vitest test prints no `console.log` (the config is silent): probe a value by asserting
+  `expect(live).toEqual(['__probe__'])` and reading the AssertionError, not by logging.
+- `npm --prefix fe test -- <file> -t '<name>'` treats the filter as a REGEX: a test name with
+  parentheses (`H6a.3 (17a.2)`) matches nothing and the run reports "1 skipped", which looks like a pass.
+- `tools.opencode.worktree_create` + a symlink to the repo's `fe/node_modules` runs the whole fe suite at
+  HEAD in seconds (no `npm ci`), and the untracked scratch test can be copied in and out.
+  `git worktree remove --force` / `tools.opencode.worktree_remove` takes the symlink with it.
 - A text-pinning test that does `body.find(want)` and then slices `tail[want.len()..close]` with
   `close = tail.find(')')` PANICS (`byte range starts at 33 but ends at 26`) for EVERY code shape when
   `want` itself carries a `)` (`"paths::instance_state_dir().join("` puts one at 26, its length is 33).
