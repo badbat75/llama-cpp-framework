@@ -312,6 +312,53 @@ Lessons only: the rules are in `AGENTS.md`.
   route that only peeks loses nothing. The pattern that works is `control.rs:1568`: advance `IDLE + 1s`
   after the action.
 
+### The bff's test fakes, and reading a red there
+
+- A calls-list prefix is a SUBSTRING of a logged line: `actor_of("read models.ini")` counts
+  `read models.ini.disabled` too, and the fake PANICS when the prefix matches more than one line
+  ("more than one call"), so such a test is unsatisfiable for a route that reads both pool files,
+  beside the rows test that pins a profile from the disabled file. Read the fixture's helper before
+  treating the red as yours. `sorted_calls()` sorts the lines (an order-free pin); the switch suite's
+  calls pins are exact order.
+- The association write's `running` is the effective-id set (`assign::rows` over both pool files and the
+  section, before and after) differing AND the instance running, nothing else: ruled out (ARCHITECTURE.md
+  slice 15 "As built") the second clause that pinned a restart for an `on`/`off` written under a `*` of
+  `inherit` while `effective` was false on both sides, since the render emits the same sections. A record
+  read back that fails answers `running: true` (the design says so, and a test pins it), so
+  `read_back` returns the text beside a "came from the manager" flag rather than only the text.
+- Two pins of the assignment PUT are unsatisfiable together: `the_assignment_put_answers_the_record_the_
+  manager_left_after_the_write` counts `read assignments.ini >= 2` (the after-read the design states),
+  while `the_assignment_put_asks_as_the_signed_in_user` calls `actor_of("read assignments.ini")`, whose
+  helper asserts the prefix matches EXACTLY one line. Nothing about the request separates them. Keep the
+  after-read (the design, and the `effective`-from-the-machine tests) and report the second red.
+- The fakes implement ONLY the `ManagerClient` methods their own routes call, and the trait's defaults
+  answer `ClientError::Other`, which the bff answers 502. Adding a manager call to a SHARED route
+  reddens every suite whose fake lacks it: the model profile list's new `instances()` (the rows'
+  `assignments`) is green in `model_profiles.rs`, which implements it, and 502 in
+  `model_profiles_switch.rs`, which has only `list_instances`. Grep `crates/bff/tests/*.rs` for the
+  method name before adding the call, and report the suite the fake cannot answer.
+- Ask a per-instance `status` on a FRESH `connect(None)` created right before it, never on a client
+  kept from an earlier connect: the fake logs `as <principal>` ONCE per connect, so a stored
+  `connect(Some(user))` client logs a later `status` under the segment that opened it, and
+  `actor_of("status <id>")` reads the wrong principal. Each read of the bff's own account
+  (`instances`, `status`) is its own segment, and a record read BEFORE a write lands under the
+  account of the client made first, which is the one the pin expects.
+- A `Result<_, enum>` whose variant carries an axum `Response` is `clippy::result_large_err` (a body):
+  box it in the ONE mapping fn that builds it (`Answer(Box<Response>)`) and add module
+  `type Answered` / `type Outcome` aliases for the four-deep `Result` a route passes to `read_answer`
+  (`clippy::type_complexity` otherwise). `Refusal.key` is already a `&'static str`: `.as_str()` on it
+  is `clippy::needless_borrow`, and on a `&str` the method is unstable (E0658 `str_as_str`).
+- A manager `NotAuthorized` on any route that acts as the signed-in user answers 403
+  `session-not-administrator` AND ends the session: carry it out of the blocking task as its own
+  variant and answer it in the shared `model_profiles::not_administrator`, which is also
+  `read_answer`'s arm, so the key string lives in one place. A 403 built inside the task keeps the
+  session alive, which a test pins by a following `GET /api/session`.
+- No `assignments.ini` at all means no instance is given the model profile: the save answers `restart: []`
+  with `running: false`, asks no state and no `list_instances`, whether or not the body wrote
+  (`save_no_changes_with_no_record_restarts_nothing_and_asks_no_state`). The earlier
+  `None if !changed => client.list_instances()` arm is ruled out (slice 15 "As built"): the save's limit is
+  never spent on the state of an instance the record never named.
+
 ## INI, config, the manager
 
 - `ServerForm` is a SLINT struct (`crates/config/ui/types.slint`), so a `ServerConfig` field
@@ -677,6 +724,45 @@ Lessons only: the rules are in `AGENTS.md`.
   `HearthH2a.test.ts` clean after my edit of it). Re-check `git status` and the file text before
   trusting anything you wrote there, and write no test file at all.
 
+## Brief 14 (2026-11-21): the GPU list, and what the UX check actually reads
+
+- The UX check's summary prints only `axe: <rule> x<count>`, never which node. To learn the node, add a
+  temporary loop in `fe/ux/check.js`'s `problems()` printing `v.nodes[].target` and
+  `n.any[0].message`, run the check, then revert the loop (it is in `fe/.prettierignore`, and only your
+  hunk may stay). A standalone axe script is NOT worth the setup: `NODE_PATH=fe/ux/node_modules` reaches
+  `@axe-core/playwright`, but the page needs the stub's `__set?session=admin` fetch and a
+  `waitForSelector` before it renders.
+- axe's `aria-required-children` fires on a plain `<div>` child of a `<ul role="list">`, and only webkit
+  reports it: chromium and firefox pass the same page. The fix keeps both the sheet and the tests:
+  `role="listitem"` on the div (its role, not an `li` element, so a test that reads the list's rows as
+  `[...list.children].filter(el => el.tagName === 'LI')` still counts only rows).
+- A `<button>` with no class is a webkit `color-contrast` violation: the UA paints it grey (`#c0c0c0`)
+  with white text at 1.81:1, and axe's own fix is the sheet's rule, so give the control the shipped
+  `.secondary` (or `.primary`) class; the sheet already styles `[aria-disabled='true']` for both.
+- The stub `fe/ux/stub.py` decides what the 320 px / 200 % pass ever sees: a control that only renders
+  for a profile carrying certain `values` is unmeasured until the stub's `MODEL_PROFILE_DOC` carries them
+  (the GPU list needed `split-mode`, `device` and `tensor-split` to reach the check at all).
+- Vitest + RTL under `vi.useFakeTimers()` is a trap: RTL takes its non-jest `waitFor` branch, checks once
+  synchronously, then polls on a faked `setInterval` and on DOM mutations. A render that needs a real
+  macrotask never happens, so every `findByRole` on a fake clock hangs to `Test timed out in 5000ms`.
+  A test that holds a request and advances the clock can only see what the flush after `advance` renders.
+- The page has ONE page-level `role="status"` (the Save bar's alert) and `ModelProfileSave2` pins that
+  count, so a "…ing…" line is a plain `<p className="muted">`, and an announcement line carries
+  `aria-live`/`aria-atomic` ONLY while it has text: `ModelProfileContent` 2d.79 refuses any live region on
+  arrival, and a second status reddens two shipped helpers at once.
+- One label, two names: `nameOf(checkbox)` is the whole label text, so a row labelled `${id} ${name}`
+  answers a pin of the bare `id` list with the name appended. When one test lists the rows by name and
+  another matches them by `id` prefix, the prefixed form satisfies both; the bare form satisfies neither.
+- `Sign out` is in the banner (`SessionBar`, rendered by `App.tsx`), OUTSIDE `<main>`, so
+  `within(main).getByRole('button', { name: en('session-sign-out') })` finds nothing for any page code.
+- The card order is pinned from three directions at once: the jump list's neighbours, the "middle card"
+  index of `ModelProfileSave16` 2h.196, and `fe/src/test/modelProfileCards.ts`'s `MODEL_PROFILE_CARDS`.
+  A new card FIRST (the page prepends Assets to `cardJumps()`) shifts every positional pin: recompute the
+  indices, and report the ones no order satisfies.
+- `npm --prefix fe test -- src/<File>.test.tsx` is the single-file form (npm sets the cwd to `fe`, so the
+  jsdom config applies). `npx --prefix fe vitest run src/<File>.test.tsx` from the repo root picks the
+  node environment and dies on every test with `ReferenceError: window is not defined`.
+
 ## Tests that cannot pass, and what to report
 
 - A cascade test's self-probe can restate its own expectations as the PRE-slice sheet (H10: the probe
@@ -685,6 +771,17 @@ Lessons only: the rules are in `AGENTS.md`.
 - "the page adds no live region" counts every region of the page, and this one has a page-level
   fixture: the Save bar's `p[role="status"]` (`SaveBar.tsx`) predates the slice, and a brief's "what
   must not change" list naming the bar forbids the only fix. Report, do not remove the cue.
+- A test file's own stub of the save answer decides the bar's text: `fe/src/save.ts` needs
+  `{revision, running}` and treats any other 200 as a failure, so a `form()` answering
+  `200 {revision:'r2'}` can never leave the status at `Saved.` (it reads `You have unsaved changes.`), and
+  every `statusText` pin of a save in that file is the stub's, not the page's.
+- Two shipped files can pin opposite things about one new field: `ModelProfileSave1`'s own
+  `EDITABLE_BY_ID` map (a field with no entry there must be natively DISABLED) against
+  `fe/src/test/modelProfileCards.ts`'s `EDITABLE_FIELDS` (the shared list the tab-stop test walks). Name
+  the pair, keep the shared list's reading, and add the new acceptance file's reading.
+- A hint of several lines has two incompatible renderings pinned: `ModelProfileCards1` 2e.88 wants
+  `paragraphs.length === lines.length` for every field with a hint, a new file wants ONE node whose
+  collapsed text is the whole hint. The shipped per-line `<p>` stays; report the new file's line.
 
 - A fixture helper that forwards its argument as the document's TOP-LEVEL members (H11a:
   `assetsDoc(extra)` = `modelProfileDoc(values, { ...extra })`) turns a test that overrides a `values` key

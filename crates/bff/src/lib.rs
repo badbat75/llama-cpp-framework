@@ -3,6 +3,7 @@
 
 pub mod bff;
 mod control;
+mod instance_profiles;
 pub mod listen;
 mod model_profiles;
 pub mod node;
@@ -216,7 +217,8 @@ pub fn router_with_session_and_versions_dir(
 
 /// `router_with_session` with the manager's calls of a WRITE given their own,
 /// longer limit: the server file's save, the model profile save and the model profile switch
-/// run under `write_timeout`, every read keeps `timeout`, and so does the boot
+/// run under `write_timeout`, as do the three association writes
+/// (`instance_profiles.rs`); every read keeps `timeout`, and so does the boot
 /// write and the control verbs (the control routes are handed `timeout`). A
 /// manager busy writing is not cut off at the limit that is right for a read.
 pub fn router_with_session_and_write_timeout(
@@ -346,6 +348,12 @@ fn router_with_policy(
             axum::routing::put(set_enabled),
         )
         .merge(control::routes(connect.clone(), timeout, sessions.clone()))
+        .merge(instance_profiles::routes(
+            connect.clone(),
+            timeout,
+            write_timeout,
+            sessions.clone(),
+        ))
         .merge(node::routes(connect, sessions, versions_dir))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn_with_state(policy, origin::guard))
@@ -486,10 +494,14 @@ async fn version(
     axum::Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })).into_response()
 }
 
-/// `GET /api/instances`: `[{"id", "engine", "state", "port", "tags",
-/// "instanceTags", "boot"}]` in the manager's order, to a signed-in reader, or
+/// `GET /api/instances`: `[{"id", "engine", "serverProfile", "state", "port",
+/// "tags", "instanceTags", "boot"}]` in the manager's order, to a signed-in
+/// reader, or
 /// `{"key": <strings key>, "args": []}`, never the manager's detail. The
-/// manager's row of the instance carries the port and the two tag lists:
+/// manager's row of the instance carries the server profile it runs, named as
+/// the manager names it (`serverProfile`, `null` when the row names none: the
+/// page shows which `server@<profile>.ini` the instance reads), the port and
+/// the two tag lists:
 /// `port` is the configured one, `tags` the union the bff builds of the two
 /// lists (the server profile's first, none twice), `instanceTags` the
 /// instance's own list, the one the editor saves back. `boot` is the
@@ -526,6 +538,7 @@ async fn instances(
                 Ok(state) => list.push(serde_json::json!({
                     "id": id,
                     "engine": ENGINE_LLAMA_CPP,
+                    "serverProfile": row.and_then(|row| row.server_profile.clone()),
                     "state": state.name(),
                     "port": row.map_or(0, |row| row.port),
                     "tags": tags_of_row(row),

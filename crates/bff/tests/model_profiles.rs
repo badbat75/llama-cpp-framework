@@ -5,8 +5,8 @@
 //! on the manager fails instead of hanging.
 //!
 //! The answer (fe/briefs/api-contract.md, `GET /api/profiles/model`): 200 and
-//! `[{"id", "engine", "engineAvailable", "enabled", "model"}]`, one entry per
-//! section of the engine's `models.ini` (enabled true) and
+//! `[{"id", "engine", "engineAvailable", "enabled", "model", "assignments"}]`,
+//! one entry per section of the engine's `models.ini` (enabled true) and
 //! `models.ini.disabled` (enabled false), read as the session's user:
 //! - `id` as the file spells it, `model` the section's `model` key as the
 //!   model profile file holds it (no path resolution, no existence check, the
@@ -18,6 +18,14 @@
 //!   true for every row while llama.cpp is the only engine: there is no
 //!   engines route to check it against, so the row simply says the engine
 //!   that owns the model profile file is installed.
+//! - `assignments` is what the records of `assignments.ini` say about the
+//!   profile: `[{"instance", "value", "viaAll", "effective"}]`, sorted by
+//!   instance, for every instance the manager lists (`Instances()`) that has an
+//!   explicit key or is covered by the record's `*`. A section naming no listed
+//!   instance is not listed, and a profile no instance is given has `[]`.
+//!   `assignments.ini` unreadable, or the instance list unreadable, fails the
+//!   list: an answer of empty lists would tell the page no instance serves
+//!   anything, on a machine where the records are simply unreadable.
 //! - The order is the GUI's (`model_profiles::load_listed`): the switched-on
 //!   model profiles, then the switched-off ones, each group in file order; an id in
 //!   both files is listed once, as on (the id matched without case, the row
@@ -46,7 +54,7 @@ use axum::Router;
 use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
-use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -103,8 +111,9 @@ model = /models/DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf\r\n\
 n-gpu-layers = 4\r\n\
 ";
 
-/// The five fields of a row, `engine` and `engineAvailable` fixed to the only
-/// engine there is today.
+/// The six fields of a row, `engine` and `engineAvailable` fixed to the only
+/// engine there is today, and `assignments` empty: these tests' manager lists
+/// no instance, so no profile is served anywhere.
 fn row(id: &str, enabled: bool, model: &str) -> Value {
     json!({
         "id": id,
@@ -112,6 +121,20 @@ fn row(id: &str, enabled: bool, model: &str) -> Value {
         "engineAvailable": true,
         "enabled": enabled,
         "model": model,
+        "assignments": [],
+    })
+}
+
+/// One entry of a row's `assignments`: the instance, the value its section of
+/// `assignments.ini` carries (the record's `*` when the instance has no key of
+/// its own, spelled as the record spells it), `viaAll` true when it comes from
+/// that `*`, and whether the profile is effective on it.
+fn assignment(instance: &str, value: &str, via_all: bool, effective: bool) -> Value {
+    json!({
+        "instance": instance,
+        "value": value,
+        "viaAll": via_all,
+        "effective": effective,
     })
 }
 
@@ -158,6 +181,16 @@ struct Shared {
     files: Files,
     read_failure: Arc<Mutex<Option<Failure>>>,
     read_pause_ms: Arc<AtomicU64>,
+    /// What `instances` answers: the rows a row's `assignments` are built from.
+    /// Empty by default: these tests' machine runs no instance, so no profile
+    /// is served and every list is empty.
+    rows: Arc<Mutex<Vec<InstanceInfo>>>,
+    /// The failure `instances` answers with, in place of `rows`.
+    rows_failure: Arc<Mutex<Option<Failure>>>,
+    /// The one file a read fails on, in place of the plain `read_failure`: how
+    /// a test makes `assignments.ini` unreadable and leaves the pool files
+    /// readable, which is the case that tempts a bff to answer empty lists.
+    fail_read_of: Arc<Mutex<Option<String>>>,
 }
 
 /// A manager that answers `read_file` from the files it holds, logs every
@@ -208,6 +241,16 @@ impl ManagerClient for FakeManager {
         if let Some(failure) = failure {
             return Err(failure.into_error());
         }
+        if self
+            .shared
+            .fail_read_of
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_deref()
+            == Some(name)
+        {
+            return Err(ClientError::Other("the records are unreadable".into()));
+        }
         Ok(self
             .shared
             .files
@@ -222,6 +265,26 @@ impl ManagerClient for FakeManager {
     fn list_instances(&self) -> Result<Vec<String>, ClientError> {
         self.record("list".into());
         Ok(vec!["default".into()])
+    }
+    /// The rows behind a row's `assignments`: the instances, each with the
+    /// engine and the server profile its record names by default.
+    fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+        self.record("instances".into());
+        let failure = self
+            .shared
+            .rows_failure
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(failure) = failure {
+            return Err(failure.into_error());
+        }
+        Ok(self
+            .shared
+            .rows
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone())
     }
     fn status(&self, id: &str) -> Result<InstanceState, ClientError> {
         self.record(format!("status {id}"));
@@ -345,6 +408,38 @@ fn app_holding(on: &str, off: &str) -> App {
     app_for(&[(ON, on), (OFF, off)], &[], Ok(()))
 }
 
+/// The manager holding the pool `POOL_ON` / `POOL_OFF` and `assignments` as
+/// `assignments.ini`: the state of a machine whose records hand profiles to
+/// instances. The instance list is empty until the test sets it.
+fn app_pool(assignments: &str) -> App {
+    app_for(
+        &[(ON, POOL_ON), (OFF, POOL_OFF), (ASSIGNS, assignments)],
+        &[],
+        Ok(()),
+    )
+}
+
+/// One instance's row: the id, the engine, the id's own server profile, port 0
+/// and no tags.
+fn info(id: &str) -> InstanceInfo {
+    InstanceInfo {
+        id: id.to_string(),
+        engine: "llama.cpp".to_string(),
+        server_profile: Some(id.to_string()),
+        port: 0,
+        profile_tags: Vec::new(),
+        instance_tags: Vec::new(),
+    }
+}
+
+/// The pool the assignment tests read: `alpha` switched on, `mistral-7b`
+/// switched off.
+const POOL_ON: &str = "[alpha]\r\nmodel = /models/alpha.gguf\r\n\r\n";
+const POOL_OFF: &str = "[mistral-7b]\r\nmodel = /models/mistral.gguf\r\n\r\n";
+
+/// The name the manager knows the assignment records by.
+const ASSIGNS: &str = "assignments.ini";
+
 /// A manager holding `on` as `models.ini` and no `models.ini.disabled`.
 fn app_holding_no_disabled(on: &str) -> App {
     app_for(&[(ON, on)], &[], Ok(()))
@@ -381,6 +476,30 @@ impl App {
     /// The manager's calls, in order.
     fn calls(&self) -> Vec<String> {
         self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The manager's calls, sorted and joined by a space: what the read asks
+    /// for, without pinning the order the route makes the calls in.
+    fn sorted_calls(&self) -> String {
+        let mut calls = self.calls();
+        calls.sort();
+        calls.join(" ")
+    }
+
+    /// The manager answers `instances` with one row per id (its engine, its
+    /// own server profile, no tags): the instances the records may name.
+    fn set_rows(&self, ids: &[&str]) {
+        *self.shared.rows.lock().unwrap() = ids.iter().map(|id| info(id)).collect();
+    }
+
+    /// The manager fails `instances` with `failure`.
+    fn set_rows_failure(&self, failure: Failure) {
+        *self.shared.rows_failure.lock().unwrap() = Some(failure);
+    }
+
+    /// The read of `name` fails, every other read answers.
+    fn set_read_fails_of(&self, name: &str) {
+        *self.shared.fail_read_of.lock().unwrap() = Some(name.to_string());
     }
 
     /// Answer every coming read with `failure`.
@@ -591,7 +710,10 @@ async fn the_read_connects_as_the_signed_in_user() {
             vec![Some(user.to_string())],
             "{user}: the principal of the connect"
         );
-        assert_eq!(app.calls(), ["read models.ini", "read models.ini.disabled"]);
+        assert_eq!(
+            app.sorted_calls(),
+            "instances read assignments.ini read models.ini read models.ini.disabled"
+        );
     }
 }
 
@@ -632,16 +754,17 @@ async fn a_name_in_the_request_is_never_the_principal() {
     );
 }
 
-/// The read asks the manager nothing beside the two model profile files: no instance
-/// list, no status, no write.
+/// The read asks the manager the two pool files, the records of
+/// `assignments.ini` (the rows' `assignments`) and the instance list (the ids
+/// those records name), and nothing else: no status, no write.
 #[tokio::test]
-async fn the_read_asks_only_the_two_model_profile_files() {
+async fn the_read_asks_the_pool_files_the_assignments_and_the_instances() {
     let app = app_holding(FILE_ON, FILE_OFF);
     assert_eq!(app.list().await.rows().len(), 5);
     assert_eq!(
-        app.calls(),
-        ["read models.ini", "read models.ini.disabled"],
-        "the enabled file read first, then the switched-off one, nothing else"
+        app.sorted_calls(),
+        "instances read assignments.ini read models.ini read models.ini.disabled",
+        "the three reads and the instance list, nothing beside them"
     );
 }
 
@@ -834,7 +957,7 @@ async fn the_old_model_profile_paths_are_the_routers_404_with_no_body() {
 
 // ── What it answers ─────────────────────────────────────────────────────
 
-/// Both files, every row with its five fields, in the GUI's order: the
+/// Both files, every row with its six fields, in the GUI's order: the
 /// switched-on model profiles in their file order, then the switched-off ones in
 /// theirs, each id as the file spells it and each model as the file holds it.
 #[tokio::test]
@@ -860,12 +983,12 @@ async fn both_files_answer_the_list_in_the_guis_order() {
     );
 }
 
-/// A row carries exactly the five fields of the contract, with the types the
+/// A row carries exactly the six fields of the contract, with the types the
 /// web UI reads: `engine` and `engineAvailable` for every row of both files
 /// (llama.cpp is the only engine, and it is available), `model` a string even
-/// for a section that has none.
+/// for a section that has none, and `assignments` an array.
 #[tokio::test]
-async fn every_row_carries_exactly_the_five_fields() {
+async fn every_row_carries_exactly_the_six_fields() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rows = app.list().await.rows();
     assert!(!rows.is_empty(), "{rows:?}");
@@ -875,7 +998,14 @@ async fn every_row_carries_exactly_the_five_fields() {
         names.sort_unstable();
         assert_eq!(
             names,
-            ["enabled", "engine", "engineAvailable", "id", "model"],
+            [
+                "assignments",
+                "enabled",
+                "engine",
+                "engineAvailable",
+                "id",
+                "model"
+            ],
             "{row}"
         );
         assert!(row["id"].is_string(), "{row}");
@@ -885,6 +1015,10 @@ async fn every_row_carries_exactly_the_five_fields() {
         assert!(
             row["model"].is_string(),
             "a model the web UI can read: {row}"
+        );
+        assert!(
+            row["assignments"].is_array(),
+            "a list the web UI can read: {row}"
         );
     }
 }
@@ -998,7 +1132,10 @@ async fn a_missing_disabled_file_is_not_an_error() {
             row("alpha", true, "C:\\Models\\alpha.gguf"),
         ]
     );
-    assert_eq!(app.calls(), ["read models.ini", "read models.ini.disabled"]);
+    assert_eq!(
+        app.sorted_calls(),
+        "instances read assignments.ini read models.ini read models.ini.disabled"
+    );
 }
 
 /// Neither file exists: 200 and an empty list (the page's empty state), not an
@@ -1007,7 +1144,10 @@ async fn a_missing_disabled_file_is_not_an_error() {
 async fn no_model_profile_file_at_all_is_an_empty_list() {
     let app = app_no_files();
     assert_eq!(app.list().await.rows(), Vec::<Value>::new());
-    assert_eq!(app.calls(), ["read models.ini", "read models.ini.disabled"]);
+    assert_eq!(
+        app.sorted_calls(),
+        "instances read assignments.ini read models.ini read models.ini.disabled"
+    );
 }
 
 /// Both files there and no section in either: 200 and an empty list, with a
@@ -1027,4 +1167,114 @@ async fn version_is_still_served_beside_the_model_profiles() {
     let r = app.get("/api/version", Some(&cookie)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(r.json(), json!({ "version": env!("CARGO_PKG_VERSION") }));
+}
+
+// ── `assignments`: what the records say about each profile ──────────────
+
+/// A row's `assignments` is what the records of `assignments.ini` say about
+/// that profile, one entry per instance the manager lists that the records
+/// name it to, sorted by instance: `alpha` is given `on` by `default` and
+/// `inherit`ed by `lab`, so it is served on both; `mistral-7b` is switched off
+/// in the pool and `default` says `off` about it, so it is served nowhere.
+#[tokio::test]
+async fn a_row_names_the_instances_the_records_give_the_profile_to() {
+    let app =
+        app_pool("[default]\r\nalpha = on\r\nmistral-7b = off\r\n\r\n[lab]\r\nalpha = inherit\r\n");
+    app.set_rows(&["default", "lab"]);
+    let rows = app.list().await.rows();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[0]["id"], "alpha", "the switched-on file first");
+    assert_eq!(
+        rows[0]["assignments"],
+        json!([
+            assignment("default", "on", false, true),
+            assignment("lab", "inherit", false, true),
+        ]),
+        "{}",
+        rows[0]
+    );
+    assert_eq!(
+        rows[1]["assignments"],
+        json!([assignment("default", "off", false, false)]),
+        "{}",
+        rows[1]
+    );
+}
+
+/// The record's `*` stands in for an instance that has no key of its own,
+/// spelled as the record spells it with `viaAll` true; an explicit key wins
+/// over it and is not `viaAll`. An instance with no section of its own is in no
+/// list: the records say nothing about it.
+#[tokio::test]
+async fn the_star_record_stands_in_for_an_instance_with_no_key_of_its_own() {
+    let app = app_pool("[default]\r\n* = inherit\r\nalpha = off\r\n\r\n[lab]\r\nalpha = on\r\n");
+    app.set_rows(&["default", "lab"]);
+    let rows = app.list().await.rows();
+    assert_eq!(
+        rows[0]["assignments"],
+        json!([
+            assignment("default", "off", false, false),
+            assignment("lab", "on", false, true),
+        ]),
+        "the explicit key of {} wins over its record's *",
+        rows[0]["id"]
+    );
+    assert_eq!(
+        rows[1]["assignments"],
+        json!([assignment("default", "inherit", true, false)]),
+        "{}: * covers it, and a switched-off pool profile inherited is not served",
+        rows[1]
+    );
+}
+
+/// A profile no instance is given is a row with an empty list: the page shows it
+/// as served nowhere. An id the records name that the pool does not hold adds
+/// no row: the list is the pool's.
+#[tokio::test]
+async fn a_profile_no_instance_is_given_is_a_row_with_an_empty_list() {
+    let app = app_pool("[default]\r\ngamma = on\r\n");
+    app.set_rows(&["default", "lab"]);
+    let rows = app.list().await.rows();
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["alpha", "mistral-7b"],
+        "a record naming a profile the pool lacks adds no row"
+    );
+    for row in rows {
+        assert_eq!(row["assignments"], json!([]), "{}", row);
+    }
+}
+
+/// The records unreadable, or the instance list unreadable, fails the list: an
+/// answer of empty `assignments` would tell the page that no instance serves
+/// anything, on a machine where the records are simply unreachable. The pool
+/// files readable is no help: the same keys as a pool read that fails.
+#[tokio::test]
+async fn the_records_unreadable_fail_the_list_rather_than_answer_empty_lists() {
+    let app = app_pool("[default]\r\nalpha = on\r\n");
+    app.set_rows(&["default"]);
+    app.set_read_fails_of(ASSIGNS);
+    app.list()
+        .await
+        .assert_error(StatusCode::BAD_GATEWAY, "client-other");
+
+    for (failure, status, key) in [
+        (
+            Failure::Unavailable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "client-unavailable",
+        ),
+        (
+            Failure::Other("no rows".into()),
+            StatusCode::BAD_GATEWAY,
+            "client-other",
+        ),
+    ] {
+        let app = app_pool("[default]\r\nalpha = on\r\n");
+        app.set_rows(&["default"]);
+        app.set_rows_failure(failure);
+        app.list().await.assert_error(status, key);
+    }
 }

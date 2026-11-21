@@ -16,13 +16,23 @@
 //! nothing for it ([`switch`]): moved to the disabled file it would stop
 //! applying to every model with no row left in the list to bring it back.
 //!
-//! Every row carries the five fields the web UI reads: `{"id", "engine",
-//! "engineAvailable", "enabled", "model"}`. `id` is the section as the file
+//! Every row carries the six fields the web UI reads: `{"id", "engine",
+//! "engineAvailable", "enabled", "model", "assignments"}`. `id` is the section as the file
 //! spells it, `model` the section's `model` key as the file holds it (the
 //! inline comment ended by the file's parser, `""` when the section has no
 //! such key), `engine` the engine whose model profile file holds the section and
 //! `engineAvailable` that engine in `GET /api/instances`: llama.cpp, the only
 //! engine there is.
+//!
+//! `assignments` is the same answer as
+//! `GET /api/instances/{id}/profiles/model` (`instance_profiles.rs`), read from
+//! the instance side: one entry per instance the manager's record of
+//! `assignments.ini` gives this model profile to, by a key of its own or through
+//! the section's `*`, each with the `instance`, the `value` of its key, `viaAll`
+//! when the `*` speaks for it, and `effective` where the render gives the model
+//! profile to that instance (`pai_core::assign::rows`, one rule with the
+//! render). The instances are the manager's list, in its order, and a row no
+//! instance speaks of has an empty list.
 //!
 //! Every failure is `{"key": <strings key>, "args": []}`, never the manager's
 //! detail: 401 `session-required` with no session (the manager is not even
@@ -48,16 +58,21 @@ use axum::extract::rejection::BytesRejection;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use pai_core::client::{ClientError, ManagerFile};
-use pai_core::{checks, ini};
+use pai_core::{assign, checks, ini};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The engine's file of switched-on model profiles, the one llama-server reads.
-const MODELS: &str = "models.ini";
+pub(crate) const MODELS: &str = "models.ini";
 
 /// The engine's file of switched-off model profiles, never read by llama-server.
-const MODELS_DISABLED: &str = "models.ini.disabled";
+pub(crate) const MODELS_DISABLED: &str = "models.ini.disabled";
+
+/// The manager's record of which instance is given which model profile. The bff
+/// reads it for the list's rows and for the instances a move offers to restart.
+const ASSIGNMENTS: &str = "assignments.ini";
 
 /// The header a `models.ini.disabled` the configurator never wrote is created
 /// with, so a file the switch off makes reads like one it wrote. The text is
@@ -88,7 +103,8 @@ pub(crate) async fn list(
         let client = connect(Some(user.as_str()))?;
         let on = client.read_file(MODELS)?;
         let off = client.read_file(MODELS_DISABLED)?;
-        Ok(rows(&on, &off))
+        let assignments = client.read_file(ASSIGNMENTS)?;
+        Ok(rows(&on, &off, &given(&client, &on, &off, &assignments)?))
     });
     read_answer(
         &sessions,
@@ -98,13 +114,22 @@ pub(crate) async fn list(
     )
 }
 
+/// The manager refused the signed-in user: 403 `session-not-administrator`, and
+/// the session ends, so the page goes back to the sign-in page. Every route that
+/// acts as the signed-in user gives the refusal here: [`read_answer`] and the
+/// association routes ([`crate::instance_profiles`]) alike.
+pub(crate) fn not_administrator(sessions: &Sessions, session: &str) -> Response {
+    sessions.end(session);
+    error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
+}
+
 /// The answer of a read through the manager: `outcome` is the blocking task
 /// under the deadline, and `answer` is what the page gets from the value the
-/// task read. The list and the section read answer their failures the same way,
-/// on the same rule as the server read (`server.rs`): 503 `client-unavailable`
-/// when there is no manager, it went away, or it answers later than the
-/// deadline; 403 `session-not-administrator` when the manager refused the
-/// signed-in user, which ends that session with the right that authorized it;
+/// task read. The list, the section read and the association routes answer
+/// their failures here, on the same rule as the server read (`server.rs`):
+/// 503 `client-unavailable` when there is no manager, it went away, or it
+/// answers later than the deadline; 403 `session-not-administrator` when the
+/// manager refused the signed-in user, ending that session ([`not_administrator`]);
 /// 502 `client-other` for anything else, which keeps the session. The manager's
 /// detail stays out of the body.
 pub(crate) fn read_answer<T>(
@@ -118,10 +143,7 @@ pub(crate) fn read_answer<T>(
 ) -> Response {
     match outcome {
         Ok(Ok(Ok(value))) => answer(value),
-        Ok(Ok(Err(ClientError::NotAuthorized))) => {
-            sessions.end(session);
-            error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
-        }
+        Ok(Ok(Err(ClientError::NotAuthorized))) => not_administrator(sessions, session),
         Ok(Ok(Err(ClientError::Unavailable))) | Err(_) => {
             error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
         }
@@ -129,11 +151,20 @@ pub(crate) fn read_answer<T>(
     }
 }
 
-/// The rows of the two files: the switched-on sections in their order, then
-/// the switched-off ones in theirs, each id of `models.ini.disabled` that
-/// `models.ini` also holds left out, and llama-server's global section left
+/// One model profile of the pool, as the two files hold it: the `id` as the
+/// first file that holds it spells it, its `model` key, and whether it sits in
+/// the file llama-server reads.
+pub(crate) struct PoolRow {
+    pub(crate) id: String,
+    pub(crate) model: String,
+    pub(crate) enabled: bool,
+}
+
+/// The pool's model profiles in the two files: the switched-on sections in their
+/// order, then the switched-off ones in theirs, each id of `models.ini.disabled`
+/// that `models.ini` also holds left out, and llama-server's global section left
 /// out of both.
-fn rows(on: &Option<ManagerFile>, off: &Option<ManagerFile>) -> Vec<Value> {
+pub(crate) fn pool(on: &Option<ManagerFile>, off: &Option<ManagerFile>) -> Vec<PoolRow> {
     let on: Vec<ini::Section> = sections(on)
         .into_iter()
         .filter(|s| !is_global(&s.id))
@@ -144,8 +175,135 @@ fn rows(on: &Option<ManagerFile>, off: &Option<ManagerFile>) -> Vec<Value> {
         .filter(|s| !on.iter().any(|q| q.id.eq_ignore_ascii_case(&s.id)))
         .collect();
     on.into_iter()
-        .map(|section| row(&section, true))
-        .chain(off.into_iter().map(|section| row(&section, false)))
+        .map(|section| PoolRow {
+            model: model_of(&section),
+            id: section.id,
+            enabled: true,
+        })
+        .chain(off.into_iter().map(|section| PoolRow {
+            model: model_of(&section),
+            id: section.id,
+            enabled: false,
+        }))
+        .collect()
+}
+
+/// The `model` key of a section, as the file holds it (`""` when it has none).
+fn model_of(section: &ini::Section) -> String {
+    section.keys.get("model").cloned().unwrap_or_default()
+}
+
+/// One instance's assignment of one model profile, as the list carries it under
+/// that model profile: the `instance` whose section of `assignments.ini` speaks
+/// of it, the `value` of its key, `viaAll` when the `*` speaks for it, and
+/// `effective` where the render gives it to the instance.
+struct Given {
+    instance: String,
+    value: String,
+    via_all: bool,
+    effective: bool,
+}
+
+/// Every instance's assignment of every model profile of the pool, under the
+/// model profile's id as the pool spells it, lowered: the rows
+/// `pai_core::assign::rows` gives for one instance, kept for the model profiles
+/// that instance's section speaks of, by a key of its own or through the `*`.
+/// The `value` of a model profile the section has no key of its own is the `*`
+/// as that section spells it. The instances are the sections of the record that
+/// the manager lists, so the rows under one model profile are in the instances'
+/// own order. A record, a list, or a record read that cannot be read fails the
+/// list: an answer of empty `assignments` would tell the page that no instance
+/// serves anything.
+fn given(
+    client: &Client,
+    on: &Option<ManagerFile>,
+    off: &Option<ManagerFile>,
+    assignments: &Option<ManagerFile>,
+) -> Result<BTreeMap<String, Vec<Given>>, ClientError> {
+    let record = assignments
+        .clone()
+        .map(|file| file.text)
+        .unwrap_or_default();
+    let (on, off) = (
+        on.clone().map(|file| file.text).unwrap_or_default(),
+        off.clone().map(|file| file.text).unwrap_or_default(),
+    );
+    let mut out: BTreeMap<String, Vec<Given>> = BTreeMap::new();
+    // The manager's list, lowered: a record that names an instance the manager
+    // does not list says nothing about a machine that no longer has it.
+    let listed: BTreeSet<String> = client
+        .instances()?
+        .into_iter()
+        .map(|instance| instance.id.to_lowercase())
+        .collect();
+    let mut ids = record_ids(&record);
+    ids.sort_unstable_by_key(|a| a.to_lowercase());
+    for instance in ids {
+        if !listed.contains(&instance.to_lowercase()) {
+            continue;
+        }
+        let section = ini::text::section_text(&record, &instance);
+        // The `*` of this instance's section, as the section spells it.
+        let all = section.as_deref().and_then(|text| {
+            ini::parse_sections(text)
+                .into_iter()
+                .find_map(|section| section.keys.get("*").cloned())
+        });
+        for row in assign::rows(&on, &off, section.as_deref()).1 {
+            if row.value == "none" && !row.via_all {
+                // The section says nothing about this model profile, with the
+                // `*` and without it: the row has nothing to carry.
+                continue;
+            }
+            let value = if row.via_all {
+                all.clone().unwrap_or(row.value)
+            } else {
+                row.value
+            };
+            out.entry(row.id.to_lowercase()).or_default().push(Given {
+                instance: instance.clone(),
+                value,
+                via_all: row.via_all,
+                effective: row.effective,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// The rows of the two files, in [`pool`]'s order, each with the instances
+/// [`given`] lists it under it.
+fn rows(
+    on: &Option<ManagerFile>,
+    off: &Option<ManagerFile>,
+    given: &BTreeMap<String, Vec<Given>>,
+) -> Vec<Value> {
+    pool(on, off)
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id,
+                "engine": crate::ENGINE_LLAMA_CPP,
+                "engineAvailable": true,
+                "enabled": row.enabled,
+                "model": row.model,
+                "assignments": given
+                    .get(&row.id.to_lowercase())
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|given| {
+                                json!({
+                                    "instance": given.instance,
+                                    "value": given.value,
+                                    "viaAll": given.via_all,
+                                    "effective": given.effective,
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
+            })
+        })
         .collect()
 }
 
@@ -165,23 +323,17 @@ fn sections(file: &Option<ManagerFile>) -> Vec<ini::Section> {
     }
 }
 
-/// One row: the section's id and `model` key as the file holds them, the one
-/// engine, and whether the section sits in the file llama-server reads.
-fn row(section: &ini::Section, enabled: bool) -> Value {
-    json!({
-        "id": section.id,
-        "engine": crate::ENGINE_LLAMA_CPP,
-        "engineAvailable": true,
-        "enabled": enabled,
-        "model": section.keys.get("model").cloned().unwrap_or_default(),
-    })
-}
-
 /// The answer of one switch.
 enum Answer {
     /// The move is made, or the model profile was already where it is asked for and
-    /// nothing was written: the model profile's state, and whether an instance is up.
-    Moved { enabled: bool, running: bool },
+    /// nothing was written: the model profile's state, the instances the page
+    /// offers to restart (`running` is their list not being empty), and that
+    /// list.
+    Moved {
+        enabled: bool,
+        running: bool,
+        restart: Vec<String>,
+    },
     /// Neither model profile file has a section named by the id.
     NotFound,
 }
@@ -222,16 +374,20 @@ enum Answer {
 /// unknown, and the answer is 504 `client-timeout`. Once BOTH writes landed the
 /// move stands in the files, so a limit that runs out on the file read back
 /// after them, or on the states that follow, is the switch's 200: `enabled` the
-/// value the move produced, and `running` true, the safe answer for a state the
-/// bff cannot read. `write_timeout` bounds every manager call of the move, the
-/// two reads and the read back with them: the write's own limit, longer than
-/// [`crate::MANAGER_TIMEOUT`], the limit a read is given. A read back that
-/// fails answers the same as one that runs out, and a refusal of the signed-in
-/// user there stays the 403 that ends the session.
+/// value the move produced, `running` true and no instance named, the safe
+/// answer for a state the bff cannot read. `write_timeout` bounds every manager
+/// call of the move, the three reads and the read back with them: the write's
+/// own limit, longer than [`crate::MANAGER_TIMEOUT`], the limit a read is given.
+/// A read back that fails answers the same as one that runs out, and a refusal
+/// of the signed-in user there stays the 403 that ends the session.
 ///
-/// `running` is what the page's "restart llama-server to apply" note is about:
-/// the engine reads `models.ini` at launch, so it is true when any instance is
-/// up ([`running`]). The switch starts, stops and restarts nothing.
+/// `restart` is what the page's "restart llama-server to apply" note is about,
+/// and `running` is that list not being empty: the engine reads `models.ini` at
+/// launch, so the instances named are the ones the record of `assignments.ini`
+/// gives this model profile to, effective in the pool as the move leaves it, and
+/// up, of the instances the manager lists ([`restarted`]): a record section
+/// naming an instance that is gone is a stale record, not a machine. The switch
+/// starts, stops and restarts nothing.
 pub(crate) async fn set_enabled(
     connect: Connect,
     write_timeout: Duration,
@@ -260,23 +416,35 @@ pub(crate) async fn set_enabled(
     let name = id.clone();
     let ask = tokio::task::spawn_blocking(move || switch(&connect, &user, &name, enabled, &mine));
     match tokio::time::timeout(write_timeout, ask).await {
-        Ok(Ok(Ok(Answer::Moved { enabled, running }))) => {
-            axum::Json(json!({ "enabled": enabled, "running": running })).into_response()
-        }
+        Ok(Ok(Ok(Answer::Moved {
+            enabled,
+            running,
+            restart,
+        }))) => axum::Json(json!({
+            "enabled": enabled,
+            "running": running,
+            "restart": restart,
+        }))
+        .into_response(),
         Ok(Ok(Ok(Answer::NotFound))) => not_found(&id),
         Ok(Ok(Err(failure))) => switch_failure(&sessions, &session, failure, state.sent()),
         // The answer cannot see the write, and the task keeps running: 503 with
         // no write asked, 504 with one sent and its outcome unknown. Done is a
         // move that landed in both files, so the answer carries the `enabled`
-        // the move produced and `running` true, the state the bff cannot read.
+        // the move produced, `running` true and no instance named: the state of
+        // the instances the move serves stayed unknown, so the page says to
+        // restart.
         Err(_) => match state.timed_out() {
             TimedOut::Cancelled => {
                 error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
             }
             TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
-            TimedOut::Done => {
-                axum::Json(json!({ "enabled": enabled, "running": true })).into_response()
-            }
+            TimedOut::Done => axum::Json(json!({
+                "enabled": enabled,
+                "running": true,
+                "restart": [],
+            }))
+            .into_response(),
         },
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
@@ -298,22 +466,43 @@ fn switch(
     let client = connect(Some(user))?;
     let on = client.read_file(MODELS)?.map(|file| file.text);
     let off = client.read_file(MODELS_DISABLED)?.map(|file| file.text);
-    if is_global(id) {
-        // llama-server's global section: not a model profile, no row in the list, and
-        // nothing to move: switched off it would stop applying to every model.
+    if is_global(id) || checks::model_profile_id(id).is_err() {
+        // llama-server's global section: not a model profile, no row in the list,
+        // and nothing to move: switched off it would stop applying to every model.
+        // A name that cannot be a section header is the same 404, answered before
+        // the records are read: no section of that name can exist anywhere.
         return Ok(Answer::NotFound);
     }
+    // The record of which instance is given which model profile, read once: the
+    // instances the move offers to restart are its sections, and the after side
+    // of the move is computed from this same read with the switch flipped.
+    let record = client
+        .read_file(ASSIGNMENTS)?
+        .map(|file| file.text)
+        .unwrap_or_default();
     let section_on = ini::text::section_text(on.as_deref().unwrap_or(""), id);
     let section_off = ini::text::section_text(off.as_deref().unwrap_or(""), id);
+    // The instances the record gives the model profile to, in the pool as it is
+    // now: the before side of the move.
+    let served_before = served(
+        &record,
+        id,
+        on.as_deref().unwrap_or(""),
+        off.as_deref().unwrap_or(""),
+    );
     if section_on.is_none() && section_off.is_none() {
         return Ok(Answer::NotFound);
     }
     if enabled == section_on.is_some() {
         // Already where it is asked for: `models.ini` is the home, so a
-        // section in both files is on. The files are not written.
+        // section in both files is on. The files are not written, and the
+        // instances the move offers to restart are the ones it is effective
+        // on now.
+        let (running, restart) = served_states(&client, &served_before);
         return Ok(Answer::Moved {
             enabled,
-            running: running(&client),
+            running,
+            restart,
         });
     }
     let (source, destination, source_text, destination_text, section) = if enabled {
@@ -328,6 +517,23 @@ fn switch(
     let current = source_text.as_deref().unwrap_or("");
     let landed =
         ini::text::replace_section(destination_text.as_deref().unwrap_or(""), id, &section);
+    // The text a destination that is not there is created with, and the text the
+    // destination carries once the move is made: the after side of the record,
+    // for the instances the move offers to restart.
+    let created = ini::text::replace_section(
+        if destination == MODELS_DISABLED {
+            DISABLED_FILE_HEADER
+        } else {
+            ""
+        },
+        id,
+        &section,
+    );
+    let destination_after = if destination_text.is_some() {
+        landed.clone()
+    } else {
+        created.clone()
+    };
     if !state.may_write() {
         // The handler ran out of time with no write asked and answered 503, so
         // this switch is over and the files stay as the browser was told. The
@@ -342,12 +548,6 @@ fn switch(
         // plain write creates it. A new disabled file carries the
         // configurator's header; a new `models.ini` needs none.
         None => {
-            let base = if destination == MODELS_DISABLED {
-                DISABLED_FILE_HEADER
-            } else {
-                ""
-            };
-            let created = ini::text::replace_section(base, id, &section);
             client.write_file(destination, &created, false)?;
         }
     }
@@ -365,8 +565,9 @@ fn switch(
     // model profile enabled is read back after the writes, so `enabled` is the text
     // that is on the machine. A read back that fails is not the move failing:
     // the files carry it, so the answer is the value the move produced and
-    // `running` true, never the 503 of a manager that was never reached. A
-    // refusal of the signed-in user is the one answer that ends the session.
+    // `running` true with no instance named, never the 503 of a manager that was
+    // never reached. A refusal of the signed-in user is the one answer that ends
+    // the session.
     let on = match client.read_file(MODELS) {
         Ok(file) => file.map(|file| file.text).unwrap_or_default(),
         Err(ClientError::NotAuthorized) => return Err(ClientError::NotAuthorized),
@@ -374,25 +575,93 @@ fn switch(
             return Ok(Answer::Moved {
                 enabled,
                 running: true,
+                restart: Vec::new(),
             })
         }
     };
+    // The pool as the move leaves it, for the after side of the record.
+    let (on, off) = if enabled {
+        (on, left.clone())
+    } else {
+        (left.clone(), destination_after)
+    };
+    let mut candidates = served_before;
+    candidates.extend(served(&record, id, &on, &off));
+    let (running, restart) = served_states(&client, &candidates);
     Ok(Answer::Moved {
         enabled: ini::text::section_text(&on, id).is_some(),
-        running: running(&client),
+        running,
+        restart,
     })
 }
 
-/// Whether any instance is up, the one the switch answers as `running`: the
-/// states are asked in the list's order and the asking stops at the first
-/// instance that is up, and a state that cannot be read answers true, the safe
-/// answer after a move that stands.
-fn running(client: &Client) -> bool {
-    match client.list_instances() {
-        Ok(ids) => ids
-            .iter()
-            .any(|instance| client.status(instance).map(runs).unwrap_or(true)),
-        Err(_) => true,
+/// The instances of `record` (`assignments.ini`) the pool of `on` and `off` gives
+/// `profile` to: one per section of the record, the id as the record spells it,
+/// kept when `pai_core::assign::rows` makes the model profile effective on that
+/// instance. An instance whose section says nothing of the model profile, or says
+/// it is off, is not running it and is never offered to restart.
+fn served(record: &str, profile: &str, on: &str, off: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for instance in record_ids(record) {
+        let section = ini::text::section_text(record, &instance);
+        let effective = assign::rows(on, off, section.as_deref())
+            .1
+            .into_iter()
+            .any(|row| row.id.eq_ignore_ascii_case(profile) && row.effective);
+        if effective {
+            out.insert(instance);
+        }
+    }
+    out
+}
+
+/// The ids of the sections of `assignments.ini`, llama-server's global `[*]`
+/// aside, in order and once each in any letter case.
+fn record_ids(record: &str) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for section in ini::parse_sections(record) {
+        if is_global(&section.id) || seen.iter().any(|id| id.eq_ignore_ascii_case(&section.id)) {
+            continue;
+        }
+        seen.push(section.id);
+    }
+    seen
+}
+
+/// The states of `candidates`, the ones that are up, in their own order: the
+/// instances a page offers to restart after a model profile write. `None` when
+/// a state cannot be read: the page gets the safe answer, `running` true with
+/// no instance named ([`served_states`]). An id the manager does not list is
+/// left out before its state is asked: a section of `assignments.ini` naming an
+/// instance that is gone is a stale record, not a machine, and asking its state
+/// answers the service manager's refusal, not an instance to restart. The list
+/// is asked only when there is a state to ask: a profile served nowhere asks
+/// for nothing.
+fn restarted(client: &Client, candidates: &BTreeSet<String>) -> Option<Vec<String>> {
+    if candidates.is_empty() {
+        return Some(Vec::new());
+    }
+    let known = client.list_instances().ok()?;
+    let mut out = Vec::new();
+    for instance in candidates {
+        if !known.iter().any(|id| id.eq_ignore_ascii_case(instance)) {
+            continue;
+        }
+        if runs(client.status(instance).ok()?) {
+            out.push(instance.clone());
+        }
+    }
+    Some(out)
+}
+
+/// `running` and `restart` for one model profile write: the instances that
+/// serve it and are up, and `running` their list not being empty. A state that
+/// cannot be read answers `running` true with no instance named, the safe
+/// answer after a write that stands: at most it costs a needless restart.
+fn served_states(client: &Client, candidates: &BTreeSet<String>) -> (bool, Vec<String>) {
+    match restarted(client, candidates) {
+        Some(restart) => (!restart.is_empty(), restart),
+        None => (true, Vec::new()),
     }
 }
 
@@ -613,14 +882,16 @@ fn section_revision(file: &str, text: &str, id: &str, key: &[u8; 16]) -> String 
 }
 
 /// The section a save starts from: the file that holds it, the text of that
-/// file as the manager read it (the compare and swap expects it), and the
-/// connect made for the signed-in user, reused for the write. `NotFound` when
-/// neither model profile file has a section of that name.
+/// file as the manager read it (the compare and swap expects it), and the text
+/// of the other pool file, with the connect made for the signed-in user, reused
+/// for the write. `NotFound` when neither model profile file has a section of
+/// that name.
 enum Read {
     Found {
         client: Client,
         file: String,
         text: String,
+        other: String,
     },
     NotFound,
 }
@@ -631,28 +902,42 @@ enum Read {
 /// is not there holds nothing, and llama-server's global `[*]` is not a model profile.
 fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientError> {
     let client = connect(Some(user))?;
-    for file in [MODELS, MODELS_DISABLED] {
-        let Some(text) = client.read_file(file)?.map(|file| file.text) else {
-            continue;
+    let on = client.read_file(MODELS)?.map(|file| file.text);
+    let found_on =
+        !is_global(id) && ini::text::section_text(on.as_deref().unwrap_or(""), id).is_some();
+    let (file, text, other) = if found_on {
+        // The section is in the file llama-server reads: that is the one the
+        // save edits, and the disabled file is never opened for it.
+        (MODELS.to_string(), on.unwrap_or_default(), String::new())
+    } else {
+        let off = client.read_file(MODELS_DISABLED)?.map(|file| file.text);
+        let Some(off) = off else {
+            return Ok(Read::NotFound);
         };
-        if !is_global(id) && ini::text::section_text(&text, id).is_some() {
-            return Ok(Read::Found {
-                client,
-                file: file.to_string(),
-                text,
-            });
+        if is_global(id) || ini::text::section_text(&off, id).is_none() {
+            return Ok(Read::NotFound);
         }
-    }
-    Ok(Read::NotFound)
+        (MODELS_DISABLED.to_string(), off, on.unwrap_or_default())
+    };
+    Ok(Read::Found {
+        client,
+        file,
+        text,
+        other,
+    })
 }
 
 /// `PUT /api/profiles/model/{id}`: the save of one model profile, as the signed-in user. The
 /// body is the object [`parse_body`] reads, the answer is exactly `{"revision",
-/// "running"}`: `revision` the revision of the section as it now stands in the
-/// file, so the card can go on editing, and `running` whether any instance is
-/// up ([`running`]), asked only when the section lives in the file llama-server
-/// reads: a model profile saved in the disabled file is not offered, so it is not
-/// running. The session is read first, so with no session the manager is not
+/// "running", "restart"}`: `revision` the revision of the section as it now
+/// stands in the file, so the card can go on editing, and `restart` the
+/// instances the page offers to restart, the ones the record of
+/// `assignments.ini` gives this model profile to and that are up
+/// ([`served_states`]), `running` being that list not being empty. The record
+/// is read once the write stands, and a machine with no record at all has no
+/// word about who serves the profile: a save that wrote nothing asks the states
+/// of every instance, a save that wrote names none, and no state is asked. The
+/// session is read first, so with no session the manager is not
 /// even connected to (401), and only a signed-in request sees a body over
 /// `origin::MAX_BODY` refused by the extractor with a 413 (as the boot write).
 ///
@@ -682,7 +967,8 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
 /// answer is still wanted, so a task left behind by a deadline writes nothing.
 /// Once the write landed the model profile is the one the body asked for, so a limit
 /// that runs out on the states that follow, and a state read that fails, are the
-/// 200 with `running` true: the safe answer for a state the bff cannot read. A
+/// 200 with `running` true and no instance named: the safe answer for a state
+/// the bff cannot read. A
 /// body that changes nothing has no write to ask, so the state is settled as
 /// done before the instances' state is asked, and a limit that runs out there
 /// is that same 200, never the 503 that tells the page an edit was lost while
@@ -728,7 +1014,13 @@ pub(crate) async fn save(
         Ok(Ok(Err(failure))) => return switch_failure(&sessions, &session, failure, false),
         Ok(Ok(Ok(found))) => found,
     };
-    let Read::Found { client, file, text } = found else {
+    let Read::Found {
+        client,
+        file,
+        text,
+        other,
+    } = found
+    else {
         return not_found(&id);
     };
     if section_revision(&file, &text, &id, &key) != sent {
@@ -737,13 +1029,19 @@ pub(crate) async fn save(
     let new_text = apply(&edits, &text, &id);
     let written = section_revision(&file, &new_text, &id, &key);
     let changed = new_text != text;
-    let enabled = file == MODELS;
+    // The pool as the save leaves it, for the record's rows: the file the
+    // section lives in carries the new text, the other file what it has.
+    let (on, off) = if file == MODELS {
+        (new_text.clone(), other.clone())
+    } else {
+        (other.clone(), new_text.clone())
+    };
     let state = Arc::new(WriteState::new());
     let mine = state.clone();
-    let ask = tokio::task::spawn_blocking(move || -> Result<bool, ClientError> {
+    let ask = tokio::task::spawn_blocking(move || -> Result<(bool, Vec<String>), ClientError> {
         if changed {
             if !mine.may_write() {
-                return Ok(true);
+                return Ok((false, Vec::new()));
             }
             client.write_file_if(&file, &new_text, &text)?;
             mine.landed();
@@ -754,11 +1052,20 @@ pub(crate) async fn save(
             // that landed does.
             mine.nothing_to_write();
         }
-        Ok(if enabled { running(&client) } else { false })
+        // The record of which instance is given which model profile, read once
+        // the write stands: the instances the save offers to restart are the
+        // ones it gives the model profile to, effective in the pool as the save
+        // leaves it. A machine with no record at all has no word about who
+        // serves a profile, so the save names none, and no state is asked.
+        let candidates = match client.read_file(ASSIGNMENTS)? {
+            Some(record) => served(&record.text, &id, &on, &off),
+            None => BTreeSet::new(),
+        };
+        Ok(served_states(&client, &candidates))
     });
     let left = write_timeout.saturating_sub(started.elapsed());
     match tokio::time::timeout(left, ask).await {
-        Ok(Ok(Ok(running))) => saved(&written, running),
+        Ok(Ok(Ok((running, restart)))) => saved(&written, running, restart),
         Ok(Ok(Err(failure))) => switch_failure(&sessions, &session, failure, state.sent()),
         Ok(Err(_join)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
         Err(_elapsed) => match state.timed_out() {
@@ -769,18 +1076,24 @@ pub(crate) async fn save(
             TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
             // The write landed, or the body asked for the text the file
             // already holds and nothing was written: the model profile is the one the
-            // body asked for and only the instances' state stayed unknown.
-            TimedOut::Done => saved(&written, true),
+            // body asked for and only the instances' state stayed unknown, so
+            // `running` is true and no instance is named.
+            TimedOut::Done => saved(&written, true, Vec::new()),
         },
     }
 }
 
-/// The 200 of a save: exactly `{"revision", "running"}`, the section's revision
-/// as the file now holds it, and whether an instance is up.
-fn saved(revision: &str, running: bool) -> Response {
+/// The 200 of a save: exactly `{"revision", "running", "restart"}`, the
+/// section's revision as the file now holds it, and the instances the page
+/// offers to restart (`running` is that list not being empty).
+fn saved(revision: &str, running: bool, restart: Vec<String>) -> Response {
     (
         StatusCode::OK,
-        axum::Json(json!({ "revision": revision, "running": running })),
+        axum::Json(json!({
+            "revision": revision,
+            "running": running,
+            "restart": restart,
+        })),
     )
         .into_response()
 }

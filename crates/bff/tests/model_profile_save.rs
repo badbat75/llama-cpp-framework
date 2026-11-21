@@ -48,13 +48,16 @@
 //!   user, one connect for the whole exchange. The manager's `Changed` is the
 //!   409; its check of the edited section is 422 `{key, args, field}` with
 //!   `field` by the design's table, one rule per key, and nothing is written;
-//! - then `running`, and the 200 is exactly `{"revision", "running"}`: the
-//!   revision of the section as written (the one `GET /api/profiles/model/{id}`
-//!   returns for the new text), and true when the section went to `models.ini`
-//!   and any instance is `active` or `activating` (the instances listed, then
-//!   the states asked until one is up), true when a state read fails after a
-//!   write that landed, and false for a section written to
-//!   `models.ini.disabled`, which asks no state at all.
+//! - then `restart` and `running`, and the 200 is exactly
+//!   `{"revision", "running", "restart"}`: the revision of the section as
+//!   written (the one `GET /api/profiles/model/{id}` returns for the new text);
+//!   `restart` the sorted ids of the instances the records of `assignments.ini`
+//!   give the profile to (an explicit `on`, or `inherit` while the profile is
+//!   switched on in the file it was written to) whose state is `active` or
+//!   `activating`; and `running` is `restart` not empty, true with `restart:
+//!   []` when a state read fails after a write that landed. A profile no
+//!   instance is given is served nowhere: `restart: []`, `running: false`, and
+//!   no state asked at all.
 //!
 //! A refusal of the signed-in user, at the connect, a read or a write, is 403
 //! `session-not-administrator` and ends that session (the served sibling's rule,
@@ -116,6 +119,10 @@ const KEY_B: [u8; 16] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
 /// The names the manager knows the engine's model profile files by.
 const MODELS: &str = "models.ini";
 const DISABLED: &str = "models.ini.disabled";
+
+/// The name the manager knows the assignment records by: which instance is
+/// given which model profile.
+const ASSIGNS: &str = "assignments.ini";
 
 /// The body cap of `origin::MAX_BODY`, copied here (it is private to the bff):
 /// the same copy `tests/origin.rs` keeps.
@@ -450,8 +457,8 @@ struct Live {
     write_gate_released: Arc<AtomicBool>,
     writes_gated: Arc<AtomicUsize>,
     writes_released: Arc<AtomicUsize>,
-    /// The instances, and the state of each: `running` is true when one of
-    /// them is active or activating.
+    /// The instances, and the state of each: `restart` names those of them
+    /// the profile is served on that are active or activating.
     instances: Arc<Mutex<Vec<String>>>,
     states: Arc<Mutex<HashMap<String, InstanceState>>>,
     /// How many writes of any kind the manager was asked for, so
@@ -904,11 +911,43 @@ fn app_holding(on: &str, off: &str) -> App {
     )
 }
 
+/// The manager holding `FILE_ON` / `FILE_OFF` and `assignments` as
+/// `assignments.ini`.
+fn app_with_assignments(assignments: &str) -> App {
+    app_for_full(
+        &[
+            (MODELS, FILE_ON),
+            (DISABLED, FILE_OFF),
+            (ASSIGNS, assignments),
+        ],
+        &[],
+        Ok(()),
+        TIMEOUT,
+        KEY_A,
+    )
+}
+
 /// The same pair, with the save bound by `write_timeout` and the reads left at
 /// `TIMEOUT`: the seam a test of the write's own limit uses.
 fn app_holding_write_timeout(on: &str, off: &str, write_timeout: Duration) -> App {
     app_for_full(
         &[(MODELS, on), (DISABLED, off)],
+        &[],
+        Ok(()),
+        write_timeout,
+        KEY_A,
+    )
+}
+
+/// The pair plus `assignments.ini`, the save bound by `write_timeout`: the seam
+/// a test of the limit needs when the restart list must have an instance in it.
+fn app_with_assignments_timeout(assignments: &str, write_timeout: Duration) -> App {
+    app_for_full(
+        &[
+            (MODELS, FILE_ON),
+            (DISABLED, FILE_OFF),
+            (ASSIGNS, assignments),
+        ],
         &[],
         Ok(()),
         write_timeout,
@@ -1024,9 +1063,13 @@ impl Reply {
         );
     }
 
-    /// The save's 200: exactly `{"revision", "running"}`, answered as JSON, the
-    /// revision a `GET` of the saved section returns.
-    fn assert_saved(&self, revision: &str, running: bool) {
+    /// The save's 200: exactly `{"revision", "running", "restart"}`, answered
+    /// as JSON, the revision a `GET` of the saved section returns. `restart`
+    /// is the sorted list of the instances the profile is effective on (the
+    /// records of `assignments.ini`) whose state is up: those are the ones the
+    /// page offers to restart. `running` is `restart` not empty, or true with
+    /// `restart: []` when a state could not be read.
+    fn assert_saved(&self, revision: &str, running: bool, restart: &[&str]) {
         assert_eq!(self.status, StatusCode::OK, "{}", self.body);
         assert!(
             self.content_type.starts_with("application/json"),
@@ -1035,7 +1078,11 @@ impl Reply {
         );
         assert_eq!(
             self.json(),
-            json!({ "revision": revision, "running": running }),
+            json!({
+                "revision": revision,
+                "running": running,
+                "restart": restart,
+            }),
             "{}",
             self.body
         );
@@ -1053,6 +1100,14 @@ impl App {
     /// The manager's calls, in order.
     fn calls(&self) -> Vec<String> {
         self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The manager's calls, sorted and joined by a space: what a save asks for,
+    /// without pinning the order the route makes the calls in.
+    fn sorted_calls(&self) -> String {
+        let mut calls = self.calls();
+        calls.sort();
+        calls.join(" ")
     }
 
     /// The `write_file_if` calls the manager was asked for, in order: name,
@@ -1365,9 +1420,11 @@ async fn save_is_served_to_every_signed_in_administrator() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let cookie = app.sign_in_as("root").await;
     let body = save_body(&alpha_revision(), json!({ "ctx-size": "8192" }));
-    app.save(ALPHA, &body, Some(&cookie))
-        .await
-        .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
+    app.save(ALPHA, &body, Some(&cookie)).await.assert_saved(
+        &rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA),
+        false,
+        &[],
+    );
     assert_eq!(
         principals_of(&app.principals),
         vec![Some("root".to_string())],
@@ -1389,7 +1446,7 @@ async fn save_a_name_in_the_request_is_never_the_principal() {
         &[("x-user", "root")],
     )
     .await
-    .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
+    .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false, &[]);
     assert_eq!(
         principals_of(&app.principals),
         vec![Some("alice".to_string())],
@@ -1519,7 +1576,7 @@ async fn save_a_json_content_type_with_a_charset_is_served() {
         Some("application/json; charset=utf-8"),
     )
     .await
-    .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
+    .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false, &[]);
     assert_eq!(
         app.file_text(MODELS).as_deref(),
         Some(ON_CTX_8192),
@@ -1805,7 +1862,7 @@ async fn save_a_switched_off_model_profile_is_written_to_the_disabled_file_and_a
     let rep = app
         .save_on_revision(MISTRAL, &revision, json!({ "temp": "1.0" }))
         .await;
-    rep.assert_saved(&rev(&KEY_A, DISABLED, OFF_TEMP_1, MISTRAL), false);
+    rep.assert_saved(&rev(&KEY_A, DISABLED, OFF_TEMP_1, MISTRAL), false, &[]);
     assert_eq!(
         app.writes(),
         vec![(
@@ -1831,8 +1888,10 @@ async fn save_a_switched_off_model_profile_is_written_to_the_disabled_file_and_a
             "read models.ini",
             "read models.ini.disabled",
             "write-if alice models.ini.disabled",
+            "read assignments.ini",
         ],
-        "a switched-off preset asks for no instance state"
+        "a switched-off preset asks for no instance state (the restart reads \
+         assignments.ini, never a status)"
     );
 }
 
@@ -1858,7 +1917,7 @@ model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
 load-on-startup = 1\r\n\
 temp = 0.2\r\n\
 ";
-    rep.assert_saved(&rev(&KEY_A, MODELS, wanted, QWEN), false);
+    rep.assert_saved(&rev(&KEY_A, MODELS, wanted, QWEN), false, &[]);
     assert_eq!(
         app.writes(),
         vec![(MODELS.to_string(), wanted.to_string(), FILE_ON.to_string())],
@@ -1886,7 +1945,7 @@ async fn save_fresh_revision_writes_the_file_and_answers_the_revision_the_read_r
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
     let written = rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA);
-    rep.assert_saved(&written, false);
+    rep.assert_saved(&written, false, &[]);
     assert_eq!(
         app.writes(),
         vec![(
@@ -1906,15 +1965,11 @@ async fn save_fresh_revision_writes_the_file_and_answers_the_revision_the_read_r
         "one connect, for the session's user"
     );
     assert_eq!(
-        app.calls(),
-        vec![
-            "read models.ini",
-            "write-if alice models.ini",
-            "list",
-            "status default",
-        ],
+        app.sorted_calls(),
+        "read assignments.ini read models.ini write-if alice models.ini",
         "the section is found in the first file, so the other is never read; no \
-         call beyond the save, the write as the signed-in user, then the state"
+         call beyond the save, the write as the signed-in user, then the records \
+         that say where the profile is served (none here, so no state is asked)"
     );
     assert_eq!(
         app.file_text(MODELS).as_deref(),
@@ -1944,7 +1999,7 @@ async fn save_the_written_text_changes_only_the_edited_lines() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.save_on(ALPHA, json!({ "ctx-size": "8192" }))
         .await
-        .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
+        .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false, &[]);
     let text = app.file_text(MODELS).expect("models.ini");
     assert!(
         text.starts_with("; The presets llama-server is offered (--models-preset).\r\n"),
@@ -1968,7 +2023,7 @@ async fn save_the_written_text_changes_only_the_edited_lines() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.save_on(ALPHA, json!({ "top-k": "40" }))
         .await
-        .assert_saved(&rev(&KEY_A, MODELS, ON_TOPK_40, ALPHA), false);
+        .assert_saved(&rev(&KEY_A, MODELS, ON_TOPK_40, ALPHA), false, &[]);
     assert_eq!(
         app.file_text(MODELS).as_deref(),
         Some(ON_TOPK_40),
@@ -1979,7 +2034,7 @@ async fn save_the_written_text_changes_only_the_edited_lines() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.save_on(ALPHA, json!({ "n-gpu-layers": Value::Null }))
         .await
-        .assert_saved(&rev(&KEY_A, MODELS, ON_NO_NGPU, ALPHA), false);
+        .assert_saved(&rev(&KEY_A, MODELS, ON_NO_NGPU, ALPHA), false, &[]);
     assert_eq!(app.file_text(MODELS).as_deref(), Some(ON_NO_NGPU));
     assert!(
         !app.file_text(MODELS).unwrap().contains("n-gpu-layers = 99"),
@@ -1996,7 +2051,7 @@ async fn save_a_value_the_file_holds_writes_nothing_and_keeps_the_line() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let fresh = alpha_revision();
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "4096" })).await;
-    rep.assert_saved(&fresh, false);
+    rep.assert_saved(&fresh, false, &[]);
     assert!(app.no_write_asked(), "nothing to write: {:?}", app.writes());
     assert_eq!(
         app.file_text(MODELS).as_deref(),
@@ -2012,7 +2067,7 @@ async fn save_no_changes_is_200_with_the_same_revision_and_no_write() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let fresh = alpha_revision();
     let rep = app.save_on(ALPHA, json!({})).await;
-    rep.assert_saved(&fresh, false);
+    rep.assert_saved(&fresh, false, &[]);
     assert!(app.no_write_asked(), "no key, no write: {:?}", app.writes());
     assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
@@ -2548,7 +2603,7 @@ async fn save_a_write_that_outlasts_the_read_limit_is_not_cut_off() {
             Some(&cookie),
         )
         .await;
-    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
+    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false, &[]);
     assert_eq!(
         app.file_text(MODELS).as_deref(),
         Some(ON_CTX_8192),
@@ -2613,79 +2668,92 @@ async fn save_the_managers_other_answer_is_502_without_its_words() {
 }
 
 // ---------------------------------------------------------------------------
-// `running`: the instances serving the model profile
+// `restart` and `running`: the instances the saved profile is served on
 // ---------------------------------------------------------------------------
 
-/// A model profile of `models.ini` is served by every instance of the engine, so
-/// `running` is true when any of them is up: the instances are listed, then
-/// their states asked in order until one is `active`.
+/// The instances the profile is served on come from `assignments.ini`, not
+/// from the instances the manager lists: a profile no instance is given (no
+/// file, no section, a section that is `off`) is served nowhere, so the save
+/// answers `restart: []` and `running: false`, and asks no state of an
+/// instance that never loads it.
 #[tokio::test]
-async fn save_running_is_true_when_any_instance_is_active() {
+async fn save_of_a_profile_no_instance_is_given_restarts_nothing() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.set_instances(&["one", "default"]);
     app.set_state("default", InstanceState::Active);
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), true);
+    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false, &[]);
     assert_eq!(
-        app.calls(),
-        vec![
-            format!("read {MODELS}"),
-            format!("write-if alice {MODELS}"),
-            "list".to_string(),
-            "status one".to_string(),
-            "status default".to_string(),
-        ],
-        "the list once, then the states until one is up"
+        app.sorted_calls(),
+        "read assignments.ini read models.ini write-if alice models.ini",
+        "the records are read, no state is asked: the listed instances are not \
+         the ones that serve the profile"
     );
 }
 
-/// `activating` counts as running, and the asks stop at the first instance that
-/// is up: no further state is read.
+/// Every instance the profile is effective on and up is named in `restart`,
+/// sorted: the page offers to restart each of them. `activating` counts as up.
 #[tokio::test]
-async fn save_running_is_true_for_an_activating_instance_and_the_asks_stop_there() {
-    let app = app_holding(FILE_ON, FILE_OFF);
+async fn save_restart_names_every_up_instance_the_profile_is_effective_on() {
+    let app = app_with_assignments("[one]\r\nalpha = on\r\n\r\n[default]\r\nalpha = on\r\n");
     app.set_instances(&["default", "one"]);
+    app.set_state("one", InstanceState::Active);
     app.set_state("default", InstanceState::Activating);
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), true);
-    assert_eq!(
-        app.calls(),
-        vec![
-            format!("read {MODELS}"),
-            format!("write-if alice {MODELS}"),
-            "list".to_string(),
-            "status default".to_string(),
-        ],
-        "the states stop at the first one that is up"
+    rep.assert_saved(
+        &rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA),
+        true,
+        &["default", "one"],
     );
 }
 
-/// An instance in any other state, and an instance that is no longer listed,
-/// are not running: every state asked, all of them down, the answer is false.
+/// An instance where the section says `off` is left out even when it is up;
+/// `inherit` follows the profile's own state in the pool, so an `on` profile
+/// is effective there and lands in `restart`; an instance that is down is left
+/// out. The order of `restart` is sorted, not the order the records spell.
 #[tokio::test]
-async fn save_running_is_false_when_every_instance_is_inactive() {
-    let app = app_holding(FILE_ON, FILE_OFF);
-    app.set_instances(&["one", "default"]);
-    app.set_state("one", InstanceState::Deactivating);
+async fn save_restart_leaves_out_the_off_instances_and_the_down_ones() {
+    let app = app_with_assignments(
+        "[one]\r\nalpha = on\r\n\r\n[default]\r\nalpha = off\r\n\r\n[laptop]\r\nalpha = inherit\r\n",
+    );
+    app.set_instances(&["default", "laptop", "one"]);
+    app.set_state("one", InstanceState::Active);
+    app.set_state("default", InstanceState::Active);
+    app.set_state("laptop", InstanceState::Active);
     let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false);
-    assert_eq!(
-        app.calls(),
-        vec![
-            format!("read {MODELS}"),
-            format!("write-if alice {MODELS}"),
-            "list".to_string(),
-            "status one".to_string(),
-            "status default".to_string(),
-        ],
-        "every instance is asked, none is up"
+    rep.assert_saved(
+        &rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA),
+        true,
+        &["laptop", "one"],
+    );
+}
+
+/// The blind spot the records close: a switched-off profile an `on` override
+/// gives to one instance IS served there, so the save of that section names
+/// that instance, and not the instance that runs the pool's own state.
+#[tokio::test]
+async fn save_of_a_switched_off_profile_named_by_an_on_override_names_its_instance() {
+    let app = app_with_assignments(
+        "[coder]\r\nmistral-7b = on\r\n\r\n[default]\r\nmistral-7b = inherit\r\n",
+    );
+    app.set_instances(&["coder", "default"]);
+    app.set_state("coder", InstanceState::Active);
+    app.set_state("default", InstanceState::Active);
+    let revision = rev(&KEY_A, DISABLED, FILE_OFF, MISTRAL);
+    let rep = app
+        .save_on_revision(MISTRAL, &revision, json!({ "temp": "1.0" }))
+        .await;
+    rep.assert_saved(
+        &rev(&KEY_A, DISABLED, OFF_TEMP_1, MISTRAL),
+        true,
+        &["coder"],
     );
 }
 
 /// A state read that fails after a write that landed is still a 200, with
-/// `running: true`: the save is done, and the safe hint costs at most a
-/// needless restart. A 200 that said `running: false` would tell the page to
-/// say nothing.
+/// `running: true` and `restart: []`: the save is done, and the safe hint
+/// costs at most a needless restart. A 200 that said `running: false` would
+/// tell the page to say nothing while the instance it edited is serving.
 #[tokio::test]
 async fn save_running_is_true_when_the_state_read_fails_after_the_write() {
     for (case, outcome) in [
@@ -2693,12 +2761,11 @@ async fn save_running_is_true_when_the_state_read_fails_after_the_write() {
         ("other", Outcome::Other),
         ("refused", Outcome::NotAuthorized),
     ] {
-        let app = app_holding(FILE_ON, FILE_OFF);
-        app.set_instances(&["one", "default"]);
+        let app = app_with_assignments("[default]\r\nalpha = on\r\n");
         app.set_state("default", InstanceState::Active);
         app.set_status_outcome(outcome);
         let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
-        rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), true);
+        rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), true, &[]);
         assert_eq!(
             app.file_text(MODELS).as_deref(),
             Some(ON_CTX_8192),
@@ -2710,23 +2777,35 @@ async fn save_running_is_true_when_the_state_read_fails_after_the_write() {
 /// A body that changes nothing has no write to wait for, so a state read that
 /// outlives the save's limit cannot make the save fail: nothing needed writing
 /// and nothing was written, so the answer is the 200 of a landed save, the
-/// revision the file holds and `running: true` (the safe answer for a state the
-/// bff could not read, as for a state read that fails after a write). 503
-/// `client-unavailable` tells the page the save did not happen, when it did:
-/// the page shows the edit as lost and offers a retry of an edit that is saved.
+/// revision the file holds and `running: true` with `restart: []` (the safe
+/// answer for a state the bff could not read, as for a state read that fails
+/// after a write). 503 `client-unavailable` tells the page the save did not
+/// happen, when it did: the page shows the edit as lost and offers a retry of
+/// an edit that is saved.
+///
+/// `assignments.ini` gives `alpha` to `default` and `default` runs, so the save
+/// has a reason to ask that state: the read that outlives the limit is asked,
+/// and it is the one that times out.
 #[tokio::test]
 async fn save_no_changes_with_a_state_read_outliving_the_limit_is_200_running_true() {
-    let app = app_holding_write_timeout(FILE_ON, FILE_OFF, Duration::from_millis(300));
-    // The manager's one instance is idle, so the state the save never read
-    // would answer false: `running: true` is pinned as the safe answer, not as
-    // the one the read carried.
+    let app =
+        app_with_assignments_timeout("[default]\r\nalpha = on\r\n", Duration::from_millis(300));
+    // The instance the model profile is effective on runs, so the state read
+    // this test stalls is asked: `running: true` is pinned as the safe answer
+    // for a state that stayed unknown, not as one the read carried.
+    app.set_state("default", InstanceState::Active);
     let fresh = alpha_revision();
     app.set_status_pause_ms(350);
     let cookie = app.sign_in().await;
     let rep = app
         .save(ALPHA, &save_body(&fresh, json!({})), Some(&cookie))
         .await;
-    rep.assert_saved(&fresh, true);
+    rep.assert_saved(&fresh, true, &[]);
+    assert!(
+        app.calls().iter().any(|call| call == "status default"),
+        "the state of the instance the model profile is effective on is asked: {:?}",
+        app.calls()
+    );
     assert!(
         app.no_write_asked(),
         "a body that changes nothing writes nothing: {:?}",
@@ -2742,6 +2821,37 @@ async fn save_no_changes_with_a_state_read_outliving_the_limit_is_200_running_tr
         .assert_signed_in_as("alice");
 }
 
+/// No `assignments.ini` at all: nothing on the machine says which instance is
+/// given the model profile, so a save that changed nothing names no instance to
+/// restart and asks no instance's state, running an idle manager or a busy one.
+/// `restart: []` and `running: false`, and the save's limit is never spent on a
+/// state of an instance the record never named (ARCHITECTURE.md's slice 15
+/// as-built: no record means no instance is given the model profile).
+#[tokio::test]
+async fn save_no_changes_with_no_record_restarts_nothing_and_asks_no_state() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    // The instance is up: the point is that the save never asks, not that the
+    // answer it would carry is false.
+    app.set_state("default", InstanceState::Active);
+    let fresh = alpha_revision();
+    let cookie = app.sign_in().await;
+    let rep = app
+        .save(ALPHA, &save_body(&fresh, json!({})), Some(&cookie))
+        .await;
+    rep.assert_saved(&fresh, false, &[]);
+    assert!(
+        app.no_write_asked(),
+        "a body that changes nothing writes nothing: {:?}",
+        app.writes()
+    );
+    for verb in ["status", "list"] {
+        assert!(
+            !app.calls().iter().any(|call| call.starts_with(verb)),
+            "no record, so no {verb} is asked: {:?}",
+            app.calls()
+        );
+    }
+}
 // ---------------------------------------------------------------------------
 // The save and the session's idle deadline
 // ---------------------------------------------------------------------------
@@ -2764,7 +2874,7 @@ async fn save_moves_the_sessions_idle_deadline() {
             Some(&cookie),
         )
         .await;
-    rep.assert_saved(&alpha_revision(), false);
+    rep.assert_saved(&alpha_revision(), false, &[]);
     app.advance(29 * MINUTE);
     app.get("/api/session", Some(&cookie))
         .await
@@ -2816,22 +2926,17 @@ async fn save_the_gpu_distribution_keys_lands_in_the_section() {
         }),
     )
     .await
-    .assert_saved(&rev(&KEY_A, MODELS, ON_GPU, ALPHA), false);
+    .assert_saved(&rev(&KEY_A, MODELS, ON_GPU, ALPHA), false, &[]);
     assert_eq!(
         app.file_text(MODELS).as_deref(),
         Some(ON_GPU),
         "the three lines land inside [alpha], in key order"
     );
     assert_eq!(
-        app.calls(),
-        vec![
-            format!("read {MODELS}"),
-            format!("write-if alice {MODELS}"),
-            "list".to_string(),
-            "status default".to_string(),
-        ],
-        "one read and one compare-and-swap write, then the instance state the \
-         save answers, as every save in this file"
+        app.sorted_calls(),
+        "read assignments.ini read models.ini write-if alice models.ini",
+        "one read and one compare-and-swap write, then the records of where the \
+         profile is served, as every save in this file"
     );
     assert_eq!(
         principals_of(&app.principals),
@@ -2967,7 +3072,7 @@ async fn save_a_device_the_probe_does_not_know_is_saved() {
     let app = app_holding(FILE_ON, FILE_OFF);
     app.save_on(ALPHA, json!({ "device": "ROCm7" }))
         .await
-        .assert_saved(&rev(&KEY_A, MODELS, ON_DEVICE_ROCM7, ALPHA), false);
+        .assert_saved(&rev(&KEY_A, MODELS, ON_DEVICE_ROCM7, ALPHA), false, &[]);
     assert!(
         app.file_text(MODELS)
             .expect("models.ini")
@@ -2990,3 +3095,22 @@ model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
 load-on-startup = 1\r\n\
 temp = 0.7\r\n\
 ";
+
+/// A section of `assignments.ini` naming an instance the manager no longer
+/// lists is a stale record, not a machine: the save of a profile effective only
+/// there names nothing to restart, `running` is false, and no state is asked of
+/// an instance that does not exist.
+#[tokio::test]
+async fn save_restart_leaves_out_a_record_section_naming_no_instance() {
+    let app = app_with_assignments("[default]\r\nalpha = off\r\n\r\n[ghost]\r\nalpha = on\r\n");
+    app.set_instances(&["default"]);
+    app.set_state("default", InstanceState::Active);
+    app.set_state("ghost", InstanceState::Active);
+    let rep = app.save_on(ALPHA, json!({ "ctx-size": "8192" })).await;
+    rep.assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false, &[]);
+    assert!(
+        !app.calls().iter().any(|call| call == "status ghost"),
+        "a state was asked of an instance the manager does not list: {:?}",
+        app.calls()
+    );
+}

@@ -141,9 +141,86 @@ fn pool_ids(pool: &str) -> Vec<String> {
         .collect()
 }
 
+/// One model profile of the pool, with what one instance's assignment makes of
+/// it: the `id` as the pool spells it, `value` the explicit key of
+/// `assignments.ini` (`none` when the id has no key of its own, or a word the
+/// render ignores), `via_all` true when the id has no key of its own and the
+/// key `*` stands in for it, and `effective` true when the render emits the
+/// id's section.
+pub struct AssignmentRow {
+    pub id: String,
+    pub value: String,
+    pub via_all: bool,
+    pub effective: bool,
+}
+
+/// The pool and one instance's assignment, read as the rows the web UI lists:
+/// the `*` the page shows (`inherit` when the render honours the key `*`,
+/// `none` when it does not) and one row per model profile of the pool, in
+/// `render`'s own order.
+///
+/// One rule, the render's: a row is effective when `render` emits the id's
+/// section, so the effective rows are exactly the rendered sections, in the
+/// render's order, and a page never needs a second copy of the render. The
+/// spelling of the row is the pool's, of the first file that holds the id.
+pub fn rows(
+    enabled: &str,
+    disabled: &str,
+    assignment: Option<&str>,
+) -> (String, Vec<AssignmentRow>) {
+    let keys = assigned(assignment);
+    let star = keys.get("*").map(String::as_str);
+    let all = if keys.contains_key("*") {
+        "inherit"
+    } else {
+        "none"
+    }
+    .to_string();
+    let mut out: Vec<AssignmentRow> = Vec::new();
+    // The ids of the rows so far, lowered, with their place: one id is one
+    // model profile, so a copy in the other file, or a second spelling, is not
+    // a row of its own.
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    for (in_enabled, pool) in [(true, enabled), (false, disabled)] {
+        // The global switch, as `render` reads it.
+        let global = match star {
+            Some("on") => true,
+            Some("off") => false,
+            _ => in_enabled,
+        };
+        for id in pool_ids(pool) {
+            // The id's own key, exact case, as `render` looks it up.
+            let key = keys.get(&id);
+            let on = match key {
+                Some(value) => is_on(value, global),
+                None => keys.contains_key("*") && global,
+            };
+            let row = AssignmentRow {
+                id: id.clone(),
+                value: key.cloned().unwrap_or_else(|| "none".to_string()),
+                via_all: key.is_none() && keys.contains_key("*"),
+                effective: on,
+            };
+            let lower = id.to_lowercase();
+            if let Some(at) = seen.get(&lower) {
+                // The row is the first copy of the id, where it sits in the
+                // pool: the section `render` copies is that one. A second copy
+                // the render emits makes the row effective.
+                if on {
+                    out[*at].effective = true;
+                }
+            } else {
+                seen.insert(lower, out.len());
+                out.push(row);
+            }
+        }
+    }
+    (all, out)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::render;
+    use super::{render, rows, AssignmentRow};
     use crate::ini;
 
     /// Both ending styles a pool file can have.
@@ -976,6 +1053,425 @@ mod tests {
                 format!("{WANT}{eol}"),
                 "the render opens with that line ({eol:?}): {got:?}"
             );
+        }
+    }
+
+    // ── rows: the pool and one assignment, read as the web UI's rows ──────
+
+    /// `rows` as a table of `(id, value, via_all, effective)`, in the order
+    /// the call answers them.
+    fn table(rows: &[AssignmentRow]) -> Vec<(String, String, bool, bool)> {
+        rows.iter()
+            .map(|row| {
+                (
+                    row.id.clone(),
+                    row.value.clone(),
+                    row.via_all,
+                    row.effective,
+                )
+            })
+            .collect()
+    }
+
+    /// One row of an expected table.
+    fn row(id: &str, value: &str, via_all: bool, effective: bool) -> (String, String, bool, bool) {
+        (id.to_string(), value.to_string(), via_all, effective)
+    }
+
+    /// One call's `*` and its rows, the rows as a table.
+    fn rows_of(
+        enabled: &str,
+        disabled: &str,
+        assignment: Option<&str>,
+    ) -> (String, Vec<(String, String, bool, bool)>) {
+        let (all, rows) = rows(enabled, disabled, assignment);
+        (all, table(&rows))
+    }
+
+    /// The ids of the table's rows that are effective.
+    fn effective(rows: &[(String, String, bool, bool)]) -> Vec<String> {
+        rows.iter()
+            .filter(|row| row.3)
+            .map(|row| row.0.clone())
+            .collect()
+    }
+
+    /// `* = inherit`, no other key: the pool in its order, every model profile
+    /// following the global switch of the file that holds it, and the `*` read
+    /// as `inherit`.
+    #[test]
+    fn the_rows_of_the_star_alone_follow_the_global_switch() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = inherit"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "inherit", "the key `* = inherit` ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "none", true, true),
+                    row("beta", "none", true, true),
+                    row("gamma", "none", true, false),
+                ],
+                "the rows of `* = inherit` ({eol:?})"
+            );
+        }
+    }
+
+    /// `* = on`: the key is honoured, so the model profiles of the switched-off
+    /// file are effective too, and the `*` the page shows is `inherit`.
+    #[test]
+    fn the_rows_of_the_star_on_reach_the_disabled_file() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = on"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "inherit", "a honoured `*` ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "none", true, true),
+                    row("beta", "none", true, true),
+                    row("gamma", "none", true, true),
+                ],
+                "the rows of `* = on` ({eol:?})"
+            );
+        }
+    }
+
+    /// The keys a page writes: `value` is the key the file holds, and with no
+    /// `*` the rows are not `via_all` and the `*` the page shows is `none`.
+    #[test]
+    fn the_rows_value_is_the_explicit_key() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["alpha = inherit", "gamma = on"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "none", "no key `*` in the section ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "inherit", false, true),
+                    row("beta", "none", false, false),
+                    row("gamma", "on", false, true),
+                ],
+                "the rows of two explicit keys ({eol:?})"
+            );
+        }
+    }
+
+    /// An explicit `off` under `* = on`: the row is not effective, carries the
+    /// key as its value, and is not covered by the `*`.
+    #[test]
+    fn the_rows_explicit_off_wins_over_the_star() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = on", "alpha = off"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "inherit", "the `*` is honoured ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "off", false, false),
+                    row("beta", "none", true, true),
+                    row("gamma", "none", true, true),
+                ],
+                "the explicit off and the `*` ({eol:?})"
+            );
+        }
+    }
+
+    /// An explicit `inherit` follows the `*` it sits under: with `* = off` the
+    /// row is not effective, and it is not covered by the `*` either.
+    #[test]
+    fn the_rows_explicit_inherit_follows_the_star_it_sits_under() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = off", "alpha = inherit"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "inherit", "the key `* = off` is honoured ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "inherit", false, false),
+                    row("beta", "none", true, false),
+                    row("gamma", "none", true, false),
+                ],
+                "the rows of `* = off` with an explicit inherit ({eol:?})"
+            );
+        }
+    }
+
+    /// `on` on a model profile switched off in the pool: the row is effective,
+    /// and with no `*` in the section the page's `*` is `none`.
+    #[test]
+    fn the_rows_on_renders_a_model_profile_switched_off() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["gamma = on"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "none", "no key `*` ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "none", false, false),
+                    row("beta", "none", false, false),
+                    row("gamma", "on", false, true),
+                ],
+                "the rows of one `on` over a switched-off model profile ({eol:?})"
+            );
+        }
+    }
+
+    /// A hand-edited `* = none`, a word the render ignores: the key is not
+    /// honoured, so the `*` the page shows is `none`, no row is `via_all`, and
+    /// the pool's own switch assigns nothing.
+    #[test]
+    fn the_rows_a_hand_edited_star_none_is_not_honoured() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = none", "beta = on"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "none", "the ignored `*` is not honoured ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "none", false, false),
+                    row("beta", "on", false, true),
+                    row("gamma", "none", false, false),
+                ],
+                "the rows of an ignored `*` ({eol:?})"
+            );
+        }
+    }
+
+    /// A hand-edited `* = on`, a value the page never writes, is honoured all
+    /// the same: the `*` is `inherit` and every model profile of the pool is
+    /// effective.
+    #[test]
+    fn the_rows_a_hand_edited_star_on_is_honoured() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = on", "gamma = off"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "inherit", "the honoured `* = on` ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "none", true, true),
+                    row("beta", "none", true, true),
+                    row("gamma", "off", false, false),
+                ],
+                "the rows of a hand-edited `* = on` ({eol:?})"
+            );
+        }
+    }
+
+    /// A hand-edited value that is none of the three words is no key at all:
+    /// the row is `none` and, under a honoured `*`, `via_all`.
+    #[test]
+    fn the_rows_a_hand_edited_value_reads_as_no_key() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            let assignment = file_of(&["* = off", "alpha = none", "beta = yes"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "inherit", "the `*` is honoured ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "none", true, false),
+                    row("beta", "none", true, false),
+                    row("gamma", "none", true, false),
+                ],
+                "the rows of two ignored values ({eol:?})"
+            );
+        }
+    }
+
+    /// One id in both files of the pool is one model profile: one row, in the
+    /// place the file that holds it on has, never a second row for the copy
+    /// switched off.
+    #[test]
+    fn the_rows_an_id_in_both_pool_files_is_one_row() {
+        for eol in EOLS {
+            let (on, off) = (pool_both_on(eol), pool_both_off(eol));
+            let assignment = file_of(&["alpha = on"], eol);
+            let (all, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(all, "none", "no key `*` ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "on", false, true),
+                    row("beta", "none", false, false),
+                    row("gamma", "none", false, false),
+                ],
+                "the rows of the id in both files ({eol:?})"
+            );
+
+            let assignment = file_of(&["* = on"], eol);
+            let (_, rows) = rows_of(&on, &off, Some(&assignment));
+            assert_eq!(
+                rows.iter().filter(|row| row.0 == "alpha").count(),
+                1,
+                "the id in both files is not one row ({eol:?}): {rows:?}"
+            );
+            assert_eq!(
+                rows,
+                vec![
+                    row("alpha", "none", true, true),
+                    row("beta", "none", true, true),
+                    row("gamma", "none", true, true),
+                ],
+                "the rows of the id in both files under `* = on` ({eol:?})"
+            );
+        }
+    }
+
+    /// No section at all, and an empty one: every model profile of the pool is
+    /// a row with no value, not covered by anything, effective nowhere, and the
+    /// `*` the page shows is `none`.
+    #[test]
+    fn the_rows_no_section_is_no_assignment() {
+        for eol in EOLS {
+            let (on, off) = (pool_on(eol), pool_off(eol));
+            for assignment in [None, Some("")] {
+                let (all, rows) = rows_of(&on, &off, assignment);
+                assert_eq!(all, "none", "no assignment ({eol:?})");
+                assert_eq!(
+                    rows,
+                    vec![
+                        row("alpha", "none", false, false),
+                        row("beta", "none", false, false),
+                        row("gamma", "none", false, false),
+                    ],
+                    "the rows with no assignment section ({eol:?})"
+                );
+            }
+        }
+    }
+
+    /// The rows are the pool's model profiles, in the pool's order (`models.ini`
+    /// first), once each: never the `*`, never an id only the section names, and
+    /// ids that differ only in letter case are one row.
+    #[test]
+    fn the_rows_are_the_pool_in_its_order_once_each() {
+        for eol in EOLS {
+            let on = pool_no_global(eol);
+            let empty = String::new();
+            let assignment = file_of(&["* = inherit", "zeta = on"], eol);
+            let (all, rows) = rows_of(&on, &empty, Some(&assignment));
+            assert_eq!(all, "inherit", "the key `* = inherit` ({eol:?})");
+            assert_eq!(
+                rows,
+                vec![
+                    row("beta", "none", true, true),
+                    row("alpha", "none", true, true)
+                ],
+                "the rows follow the pool's order, not the sorted one ({eol:?})"
+            );
+
+            let twice = file_of(
+                &[
+                    "[*]",
+                    "temp = 0.7",
+                    "",
+                    "[Alpha]",
+                    "model = /models/Alpha.gguf",
+                    "",
+                    "[alpha]",
+                    "model = /models/alpha.gguf",
+                ],
+                eol,
+            );
+            let assignment = file_of(&["* = on"], eol);
+            let (_, rows) = rows_of(&twice, &empty, Some(&assignment));
+            assert_eq!(
+                rows,
+                vec![row("Alpha", "none", true, true)],
+                "the two spellings of one id are one row ({eol:?})"
+            );
+            assert!(
+                !rows.iter().any(|row| row.0 == "*"),
+                "the `*` is a row of its own ({eol:?}): {rows:?}"
+            );
+        }
+    }
+
+    /// A pool with no model profile: no row, in either ending style, with a
+    /// honoured `*` and without one.
+    #[test]
+    fn the_rows_of_an_empty_pool_are_no_rows() {
+        for eol in EOLS {
+            let empty = String::new();
+            let bare = file_of(&["; models.ini, no preset in the pool yet"], eol);
+            assert_eq!(
+                rows_of(&empty, &empty, None),
+                ("none".to_string(), Vec::new()),
+                "no pool, no rows ({eol:?})"
+            );
+            let (all, rows) = rows_of(&bare, &empty, Some(&file_of(&["* = on"], eol)));
+            assert_eq!(all, "inherit", "the `*` is honoured ({eol:?})");
+            assert!(
+                rows.is_empty(),
+                "the key `*` is a row of its own ({eol:?}): {rows:?}"
+            );
+        }
+    }
+
+    /// The rows that are effective are exactly the sections the render emits
+    /// after `[*]`, in the render's order: the bff reads one rule, never a
+    /// second copy of the render.
+    #[test]
+    fn the_rows_effective_ids_are_the_sections_the_render_emits() {
+        for eol in EOLS {
+            let case_pool = file_of(
+                &[
+                    "[Alpha]",
+                    "model = /models/Alpha.gguf",
+                    "",
+                    "[alpha]",
+                    "model = /models/alpha.gguf",
+                ],
+                eol,
+            );
+            let pools: Vec<(String, String)> = vec![
+                (pool_on(eol), pool_off(eol)),
+                (pool_both_on(eol), pool_both_off(eol)),
+                (pool_no_global(eol), String::new()),
+                (pool_no_global(eol), pool_off(eol)),
+                (case_pool, String::new()),
+            ];
+            let assignments: [Option<&str>; 13] = [
+                None,
+                Some("* = inherit"),
+                Some("* = on"),
+                Some("* = off"),
+                Some("* = none"),
+                Some("alpha = on"),
+                Some("alpha = off"),
+                Some("* = on\nalpha = off"),
+                Some("* = off\nbeta = on"),
+                Some("gamma = on"),
+                Some("alpha = inherit\ngamma = inherit"),
+                Some("alpha = none\nbeta = on"),
+                Some("zeta = on\nalpha = inherit"),
+            ];
+            for (on, off) in pools.iter() {
+                for assignment in assignments {
+                    let (_, rows) = rows_of(on.as_str(), off.as_str(), assignment);
+                    let rendered: Vec<String> =
+                        headers(&render(on.as_str(), off.as_str(), assignment))
+                            .into_iter()
+                            .filter(|id| id != "*")
+                            .collect();
+                    assert_eq!(
+                        effective(&rows),
+                        rendered,
+                        "the effective rows are not the rendered sections: assignment \
+                         {assignment:?}, pool ({eol:?})"
+                    );
+                }
+            }
         }
     }
 }

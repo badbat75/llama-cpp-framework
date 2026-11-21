@@ -304,6 +304,33 @@ Lessons only: the rules are in `AGENTS.md`.
   `E0407 ... is not a member of trait` per verb, `E0432` for the row type the trait returns,
   `E0599` for a new `ClientError` variant. Count them and list them: a red list that names ONLY
   missing slice items is also the proof the tests carry no typo.
+- The bff's `ManagerClient::instances()` default body is `Err(Other)`, so a fake
+  that never overrides it makes every LIST route (`GET /api/profiles/model`) answer
+  502 `client-other`, while a route that does NOT read it (the model-profile switch:
+  its `restart` comes from `assignments.ini` + `Status`, never the list) keeps its
+  `sorted_calls` pin clean. So when a switch/list file's fake gains `instances()`,
+  ONLY the file's `.list()` tests change; add it answering from the same `instances`
+  cell as `list_instances`. A `restart` that is derived (assignments + status) never
+  reads `Instances()`, so do not prefix `instances` into a switch's calls pin.
+- A prefix-matching call-log helper (`actor_of(prefix)` over recorded lines) collides
+  when one call is a PREFIX of a sibling the same route makes (`read models.ini` also
+  hits `read models.ini.disabled`), so its "exactly one call" assert reds on the pair.
+  The SAME collision when the route makes the identical call twice (reads the file,
+  writes, reads it back for the answer): a write route with a read-back pins the WRITE
+  by exact line, never the read. Add an exact-line variant (`line == call`) and
+  retarget only the colliding site;
+  leave the prefix sites (a verb with no sibling, `set-server ` with a trailing space)
+  as they are. Where every ask of the repeated call must carry the actor (the design's
+  read-back answers for the signed-in user), a third variant takes the count the route
+  owes and returns EVERY actor in order (`actors_of_exact(call, times)` ->
+  `Vec<Option<String>>`, its red naming "asked N times, the route owes M"), so both
+  reads are pinned, not one of them silently.
+- A "the state read times out so running is true with restart []" switch test only
+  reaches that branch if a `Status` is actually ASKED: give the fixture an instance
+  the profile is served on (`assignments.ini` `[default]\r\nQwen = on\r\n` + that
+  instance `Active`). With no served instance the whole-task timeout passes on the
+  quick calls, no status is asked, and `running` is false: that is a DIFFERENT test
+  (`...no_instance_is_given_restarts_nothing`, an absence, sorted_calls has no status).
 - Which account a route acts for is pinned on the connect log: `principals_of(..)` is
   `vec![None]` for a read the bff answers with its own rights, `vec![Some("alice")]` for a write
   that acts for the signed-in user. One entry per manager connect (the session routes connect
@@ -784,6 +811,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - Weigh every element of the slice in ONE pass: collect each chain's misses into one array and assert
   once. A test that asserts chain by chain stops at the first chain, and the report shows the label's
   misses while the toggle's (`32px` beating the 40 px pill) stay hidden from the coder.
+- A mount helper that ends in `findByRole` / `ready(main)` (the GPU files' `form()`) must be called BEFORE
+  `fakeClock()`: its finds poll on faked timers and deadlock, so every clocked test of the file dies
+  `Error: Test timed out in 5000ms` (five reds, one root cause, and the reason line names nothing).
+- `Field.tsx`'s `Hint` renders one `<p>` per `\n` of the hint, so `getByText(<whole multi-line text>)`
+  NEVER matches, for a hint of any length: pin it the way `HearthAssetsEngine` does (`.field-hint`,
+  normalized `textContent`). A hint key whose text has `\n` is a red no coder can pass.
 - Vitest's jsdom loads no stylesheet, so `getComputedStyle` of a mounted page sees the user agent only: a
   cascade question ("does the pill win over the entry rule?") is answered by the parser plus specificity
   arithmetic over the file's text, never by the DOM. Weigh the real `index.css` chains and keep a
@@ -1157,3 +1190,114 @@ Lessons only: the rules are in `AGENTS.md`.
 - `cargo test -p pai-bff` runs targets in alphabetical order and stops at the first red: a red in
   `model_profile_save` hides `node_devices` and nine files after it. Run the rest by name in a second
   invocation, and account for every file.
+
+## Scripted edits of a big test file (slice 15, 2026-11-21)
+
+- Never a whole-file regex with `.*` and `re.S` on a 3 000-line test file: one greedy match ate
+  everything from a mid-file helper to the file's last brace (1 863, 1 618 and 569 lines gone from
+  three files at once). Edit with exact-string `str.replace` and a per-pattern count assert
+  (`assert t.count(old) == 14, (old[:60], t.count(old))`) BEFORE the replace, and splice a tail at a
+  line index you read back first (`lines[i].startswith("// ---")`), printing the line count before and
+  after. A script that replaces blindly truncates in silence; a count assert stops it mid-file.
+- `cp` every file to your own scratch dir before a scripted bulk edit. When it goes wrong, the
+  recovery sources are `git show HEAD:<path>` of YOUR OWN files (never `git checkout`), plus the
+  broken tail you kept: the helpers you had already authored are in the intact head, so the fix is a
+  replay of your edits, not a rewrite. The OpenCode snapshot repo
+  (`~/.local/share/opencode/snapshot/<hash>/<hash>`) is a git repo of the tree, but its newest commit
+  can hold the PRE-edit HEAD content, and `tool-output/` and the `session_part` table of `opencode.db`
+  hold no tool results: do not count on them, keep every scripted edit in one reusable block.
+- To pin the SET of manager calls without pinning the order the route makes them in, add
+  `fn sorted_calls(&self) -> String { calls.sort(); calls.join(" ") }` to the file's fake: one string
+  literal compares, and a `Vec<String>` never compares against a `[&str]` table. Name in the assert
+  message why the order is free (the coder's choice).
+- Where a reply-shape pin (the exact JSON of a 200) sits in the same test as a call-log pin, the shape
+  red STOPS the test and the call-log red is never reached: report the test as red for the shape, and
+  say the call-list assert behind it is unproven today.
+- A positional fake hook (`read_pause_at(position, ms)`: "the read at index 3") is a fixture that dies
+  the day the route gains a read: give it the hook the rule names ("the read of `models.ini` that
+  FOLLOWS a write"), which holds whatever order the route settles on.
+
+## Mutants of the bff's association routes (slice 15 close, 2026-11-21)
+
+- The BEHAVIOURAL gate mutant (the compile one is the `current` → `peek` swap): replace the route's
+  three-line `let Some((session, identity)) = sessions.current(&headers) else { return ... };` with one
+  line `sessions.current(&headers).unwrap_or_else(|| (String::new(), crate::session::Identity { user:
+  String::new() }))` (the bff's `Identity` has no `Default`, so a bare `unwrap_or_default()` is a COMPILE
+  red). It keeps `headers` and `sessions` used, so no warning, and the gate test reds naming the ONE
+  route mutated: its loop passes the routes whose gate is intact, so the panic body (`200 {"running":
+  false}` vs 401) is the URI's own.
+- The principal mutant is the verb's own connect: `connect(Some(user))` → `connect(None)`. Where the
+  client comes from a shared helper (`assign_files`), re-take `connect(None)?` AT THE CALL SITE and
+  rename the helper's binding `_client`: mutating the helper kills every route that shares it, and the
+  red names one test out of three, which is not a per-route proof.
+- A principal pin whose prefix is a prefix of a sibling call reds its "exactly one call" assert
+  vacuously: `actor_of("read models.ini")` matches `read models.ini.disabled` too (2 hits, the assert
+  prints both). Pin a prefix no other recorded call starts with (a verb plus its args), and prove the
+  pin's own green against a call list the route really makes.
+- A read a whole route family gains is asked of EVERY `tests/*.rs` fake of the family: a fake with no
+  answer for it reds as 502 `client-other` on the route (`switch_then_list_agree...`), and the sibling
+  files' call-log pins red as a list with one extra entry (`model_profile_save.rs:1869`). Retarget the
+  fake AND the pins of every file, not only the new one.
+- An additive member of a served item (`GET /api/instances` gaining `serverProfile`) reds every
+  whole-item JSON literal in the crate: 13 of them in `tests/origin.rs` alone, green in
+  `tests/instances.rs` the coder updated. `grep -c '"engine":' crates/bff/tests/*.rs` is the map, and
+  it names origin.rs as well as instances.rs.
+- Drive the mutant loop from a script that `cp`s the pristine file back BEFORE each mutant and prints
+  `md5sum` plus `cmp -s` after each restore: seven mutants, seven `restore=identical`, one md5 through
+  the whole run. The `cmp` is of the pristine to the live path, not of the live path to itself.
+
+## Reviewer's findings on a landed slice (red tests over uncommitted code, slice 15, 2026-11-21)
+
+- A rule that is "the answer is the record as the MANAGER left it" cannot be pinned by a fake whose files
+  cell is shared: applying the write with the bff's own rule makes the computed answer and the read-back
+  answer agree, so the test greens on a bff that never re-reads. Add a fixture knob that answers a text the
+  bff CANNOT compute (`after_read(text)`, answered for that file once `wrote` is set), and pin the
+  after-read happened (`read assignments.ini` counted `>= 2`), else a route that computes is green.
+- `running` of an assignment write has three separable rules; write one test each or a fix for one greens
+  the others: (a) the effective SET is what counts, so a key landing under a `*` that already ignores it
+  (`* = off` plus `gamma = off`, and `inherit` under it) is `running: false` with `assert_no_call("status")`;
+  (b) for the whole-pool `*`, build a section where every row has its own key (`* = inherit` +
+  `alpha = on`, `beta = on`, `gamma = off`), so removing the `*` changes the text and not the set;
+  (c) the answer is the after-read's, so the `after_read` knob is the only fixture that proves it.
+- The write-limit seam is PUBLIC (`pai_bff::router_with_session_and_write_timeout`), so a test file needs
+  only a twin of its `app_for` (`app_for_write_timeout(fixture, write_timeout)`), with `app_connecting`
+  kept as a one-line wrapper so no existing call site moves. The 200-side test (delay 350 ms inside a
+  900 ms limit) is the red that names the read-limit cut; on the 503-side, assert
+  `started.elapsed() >= write_timeout` too: the key alone greens today, because the route cuts at the READ
+  limit and answers the same 503 at 200 ms.
+- A `NotAuthorized` refusal has two answers and the brief's key can be the wrong one: a refusal of the
+  SIGNED-IN user's `As` call is 403 `session-not-administrator` and ends the session; a refusal of a
+  connect with NO principal (the instances record, the state) is 502 `client-not-authorized` and ends
+  nothing (`crates/bff/README.md` line on `session-not-administrator`, `fe/briefs/api-contract.md`,
+  ARCHITECTURE's "As built" of slice 5, and `tests/instances.rs::a_refusal_by_the_manager_is_not_authorized`).
+  Pin the documented key, and report the brief's key as a divergence for the coordinator to settle.
+- A restart-candidate rule ("the record's sections that the manager LISTS") is pinned through the fake's
+  list cell (`set_instances(&["default"])`) with a section naming a `ghost` that is `Active`: the red is
+  `restart: ["ghost"], running: true` against `[], false`, and the extra assert
+  `!calls.iter().any(|c| c == "status ghost")` names the call the route must not make. Pin no exact call
+  list: the fix adds a `list`/`instances` call the test must not pre-judge.
+
+## Retargeting tests when a ruling deletes a branch (slice 15 rework, 2026-11-21)
+
+- A ruling that removes a code branch retargets CALL-LOG pins, not only answer pins: a pin of a call the
+  route stops making (`actor_of_exact("status default")` in a principal test) reds as
+  `no call "status default"`, which reads as a broken fake. Move that test's input to the case that still
+  earns the call (write the key that changes the effective set), and say in its doc comment why the
+  fixture is that one.
+- A `running`/`restart` rule stated as "the effective set changed" needs BOTH sides of the "no change"
+  case, because a rule like "an `on`/`off` under a `*` of `inherit` is always a change" passes one of
+  them: a key that leaves the profile effective on neither side (`gamma = off` under `* = inherit`, the
+  profile in the disabled file) AND one that leaves it effective on BOTH sides (`beta = on` under
+  `* = inherit`, the profile enabled). One test each, each with `assert_no_call("status", ..)`.
+- A ruled-out fallback is pinned as an ABSENCE over a fixture where the fallback CHANGES THE ANSWER: for
+  "no `assignments.ini` => `restart: []`, no state asked", make the listed instance `Active`, so today's
+  `list_instances()` fallback answers `restart: ["default"], running: true` and the red names the answer.
+  With the instance idle the fallback answers `[], false` and the test greens vacuously; add the
+  no-`status`/no-`list` loop so the pin is visible even when the shapes coincide.
+- A test retargeted to exercise a branch it only reached through the ruled-out path is GREEN on day one
+  (the retarget keeps it meaningful, it is not a red): report it by name as a green guard.
+- `rustfmt --edition 2021 <file>` adds no noise when the file's `rustfmt --check` (or `cargo fmt -p <crate>
+  --check`) printed only YOUR hunks beforehand: the changes rustfmt applies are exactly the hunks
+  `--check` prints. Do not judge the blast radius from `git diff --stat` of a file the coder already
+  modified, that counts the coder's uncommitted lines as yours; check HEAD's copy of the file is
+  rustfmt-clean (`git show HEAD:<file> > /tmp/...; rustfmt --check`) to be sure.

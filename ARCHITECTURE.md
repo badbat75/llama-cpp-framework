@@ -1924,6 +1924,22 @@ running instances the profile is (or becomes) effective on, `[]` plus `running: 
 fails; `GET /api/instances` carries `serverProfile`. Clippy and fmt green per crate; mutants on the
 security code above.
 
+*As built (slice 15 reviewed, 2026-11-21, uncommitted).* Met: `assign::rows` beside `render` with the
+equality test; the four routes in `crates/bff/src/instance_profiles.rs` (gate first, writes and file
+reads `As`, `Instances()`/`Status` on the bff's own connect, `*` in the path 404 before any call, bad
+values 422 first); the pool rows' `assignments` filtered by `Instances()` (`model_profiles.rs` 234);
+`restart` from `served` before/after, stale sections dropped by the manager's `ListInstances`
+(`restarted`, 640); `serverProfile` in `GET /api/instances` (`lib.rs` 541). Accepted deviations: a
+`NotAuthorized` on the bff's OWN call (`Instances()`, `Status`) is 502 `client-not-authorized` with the
+session kept (`own_refused`, 671; the precedent of `control.rs` 320): only a refusal of an `As` call
+ends a session; the server switch with `Instances()` unreadable answers `running: true` without asking
+`Status` (safe); an after-read that fails answers `effective` from the text the write leaves
+(`written`), not the before-read. Ruled out: `star_inherits` (537), a restart offered for an `on`/`off`
+under `* = inherit` that leaves `effective` unchanged; the render emits the same sections, so the
+router's file is the same; `running` stays "the effective set changed and the instance runs". Ruled
+out: the save's `None if !changed => list_instances()` (`model_profiles.rs` 1062): no record means
+no instance is given the profile, so `restart: []` and no state asked.
+
 **Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
 
 4. **The rename** (13a), no behaviour change, across `pai-core`, `pai-manager`, `pai-app`, `pai-cli`,

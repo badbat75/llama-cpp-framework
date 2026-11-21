@@ -64,13 +64,17 @@
 //!   runs out on the file read back after the writes, or on the state asked
 //!   after that, does not make a completed move a timeout. `enabled` is then
 //!   the value the move produced, the read-back's when the read-back came
-//!   back, and `running` is true, the safe answer for a state the bff cannot
-//!   see (the rule `switch_answers_running_true_when_the_state_cannot_be_read`
-//!   pins for a state that fails).
-//! - every answer says `running`: true when any instance of the engine is
-//!   `active` or `activating` (one `list_instances`, then the `status` of each
-//!   until one answers so), and true when a status read fails after a write
-//!   that landed. The bff restarts nothing.
+//!   back, and `running` is true with `restart: []`, the safe answer for a
+//!   state the bff cannot see (the rule
+//!   `switch_answers_running_true_when_the_state_cannot_be_read` pins for a
+//!   state that fails).
+//! - every answer says `restart` and `running`: `restart` is the sorted ids of
+//!   the instances the records of `assignments.ini` give the profile to before
+//!   the move or after it (an explicit `on`, or `inherit` following the pool's
+//!   own state on either side) whose state is `active` or `activating`, and
+//!   `running` is `restart` not empty. No instance list is read for it, and no
+//!   state is asked of an instance the profile is not served on. The bff
+//!   restarts nothing.
 //!
 //! The time limits are the bff's own and they end the manager's task when
 //! they fire (`crates/bff/src/server.rs`): a switch whose read is parked is
@@ -95,7 +99,7 @@ use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::checks::Refusal;
-use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -128,6 +132,10 @@ const KEY: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 /// The names the manager knows the engine's model profile files by.
 const MODELS: &str = "models.ini";
 const DISABLED: &str = "models.ini.disabled";
+
+/// The name the manager knows the assignment records by: which instance is
+/// given which model profile.
+const ASSIGNS: &str = "assignments.ini";
 
 /// The ids these tests switch. `Qwen` is spelled as the file spells it, so a
 /// bff that matches the id case-sensitively is caught; it carries
@@ -289,11 +297,12 @@ struct Live {
     /// plain `write_outcome`: how a test answers the second write of a move
     /// with `Changed` and lets the first land.
     write_outcome_at: Arc<Mutex<Option<(usize, Outcome)>>>,
-    /// How long the read at one position (1, 2, ...) takes, in place of the
-    /// plain `read_pause_ms`: how a test slows only the read of the file the
-    /// switch reads back after the writes, leaving the two reads of the move
-    /// quick.
-    read_pause_at: Arc<Mutex<Option<(usize, u64)>>>,
+    /// How long the read of `models.ini` that FOLLOWS a write takes, in place
+    /// of the plain `read_pause_ms`: how a test slows only the read-back of
+    /// the move, leaving the reads before the writes quick. The read-back is
+    /// the read asked when the manager already holds a write, whatever the
+    /// order of the reads that came before it.
+    read_back_pause_ms: Arc<AtomicU64>,
     /// How long each takes.
     connect_pause_ms: Arc<AtomicU64>,
     read_pause_ms: Arc<AtomicU64>,
@@ -313,16 +322,13 @@ struct Live {
     connect_gate_released: Arc<AtomicBool>,
     connects_gated: Arc<AtomicUsize>,
     connects_released: Arc<AtomicUsize>,
-    /// The instances, and the state of each: `running` is true when one of
-    /// them is active or activating.
+    /// The instances, and the state of each: `restart` names those of them
+    /// the profile is served on that are active or activating.
     instances: Arc<Mutex<Vec<String>>>,
     states: Arc<Mutex<HashMap<String, InstanceState>>>,
     /// How many writes of any kind the manager was asked for, so
     /// `write_outcome_at` counts the plain ones too.
     write_count: Arc<AtomicUsize>,
-    /// How many reads the manager was asked for, so `read_pause_at` counts
-    /// them too.
-    read_count: Arc<AtomicUsize>,
 }
 
 impl Live {
@@ -463,19 +469,29 @@ impl FakeManager {
             .any(|u| Some(u.as_str()) == self.as_user.as_deref())
     }
 
-    /// How long this read takes: the pause armed for its position (1-based,
-    /// counting every read of this app) wins over the one armed for every
-    /// read.
-    fn read_pause(&self) -> u64 {
-        let position = self.live.read_count.fetch_add(1, Ordering::SeqCst) + 1;
-        let armed = *self
-            .live
-            .read_pause_at
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some((at, ms)) = armed {
-            if at == position {
-                return ms;
+    /// How long this read takes: the pause armed for the read-back (the read
+    /// of `models.ini` asked once a write landed) wins for that read, the one
+    /// armed for every read wins for the others.
+    fn read_pause(&self, name: &str) -> u64 {
+        let written = {
+            let mut asked = self
+                .live
+                .writes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len();
+            asked += self
+                .live
+                .plain_writes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len();
+            asked
+        };
+        if name == MODELS && written > 0 {
+            let back = self.live.read_back_pause_ms.load(Ordering::SeqCst);
+            if back > 0 {
+                return back;
             }
         }
         self.live.read_pause_ms.load(Ordering::SeqCst)
@@ -517,7 +533,7 @@ impl ManagerClient for FakeManager {
             &self.live.reads_gated,
             &self.live.reads_released,
         );
-        let pause = self.read_pause();
+        let pause = self.read_pause(name);
         if pause > 0 {
             std::thread::sleep(Duration::from_millis(pause));
         }
@@ -633,6 +649,29 @@ impl ManagerClient for FakeManager {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone())
+    }
+    /// The record the list reads to fill each row's `assignments` and to know
+    /// which engines are available. The switch never asks it (its `restart` is
+    /// derived from `assignments.ini` and the instances' states alone), so this
+    /// answers from the same `instances` cell as `list_instances`, one row per
+    /// id, on the server profile of its own name.
+    fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
+        self.record("instances".into());
+        Ok(self
+            .live
+            .instances
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|id| InstanceInfo {
+                id: id.clone(),
+                engine: "llama.cpp".to_string(),
+                server_profile: Some(id.clone()),
+                port: 0,
+                profile_tags: vec![],
+                instance_tags: vec![],
+            })
+            .collect())
     }
     fn status(&self, id: &str) -> Result<InstanceState, ClientError> {
         self.record(format!("status {id}"));
@@ -783,6 +822,21 @@ fn app_holding(on: &str, off: &str) -> App {
     app_for(&[(MODELS, on), (DISABLED, off)], &[], Ok(()))
 }
 
+/// The manager holding `FILE_ON` / `FILE_OFF` and `assignments` as
+/// `assignments.ini`: which instance is given which model profile, the record
+/// the switch reads to know what to restart.
+fn app_with_assignments(assignments: &str) -> App {
+    app_for(
+        &[
+            (MODELS, FILE_ON),
+            (DISABLED, FILE_OFF),
+            (ASSIGNS, assignments),
+        ],
+        &[],
+        Ok(()),
+    )
+}
+
 /// The same pair, with the manager's calls of a write bound by
 /// `write_timeout` and the reads left at `TIMEOUT`.
 fn app_holding_write_timeout(on: &str, off: &str, write_timeout: Duration) -> App {
@@ -885,8 +939,14 @@ impl Reply {
         );
     }
 
-    /// The switch's 200: exactly `{"enabled", "running"}`, answered as JSON.
-    fn assert_switched(&self, enabled: bool, running: bool) {
+    /// The switch's 200: exactly `{"enabled", "running", "restart"}`, answered
+    /// as JSON. `restart` is the sorted ids of the instances the profile is
+    /// effective on before the move or after it (the records of
+    /// `assignments.ini`, the after side the same read with the switch
+    /// flipped) whose state is up: the page offers to restart each of them.
+    /// `running` is `restart` not empty, or true with `restart: []` when a
+    /// state could not be read.
+    fn assert_switched(&self, enabled: bool, running: bool, restart: &[&str]) {
         assert_eq!(self.status, StatusCode::OK, "{}", self.body);
         assert!(
             self.content_type.starts_with("application/json"),
@@ -895,7 +955,11 @@ impl Reply {
         );
         assert_eq!(
             self.json(),
-            json!({ "enabled": enabled, "running": running }),
+            json!({
+                "enabled": enabled,
+                "running": running,
+                "restart": restart,
+            }),
             "{}",
             self.body
         );
@@ -938,6 +1002,14 @@ impl App {
     /// The manager's calls, in order.
     fn calls(&self) -> Vec<String> {
         self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The manager's calls, sorted and joined by a space: what a switch asks
+    /// for, without pinning the order the route makes the calls in.
+    fn sorted_calls(&self) -> String {
+        let mut calls = self.calls();
+        calls.sort();
+        calls.join(" ")
     }
 
     /// The `write_file_if` calls the manager was asked for, in order: name,
@@ -1041,11 +1113,10 @@ impl App {
         self.live.read_pause_ms.store(ms, Ordering::SeqCst);
     }
 
-    /// The read at `position` (1-based) that takes `ms`, leaving every other
-    /// read quick: the switch's read of the file it reads back after the
-    /// writes is its third read.
-    fn set_read_pause_at(&self, position: usize, ms: u64) {
-        *self.live.read_pause_at.lock().unwrap() = Some((position, ms));
+    /// The read-back of `models.ini` (the read after the writes) that takes
+    /// `ms`, leaving every other read quick.
+    fn set_read_back_pause_ms(&self, ms: u64) {
+        self.live.read_back_pause_ms.store(ms, Ordering::SeqCst);
     }
 
     /// A write that takes `ms`: the manager busy at the moment the switch
@@ -1241,7 +1312,7 @@ impl App {
 async fn switch_signed_in_moves_the_model_profile_off_and_answers_its_state() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     assert_eq!(
         app.writes(),
         vec![
@@ -1438,7 +1509,7 @@ model = /models/alpha.gguf\r\n\
 async fn switch_matches_the_name_ignoring_case() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on("qwen", false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     assert_eq!(
         app.writes(),
         vec![
@@ -1474,7 +1545,7 @@ async fn switch_is_served_to_every_signed_in_administrator() {
     let rep = app
         .switch(QWEN, &json!({ "enabled": false }), Some(&cookie))
         .await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     assert_eq!(
         principals_of(&app.principals),
         vec![Some("root".to_string())],
@@ -1488,33 +1559,42 @@ async fn switch_is_served_to_every_signed_in_administrator() {
 
 /// The bff is not privileged: the connect names the signed-in user, so the
 /// manager re-checks their membership of `pai`, and every call of the move is
-/// made as them. The move asks for exactly seven calls: both files read, the
-/// enabled one first, the two writes (the destination first), then
-/// `models.ini` read back for the `enabled` of the answer, then the instances
-/// for `running`.
+/// made as them. The move reads both pool files, the enabled one first, and
+/// the records of `assignments.ini`, writes the two files (the destination
+/// first), and reads `models.ini` back for the `enabled` of the answer; the
+/// only states it asks are those of the instances the records give the profile
+/// to, and with no records there are none.
 #[tokio::test]
-async fn switch_asks_exactly_seven_calls_as_the_signed_in_user() {
+async fn switch_asks_the_move_the_records_and_no_state_of_theirs() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     assert_eq!(
         principals_of(&app.principals),
         vec![Some("alice".to_string())],
         "one connect, for the session's user"
     );
+    let calls: Vec<String> = app
+        .calls()
+        .into_iter()
+        .filter(|call| call != "read assignments.ini")
+        .collect();
     assert_eq!(
-        app.calls(),
+        calls,
         vec![
             "read models.ini",
             "read models.ini.disabled",
             "write-if alice models.ini.disabled",
             "write-if alice models.ini",
             "read models.ini",
-            "list",
-            "status default",
         ],
-        "no call beyond the move, its writes as the signed-in user, the enabled \
-         file read back after them, then the state"
+        "no call beside the move and its records, the writes as the signed-in \
+         user, the enabled file read back after them: no instance list, no state"
+    );
+    assert!(
+        app.calls().contains(&"read assignments.ini".to_string()),
+        "the records of who is served are read: {:?}",
+        app.calls()
     );
 }
 
@@ -1532,7 +1612,7 @@ async fn switch_a_name_in_the_request_is_never_the_principal() {
             &[("x-user", "root"), ("x-principal", "root")],
         )
         .await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     assert_eq!(
         principals_of(&app.principals),
         vec![Some("alice".to_string())],
@@ -1547,7 +1627,7 @@ async fn switch_a_name_in_the_request_is_never_the_principal() {
 async fn switch_off_writes_the_disabled_file_first_then_model_profiles_ini() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     let names: Vec<String> = app
         .writes()
         .iter()
@@ -1572,7 +1652,7 @@ async fn switch_off_writes_the_disabled_file_first_then_model_profiles_ini() {
 async fn switch_off_moves_the_section_bytes_to_the_disabled_file() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     assert_eq!(
         app.file_text(DISABLED).as_deref(),
         Some(&file_off_with_qwen()[..])
@@ -1595,7 +1675,7 @@ async fn switch_off_moves_the_section_bytes_to_the_disabled_file() {
 async fn switch_on_writes_model_profiles_ini_first_then_the_disabled_file() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(MISTRAL, true).await;
-    rep.assert_switched(true, false);
+    rep.assert_switched(true, false, &[]);
     assert_eq!(
         app.writes(),
         vec![
@@ -1627,7 +1707,7 @@ async fn switch_on_writes_model_profiles_ini_first_then_the_disabled_file() {
 async fn switch_creates_the_disabled_file_with_the_header_then_the_section() {
     let app = app_holding_no_disabled(FILE_ON);
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     assert_eq!(
         app.plain_writes(),
         vec![(DISABLED.to_string(), created_with_qwen())],
@@ -1662,7 +1742,7 @@ async fn switch_creates_the_disabled_file_with_the_header_then_the_section() {
 async fn switch_a_moved_file_is_read_again_after_the_last_write() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     let calls = app.calls();
     let last_write = calls
         .iter()
@@ -1684,7 +1764,7 @@ async fn switch_a_moved_file_is_read_again_after_the_last_write() {
 async fn switch_then_list_agree_on_which_model_profiles_are_on() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     let list = app.list().await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.body);
     assert_eq!(
@@ -1710,7 +1790,7 @@ async fn switch_then_list_agree_on_which_model_profiles_are_on() {
 async fn switch_mends_a_model_profile_the_files_hold_in_both_places() {
     let app = app_holding(FILE_ON, &file_off_with_qwen());
     let rep = app.switch_on(QWEN, true).await;
-    rep.assert_switched(true, false);
+    rep.assert_switched(true, false, &[]);
     assert!(
         app.no_write_asked(),
         "already where it is asked: {:?}",
@@ -1719,7 +1799,7 @@ async fn switch_mends_a_model_profile_the_files_hold_in_both_places() {
 
     let app = app_holding(FILE_ON, &file_off_with_qwen());
     let rep = app.switch_on(QWEN, false).await;
-    rep.assert_switched(false, false);
+    rep.assert_switched(false, false, &[]);
     assert_eq!(
         app.file_text(DISABLED).as_deref(),
         Some(&file_off_with_qwen()[..])
@@ -1939,7 +2019,7 @@ async fn switch_changed_on_the_second_write_leaves_the_model_profile_in_both_fil
     // `models.ini` goes, the one in the disabled file stays.
     app.switch_on(QWEN, false)
         .await
-        .assert_switched(false, false);
+        .assert_switched(false, false, &[]);
     assert!(
         !holds(&app.file_text(MODELS).unwrap(), QWEN),
         "the next switch took the section out of models.ini"
@@ -2280,13 +2360,18 @@ async fn switch_with_a_write_that_is_too_slow_is_504() {
 /// happened, when the files say it did.
 #[tokio::test]
 async fn switch_with_a_status_read_that_is_too_slow_is_200_after_the_move_landed() {
-    let app = app_holding(FILE_ON, FILE_OFF);
+    // A profile an instance is given, so the switch asks that instance's state
+    // and the slow read is the call that runs out: with no instance served, no
+    // state is asked and there is nothing to be slow (`switch_of_a_profile_no_
+    // instance_is_given_restarts_nothing`).
+    let app = app_with_assignments("[default]\r\nQwen = on\r\n");
+    app.set_state("default", InstanceState::Active);
     app.set_status_pause_ms(TIMEOUT.as_millis() as u64 + 200);
     let started = Instant::now();
 
     app.switch_on(QWEN, false)
         .await
-        .assert_switched(false, true);
+        .assert_switched(false, true, &[]);
     assert!(
         started.elapsed() < DEADLINE,
         "the answer came at the time limit, not at the request's deadline"
@@ -2317,11 +2402,11 @@ async fn switch_with_a_status_read_that_is_too_slow_is_200_after_the_move_landed
 #[tokio::test]
 async fn switch_with_a_read_back_that_is_too_slow_is_200_with_the_value_the_move_produced() {
     let app = app_holding(FILE_ON, FILE_OFF);
-    app.set_read_pause_at(3, TIMEOUT.as_millis() as u64 + 200);
+    app.set_read_back_pause_ms(TIMEOUT.as_millis() as u64 + 200);
 
     app.switch_on(QWEN, false)
         .await
-        .assert_switched(false, true);
+        .assert_switched(false, true, &[]);
     assert_eq!(
         app.writes().len(),
         2,
@@ -2356,7 +2441,7 @@ async fn switch_whose_writes_outlive_the_read_limit_is_answered_under_the_write_
     let started = Instant::now();
     app.switch_on(QWEN, false)
         .await
-        .assert_switched(false, false);
+        .assert_switched(false, false, &[]);
     assert!(
         started.elapsed() > TIMEOUT,
         "the switch outlived the read's limit: {:?}",
@@ -2520,64 +2605,85 @@ async fn switch_time_limit_at_the_write_is_504_and_the_released_write_lands() {
 }
 
 // ---------------------------------------------------------------------------
-// `running`
+// `restart` and `running`: where the moved profile is served
 // ---------------------------------------------------------------------------
 
-/// The web UI says "restart llama-server to apply" when the engine is up, so the
-/// switch answers `running` true for an instance that is active and for one that
-/// is starting.
+/// The instances the page offers to restart are the ones the records of
+/// `assignments.ini` give the profile to, not every instance of the engine.
+/// Switching `Qwen` off leaves it served where an explicit `on` says so, and
+/// takes it away where the section says `inherit`: `restart` is the union of
+/// the instances it is effective on before the move and after it, sorted,
+/// whose state is up.
 #[tokio::test]
-async fn switch_answers_running_true_for_an_instance_that_is_up() {
-    for state in [InstanceState::Active, InstanceState::Activating] {
-        let app = app_holding(FILE_ON, FILE_OFF);
-        app.set_state("default", state.clone());
-        app.switch_on(QWEN, false)
-            .await
-            .assert_switched(false, true);
-    }
-}
-
-/// An instance that is not serving is not running: `inactive`, `deactivating`,
-/// `failed`.
-#[tokio::test]
-async fn switch_answers_running_false_for_an_instance_that_is_not_up() {
-    for state in [
-        InstanceState::Inactive,
-        InstanceState::Deactivating,
-        InstanceState::Failed,
-    ] {
-        let app = app_holding(FILE_ON, FILE_OFF);
-        app.set_state("default", state.clone());
-        app.switch_on(QWEN, false)
-            .await
-            .assert_switched(false, false);
-    }
-}
-
-/// Every instance serves the one model profile file, so any instance that is up makes
-/// the switch's answer `running: true`: the states are asked in the list's
-/// order, and the asking stops at the first instance that is up.
-#[tokio::test]
-async fn switch_answers_running_true_when_any_instance_is_up() {
-    let app = app_holding(FILE_ON, FILE_OFF);
-    app.set_instances(&["a", "b", "c"]);
-    app.set_state("a", InstanceState::Inactive);
-    app.set_state("b", InstanceState::Active);
-    app.set_state("c", InstanceState::Active);
-
+async fn switch_off_names_the_instances_that_keep_the_profile_through_an_on_override() {
+    let app = app_with_assignments("[default]\r\nQwen = inherit\r\n\r\n[lab]\r\nQwen = on\r\n");
+    app.set_instances(&["default", "lab"]);
+    app.set_state("default", InstanceState::Active);
+    app.set_state("lab", InstanceState::Active);
     app.switch_on(QWEN, false)
         .await
-        .assert_switched(false, true);
+        .assert_switched(false, true, &["default", "lab"]);
+}
 
+/// A profile switched on becomes served wherever it is `inherit`ed: the after
+/// side of the move, computed from the same read with the switch flipped, so
+/// the instances that take it are named even though the file the move read
+/// holds it off.
+#[tokio::test]
+async fn switch_on_names_the_instances_that_take_the_profile_through_inherit() {
+    let app = app_with_assignments(
+        "[default]\r\nmistral-7b = inherit\r\n\r\n[lab]\r\nmistral-7b = off\r\n",
+    );
+    app.set_instances(&["default", "lab"]);
+    app.set_state("default", InstanceState::Active);
+    app.set_state("lab", InstanceState::Active);
+    app.switch_on(MISTRAL, true)
+        .await
+        .assert_switched(true, true, &["default"]);
+}
+
+/// A profile every instance says `off` about is served nowhere, before the
+/// move or after it: `restart: []`, `running: false`, and no state is asked
+/// of an instance that never loads the profile.
+#[tokio::test]
+async fn switch_of_a_profile_every_instance_refuses_asks_no_state() {
+    let app = app_with_assignments("[default]\r\nQwen = off\r\n\r\n[lab]\r\nQwen = off\r\n");
+    app.set_instances(&["default", "lab"]);
+    app.set_state("default", InstanceState::Active);
+    app.set_state("lab", InstanceState::Active);
+    app.switch_on(QWEN, false)
+        .await
+        .assert_switched(false, false, &[]);
+    assert!(
+        !app.calls().iter().any(|c| c.starts_with("status")),
+        "no state is asked: {:?}",
+        app.calls()
+    );
+}
+
+/// An instance that is down is left out of `restart`, and the instances that
+/// do not serve the profile are never asked their state. `activating` counts
+/// as up. The switch itself restarts nothing.
+#[tokio::test]
+async fn switch_leaves_out_the_down_instances_and_asks_nothing_of_the_others() {
+    let app = app_with_assignments(
+        "[up]\r\nQwen = on\r\n\r\n[starting]\r\nQwen = inherit\r\n\r\n[other]\r\nQwen = off\r\n",
+    );
+    app.set_instances(&["other", "starting", "up"]);
+    app.set_state("up", InstanceState::Active);
+    app.set_state("starting", InstanceState::Activating);
+    app.set_state("other", InstanceState::Active);
+    app.switch_on(QWEN, false)
+        .await
+        .assert_switched(false, true, &["starting", "up"]);
     let calls = app.calls();
-    let list = calls
-        .iter()
-        .position(|c| c == "list")
-        .expect("the instances are listed");
-    assert_eq!(
-        calls[list..],
-        ["list", "status a", "status b"],
-        "the states in the list's order, stopping at the instance that is up: {calls:?}"
+    assert!(
+        calls.contains(&"status up".to_string()) && calls.contains(&"status starting".to_string()),
+        "the states of the instances that serve it are asked: {calls:?}"
+    );
+    assert!(
+        !calls.contains(&"status other".to_string()),
+        "the instance that refuses the profile is not asked: {calls:?}"
     );
     assert!(
         !calls
@@ -2587,16 +2693,41 @@ async fn switch_answers_running_true_when_any_instance_is_up() {
     );
 }
 
-/// The move is done and the state cannot be read: `running` is true, the safe
-/// answer, so the page says to restart. The switch is not undone by it.
+/// A profile no instance is given (no `assignments.ini` at all) is served
+/// nowhere, so the move restarts nothing: `running` is no longer "any instance
+/// of the engine is up".
+#[tokio::test]
+async fn switch_of_a_profile_no_instance_is_given_restarts_nothing() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.set_instances(&["a", "b"]);
+    app.set_state("a", InstanceState::Active);
+    app.set_state("b", InstanceState::Active);
+    app.switch_on(QWEN, false)
+        .await
+        .assert_switched(false, false, &[]);
+    assert_eq!(
+        app.sorted_calls(),
+        "read assignments.ini read models.ini read models.ini \
+         read models.ini.disabled write-if alice models.ini \
+         write-if alice models.ini.disabled",
+        "the move, the records that say where the profile is served, and nothing \
+         else: no instance list, no state. `models.ini` is read twice, the second \
+         time to read the move back"
+    );
+}
+
+/// The move is done and the state cannot be read: `running` true with
+/// `restart: []`, the safe answer, so the page says to restart. The switch is
+/// not undone by it.
 #[tokio::test]
 async fn switch_answers_running_true_when_the_state_cannot_be_read() {
     for outcome in [Outcome::Unavailable, Outcome::Other, Outcome::NotAuthorized] {
-        let app = app_holding(FILE_ON, FILE_OFF);
+        let app = app_with_assignments("[default]\r\nQwen = on\r\n");
+        app.set_state("default", InstanceState::Active);
         app.set_status_outcome(outcome);
         app.switch_on(QWEN, false)
             .await
-            .assert_switched(false, true);
+            .assert_switched(false, true, &[]);
         assert_eq!(
             app.file_text(DISABLED).as_deref(),
             Some(&file_off_with_qwen()[..]),
@@ -2604,4 +2735,24 @@ async fn switch_answers_running_true_when_the_state_cannot_be_read() {
             app.calls()
         );
     }
+}
+
+/// A section of `assignments.ini` naming an instance the manager no longer
+/// lists is a stale record, not a machine: the move of a profile effective only
+/// there names nothing to restart, `running` is false, and no state is asked of
+/// an instance that does not exist, before or after the move.
+#[tokio::test]
+async fn switch_restart_leaves_out_a_record_section_naming_no_instance() {
+    let app = app_with_assignments("[default]\r\nQwen = off\r\n\r\n[ghost]\r\nQwen = on\r\n");
+    app.set_instances(&["default"]);
+    app.set_state("default", InstanceState::Active);
+    app.set_state("ghost", InstanceState::Active);
+    app.switch_on(QWEN, false)
+        .await
+        .assert_switched(false, false, &[]);
+    assert!(
+        !app.calls().iter().any(|call| call == "status ghost"),
+        "a state was asked of an instance the manager does not list: {:?}",
+        app.calls()
+    );
 }

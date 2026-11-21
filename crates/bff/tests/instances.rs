@@ -6,7 +6,7 @@
 //! manager fails instead of hanging.
 //!
 //! The answer (fe/briefs/api-contract.md): 200 and
-//! `[{"id": ..., "engine": "llama.cpp", "state": ..., "port": ..., "tags":
+//! `[{"id": ..., "engine": "llama.cpp", "serverProfile": ..., "state": ..., "port": ..., "tags":
 //! [...], "instanceTags": [...]}]` in the manager's order, the state as the
 //! manager names it, `port` the configured one (0 when the manager answers
 //! no row for the instance), `tags` the union the bff builds of the two
@@ -781,7 +781,7 @@ async fn an_instance_removed_meanwhile_is_left_out() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
         "no rows: port 0, no tags"
     );
 }
@@ -820,12 +820,12 @@ async fn each_instance_with_its_state_in_the_manager_s_order() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "coder", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "big-model", "engine": "llama.cpp", "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "a", "engine": "llama.cpp", "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "z", "engine": "llama.cpp", "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "odd", "engine": "llama.cpp", "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "big-model", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "a", "engine": "llama.cpp", "serverProfile": null, "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "z", "engine": "llama.cpp", "serverProfile": null, "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "odd", "engine": "llama.cpp", "serverProfile": null, "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false },
         ])
     );
 }
@@ -853,8 +853,8 @@ async fn each_instance_carries_its_own_boot_flag() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true },
-            { "id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true },
+            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false },
         ])
     );
     assert_eq!(
@@ -897,8 +897,8 @@ async fn a_boot_flag_that_cannot_be_read_is_null_and_the_list_answers() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null },
+            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null },
         ]),
         "the instance whose flag is unanswerable is listed, its flag null"
     );
@@ -970,7 +970,7 @@ async fn a_manager_started_later_is_seen_at_the_next_request() {
     assert_eq!(second.status, StatusCode::OK, "{}", second.body);
     assert_eq!(
         second.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }])
+        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }])
     );
     assert_eq!(asked.load(Ordering::SeqCst), 2, "asked anew each time");
     assert_eq!(app.connects.load(Ordering::SeqCst), 2);
@@ -1051,7 +1051,7 @@ async fn a_session_read_only_through_the_gated_reads_still_expires() {
     let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
         "{}",
         r.body
     );
@@ -1088,6 +1088,36 @@ fn app_tags(
     })
 }
 
+/// The row's server profile is on the item, named as the manager names it:
+/// the page shows which `server@<id>.ini` the instance runs, and a manager
+/// that names none (a row from a manager that knows no profile) answers
+/// `null`, it does not fall back to the instance's id.
+#[tokio::test]
+async fn the_row_carries_the_server_profile_the_manager_names() {
+    let mut big = FakeManager::row("big", PORT, &[], &[]);
+    big.server_profile = Some("big-model".into());
+    let mut plain = FakeManager::row("plain", PORT, &[], &[]);
+    plain.server_profile = None;
+    let app = app_tags(
+        &[
+            ("big", InstanceState::Active),
+            ("plain", InstanceState::Inactive),
+        ],
+        Ok(vec![big, plain]),
+        Ok(()),
+    );
+    let r = app.instances().await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+    assert_eq!(
+        r.json(),
+        json!([
+            { "id": "big", "engine": "llama.cpp", "serverProfile": "big-model", "state": "active", "port": 8080, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "plain", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 8080, "tags": [], "instanceTags": [], "boot": false },
+        ]),
+        "the profile the row names, and `null` where the row names none"
+    );
+}
+
 /// The row of the list keeps its id, engine and state and gains `port`,
 /// `tags` and `instanceTags`: the tags are the union, the server profile's
 /// list first, then the instance's own, none twice; the port is the row's.
@@ -1112,8 +1142,8 @@ async fn the_rows_carry_the_tags_of_the_profile_then_their_own_none_twice() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false },
-            { "id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false },
+            { "id": "default", "engine": "llama.cpp", "serverProfile": "default", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false },
+            { "id": "coder", "engine": "llama.cpp", "serverProfile": "coder", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false },
         ]),
         "the union, the profile's tags first, `v2` once, in the list's order; the port the row carries, not a constant"
     );
@@ -1140,6 +1170,7 @@ async fn the_shown_tags_are_the_union_the_editable_ones_the_instance_s_own() {
         json!([{
             "id": "default",
             "engine": "llama.cpp",
+            "serverProfile": "default",
             "state": "active",
             "port": 8080,
             "tags": ["edge", "v2", "gpu", "lab"],
@@ -1165,7 +1196,7 @@ async fn a_manager_that_answers_no_rows_shows_no_tags() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
         "no rows: port 0, no tags"
     );
     assert!(
