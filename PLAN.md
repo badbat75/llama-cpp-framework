@@ -1006,6 +1006,16 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     follows. While typing, the labels already used (on any instance or server profile) are suggested.
     No edit of a chip: remove it and add it again. How a chip is removed is the designer's (the user
     had no preference). Web UI only (`PUT /api/instances/{id}/tags` unchanged); designer's brief first.
+    **Resources belong to the server profile, placement follows** (user, 2026-11-21): a bare model profile
+    cannot know its GPU/CPU distribution until it runs on an instance. The server profile should bind the
+    resources an instance may use (which GPUs, RAM, CPU threads, the backend SDK), so a model profile
+    served under that server profile gets those resources; and the node's hardware may need a profile of
+    its own (GPUs with VRAM, RAM, CPU, the installed SDKs and runtimes). First the architect's design: how
+    the server profile's resource set relates to the model profile's `device`, `tensor-split`,
+    `n-gpu-layers`, `n-cpu-moe` (defaults, overrides, or derived at render), what the manager renders into
+    `models@<id>.ini`, where the memory estimate runs, the node inventory (G2's probe, the versions files,
+    pai-hwmon), and what changes in the GD card and brief 16. Before slice 17's sub-slices that touch the
+    server profile form (17a).
     **GPU distribution on the model profile page** (user, 2026-11-20: "Non vedo gli slider per la
     spartizione dei layer"): the web UI edits `device`, `split-mode` and `tensor-split` as the GUI's GPU
     table does (fe slice 2f of brief 02, never scheduled until now). Built beside slice 14: first the
