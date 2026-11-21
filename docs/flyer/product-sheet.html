@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Private AI Framework: product sheet</title>
+<meta name="description" content="Private AI Framework: large language models served on your own GPUs, on your own machines, governed by your own administrators.">
+<style>
+  :root {
+    --accent: #14557c;
+    --ink: #171b1f;
+    --muted: #5c6670;
+    --line: #ccd5dc;
+    --wash: #f1f5f8;
+  }
+  @page { size: A4; margin: 14mm; }
+  * { box-sizing: border-box; }
+  html {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    font-size: 10.5pt;
+    line-height: 1.42;
+    background: #fff;
+  }
+  .sheet { max-width: 210mm; margin: 0 auto; padding: 14mm 14mm 10mm; }
+  header { border-bottom: 2px solid var(--accent); padding-bottom: 5mm; }
+  h1 {
+    margin: 0;
+    font-size: 23pt;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    color: var(--accent);
+  }
+  .kicker {
+    margin: 0 0 1.5mm;
+    font-size: 8.5pt;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .lede { margin: 3mm 0 0; font-size: 12pt; max-width: 165mm; }
+  h2 {
+    margin: 0 0 1.5mm;
+    font-size: 11pt;
+    color: var(--accent);
+  }
+  .blocks {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6mm 8mm;
+    margin: 6mm 0 0;
+  }
+  .block { break-inside: avoid; page-break-inside: avoid; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  li {
+    margin: 0 0 1.4mm;
+    padding-left: 4.5mm;
+    position: relative;
+    font-size: 9.5pt;
+  }
+  li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 1.6mm;
+    width: 2mm;
+    height: 2mm;
+    background: var(--accent);
+  }
+  .strip {
+    margin-top: 7mm;
+    padding: 4mm 5mm 3mm;
+    background: var(--wash);
+    border-left: 2px solid var(--accent);
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .strip p { margin: 0 0 2mm; font-size: 9.5pt; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: inherit; font-size: 12px; fill: var(--ink); }
+  svg .small { font-size: 10.5px; fill: var(--muted); }
+  svg .box { fill: #fff; stroke: var(--line); stroke-width: 1.5; }
+  svg .node { fill: #fff; stroke: var(--accent); stroke-width: 1.5; }
+  svg .accent { fill: var(--accent); }
+  svg .label { fill: var(--accent); font-size: 10.5px; }
+  svg .arrow { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+  footer {
+    margin-top: 6mm;
+    padding-top: 3mm;
+    border-top: 1px solid var(--line);
+    font-size: 9pt;
+    color: var(--muted);
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .contact { color: var(--ink); font-size: 10pt; }
+  @media print {
+    .sheet { max-width: none; padding: 0; }
+    body { font-size: 10pt; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header>
+    <p class="kicker">Product sheet</p>
+    <h1>Private AI Framework</h1>
+    <p class="lede">Large language models served on your own GPUs, in your own machine room, governed by your own administrators. Your models, your data and your prompts stay inside the building.</p>
+  </header>
+
+  <main>
+    <div class="blocks">
+      <section class="block">
+        <h2>Private by design</h2>
+        <ul>
+          <li>Inference runs on hardware you own. No subscription, no external service, no account with anyone else: the software runs entirely on machines you administer.</li>
+          <li>The model files sit on your disks. You choose which model answers which request, and you keep every version.</li>
+          <li>Administration is a group on the machine. Only its members can change anything, and a visitor who has not signed in sees nothing but the sign-in page.</li>
+          <li>The serving endpoint takes an API key, and its request log records the caller, the model and the timing, never the prompt text or the reply.</li>
+        </ul>
+      </section>
+
+      <section class="block">
+        <h2>Runs on your hardware</h2>
+        <ul>
+          <li>Built on llama.cpp, the open source inference engine, always a published release, never a nightly build.</li>
+          <li>NVIDIA CUDA, AMD ROCm/HIP and Vulkan on Linux and Windows; Apple Silicon Metal, and Vulkan through MoltenVK, on macOS.</li>
+          <li>Mixed and matched cards in one machine: work spread across several GPUs, weights split between them, experts of a large model kept in system memory and streamed to the card when needed.</li>
+          <li>Installed like any other software: <code>.deb</code> and <code>.rpm</code> on Linux, an MSI on Windows, a <code>.pkg</code> on macOS, with the GPU runtimes bundled, so a server needs only its driver.</li>
+          <li>Engine and framework are packaged apart: refresh the engine, upgrade the tools, each on its own schedule, without touching the other's configuration.</li>
+        </ul>
+      </section>
+
+      <section class="block">
+        <h2>Operate it simply</h2>
+        <ul>
+          <li>A manager service runs several model server instances on one host, each with its own network address, its own server profile and its own set of model profiles.</li>
+          <li>The web admin console, behind sign-in, starts, stops and restarts an instance, adds a new instance and removes one, switches start at boot, and lists the model profiles with their state.</li>
+          <li>GPU distribution is a table of the detected cards, not a command line. A memory check reads the model and refuses a profile that would not fit the machine before it is accepted.</li>
+          <li>The same operations from a desktop configurator, and from a command line for the hosts you reach over SSH.</li>
+          <li>A live hardware view, one sample a second: each GPU, its memory and what spills out of it, the PCIe link, the CPU, RAM and disk, next to the server's log, followed as it grows.</li>
+          <li>Benchmarking built in, with the method written down and versioned, so a change you measured is a change you can show, kept in a database that lets two configurations compare.</li>
+        </ul>
+      </section>
+
+      <section class="block">
+        <h2>Scale out</h2>
+        <ul>
+          <li>One OpenAI-compatible endpoint in front of every instance: authenticated, sending each request to the instance serving the model asked for, so the tools your teams already use keep working.</li>
+          <li>Every request logged for audit: who called, which model, which instance answered, the status, the latency and the token counts, never the text.</li>
+          <li>Hardware metrics kept as history, and log consultation across the instances, on the same console.</li>
+          <li>A super-manager above the nodes: one console governing many GPU servers, where an administrator of the group administers every node that joined.</li>
+          <li>The same packages, the same console and the same endpoint from one workstation to a rack of GPU servers.</li>
+        </ul>
+      </section>
+    </div>
+
+    <section class="strip">
+      <h2>How it fits</h2>
+      <p>A GPU node runs the manager service, which starts and stops the engine instances and owns their configuration. Your administrators work in the web console; your applications call one OpenAI-compatible endpoint.</p>
+      <svg viewBox="0 0 660 232" role="img" aria-labelledby="t d" preserveAspectRatio="xMidYMid meet">
+        <title id="t">One GPU node, its web console and its OpenAI-compatible endpoint</title>
+        <desc id="d">Your applications call the node's OpenAI-compatible endpoint. The web admin console, the desktop configurator and the command line talk to the manager service, which runs the engine instances on the node's GPUs.</desc>
+
+        <rect class="box" x="4" y="72" width="140" height="86" rx="6"/>
+        <text class="accent" x="18" y="98">Your applications</text>
+        <text class="small" x="18" y="118">chat, agents, IDE</text>
+        <text class="small" x="18" y="134">internal apps</text>
+
+        <path class="arrow" d="M144 115 H 244"/>
+        <polygon class="accent" points="244,110 256,115 244,120"/>
+        <text class="label" x="150" y="104">OpenAI-compatible</text>
+        <text class="label" x="150" y="132">API, with a key</text>
+
+        <rect class="node" x="256" y="6" width="400" height="220" rx="8"/>
+        <text class="accent" x="272" y="30">Your GPU node</text>
+
+        <rect class="box" x="272" y="42" width="176" height="42" rx="5"/>
+        <text x="284" y="60">Web admin console</text>
+        <text class="small" x="284" y="76">administrators sign in</text>
+
+        <rect class="box" x="462" y="42" width="176" height="42" rx="5"/>
+        <text x="474" y="60">Configurator and CLI</text>
+        <text class="small" x="474" y="76">the same operations</text>
+
+        <rect class="box" x="272" y="98" width="366" height="38" rx="5"/>
+        <text x="284" y="122">Manager service: instances, files, checks, rights</text>
+
+        <rect class="box" x="272" y="150" width="114" height="44" rx="5"/>
+        <text x="284" y="168">Instance 1</text>
+        <text class="small" x="284" y="184">model profiles</text>
+
+        <rect class="box" x="398" y="150" width="114" height="44" rx="5"/>
+        <text x="410" y="168">Instance 2</text>
+        <text class="small" x="410" y="184">model profiles</text>
+
+        <rect class="box" x="524" y="150" width="114" height="44" rx="5"/>
+        <text x="536" y="168">Instance 3</text>
+        <text class="small" x="536" y="184">model profiles</text>
+
+        <text class="small" x="272" y="212">The node's GPUs: NVIDIA CUDA, AMD ROCm/HIP, Vulkan</text>
+      </svg>
+    </section>
+  </main>
+
+  <footer>
+    <p>Some capabilities are in development; ask us for the current status.</p>
+    <p class="contact">Talk to us: [contact]</p>
+  </footer>
+
+</div>
+</body>
+</html>

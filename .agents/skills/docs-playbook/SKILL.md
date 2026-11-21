@@ -491,3 +491,12 @@ Lessons only: the rules are in `AGENTS.md`.
 - A `python3 - <<PY` write of a whole file can land silently unwritten (three line-level rewrites of
   `crates/bff/README.md` reported success and left the bytes; `>>` and `sed -i` landed): re-read the
   file after a scripted write, and prefer the edit tool for a line edit.
+- A standalone HTML file (a flyer, a printable sheet) is the docs agent's to write, and the site
+  ignores it: `page.rs` `load_all` reads only top-level `.md` of `docs/`, and `main.rs` copies only
+  `docs/assets` (`copy_dir`), so a subdirectory of `docs/` publishes nothing. Check such a file
+  offline: `~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome --headless --no-sandbox
+  --no-pdf-header-footer --print-to-pdf <f> file://<f>` then `pdfinfo` for the page count (the flag
+  is `--no-pdf-header-footer`; `--print-to-pdf-no-header` leaves the date and URL in), give each run
+  its own `--user-data-dir`, and add `--window-size=W,H --screenshot` to see the screen view.
+  Inline SVG paints in document order: a later filled `rect` covers a `text` drawn before it, which
+  a screenshot catches and a PDF text dump does not.

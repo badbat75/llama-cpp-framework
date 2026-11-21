@@ -110,6 +110,7 @@ Check that a chart's bars match its table: a run holding several prompts pools t
 ## Other rules
 
 - No em-dashes (the repo rule): the glyph appears only as a not-applicable table cell, where it is data.
+- `flyer\product-sheet.html` is a printable product sheet for people to share (A4, opens in a browser, prints to PDF from it), not a page: the site reads only the `.md` files of `docs\` and copies `docs\assets\` (`tools\site\src\page.rs` `load_all`, `tools\site\src\main.rs`), so it publishes no flyer and `--check` never reads one.
 - Images go in `assets\` (screenshots in `assets\screenshots\`), referenced by relative path. Diagrams are hand-written SVG in `assets\diagrams\` (GitHub and the site show the same file): colours as CSS variables with a `prefers-color-scheme: dark` block, no script, no external font, and only what the page's text states.
 - The site puts an index of the `##` and `###` headings under each page's title (GitHub's anchors); nothing to write for it.
 - `build-pipeline.md` (the entry page) and its topic pages `build-prerequisites.md`, `build-compiling.md`, `build-packaging.md`, `build-macos.md`: developer reference for the build phases and conventions; only the front matter and the em-dash rule apply.
