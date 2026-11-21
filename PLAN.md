@@ -1036,7 +1036,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     and CPU threads are shown in the node inventory with no budget. R1 (inventory, a1a3458), R2
     (the `Devices` key, 3aaa4dc) and R3 (the per-pair memory check) are built; left: R4 `device` off the web model profile
     page, R5 the web UI (a GPUs card on the server profile page, designer's brief first, after 17a; it also
-    gives `pai server show` a Devices row).
+    gives `pai server show` a Devices row). R4 is built together with R5, not before: taking `device` off
+    the web keys first would make the model profile page's GPU card send a key the bff refuses.
     **Fix first (found at R2's docs, 2026-11-21):** the web UI's server form (`fe/src/ServerForm.tsx`)
     sends 19 of the document's 21 keys, and the save writes an absent key as cleared, so saving the
     Server page drops `[Server] Tags` and `Devices`. Fix: the form sends back every key it read and did
