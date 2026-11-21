@@ -1112,6 +1112,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     header), the Draft device and Vision GPU lists, and 2j (tensor placement, `override-tensor`) come
     right after C2 and before slice 17; the architect's read of the layer count first, then the
     designer's brief.
+    Decided (user, 2026-11-21, ARCHITECTURE.md "Layers, MoE and tensor placement on the web model profile
+    page"): the sliders read the saved `model` (manager `ModelInfoAs`, `GET
+    /api/profiles/model/{id}/model-info`); an `hf-repo` not yet downloaded gives no layer facts for now;
+    the manager refuses `override-tensor`, `device-draft` or `mmproj-device` naming a GPU outside the
+    instance's server profile `Devices`; `moe-cache-mib` stays off the web until its floor rule. Slices
+    L1 to L3, 2g (designer first), J1, 2j (designer first).
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.
