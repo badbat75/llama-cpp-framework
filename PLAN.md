@@ -1035,7 +1035,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
     designer's audit of what is basic today and a phased brief, built in slices after C1; after U17b it
-    waits for slice 17 (user, 2026-11-21: slice 17 at the top of the backlog)
+    waits for C2, slice 17, then R4 and R5 (user, 2026-11-21)
     (fe brief 17: U17a skeletons and U17c sorting built; left U17b, U17h, U17e, U17d, U17f, U17g in that order).
     **One models folder for every engine** (user, 2026-11-21: "usa una folder unica per i modelli tra i
     differenti motori"; asked whether a server profile may still name another: "unica e basta"): one
@@ -1069,7 +1069,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     Long tags (user, 2026-11-21): shortened with an ellipsis on one line; a smaller font if needed;
     wrapping only when nothing else fits. Hovering a shortened tag (and focusing it from the keyboard)
     opens a temporary larger pill with the whole text. C1 (chips, "+", x, the long-tag rule, the hover
-    pill) is built; left: C2, the suggestions (brief 15). Test flakes seen at C1, to fix test-side when
+    pill) is built; left: C2, the suggestions (brief 15), next after U17b and before slice 17 (user,
+    2026-11-21). Test flakes seen at C1, to fix test-side when
     a slice touches them: `ModelProfilePage.test.tsx` 2d.63 (title asserted before the effect writes
     it), `NodeNav.test.tsx` ~211 (a read count), `SignInOnly.test.tsx` S1a.10.
     **Resources belong to the server profile, placement follows** (user, 2026-11-21): a bare model profile
@@ -1090,7 +1091,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     profile's GPUs (this replaces the 2026-11-17 decision that it counts every GPU of the node); host RAM
     and CPU threads are shown in the node inventory with no budget. R1 (inventory, a1a3458), R2
     (the `Devices` key, 3aaa4dc) and R3 (the per-pair memory check) are built; left: R4 `device` off the web model profile
-    page, R5 the web UI (a GPUs card on the server profile page, designer's brief first, after 17a; it also
+    page, R5 the web UI (a GPUs card on the server profile page, designer's brief first, after the whole of slice 17 (user, 2026-11-21); it also
     gives `pai server show` a Devices row). R4 is built together with R5, not before: taking `device` off
     the web keys first would make the model profile page's GPU card send a key the bff refuses.
     With R4/R5 also: fe briefs 11 and 14 and the doc comments at `service.rs` ~8660 and ~8878 and
