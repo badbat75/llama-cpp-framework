@@ -196,6 +196,31 @@ pub struct InstanceInfo {
     pub instance_tags: Vec<String>,
 }
 
+/// One compute device of the node, as the engine's own probe reported it: the
+/// id `device` takes (`ROCm0`), the product name, the backend (the id without
+/// its trailing digits, case kept), and the device memory in MiB at the moment
+/// of the probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub backend: String,
+    pub total_mib: u64,
+    pub free_mib: u64,
+}
+
+/// The node's device list, as [`ManagerClient::devices`] answers it: the
+/// moment of the probe in Unix seconds UTC (`None` when no probe answered,
+/// which is no list either) and one entry per device in the probe's order,
+/// the CPU pseudo-device left out. The list lives as long as the manager's
+/// probe does, so the moment travels with it: the memory of a card is what it
+/// was at the probe, never now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeDevices {
+    pub probed_at: Option<u64>,
+    pub devices: Vec<DeviceInfo>,
+}
+
 /// One server profile, as `server_profiles()` answers it: the name of its file
 /// (`server@<id>.ini`), the engine it serves, the port its `Port` answers (the
 /// default when the file names none), the tags of its `[Server]` section, and
@@ -344,6 +369,22 @@ pub trait ManagerClient {
         let _ = (instance, tags);
         Err(ClientError::Other(
             "this transport of the manager has no SetInstanceTags".into(),
+        ))
+    }
+    /// The node's compute devices, from the engine's own probe, with the
+    /// moment of that probe: the list a model profile distributes a model
+    /// over, the CPU pseudo-device left out. The manager runs its probe for
+    /// this, so it is guarded as `control` (asked without interaction, the
+    /// way a read that can prompt for nothing is asked), and as every `As`
+    /// method for the bff's read of a signed-in user: a caller with no right
+    /// is [`ClientError::NotAuthorized`] and runs no probe.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn devices(&self) -> Result<NodeDevices, ClientError> {
+        Err(ClientError::Other(
+            "this transport of the manager has no Devices".into(),
         ))
     }
     /// Whether `password` is `user`'s OS password, and whether that user may
@@ -810,6 +851,64 @@ mod tests {
         assert_eq!(dbus::BUS_NAME, "org.privateai.Manager1");
         assert_eq!(dbus::OBJECT_PATH, "/org/privateai/Manager1");
         assert_eq!(dbus::INTERFACE, "org.privateai.Manager1");
+    }
+
+    // ── The node's devices (G2, ARCHITECTURE.md 1) ───────────────────────
+
+    /// The shape every transport of the manager must read: the probe's moment
+    /// (Unix seconds UTC, `None` when no probe answered) and one entry per
+    /// device, in the probe's order, with the id `device` takes, the product
+    /// name, the backend and both sizes in MiB. The sizes are u64: a card's
+    /// total fits no u32 once a node grows.
+    #[test]
+    fn the_device_list_carries_the_probe_moment_and_each_device_in_mib() {
+        let got = NodeDevices {
+            probed_at: Some(1_766_271_243u64),
+            devices: vec![
+                DeviceInfo {
+                    id: "ROCm0".to_string(),
+                    name: "AMD Radeon AI PRO R9700".to_string(),
+                    backend: "ROCm".to_string(),
+                    total_mib: 32624u64,
+                    free_mib: 32420u64,
+                },
+                DeviceInfo {
+                    id: "CUDA0".to_string(),
+                    name: "NVIDIA GeForce RTX 4070 SUPER".to_string(),
+                    backend: "CUDA".to_string(),
+                    total_mib: 12281u64,
+                    free_mib: 10844u64,
+                },
+            ],
+        };
+        assert_eq!(got.probed_at, Some(1_766_271_243));
+        assert_eq!(got.devices[0].id, "ROCm0");
+        assert_eq!(got.devices[0].backend, "ROCm");
+        assert_eq!(got.devices[1].total_mib, 12281);
+        assert_eq!(got.devices[1].free_mib, 10844);
+        // No probe answered: no time, and no device.
+        assert_eq!(
+            NodeDevices {
+                probed_at: None,
+                devices: vec![],
+            }
+            .probed_at,
+            None
+        );
+    }
+
+    /// `devices()` is a verb of the manager as its siblings are: the same
+    /// `Result<_, ClientError>` shape, and a verb of the trait object, so every
+    /// transport has it, with the default body that says the manager speaks it
+    /// and a `None` principal picks the plain method.
+    #[test]
+    fn devices_is_a_verb_of_the_manager() {
+        // The verb, called on the trait object, with the shape the design
+        // pins. A method of `dyn ManagerClient` cannot be named as a function
+        // (its `&self` outlives no lifetime a `fn` item can carry), so the
+        // call is the pin.
+        let ask: fn(&dyn ManagerClient) -> Result<NodeDevices, ClientError> = |c| c.devices();
+        let _ = ask;
     }
 
     /// No system bus at all (its socket missing) is Unavailable, never a

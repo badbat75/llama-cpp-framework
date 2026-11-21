@@ -1023,6 +1023,8 @@ min-above-max = "{0} = {1} is above {2} = {3}: the minimum cannot exceed the max
 server-bad-tags = "{0}: the tags {1} are not a list of at most {2} tags, each of {3} to {4} characters of a-z, 0-9 and -, none twice"
 unknown-engine = "unknown engine `{0}`: this manager serves the engine llama.cpp"
 server-profile-bad-id = "invalid server profile id `{0}`: use lowercase letters, digits and '-', starting with a letter or digit, up to 32 characters"
+device-bad-name = "{0}: `{1}` is not a device llama.cpp accepts: no spaces, none of ; # =, not CPU, and none only alone"
+tensor-split-format = "tensor-split = `{0}` is not a list of up to 15 numbers of 0 or more, separated by , or /"
 not-whole-number-or = "`{0}` is not a whole number (or `{1}`)"
 not-number-or = "`{0}` is not a number (or `{1}`)"
 not-boolean-or = "`{0}` is not a boolean (true/false, or `{1}`)"

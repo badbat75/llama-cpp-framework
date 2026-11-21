@@ -1811,6 +1811,32 @@ merge conflicts.
    - **Decided by the user (2026-11-20)**: the memory check still counts every GPU of the node, not only
      those a profile's `device` names (the 2026-11-17 rule stands); no refresh: the page shows each
      card's free memory as of `probedAt`.
+   - **As built (G1+G2 reviewed, 2026-11-21, uncommitted).** Met: the key move, both keys in `KEYS`
+     and both strings files, `Devices`/`DevicesAs` under the quiet `control` check and the `As` gate
+     (`service.rs` `Manager::devices`, `authorize_quietly`), the wire on D-Bus and pipe, the cache widened
+     not doubled (`ProbedGpus::probe`), the route (`bff/src/node.rs` `devices`, `DEVICES_TIMEOUT` 35 s).
+     Four rulings, each changing the design above:
+     (a) *The device rule judges the value llama.cpp reads*, not the raw line: the preset reader
+     (`common/preset.cpp` `parse_ini_from_file`, v1.0.0) drops the spaces after `=`, ends the value at
+     trailing `[ \t]*` before a `;`/`#`/newline, and cuts it at the first `;` or `#`; that is
+     `RawSection::get` (`cut_comment`). So `raws`/`raw()` go; `device = ROCm0 ` and `device = ROCm0 ; note`
+     are taken, `ROCm0, ROCm1` and `ROCm0, ` still refused. A body value with `;`/`#` is already 422
+     `comment-markers` at the bff (`model_profiles.rs` ~880), so the `ROCm0;x` case of G1 is pinned there,
+     not as `device-bad-name`; `=` stays refused in an entry.
+     (b) *tensor-split splits as llama.cpp does*: a run of `,`/`/` is one separator and a trailing one
+     ends the list (`common/arg.cpp` `-ts`, regex `[,/]+` with `sregex_token_iterator` -1, which yields
+     an empty leading piece but no empty trailing suffix, [re.tokiter.incr]
+     https://eel.is/c++draft/re.tokiter.incr); so `3,,1`, `3//1`, `3,1,` are taken, `,3` refused. The
+     stricter number rule stays (preference): negative, `inf`, `nan` and `3x` (which `std::stof` reads
+     as 3) refused, as nonsense or a typo, never a value the GUI writes.
+     (c) *A probe that parsed only the CPU line is answered but not cached* (`[]` with its time; the
+     memory check `None`), restoring 10b's retry: a GPU backend that failed once is read again at the
+     next page open or memory-checked write. A CPU-only node pays one quick `--list-devices` per such
+     call. A partial failure (ROCm down, Vulkan up) still caches until the exe changes or the manager
+     restarts: accepted.
+     (d) *A reader that waited takes the answer of the probe it waited for, failure included*: no
+     second probe after a failed or CPU-only one, so no reader waits past one `GPU_PROBE_TIMEOUT` and
+     N queued readers never run N probes back to back.
 
 **Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
 

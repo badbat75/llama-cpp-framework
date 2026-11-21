@@ -241,6 +241,11 @@ Lessons only: the rules are in `AGENTS.md`.
   naming it.
 - `WriterLog` records `(name, pid)`: a pid-keyed helper (`asked_admin`, `asked_bff`, `set_unique_name`,
   `is_authorized_quietly`) needs a unique name per test, else a parallel test's write counts as yours.
+- A new verb of a probe that a test file already fakes (the fake exe and its counter file of
+  `pai-manager`'s `tests/gpu_probe.rs`) belongs in THAT harness: widen the shared fake with an answer cell
+  (`FakeGpus::with_devices(..)` / `.no_devices()`, the latter taking `self`, so
+  `FakeGpus::new(&[]).no_devices()`), never a second fake. The same counter then pins both "one probe per
+  call" and "a refusal ran no probe", which two harnesses cannot.
 - `SYSTEM_DIR_ALLOWED` gates writing a file under the system dirs, and the gate's own list is pinned by a
   source lint: a new function that writes there needs both, and the pin's needle list must gain the name.
 - A CAS fake that models a save records the write, THEN pauses, THEN compares-and-swaps against the live
@@ -306,6 +311,17 @@ Lessons only: the rules are in `AGENTS.md`.
 - A route gated with `Sessions::current` MOVES the idle deadline: sign in, advance the fake clock
   just under the timeout, and assert the answer is not 401. Assert "not 401", not a status: the
   body's code is the rest of the slice's business, and the deadline pin stays green when it moves.
+- A deadline pin that tells `current` from `peek` needs steps measured from the LAST answering read,
+  since every answer moves the deadline: a second step of the same length as the first lands inside
+  the window the first one opened, so the read answers 200 and a "the session is over" assert there
+  passes ONLY when the code is wrong. Pin the move as a clock past the sign-in's deadline and inside
+  the moved one (assert 200), then one step past the last answer (assert 401, the manager asked
+  nothing): that pair says the deadline moved and stays finite.
+- The `current` -> `peek` mutant is a COMPILE red, not a behaviour one: `peek` answers
+  `Option<Identity>`, `current` `Option<(String, Identity)>`, so swapping the token at a route that
+  destructures the tuple is `E0308 expected Identity, found (_, _)`. The compiling behaviour mutant keeps
+  the tuple: `sessions.peek(&headers).map(|identity| (String::new(), identity))` (the empty id only
+  weakens the session-end path; the deadline is what the mutant moves). Report both shapes.
 - A document's `revision` is a keyed hash under the router's own secret: a save's body takes it
   from the GET of the SAME router (a helper that reads, edits one value, saves), never from a
   constant. To pin the revision the save ANSWERS, recompute SipHash-2-4 with
@@ -327,6 +343,21 @@ Lessons only: the rules are in `AGENTS.md`.
   per e2e phase (not one `mod tests`), so a diff at line 9075 is test code.
 - A `///` doc comment on a local `let` closure inside a test fn warns `unused_doc_comments`, which
   kills the coder's `cargo clippy --all-targets -- -D warnings`: write those comments with `//`.
+- A key that is OFF the web key list reds a save as 400 `model-profiles-malformed` (the bff's own body
+  check), before the manager is read, so every 422 pin of a "the keys move to the web" slice sits behind
+  that 400. Report the 400 as the first red and the 422 table as its own test, so one red names one rule.
+  The same ordering bites a VALUE: once the bff refuses `;`/`#` itself (ruling a), a "the manager's device
+  rule refuses it" row cannot carry a `;` value, it dies at the bff's `comment-markers` with no write, so
+  pick a value the bff passes and only the manager's rule refuses (`"ROCm0, ROCm1"`).
+- `serde_json` here has no `preserve_order`: a body's `Map` is sorted, and iterating `&Map` yields
+  `(&String, &Value)` pairs, so a keys loop is `.as_object().keys()`. The sorted order is also the order
+  `ini::text::set_key` appends several NEW keys in (the bff builds its edits from that map), which is what
+  a byte-for-byte expected file must spell.
+- A route whose deadline is its own constant (not the injected read timeout) has no cheap timeout test: pin
+  the constant's value as its own test, and in the past-deadline test give the REQUEST a limit above the
+  constant (a `get_within(limit, ..)` helper; the shared 5 s deadline kills it first) and pay the seconds.
+- An axum body is read with `response.into_body().collect().await.expect(..).to_bytes()`: a `Collected` has
+  no `iter`, and that typo reads as a harness bug inside a compile-red target.
 
 ## Behaviour that cannot run here (Windows, xtask, packages, CI)
 
@@ -481,6 +512,16 @@ Lessons only: the rules are in `AGENTS.md`.
   of a call the design never fixes is zbus's business, not a rule of ours. Prove the shape loop you keep is
   not vacuous by dropping one case's bad argument: a legal call answers and the `expect_err` panics naming
   that case.
+- A client test that feeds an `{"error":{...}}` frame can only name a wire kind the decoder maps
+  (`ClientError::from_reply`'s list, the manager's own): a kind it lacks decodes as `Other`, so an
+  `Unavailable` reply frame is a red nobody can pass. `Unavailable` is the TRANSPORT's own (no reply,
+  a failed write, a cut frame), pinned for every method by the `EVERY_METHOD` loops: pin a refusal as
+  the kind the gate actually sends (`NotAuthorized`), and say in the doc comment where the transport's
+  failure is pinned.
+- A fixture closure that builds "the list" with its rows (`cards(t)`, `listed(t)`) is not the empty
+  answer: calling it with `None` pins the rows and drops only the time. Where the design says "no
+  probe answer is no cards and no time", write the empty value out (`NodeDevices { probed_at: None,
+  devices: Vec::new() }`), so the test reds naming a card, not a clock.
 - `Refusal` is public in `pai_core::checks` (`key: &'static str`, `values: Vec<String>`), NOT re-exported by
   `pai_core::client`: import it from `checks`, and write the key as a bare literal.
 - One `data_root_e2e` runs every phase in one process over one tree: a phase that writes the record must
@@ -765,6 +806,32 @@ Lessons only: the rules are in `AGENTS.md`.
 - Prettier 3.10 in a `semi: false` package KEEPS the semicolons a file already has: that file stays
   format-clean, and a semicolon-less statement appended to it stays clean too, so an added assertion
   needs no style edit in the existing file.
+- A model-profile Save is INERT on a clean form (no PUT goes out), so every refusal test of a new card must
+  make a real change before clicking Save: a checkbox, a Move, a typed weight, an edit of a key the card
+  shares. A click on a clean form sends nothing and the refusal's `findByText` dies at its 1 s timeout,
+  which reads as "the check is missing". For a key the page composes (`tensor-split` is sent only with a
+  checked row), the change must touch THAT state, else the injected 422 never lands on the key.
+- A refusal injected by a `modelProfileSave` option is a CONSTRUCTOR option, so a test that wants both a
+  device refusal (422, sent) and a client-check refusal (nothing sent) needs two saves in one page: change
+  the device, Save (the refusal shows), then break a weight and Save again (the check stops it) to pin that
+  the two error lines sit in the brief's order and focus goes to the check's field.
+- A card intro that names a key in prose ("the split order ... `tensor-split`") makes every
+  `queryByText(/tensor-split/)` absence pin inside that card a permanent miss: pin the ABSENCE of the
+  FILLED text (the string built with `en(key, value)`), never of a substring of the key's name.
+- The test table's `en(key, ...args)` throws `no English for <key> in the test`, and its args are STRINGS:
+  a "the key exists" test is `expect(en(key)).toBeTruthy()` with no query at all, and a positional
+  (`{1}`) filled from numbers is TS2345 in `npm --prefix fe run typecheck` while the Vitest run greens
+  (Vitest never type-checks). A fixture row typed `number | string | null` needs the same `Number(..)`
+  at every arithmetic site, for the same reason.
+- `npm --prefix fe test -- <word>` filters by SUBSTRING of the file path, so `ModelProfileSave1` runs
+  `ModelProfileSave10` to `19` too. Quote the coverage of a collateral run by the FILES it ran, not by the
+  filter words.
+- A card added to `test/modelProfileCards.ts` reds 30-35 tests in ~14 files, all naming the card COUNT or
+  the card ORDER: `App.test.tsx` 1a (the strings pin, its message lists the new keys), `HearthJump`,
+  `HearthJumpRail`, `HearthJumpToggle`, `HearthAssets`, `HearthAssetsEngine`, `ModelProfileCards1` to `5`,
+  `ModelProfileContent`, `ModelProfilePage`, `ModelProfileSave16`. One is the opaque
+  `Unable to fire a "click" event - please provide a DOM element`: a jump test that indexes the buttons by
+  position. Report all of them as collateral reds of the shared list, one line per file.
 
 - Run fe vitest from `fe/` with `TMPDIR=/tmp/opencode`: vitest writes `node_modules/.vite` (the source tree
   is gitignored only under `dist`/`coverage`, so a sandbox that read-only binds the repo dies with
@@ -904,11 +971,21 @@ Lessons only: the rules are in `AGENTS.md`.
 - A suite-load flake to expect: `HearthTheme` H4.7's `document.title` lags the page's h1 by a tick, so it
   reds in a full-suite run and passes solo. Prove it with three solo runs plus a second full suite before
   naming it; report it as a flake, not as a red.
-- One line per red, with the reason: `npx vitest run src/<file> --reporter=json --outputFile=/tmp/opencode/<name>.json`
-  (vitest 5 accepts `--outputFile` for the json reporter), then read the file with node: each
-  `testResults[].assertionResults[]` carries `status`, `title` and `failureMessages`, so print the status,
-  the title and the first line matching `AssertionError|Error|TestingLibraryElementError`. The reporter
-  option is a flag of its own (`--outputFile=`, not `--reporter-option outputFile=`).
+- One line per red, with the reason, for a file that does NOT mount:
+  `npx vitest run src/<file> --reporter=json --outputFile=/tmp/opencode/<name>.json` (vitest 5 accepts
+  `--outputFile` for the json reporter), then read the file with node: each
+  `testResults[].assertionResults[]` carries `status`, `title` and `failureMessages`. The reporter option is
+  a flag of its own (`--outputFile=`, not `--reporter-option outputFile=`). For a file that MOUNTS this
+  reporter is useless: it runs the file outside jsdom (`vite.config.ts`'s `environment: 'jsdom'` is not
+  applied), so every test dies `ReferenceError: window is not defined` in the harness's `beforeEach`
+  (`startAt`), one line for every red, naming nothing. Prove a mounting file's red from the default
+  reporter's log.
+- The default reporter prints the detail of the FIRST test carrying each distinct error and collapses the
+  rest into a two-line `FAIL file > title` block, so `grep -c "form src/<file>"` under-counts a red. Prove
+  "every red is the expected one" by counting the DISTINCT `*Error:` lines over the whole log: strip the
+  colours first (`sed 's/\x1b\[[0-9;]*m//g'`), then
+  `grep -oE "[A-Za-z]+Error: [^\n]{0,90}" | sort | uniq -c`: one line, every red, is the proof the file has
+  no typo hiding behind a shared cause.
 
 ## Renames, wire and text
 
@@ -1055,3 +1132,28 @@ Lessons only: the rules are in `AGENTS.md`.
 - To map the phases behind an e2e red, comment the red phase's call in `tests/mod.rs` with a `// DIAG:`
   marker (`sed -i '<line>s|^    |    // DIAG: |'`), run, restore with `cp` + `cmp`: one DIAG run showed the
   second red (masked by the first), the second showed the rest of the e2e green.
+
+## Mutants and wire kinds (G1+G2 close, 2026-11-21)
+
+- A `sed` that replaces a SUBSTRING eats the line (`s/if self\.x/is true || self.x/` leaves `if is true`, a
+  COMPILE red, not a mutant): change the WHOLE line (`sed -i '<line>c\        if true {'`) and print it back.
+- A mutant that reds a test which is ALREADY red (a fixture step of my own) proves nothing. Say so, and
+  report the mutant as unprovable until that step is fixed.
+- The `Devices` gate is two halves, each needing its own mutant: the caller's polkit-quiet check (mutant
+  `if true`) reds the asked-list pin ("control asked without interaction", the list empty), and a swallowed
+  `gate_principal(who)?` reds the non-member refusal ("bob is no member of `pai`", the full list answered).
+- Dropping the `As` principal at the pipe's parse (`"DevicesAs" => Request::Devices(None)`) is caught ONLY
+  by the transport whose parse you broke: the pipe test reds, the D-Bus one stays green. That split is the
+  proof the two parses are separate pins, not a missed kill.
+- Pin a `ClientError::from_reply` mapping only for a kind the manager's `error_kind` list emits: there is no
+  `Unavailable` kind, so a pipe test asserting `Err(Unavailable)` from an `error_reply("Unavailable")` frame
+  is a red only passable by inventing a protocol kind (the transport's Unavailable for that method is
+  already pinned by the `EVERY_METHOD` tests).
+- A save's calls pin takes the file's convention: the bff's save answer carries `running`, so every save in
+  `crates/bff/tests/model_profile_save.rs` expects `list` then `status <id>` AFTER the write; a new test
+  pinning 2 calls reds on 4.
+- An idle-deadline pin: the step after the read that MOVED the deadline must exceed `IDLE` measured from
+  that read (`SHORT = IDLE - 60 s` leaves the session alive, so the closing 401 assert reads 200).
+- `cargo test -p pai-bff` runs targets in alphabetical order and stops at the first red: a red in
+  `model_profile_save` hides `node_devices` and nine files after it. Run the rest by name in a second
+  invocation, and account for every file.

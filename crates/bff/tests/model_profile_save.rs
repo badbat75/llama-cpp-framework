@@ -143,6 +143,24 @@ load-on-startup = 1\r\n\
 temp = 0.7\r\n\
 ";
 
+/// `FILE_ON` with `moe-cache-mib` set in `[alpha]`. The key is not on the web,
+/// so a page can only get the pair refused by the manager's rule by writing the
+/// other half of it: `split-mode = tensor` over a section that already carries
+/// the cache.
+const FILE_ON_MOE: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+model = C:\\Models\\alpha.gguf\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+moe-cache-mib = 4096\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";
+
 /// A `models.ini.disabled` with one switched-off model profile, written as the
 /// configurator writes it (its header, then the section).
 const FILE_OFF: &str = "\
@@ -1587,6 +1605,28 @@ async fn save_value_with_a_comment_marker_is_422_from_the_bff_with_the_field() {
     assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }
 
+/// A device-list value holding `;`/`#` is the bff's marker refusal like every
+/// other key ("As built" ruling a): the web's value reloads in the file as
+/// less than what was written, so the bff refuses it before the manager is
+/// asked: 422 `comment-markers`, `args` and `field` `device`, no connect, no
+/// write. The manager's device rule never sees a marker: it runs on the value
+/// the reader cuts.
+#[tokio::test]
+async fn save_device_value_with_a_comment_marker_is_422_comment_markers() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    let rep = app.save_on(ALPHA, json!({ "device": "ROCm0;x" })).await;
+    rep.assert_refused("comment-markers", &["device"], "device");
+    assert_eq!(
+        app.connects.load(Ordering::SeqCst),
+        0,
+        "the bff answers this itself: {:?}",
+        app.calls()
+    );
+    assert!(app.calls().is_empty(), "{:?}", app.calls());
+    assert!(app.no_write_asked(), "nothing written");
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
+}
+
 /// A body over the extractor's cap is 413 `payload-too-large`, answered before
 /// the session and before any manager call.
 #[tokio::test]
@@ -2730,3 +2770,223 @@ async fn save_moves_the_sessions_idle_deadline() {
         .await
         .assert_signed_in_as("alice");
 }
+
+// ── The GPU distribution card's three keys (G1, ARCHITECTURE.md 1) ───────
+//
+// `device`, `split-mode` and `tensor-split` moved from
+// `checks::MODEL_PROFILE_KEYS_NOT_ON_WEB` to `WEB_MODEL_PROFILE_KEYS`, so the
+// page's body carries them and the save treats them as every other key: the
+// body check lets them through, the text lands in the section, and the
+// manager's refusal of a value answers 422 with the key it named and the
+// control to mark. The save path itself is unchanged: one read, one
+// compare-and-swap write, the same 200.
+
+/// `FILE_ON` with the GPU distribution card saved on `[alpha]`: the three keys
+/// the section did not hold, appended after its last real line in key order
+/// (`device`, `split-mode`, `tensor-split`), each as the body gave it, and
+/// nothing else moved.
+const ON_GPU: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+model = C:\\Models\\alpha.gguf\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+device = ROCm0,CUDA0\r\n\
+split-mode = layer\r\n\
+tensor-split = 3,1\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";
+
+/// The three keys are on the web, so a body naming them is saved: no 400 for a
+/// key off the web list, the text lands as any other key's does, asked as the
+/// signed-in user with one connect for the exchange.
+#[tokio::test]
+async fn save_the_gpu_distribution_keys_lands_in_the_section() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.save_on(
+        ALPHA,
+        json!({
+            "device": "ROCm0,CUDA0",
+            "split-mode": "layer",
+            "tensor-split": "3,1",
+        }),
+    )
+    .await
+    .assert_saved(&rev(&KEY_A, MODELS, ON_GPU, ALPHA), false);
+    assert_eq!(
+        app.file_text(MODELS).as_deref(),
+        Some(ON_GPU),
+        "the three lines land inside [alpha], in key order"
+    );
+    assert_eq!(
+        app.calls(),
+        vec![
+            format!("read {MODELS}"),
+            format!("write-if alice {MODELS}"),
+            "list".to_string(),
+            "status default".to_string(),
+        ],
+        "one read and one compare-and-swap write, then the instance state the \
+         save answers, as every save in this file"
+    );
+    assert_eq!(
+        principals_of(&app.principals),
+        vec![Some("alice".to_string())],
+        "the read and the write both as the signed-in user, on one connect"
+    );
+    assert_eq!(
+        section_of(&app.file_text(MODELS).expect("models.ini"), QWEN),
+        section_of(FILE_ON, QWEN),
+        "the other section is byte for byte as it was"
+    );
+}
+
+/// `device`, `device-draft` and `mmproj-device` share the manager's one rule
+/// (`device-bad-name`, whose args are the key and the entry it refused) and
+/// `tensor-split` has its own (`tensor-split-format`, whose only arg is the
+/// whole value, so the bff marks the control). The section is never written and
+/// the session lives, as every 422 about values does. `moe-cache-mib` is not on
+/// the web, so the page cannot send it: the last case starts from a section
+/// that ALREADY holds `moe-cache-mib = 4096` (`FILE_ON_MOE`) and writes only
+/// `split-mode = tensor`, and the manager's `moe-cache-with-tensor-split` comes
+/// back marking `moe-cache-mib`, the key of the pair the page cannot touch.
+#[tokio::test]
+async fn save_a_gpu_distribution_value_the_manager_refuses_marks_its_control() {
+    struct Case {
+        key: &'static str,
+        args: &'static [&'static str],
+        /// The `models.ini` the manager holds before the save.
+        file: &'static str,
+        body: Value,
+        field: &'static str,
+    }
+    let cases = [
+        Case {
+            key: "device-bad-name",
+            args: &["device", " ROCm1"],
+            file: FILE_ON,
+            body: json!({ "device": "ROCm0, ROCm1" }),
+            field: "device",
+        },
+        Case {
+            key: "device-bad-name",
+            args: &["device", "CPU"],
+            file: FILE_ON,
+            body: json!({ "device": "CPU" }),
+            field: "device",
+        },
+        Case {
+            key: "device-bad-name",
+            args: &["device-draft", "a b"],
+            file: FILE_ON,
+            body: json!({ "device-draft": "a b" }),
+            field: "device-draft",
+        },
+        Case {
+            key: "device-bad-name",
+            args: &["mmproj-device", " ROCm1"],
+            file: FILE_ON,
+            body: json!({ "mmproj-device": "ROCm0, ROCm1" }),
+            field: "mmproj-device",
+        },
+        Case {
+            key: "tensor-split-format",
+            args: &["3,x"],
+            file: FILE_ON,
+            body: json!({ "tensor-split": "3,x" }),
+            field: "tensor-split",
+        },
+        Case {
+            key: "tensor-split-format",
+            args: &["-1,1"],
+            file: FILE_ON,
+            body: json!({ "tensor-split": "-1,1" }),
+            field: "tensor-split",
+        },
+        Case {
+            key: "moe-cache-with-tensor-split",
+            args: &[],
+            file: FILE_ON_MOE,
+            body: json!({ "split-mode": "tensor" }),
+            field: "moe-cache-mib",
+        },
+    ];
+    for case in cases {
+        let app = app_holding(case.file, FILE_OFF);
+        app.set_write_outcome(Outcome::Invalid {
+            key: case.key,
+            values: case.args.iter().map(|a| a.to_string()).collect(),
+        });
+        let cookie = app.sign_in().await;
+        let rep = app
+            .save(
+                ALPHA,
+                &save_body(&rev(&KEY_A, MODELS, case.file, ALPHA), case.body.clone()),
+                Some(&cookie),
+            )
+            .await;
+        rep.assert_refused(case.key, case.args, case.field);
+        let writes = app.writes();
+        assert_eq!(
+            writes.len(),
+            1,
+            "{}: the refusal is the write's, so the edited text reached the manager",
+            case.key
+        );
+        assert_eq!(writes[0].0, MODELS, "{}: the file", case.key);
+        for line in case.body.as_object().expect("an object").keys() {
+            assert!(
+                writes[0].1.contains(&format!("{line} = ")),
+                "{}: the text judged carries the edited key {line}: {:?}",
+                case.key,
+                writes[0].1
+            );
+        }
+        assert_eq!(
+            app.file_text(MODELS).as_deref(),
+            Some(case.file),
+            "{}: the manager wrote nothing",
+            case.key
+        );
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
+/// The device list a profile names is never judged against the node's probe: a
+/// well-formed id the probe does not know saves, and the page flags it. So the
+/// save of `device = ROCm7` on a node answering an empty list is a 200, the
+/// same as any accepted value.
+#[tokio::test]
+async fn save_a_device_the_probe_does_not_know_is_saved() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.save_on(ALPHA, json!({ "device": "ROCm7" }))
+        .await
+        .assert_saved(&rev(&KEY_A, MODELS, ON_DEVICE_ROCM7, ALPHA), false);
+    assert!(
+        app.file_text(MODELS)
+            .expect("models.ini")
+            .contains("device = ROCm7\r\n"),
+        "the id the probe lacks is written as the body gave it"
+    );
+}
+
+/// `FILE_ON` with `device = ROCm7` appended to `[alpha]`.
+const ON_DEVICE_ROCM7: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+model = C:\\Models\\alpha.gguf\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+device = ROCm7\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";

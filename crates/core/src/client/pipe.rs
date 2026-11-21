@@ -19,6 +19,7 @@
 //! {"method":"CreateServerProfile","engine":"llama.cpp","profile":"big","port":8123}
 //! {"method":"DeleteServerProfile","engine":"llama.cpp","profile":"big"}
 //! {"method":"ServerProfiles"}
+//! {"method":"Devices"}
 //! {"method":"Authenticate","user":"alice","password":"..."}
 //! {"method":"Version"}
 //! ```
@@ -26,8 +27,8 @@
 //! A client [`PipeClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
-//! `CreateServerProfile`, `DeleteServerProfile` and
-//! `SetInstanceTags` go as the
+//! `CreateServerProfile`, `DeleteServerProfile`,
+//! `SetInstanceTags` and `Devices` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
 //! (the manager answers a principal for the bff's account alone). The methods
 //! that need no right are unchanged, `Instances` and `ServerProfiles` among
@@ -47,6 +48,7 @@
 //!                                         "profile":"big","port":8123}
 //! {"method":"DeleteServerProfileAs","principal":"alice","engine":"llama.cpp",
 //!                                         "profile":"big"}
+//! {"method":"DevicesAs","principal":"alice"}
 //! ```
 //!
 //! A reply is the value or an error with the same (name, message) pair the
@@ -69,6 +71,12 @@
 //!                                           points at the profile)
 //! {"ok":{"authenticated":true,"can_configure":false}}
 //!                                           Authenticate
+//! {"ok":{"probed_at":1766271243,
+//!         "devices":[{"id":"CUDA0","name":"NVIDIA GeForce RTX 4070 SUPER",
+//!                     "backend":"CUDA","total_mib":12281,"free_mib":10844}]}
+//!                                           Devices (probed_at: the Unix
+//!                                           seconds of the probe, 0 when no
+//!                                           probe answered)
 //! {"ok":null}                               Start, Stop, Restart, WriteFile,
 //!                                           SetBootEnabled, SetInstanceTags,
 //!                                           CreateServerProfile,
@@ -79,8 +87,8 @@
 //! ```
 
 use super::{
-    ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ManagerVersion,
-    ServerProfileInfo,
+    ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
+    ManagerVersion, NodeDevices, ServerProfileInfo,
 };
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
@@ -457,6 +465,49 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             &[("instance", json!(instance)), ("tags", json!(tags))],
         ))
     }
+    fn devices(&self) -> Result<NodeDevices, ClientError> {
+        let v = self.call(self.guarded("Devices", &[]))?;
+        // The moment first: a reply without it is not a device list, whatever
+        // its rows are. 0 is no probe, as over the bus.
+        let probed_at = v
+            .get("probed_at")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| ClientError::Other(v.to_string()))?;
+        let rows = v
+            .get("devices")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ClientError::Other(v.to_string()))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let text = |key: &str| row.get(key).and_then(Value::as_str).map(str::to_string);
+            let mib = |key: &str| row.get(key).and_then(Value::as_u64);
+            match (
+                text("id"),
+                text("name"),
+                text("backend"),
+                mib("total_mib"),
+                mib("free_mib"),
+            ) {
+                (Some(id), Some(name), Some(backend), Some(total_mib), Some(free_mib)) => {
+                    out.push(DeviceInfo {
+                        id,
+                        name,
+                        backend,
+                        total_mib,
+                        free_mib,
+                    })
+                }
+                // A row of the wrong shape is a list the client cannot show:
+                // a card guessed at from a missing field is a card that is not
+                // there.
+                _ => return Err(ClientError::Other(row.to_string())),
+            }
+        }
+        Ok(NodeDevices {
+            probed_at: (probed_at != 0).then_some(probed_at),
+            devices: out,
+        })
+    }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         let v = self.call(json!({"method": "Authenticate", "user": user, "password": password}))?;
         let ok = v.get("authenticated").and_then(Value::as_bool);
@@ -688,9 +739,10 @@ mod tests {
         vec!["edge".to_string(), "v2".to_string()]
     }
 
-    const EVERY_METHOD: [(&str, Call); 15] = [
+    const EVERY_METHOD: [(&str, Call); 16] = [
         ("list_instances", |c| c.list_instances().err()),
         ("instances", |c| c.instances().err()),
+        ("devices", |c| c.devices().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
         ("stop", |c| c.stop("default").err()),
@@ -936,6 +988,172 @@ mod tests {
         assert!(
             matches!(got, Err(ClientError::Other(_))),
             "an older manager's list, a row naming no profile, is refused: {got:?}"
+        );
+    }
+
+    // ── The node's devices (G2, ARCHITECTURE.md 1) ──────────────────────
+
+    /// The device list `Devices` answers, read as it is: every row kept, in the
+    /// manager's order, with the id, the product name, the backend, both sizes,
+    /// and the moment of the probe.
+    #[test]
+    fn the_devices_reply_is_the_list_the_manager_answers() {
+        let (client, sent) = client_on(input(&[json!({"ok": {
+            "probed_at": 1_766_271_243u64,
+            "devices": [
+                {"id": "ROCm0", "name": "AMD Radeon AI PRO R9700", "backend": "ROCm", "total_mib": 32624u64, "free_mib": 32420u64},
+                {"id": "CUDA0", "name": "NVIDIA GeForce RTX 4070 SUPER", "backend": "CUDA", "total_mib": 12281u64, "free_mib": 10844u64},
+                {"id": "Vulkan0", "name": "AMD Radeon AI PRO R9700", "backend": "Vulkan", "total_mib": 32624u64, "free_mib": 32420u64},
+            ],
+        }})]));
+        assert_eq!(
+            client.devices().expect("the device list"),
+            NodeDevices {
+                probed_at: Some(1_766_271_243),
+                devices: vec![
+                    DeviceInfo {
+                        id: "ROCm0".into(),
+                        name: "AMD Radeon AI PRO R9700".into(),
+                        backend: "ROCm".into(),
+                        total_mib: 32624,
+                        free_mib: 32420,
+                    },
+                    DeviceInfo {
+                        id: "CUDA0".into(),
+                        name: "NVIDIA GeForce RTX 4070 SUPER".into(),
+                        backend: "CUDA".into(),
+                        total_mib: 12281,
+                        free_mib: 10844,
+                    },
+                    DeviceInfo {
+                        id: "Vulkan0".into(),
+                        name: "AMD Radeon AI PRO R9700".into(),
+                        backend: "Vulkan".into(),
+                        total_mib: 32624,
+                        free_mib: 32420,
+                    },
+                ],
+            },
+            "the row's fields, in the manager's order"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "Devices"})],
+            "the plain method, with no argument"
+        );
+    }
+
+    /// A manager that never got a probe answered: `probed_at` 0 is no time
+    /// (None), and no device is an empty list. The page shows the empty list
+    /// with no time, never an error.
+    #[test]
+    fn a_devices_reply_of_no_probe_is_no_time_and_an_empty_list() {
+        for (probed_at, devices) in [
+            (0u64, json!([])),
+            (
+                0u64,
+                json!([{"id": "CPU", "name": "CPU", "backend": "CPU", "total_mib": 0u64, "free_mib": 0u64}]),
+            ),
+        ] {
+            let (client, _) = client_on(input(&[json!({"ok": {
+                "probed_at": probed_at,
+                "devices": devices,
+            }})]));
+            let got = client.devices().expect("the empty device list");
+            assert_eq!(got.probed_at, None, "0 is no probe ({probed_at})");
+            assert_eq!(got.devices.len(), devices.as_array().unwrap().len());
+        }
+    }
+
+    /// A device row of the wrong shape is Other, like every other row: a client
+    /// that guessed at a missing field would show a card that is not there.
+    #[test]
+    fn a_devices_row_of_the_wrong_shape_is_other() {
+        for row in [
+            json!({"id": "ROCm0", "name": "AMD", "backend": "ROCm", "total_mib": 1u64}),
+            json!({"id": "ROCm0", "name": "AMD", "total_mib": 1u64, "free_mib": 1u64}),
+            json!({"name": "AMD", "backend": "ROCm", "total_mib": 1u64, "free_mib": 1u64}),
+            json!({"id": "ROCm0", "name": "AMD", "backend": 1u64, "total_mib": 1u64, "free_mib": 1u64}),
+            json!({"id": "ROCm0", "name": "AMD", "backend": "ROCm", "total_mib": "1", "free_mib": 1u64}),
+            json!({"id": "ROCm0", "name": "AMD", "backend": "ROCm", "total_mib": -1i64, "free_mib": 1u64}),
+            json!("not a row"),
+        ] {
+            let (client, _) = client_on(input(&[json!({"ok": {
+                "probed_at": 1u64,
+                "devices": [row],
+            }})]));
+            let got = client.devices();
+            assert!(
+                matches!(got, Err(ClientError::Other(_))),
+                "{row}: a row of the wrong shape is refused: {got:?}"
+            );
+        }
+        // The reply itself of the wrong shape: not an object, no devices list,
+        // a devices list that is not a list, no probed_at.
+        for reply in [
+            json!({"ok": []}),
+            json!({"ok": null}),
+            json!({"ok": {"devices": []}}),
+            json!({"ok": {"probed_at": 1u64}}),
+            json!({"ok": {"probed_at": 1u64, "devices": {}}}),
+            json!({"ok": {"probed_at": "1", "devices": []}}),
+        ] {
+            let (client, _) = client_on(input(std::slice::from_ref(&reply)));
+            let got = client.devices();
+            assert!(
+                matches!(got, Err(ClientError::Other(_))),
+                "{reply}: a reply of the wrong shape is refused: {got:?}"
+            );
+        }
+    }
+
+    /// A client acting for the signed-in user asks `DevicesAs`, with the
+    /// principal: the manager reads the devices for a member of `pai`, and the
+    /// bff always asks this way.
+    #[test]
+    fn an_acting_client_asks_the_devices_for_the_signed_in_user() {
+        let (client, sent) = client_on(input(&[json!({"ok": {
+            "probed_at": 0u64,
+            "devices": [],
+        }})]));
+        let bound = client.acting_for("alice");
+        assert_eq!(
+            bound.devices().expect("the empty device list").devices,
+            Vec::<DeviceInfo>::new()
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "DevicesAs", "principal": "alice"})],
+            "the As form, with the principal as given"
+        );
+    }
+
+    /// The refusals of the devices read cross the wire like every other
+    /// method's: the gate's `NotAuthorized` for a caller without `control`, and
+    /// the same word for a `DevicesAs` principal who is no member of `pai`
+    /// (the bff answers that 403 and ends the session). The client's own
+    /// `Unavailable` is the manager gone, pinned for this method by
+    /// `no_reply_at_all_is_unavailable`: the wire has no kind for it, so
+    /// nothing here asks for one.
+    #[test]
+    fn a_devices_refusal_is_the_error_the_manager_sent() {
+        let (client, _) = client_on(input(&[error_reply("NotAuthorized", "NotAuthorized")]));
+        assert_eq!(
+            client.devices(),
+            Err(ClientError::NotAuthorized),
+            "the plain form, refused by the quiet `control` check"
+        );
+        let (client, sent) = client_on(input(&[error_reply("NotAuthorized", "NotAuthorized")]));
+        let bound = client.acting_for("alice");
+        assert_eq!(
+            bound.devices(),
+            Err(ClientError::NotAuthorized),
+            "the As form, refused for a principal outside `pai`"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "DevicesAs", "principal": "alice"})],
+            "the refusal answers the As call"
         );
     }
 

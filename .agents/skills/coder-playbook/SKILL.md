@@ -90,9 +90,13 @@ Lessons only: the rules are in `AGENTS.md`.
   asserts stays the tester's. A binding a test clones and never reads (`let files = c.files.clone();`) is
   `unused_variables`, and the compiler's `_files` prefix loses no assertion: apply it and name it.
 - A test helper of a test module whose ONLY callers are `#[cfg(unix)]` tests (a bound and a
-  thread-race wrapper beside the FIFO tests) is `dead_code` in the Windows `--all-targets` clippy. It is
-  the tester's region: report it, and prove production is clean with the same crate WITHOUT
-  `--all-targets`. The same region reddens the Windows `cargo check --all-targets` with
+  thread-race wrapper beside the FIFO tests) is `dead_code` in the Windows `--all-targets` clippy. The
+  file's own convention is the fix and it moves no assertion: gate the helper `#[cfg(unix)]` and say the
+  reason in its doc (the gpu_probe helper module gates `use scripted::*` that way). A red you must NOT
+  touch is a `let mut want` whose only `mut` use is a `#[cfg(unix)] want.insert(..)`: `unused_mut` on
+  windows-gnu (`manager/service.rs:9913`, from 5c8232b), pre-existing, outside any slice. Report it, and
+  prove production is clean with the same crate WITHOUT `--all-targets`. The same region reddens the
+  Windows `cargo check --all-targets` with
   `unresolved import` when a `#[cfg(unix)] mod`'s users sit behind a bare `use <mod>::*;`: the un-gated
   import is the defect to report, never a production change.
 - `nix` 0.31 `fcntl::OFlag` needs the `fs` feature (`OFlag::O_NONBLOCK.bits()` is the `c_int` for
@@ -272,6 +276,41 @@ Lessons only: the rules are in `AGENTS.md`.
   `Result<usize>`, so its error arm is `.is_err()`. A source-lint test pins that shape (`.take(` present,
   `fs::read(` absent above `#[cfg(test)]`, comments stripped per line at `//`), so `fs::read_dir(` passes
   and a doc comment naming the cap is no needle.
+- A value check the manager answers needs an arm in the bff's 422 field map beside `override-no-*`
+  (`tensor-split-format` marks `tensor-split`, `moe-cache-with-tensor-split` marks `moe-cache-mib`).
+  Since ruling (a) the device keys carry NO marker exemption in `parse_body`: `checks::device_list` and
+  `tensor_split` judge `RawSection::get` (the value the preset reader cuts at the first `;`/`#`), so a
+  marker never reaches them and every body key goes through the generic `checks::comment_markers`.
+- Two bff tests over ONE value shape are unsatisfiable together, and the copy proves it in minutes:
+  `save_device_value_with_a_comment_marker_is_422_comment_markers` wants `device = "ROCm0;x"` answered by
+  the bff with 422 `comment-markers` and ZERO connects, while case 4 of
+  `save_a_gpu_distribution_value_the_manager_refuses_marks_its_control` wants `mmproj-device = "ROCm0;x"`
+  answered by the stub's faked `Outcome::Invalid { key: "device-bad-name", .. }`. The stub returns that
+  outcome from its own write, so the manager's real rule NEVER runs and any bff gate on the value
+  pre-empts it; the same marker in two keys of the same `DEVICE_LIST_KEYS` cannot be refused by the bff in
+  one and reach the stub in the other. Nothing about the value separates them (`;` truncates both lines
+  alike), so the only rule that passes both is keyed on the key name, which ruling (a) gives no reason
+  for. Report it as the tester's: the coherent case keeps the passthrough and drops the marker
+  (`mmproj-device = "ROCm0, ROCm1"` with args `["mmproj-device", " ROCm1"]`). The case loop stops at 4, so
+  cases 5-7 stay unverified behind it; the field-map arms they need are shipped.
+- A bff save's calls list ALWAYS ends `list, status <id>`: the 200 answers `running` from the record and the
+  states, pinned by `model_profile_save.rs` 1865-1877 and 2589-2599. A test pinning
+  `calls == [read, write-if]` for a save is unsatisfiable, and so is one that puts a
+  `MODEL_PROFILE_KEYS_NOT_ON_WEB` key in `values`: `parse_body` answers 400 `model-profiles-malformed` for
+  any key off `WEB_MODEL_PROFILE_KEYS` (pinned by `save_key_outside_the_web_list_is_400_and_reaches_no_manager`,
+  which names `moe-cache-mib`). A manager rule about a key the web cannot write is pinned only through the
+  field-mapping test, which sends a web key and reads the 422's `field`.
+  G1 is that pair in full: `save_a_gpu_distribution_value_the_manager_refuses_marks_its_control` ends
+  with a `moe-cache-mib` + `split-mode = tensor` case wanting 422, and deleting ONLY that case in a tree
+  copy turns the test green, so the 400 is that key gate and NOT the three-key gate, the marker
+  exemption or the `tensor-split-format` arm (all shipped and green). `fe/briefs/api-contract.md` fixes
+  the list at "68 keys, seven left out" with `moe-cache-mib` out "until 2g": no rule lets a read-only
+  key ride a sibling web key.
+- A session-idle test cannot reach 401 by advancing twice a step SHORTER than `IDLE` with any read in
+  between: `GET /api/session` is `Sessions::current`, which MOVES the deadline like a page read, so the last
+  move lands at t=SHORT and the next request at t=2xSHORT is only SHORT old (1740 < 1800), served 200. A
+  route that only peeks loses nothing. The pattern that works is `control.rs:1568`: advance `IDLE + 1s`
+  after the action.
 
 ## INI, config, the manager
 
@@ -356,7 +395,29 @@ Lessons only: the rules are in `AGENTS.md`.
 - A refusal a client test decodes must be a key of `checks::KEYS` with a `text()` arm: `Refusal::decode`
   answers `Other` for any other key, so a new key added only to the strings files reddens the D-Bus and
   pipe round trips. `Refusal::new` is private and its key is `&'static str`, so manager code builds the
-  struct literal.
+  struct literal. Its values are `&[&dyn Display]`, so a `&str` binding needs the DOUBLE borrow
+  `Refusal::new("k", &[&value])`: one `&` is `&[str]` and E0277 says "the size for values of type `str`
+  cannot be known".
+- The wire has no error name the manager cannot answer: the D-Bus and pipe replies are exactly
+  `error_reply`'s `ManagerError` kinds, so a client test that feeds an `org.privateai.Manager1.Error.X`
+  reply X no variant produces is unreachable (`Unavailable`: a stream that breaks is the CLIENT's own
+  `ClientError::Unavailable`, never a reply), and `client.rs`'s passing
+  `any_other_error_name_is_other_and_keeps_name_and_message` pins every unmapped name as `Other`. Quote the
+  variant list and the test line in the report.
+- A widened GPU probe caches the parsed rows, not a reduced pool, and its cache rule is what the tests pin
+  ("As built" (c) of the GPU distribution design reversed the first rule): cache only a probe that parsed a
+  device line of the node's OWN (`!device.is_cpu()`); a CPU-only probe answers `(Some(at), [])` and caches
+  nothing, so the node is read again at the next call, while a killed, silent or no-device probe answers
+  `(None, [])` and caches nothing. `probed_at: None` with an empty list is the "no probe" answer, so a fake
+  that answers `(None, [])` cannot be compared against a row list; the gate for a read that can prompt for
+  nothing is the pair check alone (bff account and a current `pai` member, membership read per call,
+  `asked_quietly` staying empty), and `principal: None` takes the quiet `control` check.
+- A serial probe the callers queue on answers the QUEUED readers with the probe they waited for, failure
+  included ("As built" (d)): a `Mutex<(u64, ProbeAnswer)>` attempt counter read BEFORE taking the serial
+  lock and compared, once held, with the counter of that moment, so a reader behind a killed probe takes
+  `(None, [])` and pays no second bound (the test asserts one exe run, both answers, and a total under
+  `bound + 1500 ms`: a re-probe after a failed one lands at 2 x bound). Keep the cache read inside the
+  lock as the first gate, so the successful case never touches the counter.
 - The startup budget of an instance is checked with the EXISTING rule, not a new one:
   `checks::startup_loads` takes the RENDERED per-instance file (the sections that carry
   `load-on-startup = true`) and `checks::startup_count` the count against the server profile's `ModelsMax`,

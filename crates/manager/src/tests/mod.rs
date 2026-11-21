@@ -54,6 +54,9 @@ fn data_root_e2e() {
     // ── Manager core: the model-file check of every write that lands one ──
     crate::manager::service::manager_model_file_check_e2e();
 
+    // ── Manager core: the node's device list (Devices and DevicesAs) ──────
+    crate::manager::service::manager_devices_e2e();
+
     // ── Manager core: the GPU memory check of a model profile pool write ──
     crate::manager::service::manager_memory_check_e2e();
 

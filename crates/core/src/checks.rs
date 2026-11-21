@@ -42,6 +42,8 @@ pub const KEYS: &[&str] = &[
     "server-bad-tags",
     "unknown-engine",
     "server-profile-bad-id",
+    "device-bad-name",
+    "tensor-split-format",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -119,6 +121,8 @@ impl Refusal {
             }
             "unknown-engine" => strings::fill("unknown-engine", &[&v(0)]),
             "server-profile-bad-id" => strings::fill("server-profile-bad-id", &[&v(0)]),
+            "device-bad-name" => strings::fill("device-bad-name", &[&v(0), &v(1)]),
+            "tensor-split-format" => strings::fill("tensor-split-format", &[&v(0)]),
             other => other.to_string(),
         }
     }
@@ -304,6 +308,10 @@ pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
     "fit-target",
     "device-draft",
     "n-gpu-layers-draft",
+    // The GPU distribution card.
+    "device",
+    "split-mode",
+    "tensor-split",
     // Speculative decoding card.
     "spec-draft-n-max",
     "spec-draft-p-min",
@@ -326,8 +334,8 @@ pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
 /// The model profile keys `pai-app` `model_profiles::render_section` writes that no control of
 /// the model profile page enables yet, each with the slice that enables it in the
 /// design's table: the Assets card's file picks, the MoE keys that need the
-/// model's facts, the GPU distribution and the tensor placement. A body key
-/// here is refused like an unknown one. A slice that enables one moves the key
+/// model's facts and the tensor placement. A body
+/// key here is refused like an unknown one. A slice that enables one moves the key
 /// to [`WEB_MODEL_PROFILE_KEYS`], in the same commit as its control.
 pub const MODEL_PROFILE_KEYS_NOT_ON_WEB: &[&str] = &[
     // The Assets card's file picks, until it exists.
@@ -338,10 +346,6 @@ pub const MODEL_PROFILE_KEYS_NOT_ON_WEB: &[&str] = &[
     // The MoE keys: they need the model's facts.
     "n-cpu-moe",
     "moe-cache-mib",
-    // The GPU distribution.
-    "device",
-    "split-mode",
-    "tensor-split",
     // The tensor placement.
     "override-tensor",
 ];
@@ -523,6 +527,95 @@ pub fn moe_cache_split(moe_cache_mib: Option<i32>, split_mode: &str) -> Result<(
         Ok(())
     }
 }
+
+/// The keys whose value is a list of device ids: one rule for all three.
+pub const DEVICE_LIST_KEYS: [&str; 3] = ["device", "device-draft", "mmproj-device"];
+
+/// One device list (`device`, `device-draft`, `mmproj-device`) as llama.cpp
+/// reads it: `parse_device_list` in `common/arg.cpp` splits the value at `,`,
+/// keeps each entry byte for byte (it trims nothing), and throws on an empty
+/// entry, on an entry naming the CPU device and on `none` beside another name,
+/// so the model never loads. `value` is the value the reader of the file sees
+/// (the preset reader `common/preset.cpp` drops the spaces after `=`, ends the
+/// value at the spaces before a `;`/`#`/newline and cuts it at the first `;` or
+/// `#`, which is [`RawSection::get`]), so an entry keeps the spaces inside the
+/// value and only the `=` of an `override-tensor` rule can ride in one: the
+/// other two markers end the value before the rule sees it, and a body value
+/// carrying one is the bff's 422 `comment-markers`. The names are judged by
+/// their shape only, never against the node's probe: an id the probe does not
+/// answer is a value llama.cpp takes. Refused with `device-bad-name`, naming
+/// the key and the entry.
+pub fn device_list(key: &str, value: &str) -> Result<(), Refusal> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    let entries = value.split(',').collect::<Vec<_>>();
+    for entry in entries.iter() {
+        let bad = entry.is_empty()
+            || entry.chars().any(char::is_whitespace)
+            || entry.contains('=')
+            || entry.eq_ignore_ascii_case("CPU")
+            // `none` beside another name: llama.cpp looks a device named
+            // "none" up and finds none.
+            || (entries.len() > 1 && entry.eq_ignore_ascii_case("none"));
+        if bad {
+            return Err(Refusal::new("device-bad-name", &[&key, &entry]));
+        }
+    }
+    Ok(())
+}
+
+/// The `tensor-split` weights as llama.cpp parses them (`--tensor-split` in
+/// `common/arg.cpp`): the value it reads (see [`device_list`]) split at every
+/// run of `,` and `/` (`split_weights`), at most 15 entries (it throws at
+/// `llama_max_devices()`, 16), each read with `std::stof` so a finite number of
+/// 0 or more; the number rule here is stricter than `std::stof`, which reads
+/// `3x` as 3 (a preference: a negative, `inf`, `nan` or a trailing letter is
+/// never a weight the configurator writes). Refused with `tensor-split-format`,
+/// naming the value.
+pub fn tensor_split(value: &str) -> Result<(), Refusal> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    let entries = split_weights(value);
+    let taken = entries.len() <= TENSOR_SPLIT_MAX
+        && entries
+            .iter()
+            .all(|e| e.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0));
+    if taken {
+        return Ok(());
+    }
+    Err(Refusal::new("tensor-split-format", &[&value]))
+}
+
+/// The pieces of `value` between the runs of `,` and `/`, as the engine's
+/// `sregex_token_iterator` with `-1` yields them (the regex `[,/]+` of
+/// `--tensor-split`): one run is one separator, a run at the start leaves an
+/// empty first piece (`std::stof` throws on it) and a run at the end ends the
+/// list, so `3,,1`, `3//1` and `3,1,` are the two weights 3 and 1.
+fn split_weights(value: &str) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut start = 0;
+    let mut in_run = false;
+    for (at, c) in value.char_indices() {
+        if c == ',' || c == '/' {
+            if !in_run {
+                out.push(&value[start..at]);
+                in_run = true;
+            }
+        } else if in_run {
+            start = at;
+            in_run = false;
+        }
+    }
+    if !in_run {
+        out.push(&value[start..]);
+    }
+    out
+}
+
+/// The most entries of `tensor-split`: llama.cpp throws at one more.
+pub const TENSOR_SPLIT_MAX: usize = 15;
 
 /// A bind list (`Hostname`, comma-separated) holds `0.0.0.0` alone: it covers
 /// every IPv4 address, and llama.cpp's `--host` help calls overlapping
@@ -707,7 +800,10 @@ struct RawSection {
 
 impl RawSection {
     /// The value of `key` as the readers see it: the last one, its inline
-    /// comment cut (`ini::parse_sections`).
+    /// comment cut (`ini::parse_sections`). The value a rule that refuses what
+    /// llama.cpp reads judges (`device`, `tensor-split`): the preset reader
+    /// (`common/preset.cpp`) drops the spaces after `=`, ends the value at the
+    /// spaces before a `;`/`#`/newline and cuts it at the first `;` or `#`.
     fn get(&self, key: &str) -> Option<String> {
         self.keys
             .iter()
@@ -797,6 +893,14 @@ fn model_profile_section(s: &RawSection, known: &[RawSection]) -> Result<(), Ref
     }
     fit_target(&s.get("fit-target").unwrap_or_default())?;
     override_tensor(&s.get("override-tensor").unwrap_or_default())?;
+    for key in DEVICE_LIST_KEYS {
+        if let Some(v) = s.get(key) {
+            device_list(key, &v)?;
+        }
+    }
+    if let Some(v) = s.get("tensor-split") {
+        tensor_split(&v)?;
+    }
     for (key, range) in &MODEL_PROFILE_INT_KEYS {
         if let Some(v) = s.get(key) {
             whole_number(key, &v, range)?;
@@ -1770,8 +1874,8 @@ top-p = 0.95\r\n";
     // pinned against the configurator's writer by `pai-app`'s
     // `web_key_lists_are_exactly_what_render_section_writes`.
     #[test]
-    fn web_model_profile_keys_exclude_the_ten_and_hold_the_named_ones() {
-        // The ten the design keeps off the web until the slice it names.
+    fn web_model_profile_keys_exclude_the_seven_and_hold_the_named_ones() {
+        // The seven the design keeps off the web until the slice it names.
         for key in [
             "model",
             "mmproj",
@@ -1779,9 +1883,6 @@ top-p = 0.95\r\n";
             "spec-type",
             "n-cpu-moe",
             "moe-cache-mib",
-            "device",
-            "split-mode",
-            "tensor-split",
             "override-tensor",
         ] {
             assert!(
@@ -1795,6 +1896,213 @@ top-p = 0.95\r\n";
             assert!(
                 WEB_MODEL_PROFILE_KEYS.contains(&key),
                 "{key} is a key of the design's table, so the web's list must hold it"
+            );
+        }
+    }
+
+    // G1 of "The GPU distribution on the model profile page" (ARCHITECTURE.md 3):
+    // the three keys of the GPU distribution card are the web's to write now. The
+    // union of the two lists is unchanged, so `pai-app`'s pin of it against
+    // `render_section` stays green; what moves is which side each key sits on.
+    #[test]
+    fn the_gpu_distribution_keys_are_on_the_web() {
+        for key in ["device", "split-mode", "tensor-split"] {
+            assert!(
+                WEB_MODEL_PROFILE_KEYS.contains(&key),
+                "{key} is a key of the GPU distribution card, so the web's list must hold it"
+            );
+            assert!(
+                !MODEL_PROFILE_KEYS_NOT_ON_WEB.contains(&key),
+                "{key} is on the web, so it must not also be listed as off the web"
+            );
+        }
+    }
+
+    /// The rule of `device_list` (ARCHITECTURE.md "As built" a): it runs on the
+    /// value llama.cpp's preset reader sees, not the line's bytes: the spaces
+    /// after `=` are dropped, the value is cut at the first `;` or `#` and
+    /// trimmed of trailing spaces. Every entry of the `device`, `device-draft`
+    /// and `mmproj-device` list is then non-empty, holds no whitespace and no
+    /// `=`, is not `CPU` in any case, and `none` stands alone. Refused with
+    /// `device-bad-name`, naming the key and the entry. Values are NOT judged
+    /// against the probed device list. A body value with `;`/`#` is the bff's
+    /// 422 `comment-markers` before it reaches this rule.
+    fn device_refused(key: &str, value: &str) -> Refusal {
+        let lines = format!("{key} = {value}\n");
+        match model_profiles(&section("m", &lines)) {
+            Ok(()) => panic!("{key} = {value:?} taken, the rule refuses it"),
+            Err(r) => r,
+        }
+    }
+
+    fn device_taken(key: &str, value: &str) {
+        let lines = format!("{key} = {value}\n");
+        assert_eq!(
+            model_profiles(&section("m", &lines)),
+            Ok(()),
+            "{key} = {value:?} is a value llama.cpp takes"
+        );
+    }
+
+    #[test]
+    fn every_device_list_of_the_named_shape_is_refused_naming_key_and_entry() {
+        // The entry the refusal names is an entry of the value the reader sees:
+        // the preset reader trims the ends and cuts the comment, an entry keeps
+        // its spaces (llama.cpp trims nothing), so ` ROCm1` is what it rejects.
+        let r = device_refused("device", "ROCm0, ROCm1");
+        assert_eq!(r.key, "device-bad-name");
+        assert_eq!(r.values, vec!["device".to_string(), " ROCm1".to_string()]);
+        for (key, value, entry) in [
+            ("device", "CPU", "CPU"),
+            ("device", "cpu", "cpu"),
+            ("device", "CpU", "CpU"),
+            ("device", "ROCm0,,CUDA0", ""),
+            ("device", "none,ROCm0", "none"),
+            ("device", "ROCm0=x", "ROCm0=x"),
+            ("device", "ROCm0, ", ""),
+            ("device", "ROCm0\t,CUDA0", "ROCm0\t"),
+            ("device-draft", "a b", "a b"),
+            ("device-draft", "CPU", "CPU"),
+            ("mmproj-device", "CPU", "CPU"),
+            ("mmproj-device", "none,CUDA0", "none"),
+        ] {
+            let r = device_refused(key, value);
+            assert_eq!(r.key, "device-bad-name", "{key} = {value:?}");
+            assert_eq!(
+                r.values[0], key,
+                "{key} = {value:?}: the refusal names the key"
+            );
+            assert_eq!(
+                r.values.get(1),
+                Some(&entry.to_string()),
+                "{key} = {value:?}: the refusal names the entry"
+            );
+        }
+    }
+
+    #[test]
+    fn every_device_list_of_the_named_shape_is_taken() {
+        // `ROCm7` names no device the probe can answer: the rule does not know
+        // the probe, so it is taken (the web UI flags an id the list lacks).
+        for key in ["device", "device-draft", "mmproj-device"] {
+            device_taken(key, "ROCm7");
+            device_taken(key, "none");
+            device_taken(key, "ROCm0,CUDA0");
+            device_taken(key, "cuda0");
+            // The reader's own trims and its cut at the first marker ("As
+            // built" a): the rule sees `ROCm0` in every one of these.
+            device_taken(key, "ROCm0 ");
+            device_taken(key, "ROCm0 ; note");
+            device_taken(key, "ROCm0 # note");
+            device_taken(key, "ROCm0;x");
+            device_taken(key, "ROCm0#x");
+            device_taken(key, " ROCm0");
+        }
+        // The GPU distribution card's own three keys, as the card writes them.
+        device_taken("device", "ROCm0,CUDA0,Vulkan0");
+        assert_eq!(
+            model_profiles(&section("m", "split-mode = tensor\ntensor-split = 3,1\n")),
+            Ok(())
+        );
+    }
+
+    /// The rule of `tensor_split` (ARCHITECTURE.md "As built" b): the value the
+    /// reader sees, split as llama.cpp splits it (a run of `,` and `/` is one
+    /// separator, a trailing one ends the list), at most 15 entries (llama.cpp
+    /// throws at 16), each a finite number >= 0: the stricter number rule
+    /// stays (negative, `inf`, `nan`, `3x` refused, a preference). Refused
+    /// with `tensor-split-format`, naming the whole value.
+    fn tensor_refused(value: &str) -> Refusal {
+        match model_profiles(&section("m", &format!("tensor-split = {value}\n"))) {
+            Ok(()) => panic!("tensor-split = {value:?} taken, the rule refuses it"),
+            Err(r) => r,
+        }
+    }
+
+    #[test]
+    fn every_tensor_split_of_the_named_shape_is_refused_naming_the_value() {
+        let fifteen = (0..15)
+            .map(|i| i.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        let sixteen = format!("{fifteen},16");
+        for value in [
+            "3,x", "3x", "-1,1", "inf", "nan", "1,inf", "1.5,-0.5", ",3", "1 2", "x", &sixteen,
+        ] {
+            let r = tensor_refused(value);
+            assert_eq!(r.key, "tensor-split-format", "tensor-split = {value:?}");
+            assert_eq!(
+                r.values,
+                vec![value.to_string()],
+                "tensor-split = {value:?}: the refusal names the value"
+            );
+        }
+    }
+
+    #[test]
+    fn every_tensor_split_of_the_named_shape_is_taken() {
+        let fifteen = (0..15)
+            .map(|i| i.to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        for value in [
+            "1",
+            "0",
+            "1.5,0",
+            "3/1",
+            "3,1",
+            "1/2/3",
+            "0,0",
+            "1,1,1,1,1,1,1,1,1,1,1,1,1,1,1",
+            "1/1",
+            &fifteen,
+            // One separator per run, a trailing run ends the list ("As built" b).
+            "3,,1",
+            "3//1",
+            "3,1,",
+            // The reader cuts the value at the first marker and trims the ends
+            // ("As built" a): these read as `1`, `1` and the empty value.
+            "1;2",
+            "1;2,3",
+            " ",
+        ] {
+            assert_eq!(
+                model_profiles(&section("m", &format!("tensor-split = {value}\n"))),
+                Ok(()),
+                "tensor-split = {value:?} is a value llama.cpp takes"
+            );
+        }
+    }
+
+    /// The two keys of the GPU distribution rules (ARCHITECTURE.md 3): each in
+    /// `KEYS`, so the manager's refusal crosses the wire; in both strings files,
+    /// with the values its rule passes (`device-bad-name` the key and the entry,
+    /// `tensor-split-format` the value); and with a text arm that fills them in.
+    #[test]
+    fn the_gpu_distribution_keys_are_known_and_worded() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        for (key, values) in [
+            ("device-bad-name", vec!["device", " ROCm1"]),
+            ("tensor-split-format", vec!["3,x"]),
+        ] {
+            assert!(KEYS.contains(&key), "{key} missing from checks::KEYS");
+            for (name, table) in [("cli.toml", &cli), ("en_US.toml", &gui)] {
+                let text = table
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{key} missing from {name}"));
+                assert_eq!(placeholders(text), values.len(), "{name} {key}: {text:?}");
+            }
+            let r = refusal(key, &values);
+            let text = r.text();
+            assert!(!text.starts_with(key), "{key} has no text arm: {text:?}");
+            for v in &values {
+                assert!(text.contains(v), "{key}: {v:?} not in {text:?}");
+            }
+            assert_eq!(
+                Refusal::decode(&r.encode()),
+                Some(r.clone()),
+                "{key} round-trips on the wire"
             );
         }
     }

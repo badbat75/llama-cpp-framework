@@ -107,7 +107,7 @@ pub(crate) async fn list(
 /// signed-in user, which ends that session with the right that authorized it;
 /// 502 `client-other` for anything else, which keeps the session. The manager's
 /// detail stays out of the body.
-fn read_answer<T>(
+pub(crate) fn read_answer<T>(
     sessions: &Arc<Sessions>,
     session: &str,
     outcome: Result<
@@ -443,8 +443,9 @@ fn switch_failure(
 /// the file), name the key their value belongs to: `load-on-startup` and `model`.
 /// So does the pair `override-no-pattern` and `override-no-device`, whose
 /// `args[0]` is the position of the rule inside the value, and
-/// `moe-cache-with-tensor-split`, which carries no args: each marks the key of
-/// its own value. A refusal about the model profile's name (`invalid-model-profile-id`,
+/// `moe-cache-with-tensor-split`, which carries no args, and
+/// `tensor-split-format`, whose `args[0]` is the whole value: each marks the
+/// key of its own value. A refusal about the model profile's name (`invalid-model-profile-id`,
 /// `model-profile-name-taken`), and the memory check (its `args` are the model
 /// profile, an instance and two memory figures), have no key of the section to
 /// mark, so the answer carries no field at all.
@@ -456,6 +457,7 @@ fn field_of(key: &str, args: &[String]) -> Option<String> {
         "model-profile-no-model" | "model-profile-model-missing" => Some("model".to_string()),
         "fit-target-format" => Some("fit-target".to_string()),
         "override-no-pattern" | "override-no-device" => Some("override-tensor".to_string()),
+        "tensor-split-format" => Some("tensor-split".to_string()),
         "moe-cache-with-tensor-split" => Some("moe-cache-mib".to_string()),
         "invalid-model-profile-id" | "model-profile-name-taken" | "model-profile-over-memory" => {
             None
@@ -872,7 +874,10 @@ pub(crate) fn body_to_text(body: &[u8], file_text: &str, id: &str) -> ModelProfi
 /// parser (`pai_core::ini`) reads a value with `str::trim`, which knows every
 /// Unicode space, so a value that starts or ends with one beyond a space or a
 /// tab would be read back shorter than it went. Every set value goes through
-/// the configurator's `checks::comment_markers` for its key: 422
+/// the configurator's `checks::comment_markers` for its key, a device list
+/// included: the manager's device rule runs on the value the reader cuts at the
+/// first marker, so a marker never reaches it, and the web's value would reload
+/// in the file as less than what went. 422
 /// `comment-markers` listing every key whose value holds a marker, with the
 /// field the first of them. A value is written trimmed.
 fn parse_body(body: &Value) -> Result<(String, Edits), BodyError> {
@@ -916,7 +921,12 @@ fn parse_body(body: &Value) -> Result<(String, Edits), BodyError> {
                     return Err(BodyError::Malformed);
                 }
                 // `;` and `#` end a value for every reader of the file, so a
-                // value holding one reloads as less than what was written.
+                // value holding one reloads as less than what was written. A
+                // device list is no exception ("As built" (a) of the GPU
+                // distribution design): the manager's `checks::device_list`
+                // judges the value the reader cuts at the first marker, so it
+                // never sees one, and the refusal that names an entry is the
+                // one about the entry's shape.
                 if checks::comment_markers(key, text).is_err() {
                     markers.push(key.clone());
                 }

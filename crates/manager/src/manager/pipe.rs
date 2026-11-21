@@ -64,6 +64,8 @@ enum Request {
     DeleteServerProfile(String, String, Option<Principal>),
     /// Every server profile of the node, with the instance running it.
     ServerProfiles,
+    /// The node's compute devices, from the engine's own probe.
+    Devices(Option<Principal>),
     Authenticate(String, String),
 }
 
@@ -190,6 +192,10 @@ impl Request {
             // The list, like `Instances`, with no `As` form: it is answered to
             // any caller.
             "ServerProfiles" => Request::ServerProfiles,
+            // The device list: guarded, because the manager runs the engine to
+            // read it. It takes no argument.
+            "Devices" => Request::Devices(None),
+            "DevicesAs" => Request::Devices(principal().map(Some)?),
             "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
@@ -311,6 +317,28 @@ where
                 "instance": p.instance.clone().unwrap_or_default(),
             }))
             .collect::<Vec<_>>())),
+        // The node's compute devices, as the probe read them, with the second
+        // it ran beside them: 0 is no probe, as on the bus. The rows are the
+        // probe's own, in its order, the CPU pseudo-device left out by the
+        // core.
+        Request::Devices(principal) => requester(caller, principal)
+            .and_then(|who| manager.devices(&who))
+            .map(|list| {
+                json!({
+                    "probed_at": list.probed_at.unwrap_or_default(),
+                    "devices": list
+                        .devices
+                        .iter()
+                        .map(|d| json!({
+                            "id": d.id,
+                            "name": d.name,
+                            "backend": d.backend,
+                            "total_mib": d.total_mib,
+                            "free_mib": d.free_mib,
+                        }))
+                        .collect::<Vec<_>>(),
+                })
+            }),
         // The empty caller too goes to the core, which answers only the bff.
         Request::Authenticate(user, password) => manager
             .authenticate(caller, &user, &password)

@@ -28,8 +28,8 @@
 //! ```
 
 use super::{
-    ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ManagerVersion,
-    ServerProfileInfo,
+    ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
+    ManagerVersion, NodeDevices, ServerProfileInfo,
 };
 use zbus::blocking::Connection;
 use zbus::export::serde::Serialize;
@@ -58,6 +58,13 @@ type InstanceRow = (String, String, String, u16, Vec<String>, Vec<String>);
 /// instance runs names no instance: the empty string, which the client reads
 /// as none.
 type ServerProfileRow = (String, String, u16, Vec<String>, String);
+
+/// One row of `Devices`, as the bus answers it: `(s id, s name, s backend,
+/// t total_mib, t free_mib)`, the list beside the moment of the probe:
+/// `(t probed_at, a(ssstt) devices)`. The sizes are uint64: a card's total in
+/// MiB grows past a uint16, and a signed type has no reading for a device
+/// with no memory. A probe that answered nothing is 0 with an empty list.
+type DeviceRow = (String, String, String, u64, u64);
 
 /// The manager's client over one D-Bus connection.
 pub struct DbusClient {
@@ -328,6 +335,26 @@ impl ManagerClient for DbusClient {
         }
         .map(|_| ())
     }
+    fn devices(&self) -> Result<NodeDevices, ClientError> {
+        let (probed_at, rows): (u64, Vec<DeviceRow>) = match self.acting() {
+            Some(principal) => body(self.call("DevicesAs", &(principal,))?)?,
+            None => body(self.call("Devices", &())?)?,
+        };
+        Ok(NodeDevices {
+            // 0 on the wire is no probe, as the pipe reads it.
+            probed_at: (probed_at != 0).then_some(probed_at),
+            devices: rows
+                .into_iter()
+                .map(|(id, name, backend, total_mib, free_mib)| DeviceInfo {
+                    id,
+                    name,
+                    backend,
+                    total_mib,
+                    free_mib,
+                })
+                .collect(),
+        })
+    }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         body(self.call("Authenticate", &(user, password))?)
     }
@@ -335,7 +362,7 @@ impl ManagerClient for DbusClient {
 
 #[cfg(test)]
 mod tests {
-    use super::InstanceRow;
+    use super::{DeviceRow, InstanceRow};
     use zbus::zvariant::Type;
 
     /// The row `Instances` answers, as the client reads it: one D-Bus struct
@@ -350,6 +377,20 @@ mod tests {
             <InstanceRow as Type>::SIGNATURE.to_string(),
             "(sssqasas)",
             "the row is a struct of two strings, the profile, a uint16 and two arrays of strings"
+        );
+    }
+
+    /// The row of the device list (G2, ARCHITECTURE.md 1, "Wire"): `Devices()`
+    /// answers `(t probed_at, a(ssstt) devices)`, each row the id `device`
+    /// takes, the product name, the backend and the two sizes as uint64. The
+    /// sizes are `t`, not `q` or `i`: a card's total in MiB grows past a uint16,
+    /// and a signed type has no reading for a device with no memory.
+    #[test]
+    fn the_devices_row_is_the_struct_of_the_wire() {
+        assert_eq!(
+            <DeviceRow as Type>::SIGNATURE.to_string(),
+            "(ssstt)",
+            "the row is a struct of three strings and two uint64"
         );
     }
 }

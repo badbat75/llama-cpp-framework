@@ -44,6 +44,14 @@ pub const MANAGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// estimate, until a real run measures a save and its figure replaces this.
 pub const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// How long the device list read waits for the manager: the bound of the
+/// manager's own engine probe, `GPU_PROBE_TIMEOUT` of `pai-manager`'s
+/// `service.rs` (30 s, the design's), plus the transport's own 5 s. Longer than
+/// a read's [`MANAGER_TIMEOUT`], because the first read of a node starts a
+/// `llama-server` on it to read its cards, and the page must not be cut off
+/// while that runs.
+pub const DEVICES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 + 5);
+
 /// The bff's HTTP routes: `GET /api/version`, `GET /api/instances` from the
 /// system's manager, `/api/session` through the system's authenticator,
 /// `GET /api/instances/{id}/server` and its `PUT`, the control verbs
@@ -337,8 +345,8 @@ fn router_with_policy(
             "/api/profiles/model/{id}/enabled",
             axum::routing::put(set_enabled),
         )
-        .merge(control::routes(connect, timeout, sessions.clone()))
-        .merge(node::routes(sessions, versions_dir))
+        .merge(control::routes(connect.clone(), timeout, sessions.clone()))
+        .merge(node::routes(connect, sessions, versions_dir))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn_with_state(policy, origin::guard))
         .layer(axum::middleware::from_fn(framing))

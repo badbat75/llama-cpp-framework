@@ -405,16 +405,29 @@ impl FileGroup for SystemGroup {
 /// (b) 2). A seam, so a test answers any pool and runs no engine.
 pub trait GpuTotals {
     fn gpus(&self) -> Option<Vec<pai_core::devices::Gpu>>;
+    /// The node's compute devices as the probe's own lines, with the moment it
+    /// ran: what a model profile distributes a model over, the CPU pseudo-device
+    /// left out, the CUDA and Vulkan views of one card both kept, in the probe's
+    /// order. `probed_at` `None` with no list when no probe answered, which is
+    /// nothing to distribute and never an error.
+    fn devices(&self) -> pai_core::client::NodeDevices;
 }
 
 /// The node's GPU totals answered as nothing: no pool, so the memory check is
-/// skipped. The default of [`Manager::new`], so a manager that wires no seam
-/// measures nothing.
+/// skipped, and no device list, so a page has nothing to distribute. The
+/// default of [`Manager::new`], so a manager that wires no seam measures
+/// nothing.
 pub struct NoGpus;
 
 impl GpuTotals for NoGpus {
     fn gpus(&self) -> Option<Vec<pai_core::devices::Gpu>> {
         None
+    }
+    fn devices(&self) -> pai_core::client::NodeDevices {
+        pai_core::client::NodeDevices {
+            probed_at: None,
+            devices: Vec::new(),
+        }
     }
 }
 
@@ -422,21 +435,45 @@ impl GpuTotals for NoGpus {
 /// killed (ARCHITECTURE.md (b) 2, "The GPUs").
 pub const GPU_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// One probe, as the cache keeps it: the modification time the exe had when it
+/// ran, the Unix second it ran, and the device lines it printed.
+type ProbeCache = (
+    Option<std::time::SystemTime>,
+    u64,
+    Vec<pai_core::devices::DeviceOption>,
+);
+
+/// One probe's answer: the Unix second it ran and the device lines it printed.
+/// `None` when it answered nothing, which is a probe that failed: a spawn that
+/// could not start, a probe killed at the bound, a block that named no device.
+type ProbeAnswer = Option<(u64, Vec<pai_core::devices::DeviceOption>)>;
+
 /// The node's GPU totals from the engine's own probe: `--list-devices` run
-/// against `exe` as the manager, killed after `timeout`, the block reduced
-/// to the physical pool by `pai_core::devices`, cached for the manager's
-/// life keyed by the exe's modification time, and a probe that failed not
-/// cached (ARCHITECTURE.md (b) 2: a node with no card, a probe that timed
-/// out, spawned badly or named no card is answered `None`, which skips the
-/// memory check).
+/// against `exe` as the manager, killed after `timeout`, the block read once and
+/// kept as the engine printed it, and a probe that failed not cached
+/// (ARCHITECTURE.md (b) 2: a probe that timed out, spawned badly or named no
+/// device is answered as nothing, which skips the memory check and leaves the
+/// device page empty; a node that named only the CPU pseudo-device is answered
+/// with its time and an empty list, and is not cached either, "As built" (c)).
 pub struct ProbedGpus {
     exe: std::path::PathBuf,
     timeout: std::time::Duration,
-    /// The pool the last probe answered, with the modification time the exe had
-    /// when it was read: an engine upgrade replaces the file, and the next call
-    /// probes again. A probe that failed leaves nothing here, so the fix of the
-    /// engine is picked up.
-    cached: std::sync::Mutex<Option<(Option<std::time::SystemTime>, Vec<pai_core::devices::Gpu>)>>,
+    /// The device lines the last probe parsed, with the modification time the
+    /// exe had then and the second it ran: an engine upgrade replaces the file,
+    /// and the next call probes again. A probe that named no device, and one
+    /// that named only the CPU pseudo-device ("As built" (c)), leave nothing
+    /// here: the node is read again at the next call, so the fix of the engine
+    /// or of a GPU backend is picked up.
+    cached: std::sync::Mutex<Option<ProbeCache>>,
+    /// How many probes ran, and the answer of the last of them, failure
+    /// included: a reader that queued behind a probe takes that probe's answer
+    /// ("As built" (d)), so no reader pays a second bound and queued readers
+    /// never run one probe each.
+    last: std::sync::Mutex<(u64, ProbeAnswer)>,
+    /// Held across the probe, so the reads that arrive together run one of it:
+    /// a cold probe starts a `llama-server` on the node, and two at once
+    /// contend for the cards they are there to read.
+    probing: std::sync::Mutex<()>,
 }
 
 impl ProbedGpus {
@@ -447,6 +484,8 @@ impl ProbedGpus {
             exe: exe.into(),
             timeout,
             cached: std::sync::Mutex::new(None),
+            last: std::sync::Mutex::new((0, None)),
+            probing: std::sync::Mutex::new(()),
         }
     }
 
@@ -458,35 +497,119 @@ impl ProbedGpus {
             GPU_PROBE_TIMEOUT,
         )
     }
-}
 
-impl GpuTotals for ProbedGpus {
-    fn gpus(&self) -> Option<Vec<pai_core::devices::Gpu>> {
-        let mtime = std::fs::metadata(&self.exe).and_then(|f| f.modified()).ok();
-        let cached = self
+    /// The cached device lines, when there is a probe of this very `exe` to
+    /// answer with: a poisoned lock is taken over, every write leaves the
+    /// entry whole.
+    fn cached(
+        &self,
+        mtime: Option<std::time::SystemTime>,
+    ) -> Option<(u64, Vec<pai_core::devices::DeviceOption>)> {
+        let (at, probed, devices) = self
             .cached
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        if let Some((at, pool)) = cached {
-            if at == mtime {
-                return Some(pool);
-            }
+            .clone()?;
+        (at == mtime).then_some((probed, devices))
+    }
+
+    /// How many probes ran so far: read before taking [`Self::probing`] and
+    /// compared, once it is held, with the counter of that moment. A bigger
+    /// counter means a probe ran while the caller waited, and its answer is the
+    /// caller's.
+    fn attempts(&self) -> u64 {
+        self.last.lock().unwrap_or_else(|e| e.into_inner()).0
+    }
+
+    /// The device lines of a probe, with the second it ran: the cache when the
+    /// exe has not changed since it, else a probe run under [`Self::probing`],
+    /// the cache read again first so the readers that queued behind it take its
+    /// answer, and the answer of the probe that ran while the caller waited
+    /// taken as it is, failure included ("As built" (d): a reader never waits
+    /// past one bound and never runs a probe of its own behind a failed one).
+    /// `None` when no probe answered: a spawn that failed, a probe killed at the
+    /// bound, and a block that named no device, none of them cached.
+    fn probe(&self) -> ProbeAnswer {
+        let mtime = std::fs::metadata(&self.exe).and_then(|f| f.modified()).ok();
+        if let Some(answer) = self.cached(mtime) {
+            return Some(answer);
+        }
+        let seen = self.attempts();
+        let _serial = self.probing.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(answer) = self.cached(mtime) {
+            return Some(answer);
+        }
+        let (attempt, answered) = self.last.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if attempt > seen {
+            return answered;
         }
         // The block is read out of stdout and stderr together (`proc`'s rule
         // for the llama-server probes), and the exit status is not asked: an
         // engine whose backend fails late exits non-zero with a block worth
-        // reading. A pool with no card is a probe that failed.
-        let pool =
+        // reading. A block that names no device is a probe that failed.
+        let parsed =
             pai_core::proc::run_hidden_probe_within(&self.exe, ["--list-devices"], self.timeout)
-                .map(|out| {
-                    pai_core::devices::gpu_pool(&pai_core::devices::parse(
-                        &pai_core::proc::combined_output(&out),
-                    ))
+                .map(|out| pai_core::devices::parse(&pai_core::proc::combined_output(&out)))
+                .unwrap_or_default();
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_secs())
+            .unwrap_or_default();
+        let answer = (!parsed.is_empty()).then_some((at, parsed));
+        // A probe is kept only when it read a card of its own: a CPU-only node
+        // answers its empty list with its time and is read again next time
+        // ("As built" (c), the memory check's retry of 10b-3 restored), while a
+        // partial failure (one backend down, one up) is kept until the exe
+        // changes, because that node was read.
+        if let Some((at, parsed)) = answer.clone() {
+            if parsed.iter().any(|device| !device.is_cpu()) {
+                *self.cached.lock().unwrap_or_else(|e| e.into_inner()) = Some((mtime, at, parsed));
+            }
+        }
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = (attempt + 1, answer.clone());
+        answer
+    }
+}
+
+/// The backend a device id stands for: the id with the digits the engine adds
+/// to number the cards of one backend taken off its end, its case kept as
+/// `device` names it (`ROCm0` is `ROCm`, `Vulkan1` is `Vulkan`).
+fn backend_of_id(id: &str) -> String {
+    id.trim_end_matches(|c: char| c.is_ascii_digit())
+        .to_string()
+}
+
+impl GpuTotals for ProbedGpus {
+    fn gpus(&self) -> Option<Vec<pai_core::devices::Gpu>> {
+        let (_, parsed) = self.probe()?;
+        // The pool is a reduction of the probe's lines: the CUDA and Vulkan
+        // views of one card folded into it, the integrated graphics and the
+        // CPU left out. A node the probe read with no card of its own has
+        // nothing to measure against.
+        let pool = pai_core::devices::gpu_pool(&parsed);
+        (!pool.is_empty()).then_some(pool)
+    }
+    fn devices(&self) -> pai_core::client::NodeDevices {
+        let Some((probed_at, parsed)) = self.probe() else {
+            return pai_core::client::NodeDevices {
+                probed_at: None,
+                devices: Vec::new(),
+            };
+        };
+        pai_core::client::NodeDevices {
+            probed_at: Some(probed_at),
+            devices: parsed
+                .iter()
+                .filter(|device| !device.is_cpu())
+                .map(|device| pai_core::client::DeviceInfo {
+                    id: device.id.clone(),
+                    name: device.name.clone(),
+                    backend: backend_of_id(&device.id),
+                    total_mib: device.total_mib,
+                    free_mib: device.free_mib,
                 })
-                .filter(|pool| !pool.is_empty())?;
-        *self.cached.lock().unwrap_or_else(|e| e.into_inner()) = Some((mtime, pool.clone()));
-        Some(pool)
+                .collect(),
+        }
     }
 }
 
@@ -1494,6 +1617,39 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             }
         }
         failures
+    }
+
+    /// The node's compute devices, from the engine's own probe, with the moment
+    /// it ran: the list a model profile page distributes a model over. A read,
+    /// so it records no action, reaches no service manager and writes no file;
+    /// the probe runs as the manager, which is why the right is asked before it.
+    /// A call for the caller's own asks `control` of polkit WITHOUT interaction
+    /// ([`Authority::is_authorized_quietly`], the way a read that can prompt for
+    /// nothing is asked): a device list is worth no challenge over the user's own
+    /// session, so a caller polkit would challenge is refused. A call naming a
+    /// principal is the `As` form, gated on the pair alone, as every other `As`
+    /// verb. Either refusal is [`ManagerError::NotAuthorized`] with the probe
+    /// never run: a caller with no right must not make the manager spawn the
+    /// engine.
+    pub fn devices(&self, who: &Requester) -> Result<pai_core::client::NodeDevices, ManagerError> {
+        self.authorize_quietly(who, Action::Control)?;
+        Ok(self.gpus.devices())
+    }
+
+    /// The gate of a read that may prompt for nothing: the principal gate first,
+    /// then polkit asked quietly, and for a call that vouches for a user nothing
+    /// of polkit at all (the pair is its right, and polkit's subject is the
+    /// caller, never the user the caller vouches for).
+    fn authorize_quietly(&self, who: &Requester, action: Action) -> Result<(), ManagerError> {
+        self.gate_principal(who)?;
+        if who.principal.is_some() {
+            return Ok(());
+        }
+        if self.authority.is_authorized_quietly(&who.caller, action) {
+            Ok(())
+        } else {
+            Err(ManagerError::NotAuthorized)
+        }
     }
 
     /// Whether `password` is `user`'s, and whether that user may configure:
@@ -2697,12 +2853,22 @@ pub(crate) mod fakes {
         }
     }
 
+    /// One entry of the fake's device list: `(id, name, backend, total MiB,
+    /// free MiB)`, and the whole list with the probe's moment beside it.
+    type FakeDeviceRow = (String, String, String, u64, u64);
+    type FakeDeviceList = (Option<u64>, Vec<FakeDeviceRow>);
+
     /// A GPU pool the memory check measures against: `gpus` answered as the
     /// node's cards, each written as `(device id, name, total MiB)`, and every
     /// answer recorded (lowered ids), so a test can pin how often the manager
     /// probed.
     pub struct FakeGpus {
         pub gpus: Option<Vec<(String, String, u64)>>,
+        /// The device list G2's `Devices()` answers: the probe's moment
+        /// (`None`: a probe that answered nothing) and the entries, each
+        /// `(id, name, backend, total MiB, free MiB)`. `None` (the default):
+        /// the seam speaks no device list, as a manager of an older protocol.
+        pub devices: Option<FakeDeviceList>,
         pub asked: std::sync::Arc<Mutex<Vec<String>>>,
     }
 
@@ -2714,13 +2880,42 @@ pub(crate) mod fakes {
                         .map(|(id, mib)| (id.to_string(), format!("NVIDIA GeForce {id}"), *mib))
                         .collect(),
                 ),
+                devices: None,
                 asked: std::sync::Arc::new(Mutex::new(Vec::new())),
             }
+        }
+        /// This seam answering `devices` as `list`, probed at `probed_at`.
+        pub fn with_devices(
+            mut self,
+            probed_at: Option<u64>,
+            list: &[(&str, &str, &str, u64, u64)],
+        ) -> Self {
+            self.devices = Some((
+                probed_at,
+                list.iter()
+                    .map(|(id, name, backend, total, free)| {
+                        (
+                            id.to_string(),
+                            name.to_string(),
+                            backend.to_string(),
+                            *total,
+                            *free,
+                        )
+                    })
+                    .collect(),
+            ));
+            self
+        }
+        /// A seam whose probe answered nothing: no time, no device.
+        pub fn no_devices(mut self) -> Self {
+            self.devices = Some((None, Vec::new()));
+            self
         }
         /// A node with no card: the seam answers `None`.
         pub fn none() -> Self {
             Self {
                 gpus: None,
+                devices: None,
                 asked: std::sync::Arc::new(Mutex::new(Vec::new())),
             }
         }
@@ -2738,6 +2933,30 @@ pub(crate) mod fakes {
                     })
                     .collect()
             })
+        }
+        fn devices(&self) -> pai_core::client::NodeDevices {
+            self.asked.lock().unwrap().push("devices".to_string());
+            self.devices
+                .as_ref()
+                .map(|(probed_at, list)| pai_core::client::NodeDevices {
+                    probed_at: *probed_at,
+                    devices: list
+                        .iter()
+                        .map(
+                            |(id, name, backend, total, free)| pai_core::client::DeviceInfo {
+                                id: id.clone(),
+                                name: name.clone(),
+                                backend: backend.clone(),
+                                total_mib: *total,
+                                free_mib: *free,
+                            },
+                        )
+                        .collect(),
+                })
+                .unwrap_or(pai_core::client::NodeDevices {
+                    probed_at: None,
+                    devices: vec![],
+                })
         }
     }
 
@@ -13234,6 +13453,267 @@ pub(crate) fn manager_write_file_if_e2e() {
             listing(&sys),
             ["instances.ini", "models@slow.ini", "server@slow.ini"],
             "no temp file left; the landed write renders the instance's presets file"
+        );
+    }
+}
+
+/// G2 of "The GPU distribution on the model profile page" (ARCHITECTURE.md 1):
+/// the node's device list, `Devices()` under `control` asked quietly (no
+/// interaction, as a read that can prompt for nothing is asked today) and
+/// `DevicesAs(principal)` as every `As` verb: the bff's account only, and a
+/// principal who is a current member of `pai`. Every refusal is
+/// `NotAuthorized` with the probe never run: a caller with no right must not
+/// make root spawn the engine. The read reaches no service manager, records no
+/// action, and reads and writes no file. Names the tests assume, the contract
+/// for the coder: `Manager::devices(&self, who: &Requester)`, and
+/// `GpuTotals::devices(&self) -> pai_core::client::NodeDevices` beside `gpus()`.
+#[cfg(test)]
+pub(crate) fn manager_devices_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGpus, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let own = Requester {
+        caller: desktop.clone(),
+        principal: None,
+    };
+    let own_bff = Requester {
+        caller: bff.clone(),
+        principal: None,
+    };
+
+    // The block of `tests/gpu_probe.rs`, as the widened probe caches it: three
+    // entries in the probe's order, the CPU pseudo-device left out.
+    let cards = |probed_at: Option<u64>| {
+        FakeGpus::new(&[("CUDA0", 12281)]).with_devices(
+            probed_at,
+            &[
+                (
+                    "CUDA0",
+                    "NVIDIA GeForce RTX 4070 SUPER",
+                    "CUDA",
+                    12281u64,
+                    10844u64,
+                ),
+                (
+                    "Vulkan0",
+                    "AMD Radeon(TM) Graphics",
+                    "Vulkan",
+                    33593u64,
+                    31913u64,
+                ),
+                (
+                    "Vulkan1",
+                    "NVIDIA GeForce RTX 4070 SUPER",
+                    "Vulkan",
+                    11997u64,
+                    10844u64,
+                ),
+            ],
+        )
+    };
+    let listed = |probed_at: Option<u64>| pai_core::client::NodeDevices {
+        probed_at,
+        devices: vec![
+            pai_core::client::DeviceInfo {
+                id: "CUDA0".into(),
+                name: "NVIDIA GeForce RTX 4070 SUPER".into(),
+                backend: "CUDA".into(),
+                total_mib: 12281,
+                free_mib: 10844,
+            },
+            pai_core::client::DeviceInfo {
+                id: "Vulkan0".into(),
+                name: "AMD Radeon(TM) Graphics".into(),
+                backend: "Vulkan".into(),
+                total_mib: 33593,
+                free_mib: 31913,
+            },
+            pai_core::client::DeviceInfo {
+                id: "Vulkan1".into(),
+                name: "NVIDIA GeForce RTX 4070 SUPER".into(),
+                backend: "Vulkan".into(),
+                total_mib: 11997,
+                free_mib: 10844,
+            },
+        ],
+    };
+
+    let core = |allow: bool, quiet: bool, gpus: FakeGpus| {
+        let asked = gpus.asked.clone();
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let manager = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(quiet).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_log(log)
+        .with_gpus(gpus);
+        (manager, asked, lines)
+    };
+
+    // ── The bff asking for a member: the list, the probe asked once ──────
+    {
+        let (m, asked, lines) = core(true, true, cards(Some(1_766_271_243)));
+        assert_eq!(m.devices(&member), Ok(listed(Some(1_766_271_243))));
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec!["devices".to_string()],
+            "one probe per call: the cache is the probe's, not the manager's"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            Vec::<fakes::Call>::new(),
+            "the read reaches no service manager"
+        );
+        assert_eq!(
+            *lines.lock().unwrap(),
+            Vec::<String>::new(),
+            "a read records no action"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![],
+            "the pair is the right: polkit is asked for nothing, not even quietly"
+        );
+        let listing: Vec<String> = std::fs::read_dir(&sys)
+            .expect("the config dir")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(listing, Vec::<String>::new(), "the read writes no file");
+    }
+
+    // ── The caller's own call: control asked quietly, never with a prompt ─
+    {
+        let (m, asked, _lines) = core(true, true, cards(Some(1_766_271_243)));
+        assert_eq!(m.devices(&own_bff), Ok(listed(Some(1_766_271_243))));
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![(bff.clone(), Action::Control)],
+            "control asked without interaction, the way a read that may prompt for nothing is asked"
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            Vec::<(Caller, Action)>::new(),
+            "never asked with a prompt: a device list is worth no challenge"
+        );
+        assert_eq!(*asked.lock().unwrap(), vec!["devices".to_string()]);
+    }
+
+    // ── No control: refused, and the probe never runs ─────────────────────
+    {
+        // A caller with control for the prompting check and none for the quiet
+        // one: the device list is the quiet check's, so it is refused.
+        let (m, asked, _lines) = core(true, false, cards(Some(1_766_271_243)));
+        assert_eq!(
+            m.devices(&own),
+            Err(ManagerError::NotAuthorized),
+            "a caller polkit would challenge, or refuses quietly, gets no list"
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            Vec::<String>::new(),
+            "a refused call runs no engine"
+        );
+    }
+    {
+        // No control at all.
+        let (m, asked, _lines) = core(false, false, cards(Some(1_766_271_243)));
+        assert_eq!(
+            m.devices(&own),
+            Err(ManagerError::NotAuthorized),
+            "a caller without control"
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            Vec::<String>::new(),
+            "a refused call runs no engine"
+        );
+    }
+
+    // ── The As form: the bff's account, and a current member of `pai` ─────
+    {
+        let (m, asked, _) = core(true, true, cards(Some(1_766_271_243)));
+        assert_eq!(
+            m.devices(&outsider),
+            Err(ManagerError::NotAuthorized),
+            "bob is no member of `pai`"
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            Vec::<String>::new(),
+            "a non-member's read runs no engine"
+        );
+    }
+    {
+        // A caller that is not the bff's account vouching for a user.
+        let (m, asked, _) = core(true, true, cards(Some(1_766_271_243)));
+        let forger = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.devices(&forger),
+            Err(ManagerError::NotAuthorized),
+            "only the bff's account vouches for a user"
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            Vec::<String>::new(),
+            "a forged pair runs no engine"
+        );
+    }
+    {
+        // A member removed between two calls is refused at the next one.
+        let passwords = FakePasswords::new();
+        let admins = passwords.admins.clone();
+        let manager = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(FakeActionLog::new())
+        .with_gpus(cards(Some(1_766_271_243)));
+        assert_eq!(manager.devices(&member), Ok(listed(Some(1_766_271_243))));
+        admins.lock().unwrap().remove("alice");
+        assert_eq!(
+            manager.devices(&member),
+            Err(ManagerError::NotAuthorized),
+            "the membership is read at every call, never cached"
+        );
+    }
+
+    // ── A probe that answered nothing: an empty list, no time ─────────────
+    {
+        let (m, _asked, _) = core(true, true, FakeGpus::new(&[]).no_devices());
+        assert_eq!(
+            m.devices(&member),
+            Ok(pai_core::client::NodeDevices {
+                probed_at: None,
+                devices: Vec::new(),
+            }),
+            "no probe answer: no card and no time, never an error and never a card"
         );
     }
 }

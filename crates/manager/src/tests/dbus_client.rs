@@ -1891,3 +1891,190 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
         );
     }
 }
+
+// ── The node's device list over the bus (G2, ARCHITECTURE.md 1) ──────────
+//
+// The same answer the stream gives (`tests/pipe_client.rs` pins it there):
+// the list the probe answered, in the probe's order, with its moment.
+// `Devices()` is the caller's own read, gated on `control` asked WITHOUT
+// interaction; `DevicesAs(s)` is the bff's, for a current member of `pai`. A
+// refused read runs no engine. Names the tests assume, the contract for the
+// coder: `ManagerClient::devices()`, the interface's `Devices` and `DevicesAs`,
+// and the `(t, a(ssstt))` reply of the design.
+
+/// The moment the seam's probe answered.
+const PROBED_AT: u64 = 1_766_271_243;
+
+/// The device list the seam answers: three entries, in the probe's order.
+fn cards() -> crate::manager::service::fakes::FakeGpus {
+    crate::manager::service::fakes::FakeGpus::new(&[("CUDA0", 12281)]).with_devices(
+        Some(PROBED_AT),
+        &[
+            (
+                "CUDA0",
+                "NVIDIA GeForce RTX 4070 SUPER",
+                "CUDA",
+                12281u64,
+                10844u64,
+            ),
+            (
+                "Vulkan0",
+                "AMD Radeon(TM) Graphics",
+                "Vulkan",
+                33593u64,
+                31913u64,
+            ),
+            (
+                "Vulkan1",
+                "NVIDIA GeForce RTX 4070 SUPER",
+                "Vulkan",
+                11997u64,
+                10844u64,
+            ),
+        ],
+    )
+}
+
+/// The list the client must hand back for [`cards`].
+fn listed() -> pai_core::client::NodeDevices {
+    pai_core::client::NodeDevices {
+        probed_at: Some(PROBED_AT),
+        devices: [
+            (
+                "CUDA0",
+                "NVIDIA GeForce RTX 4070 SUPER",
+                "CUDA",
+                12281u64,
+                10844u64,
+            ),
+            (
+                "Vulkan0",
+                "AMD Radeon(TM) Graphics",
+                "Vulkan",
+                33593u64,
+                31913u64,
+            ),
+            (
+                "Vulkan1",
+                "NVIDIA GeForce RTX 4070 SUPER",
+                "Vulkan",
+                11997u64,
+                10844u64,
+            ),
+        ]
+        .iter()
+        .map(
+            |(id, name, backend, total, free)| pai_core::client::DeviceInfo {
+                id: (*id).to_string(),
+                name: (*name).to_string(),
+                backend: (*backend).to_string(),
+                total_mib: *total,
+                free_mib: *free,
+            },
+        )
+        .collect(),
+    }
+}
+
+/// A core answering the device list of [`cards`], with `bff` as the bff's
+/// account over the fake accounts (alice a member of `pai`, bob not), and
+/// polkit allowing the quiet check as `quiet`.
+fn devices_core(bff: &str, quiet: bool) -> (Arc<Core>, Arc<std::sync::Mutex<Vec<String>>>) {
+    use crate::manager::service::fakes::{FakeGroup, FakePasswords};
+    let seam = cards();
+    let asked = seam.asked.clone();
+    let core = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true)
+            .quietly(quiet)
+            .bff(&Caller(bff.into())),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new())
+    .with_passwords(FakePasswords::new())
+    .with_gpus(seam);
+    (Arc::new(core), asked)
+}
+
+/// pai-core's `devices` against the interface: the bff's own read, the
+/// member's read vouched for, and both refusals. The row's signature is
+/// pinned in `pai_core::client::dbus`.
+#[test]
+fn the_dbus_client_reads_the_node_devices() {
+    let bff = ":1.9";
+    let other = ":1.42";
+
+    // The bff's own read, and the member's read it vouches for.
+    let (c, asked) = devices_core(bff, true);
+    let (_server, client) = connect(&c, Some(bff));
+    let client = Arc::new(client);
+    assert_eq!(
+        on("devices", &client, |c| c.devices()),
+        Ok(listed()),
+        "the list the probe answered, in its order"
+    );
+    assert_eq!(
+        *c.authority().asked_quietly.lock().unwrap(),
+        vec![(Caller(bff.into()), Action::Control)],
+        "control asked without interaction"
+    );
+    assert_eq!(
+        *c.authority().asked.lock().unwrap(),
+        Vec::<(Caller, Action)>::new(),
+        "never asked with a prompt"
+    );
+    let member = Arc::new(client.acting_for("alice"));
+    assert_eq!(
+        on("devices as alice", &member, |c| c.devices()),
+        Ok(listed()),
+        "the member's read, vouched for by the bff"
+    );
+    let outsider = Arc::new(client.acting_for("bob"));
+    assert_eq!(
+        on("devices as bob", &outsider, |c| c.devices()),
+        Err(ClientError::NotAuthorized),
+        "bob is no member of `pai`"
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        vec!["devices".to_string(); 2],
+        "one probe per accepted call, none for the refusal"
+    );
+    assert_eq!(
+        *c.service().calls.lock().unwrap(),
+        Vec::<Call>::new(),
+        "the read reaches no service manager"
+    );
+
+    // A caller polkit refuses the quiet check: refused, and no probe.
+    let (c, asked) = devices_core(other, false);
+    let (_server, client) = connect(&c, Some(other));
+    let client = Arc::new(client);
+    assert_eq!(
+        on("devices", &client, |c| c.devices()),
+        Err(ClientError::NotAuthorized),
+        "no control, no list"
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        Vec::<String>::new(),
+        "a refused read runs no engine"
+    );
+
+    // A caller that is not the bff, vouching for a member: refused, no probe.
+    let (c, asked) = devices_core(bff, true);
+    let (_server, client) = connect(&c, Some(other));
+    let client = Arc::new(client);
+    assert_eq!(
+        on("devices as alice", &client, |c| c
+            .acting_for("alice")
+            .devices()),
+        Err(ClientError::NotAuthorized),
+        "only the bff's account vouches"
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        Vec::<String>::new(),
+        "a forged pair runs no engine"
+    );
+}

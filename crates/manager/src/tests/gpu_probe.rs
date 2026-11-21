@@ -674,3 +674,316 @@ fn call_arguments(hay: &str, name: &str) -> Option<String> {
     }
     None
 }
+
+// ── The device list of the same probe (G2, ARCHITECTURE.md 1) ─────────────
+//
+// The probe is widened, not doubled: the cache holds the parsed device list
+// and the moment of the probe, and `gpus()` reduces it as today. The device
+// list is every entry the engine reports except the CPU pseudo-device, in the
+// probe's order, the CUDA/Vulkan twin of one card and an integrated card
+// kept: the page lists what the node has, and `device` takes the id.
+//
+// Names the tests assume, the contract for the coder: `GpuTotals::devices()`
+// beside `gpus()`, answering `pai_core::client::NodeDevices`.
+
+/// One call of the device list, off the test's own thread, as `probe` is for
+/// the pool. The scripted exes it runs are POSIX-shell only, so it exists on
+/// Unix, as every test that calls it.
+#[cfg(unix)]
+fn devices_of(gpus: &Arc<ProbedGpus>) -> (pai_core::client::NodeDevices, Duration) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let one = Arc::clone(gpus);
+    std::thread::spawn(move || {
+        let _ = tx.send(one.devices());
+    });
+    let at = Instant::now();
+    let answer = match rx.recv_timeout(HARNESS) {
+        Ok(answer) => answer,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!(
+            "the device list never answered within {}: the bound of the probe is not enforced",
+            HARNESS.as_secs()
+        ),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!(
+            "the device list's `devices()` panicked (its own panic is printed above): the \
+             widened probe is not implemented"
+        ),
+    };
+    (answer, at.elapsed())
+}
+
+/// `BLOCK` as a device list: three entries in the probe's order, each the id,
+/// the product name, the backend (the id without its digits) and the two
+/// sizes. The ids and sizes are the block's; the backend of `Vulkan0` is
+/// `Vulkan`, of `CUDA0` `CUDA`. Of the scripted exes only, so it exists on
+/// Unix, as every test that calls it.
+#[cfg(unix)]
+fn listed() -> Vec<pai_core::client::DeviceInfo> {
+    [
+        (
+            "CUDA0",
+            "NVIDIA GeForce RTX 4070 SUPER",
+            "CUDA",
+            12281,
+            10844,
+        ),
+        ("Vulkan0", "AMD Radeon(TM) Graphics", "Vulkan", 33593, 31913),
+        (
+            "Vulkan1",
+            "NVIDIA GeForce RTX 4070 SUPER",
+            "Vulkan",
+            11997,
+            10844,
+        ),
+    ]
+    .iter()
+    .map(
+        |(id, name, backend, total, free)| pai_core::client::DeviceInfo {
+            id: (*id).to_string(),
+            name: (*name).to_string(),
+            backend: (*backend).to_string(),
+            total_mib: *total,
+            free_mib: *free,
+        },
+    )
+    .collect()
+}
+
+#[test]
+#[cfg(unix)]
+fn the_fake_exe_printing_a_device_block_gives_the_device_list() {
+    let box_ = Sandbox::new();
+    let exe = box_.script(&script(&box_.counter(), BLOCK, Stream::Stdout, 0, None));
+
+    let (got, _took) = devices_of(&probed(&exe, QUICK));
+
+    let at = got
+        .probed_at
+        .expect("a probe that answered carries its moment");
+    assert!(at > 0, "the probe's moment is Unix seconds, not 0: {at}");
+    assert_eq!(
+        got.devices,
+        listed(),
+        "every device the block names, in the block's order, with the id `device` takes"
+    );
+    let runs = box_.runs();
+    assert_eq!(runs.len(), 1, "the exe ran {:?}, once expected", runs);
+    assert!(
+        runs[0].contains("--list-devices"),
+        "the same argument the pool's probe uses: {runs:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn the_device_list_and_the_memory_check_run_the_exe_once() {
+    let box_ = Sandbox::new();
+    let exe = box_.script(&script(&box_.counter(), BLOCK, Stream::Stdout, 0, None));
+    let gpus = probed(&exe, QUICK);
+
+    let (list, _) = devices_of(&gpus);
+    let (pool, _) = probe(&gpus);
+
+    assert!(!list.devices.is_empty(), "the list answered");
+    assert_eq!(pool, Some(pool_of_block()), "the check measures the pool");
+    assert_eq!(
+        box_.runs().len(),
+        1,
+        "one probe for both: the cache is shared, not doubled: {:?}",
+        box_.runs()
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn two_device_list_calls_at_once_run_the_exe_once() {
+    let box_ = Sandbox::new();
+    // The exe sleeps a second before it answers, so both callers reach the
+    // probe while it runs: the second waits for it and reads its result, and
+    // no caller has a second engine child of its own.
+    let body = format!(
+        "echo \"run $*\" >> '{}'\nsleep 1\ncat <<'DEVICES'\n{BLOCK}DEVICES\nexit 0\n",
+        box_.counter().display()
+    );
+    let exe = box_.script(&body);
+    let gpus = probed(&exe, QUICK);
+
+    let threads = [0, 1].map(|_| {
+        let one = Arc::clone(&gpus);
+        std::thread::spawn(move || one.devices())
+    });
+    let answers: Vec<pai_core::client::NodeDevices> = threads
+        .into_iter()
+        .map(|t| t.join().expect("the device list panicked"))
+        .collect();
+
+    assert_eq!(answers[0], answers[1], "both read the same probe");
+    assert_eq!(answers[0].devices, listed());
+    assert_eq!(
+        box_.runs().len(),
+        1,
+        "two callers at once run the exe once: {:?}",
+        box_.runs()
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_probe_naming_only_the_cpu_is_an_empty_list_with_a_time_and_is_not_cached() {
+    // "As built" ruling (c): a probe that parsed only the CPU line answers,
+    // with its time, and is NOT cached: a GPU backend that failed once is
+    // read again at the next call.
+    let box_ = Sandbox::new();
+    let exe = box_.script(&script(&box_.counter(), NO_CARD, Stream::Stdout, 0, None));
+    let gpus = probed(&exe, QUICK);
+
+    let (first, _) = devices_of(&gpus);
+    let (second, _) = devices_of(&gpus);
+
+    let at = first
+        .probed_at
+        .expect("the probe answered: it has a moment");
+    assert!(at > 0, "a CPU-only node has a probe time: {at}");
+    assert_eq!(
+        first.devices,
+        Vec::<pai_core::client::DeviceInfo>::new(),
+        "the CPU pseudo-device is never a device to distribute over"
+    );
+    let at = second
+        .probed_at
+        .expect("the second call probes again: it has its own moment");
+    assert!(at > 0, "the second CPU-only answer carries a time: {at}");
+    assert_eq!(
+        second.devices,
+        Vec::<pai_core::client::DeviceInfo>::new(),
+        "the second call answers the empty list too"
+    );
+    assert_eq!(
+        box_.runs().len(),
+        2,
+        "a probe that parsed only the CPU line is not cached: {:?}",
+        box_.runs()
+    );
+    assert_eq!(
+        probe(&gpus).0,
+        None,
+        "the memory check of a CPU-only node is still skipped"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_killed_probe_is_an_empty_list_with_no_time_and_is_not_cached() {
+    let box_ = Sandbox::new();
+    let (counter, pidfile, modefile) = (box_.counter(), box_.pidfile(), box_.modefile());
+    std::fs::write(&modefile, "hang").expect("mode file");
+    let exe = box_.script(&script(
+        &counter,
+        BLOCK,
+        Stream::Stdout,
+        0,
+        Some((&pidfile, &modefile)),
+    ));
+    let gpus = probed(&exe, Duration::from_secs(2));
+
+    let (first, _) = devices_of(&gpus);
+    let (second, _) = devices_of(&gpus);
+
+    assert_eq!(
+        first,
+        pai_core::client::NodeDevices {
+            probed_at: None,
+            devices: vec![],
+        },
+        "a probe that is killed has no list and no moment"
+    );
+    assert_eq!(second, first, "the next caller gets the same answer");
+    assert_eq!(
+        box_.runs().len(),
+        2,
+        "a probe that did not complete is not cached: {:?}",
+        box_.runs()
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_reader_that_waited_takes_the_answer_of_the_probe_it_waited_for() {
+    // "As built" ruling (d): the reader that queued behind a probe takes that
+    // probe's answer, failure included: an exe killed at the bound, two reads
+    // at once, the exe runs once, both answer the killed probe's empty list
+    // with time 0, and the pair pays about one bound, not two.
+    let box_ = Sandbox::new();
+    let (counter, pidfile, modefile) = (box_.counter(), box_.pidfile(), box_.modefile());
+    std::fs::write(&modefile, "hang").expect("mode file");
+    let exe = box_.script(&script(
+        &counter,
+        BLOCK,
+        Stream::Stdout,
+        0,
+        Some((&pidfile, &modefile)),
+    ));
+    let bound = Duration::from_secs(2);
+    let gpus = probed(&exe, bound);
+
+    let at = Instant::now();
+    let threads = [0, 1].map(|_| {
+        let one = Arc::clone(&gpus);
+        std::thread::spawn(move || one.devices())
+    });
+    let answers: Vec<pai_core::client::NodeDevices> = threads
+        .into_iter()
+        .map(|t| t.join().expect("the device list panicked"))
+        .collect();
+    let took = at.elapsed();
+
+    assert_eq!(
+        answers[0],
+        pai_core::client::NodeDevices {
+            probed_at: None,
+            devices: vec![],
+        },
+        "the first reader gets the killed probe's answer: no list, no moment"
+    );
+    assert_eq!(
+        answers[1], answers[0],
+        "the reader that waited takes the answer of the probe it waited for, \
+         failure included: no second probe after a failed one"
+    );
+    assert_eq!(
+        box_.runs().len(),
+        1,
+        "two readers at once, one killed probe: {:?}",
+        box_.runs()
+    );
+    assert!(
+        took < bound + Duration::from_millis(1500),
+        "both readers pay about one bound ({bound:?}), not a probe each: {took:?}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_silent_probe_is_an_empty_list_with_no_time_and_is_not_cached() {
+    let box_ = Sandbox::new();
+    let exe = box_.script(&script(&box_.counter(), "", Stream::Nothing, 0, None));
+    let gpus = probed(&exe, QUICK);
+
+    let (first, _) = devices_of(&gpus);
+    let (second, _) = devices_of(&gpus);
+
+    assert_eq!(
+        first,
+        pai_core::client::NodeDevices {
+            probed_at: None,
+            devices: vec![],
+        },
+        "an exe printing nothing names no device and has no moment"
+    );
+    assert_eq!(second, first);
+    assert_eq!(
+        box_.runs().len(),
+        2,
+        "a probe with no device line is not cached: {:?}",
+        box_.runs()
+    );
+}

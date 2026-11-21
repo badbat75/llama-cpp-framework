@@ -136,3 +136,7 @@ description: What the architect has learned about this project's components, int
   bff runs no value checks itself: it filters body keys and relays the manager's refusals.
 - zbus 5.19.0 connections have no method timeout unless built with one; a manager call that can run a
   cold `--list-devices` (30 s bound) needs a bff deadline above the 5 s read `MANAGER_TIMEOUT`.
+- A value rule judges what llama.cpp's preset reader yields (`common/preset.cpp`, a PEG grammar):
+  spaces after `=` and before a `;`/`#`/newline dropped, the value cut at the first `;` or `#`; that is
+  `checks.rs` `RawSection::get`. Never judge the raw line: a hand-edit then blocks every save of the
+  section. `-ts`'s `[,/]+` split gives an empty leading piece but no empty trailing one.
