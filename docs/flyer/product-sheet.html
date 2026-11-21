@@ -3,215 +3,417 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Private AI Framework: product sheet</title>
+<title>Private AI Framework</title>
 <meta name="description" content="Private AI Framework: large language models served on your own GPUs, on your own machines, governed by your own administrators.">
 <style>
   :root {
-    --accent: #14557c;
-    --ink: #171b1f;
-    --muted: #5c6670;
-    --line: #ccd5dc;
-    --wash: #f1f5f8;
+    --deep: #0c2b2e;
+    --deep-2: #12393d;
+    --accent: #ffb21e;
+    --ink: #142225;
+    --muted: #55666a;
+    --line: #d5dfe0;
+    --wash: #eef4f3;
+    --paper: #ffffff;
+    --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", "URW Palladio L", Georgia, serif;
+    --body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
-  @page { size: A4; margin: 14mm; }
+  @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
-  html {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body {
     margin: 0;
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #dfe6e6;
     color: var(--ink);
-    font-size: 10.5pt;
-    line-height: 1.42;
-    background: #fff;
+    font-family: var(--body);
+    font-size: 9.6pt;
+    line-height: 1.4;
   }
-  .sheet { max-width: 210mm; margin: 0 auto; padding: 14mm 14mm 10mm; }
-  header { border-bottom: 2px solid var(--accent); padding-bottom: 5mm; }
-  h1 {
-    margin: 0;
-    font-size: 23pt;
-    line-height: 1.1;
-    letter-spacing: -0.01em;
-    color: var(--accent);
+  .sheet {
+    width: 100%;
+    max-width: 210mm;
+    margin: 0 auto;
+    background: var(--paper);
+    overflow: hidden;
   }
-  .kicker {
-    margin: 0 0 1.5mm;
-    font-size: 8.5pt;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
-  .lede { margin: 3mm 0 0; font-size: 12pt; max-width: 165mm; }
+  .pad { padding-left: 14mm; padding-right: 14mm; }
+  section, header, footer { break-inside: avoid; page-break-inside: avoid; }
   h2 {
+    margin: 0 0 3mm;
+    font-family: var(--display);
+    font-size: 15pt;
+    font-weight: 700;
+    line-height: 1.15;
+    color: var(--deep);
+  }
+  .eyebrow {
     margin: 0 0 1.5mm;
-    font-size: 11pt;
+    font-size: 7.5pt;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #2f7d73;
+  }
+
+  /* Hero */
+  .hero {
+    background: var(--deep);
+    background-image: radial-gradient(120mm 90mm at 92% 10%, var(--deep-2), transparent 70%);
+    color: #e9f2f1;
+    padding-top: 9mm;
+    padding-bottom: 8mm;
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 6mm;
+    align-items: center;
+  }
+  .brand {
+    margin: 0 0 4.5mm;
+    font-size: 8.5pt;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
     color: var(--accent);
   }
-  .blocks {
+  .hero h1 {
+    margin: 0;
+    font-family: var(--display);
+    font-size: 27pt;
+    font-weight: 700;
+    line-height: 1.04;
+    letter-spacing: -0.01em;
+    color: #ffffff;
+  }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero .sub {
+    margin: 4mm 0 0;
+    font-size: 10.5pt;
+    line-height: 1.45;
+    color: #bfd3d1;
+    max-width: 108mm;
+  }
+  .hero svg { width: 100%; height: 54mm; display: block; }
+
+  /* Benefit tiles */
+  .tiles {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6mm 8mm;
-    margin: 6mm 0 0;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4mm;
+    padding-top: 7mm;
   }
-  .block { break-inside: avoid; page-break-inside: avoid; }
-  ul { margin: 0; padding: 0; list-style: none; }
-  li {
-    margin: 0 0 1.4mm;
-    padding-left: 4.5mm;
+  .tile {
+    background: var(--wash);
+    border-top: 1.2mm solid var(--accent);
+    padding: 3mm 3.5mm 3.2mm;
+  }
+  .tile svg { width: 8mm; height: 8mm; display: block; margin-bottom: 1.8mm; }
+  .tile h3 {
+    margin: 0 0 1.5mm;
+    font-family: var(--display);
+    font-size: 11.5pt;
+    line-height: 1.15;
+    color: var(--deep);
+  }
+  .tile p { margin: 0; font-size: 8.3pt; color: var(--muted); line-height: 1.38; }
+
+  /* What you get + How it fits */
+  .middle {
+    display: grid;
+    grid-template-columns: 1.08fr 1fr;
+    gap: 7mm;
+    padding-top: 7mm;
+  }
+  .checks { margin: 0; padding: 0; list-style: none; }
+  .checks li {
     position: relative;
-    font-size: 9.5pt;
+    padding-left: 6mm;
+    margin: 0 0 1.3mm;
+    font-size: 8.6pt;
+    line-height: 1.3;
   }
-  li::before {
+  .checks li::before {
     content: "";
     position: absolute;
     left: 0;
-    top: 1.6mm;
-    width: 2mm;
-    height: 2mm;
-    background: var(--accent);
+    top: 0.5mm;
+    width: 3.6mm;
+    height: 3.6mm;
+    border-radius: 50%;
+    background: var(--deep);
   }
-  .strip {
-    margin-top: 7mm;
-    padding: 4mm 5mm 3mm;
-    background: var(--wash);
-    border-left: 2px solid var(--accent);
-    break-inside: avoid;
-    page-break-inside: avoid;
+  .checks li::after {
+    content: "";
+    position: absolute;
+    left: 1.15mm;
+    top: 1.25mm;
+    width: 1.1mm;
+    height: 1.8mm;
+    border: solid var(--accent);
+    border-width: 0 0.45mm 0.45mm 0;
+    transform: rotate(45deg);
   }
-  .strip p { margin: 0 0 2mm; font-size: 9.5pt; }
-  svg { display: block; width: 100%; height: auto; }
-  svg text { font-family: inherit; font-size: 12px; fill: var(--ink); }
-  svg .small { font-size: 10.5px; fill: var(--muted); }
-  svg .box { fill: #fff; stroke: var(--line); stroke-width: 1.5; }
-  svg .node { fill: #fff; stroke: var(--accent); stroke-width: 1.5; }
-  svg .accent { fill: var(--accent); }
-  svg .label { fill: var(--accent); font-size: 10.5px; }
-  svg .arrow { stroke: var(--accent); stroke-width: 1.5; fill: none; }
-  footer {
+  .checks b { color: var(--deep); }
+  .fit svg { width: 100%; height: auto; display: block; }
+  .fit svg text { font-family: var(--body); font-size: 11px; fill: var(--ink); }
+  .fit svg .t { font-weight: 700; fill: var(--deep); }
+  .fit svg .s { font-size: 9.5px; fill: var(--muted); }
+  .fit svg .w { fill: #ffffff; font-weight: 700; }
+  .fit svg .ws { fill: #bfd3d1; font-size: 9.5px; }
+  .fit .caption { margin: 2mm 0 0; font-size: 8.4pt; color: var(--muted); }
+
+  /* Platforms */
+  .platforms {
     margin-top: 6mm;
-    padding-top: 3mm;
-    border-top: 1px solid var(--line);
-    font-size: 9pt;
-    color: var(--muted);
-    break-inside: avoid;
-    page-break-inside: avoid;
+    padding-top: 3.5mm;
+    padding-bottom: 3.5mm;
+    background: var(--wash);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2mm 2mm;
   }
-  .contact { color: var(--ink); font-size: 10pt; }
+  .platforms .label {
+    font-size: 7.5pt;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #2f7d73;
+    margin-right: 1mm;
+  }
+  .badge {
+    display: inline-block;
+    padding: 1mm 2.6mm;
+    border-radius: 10mm;
+    font-size: 8pt;
+    font-weight: 600;
+    background: var(--paper);
+    color: var(--deep);
+    border: 0.3mm solid var(--line);
+  }
+  .badge.gpu { background: var(--deep); color: #ffffff; border-color: var(--deep); }
+  .sep { width: 0.3mm; height: 5mm; background: var(--line); margin: 0 0.5mm; }
+
+  /* Call to action */
+  .cta {
+    background: var(--deep);
+    color: #e9f2f1;
+    padding-top: 7mm;
+    padding-bottom: 6mm;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 3mm 8mm;
+    align-items: center;
+  }
+  .cta h2 { color: #ffffff; font-size: 17pt; margin: 0; }
+  .cta .lead { margin: 1.5mm 0 0; color: #bfd3d1; font-size: 10pt; }
+  .cta .contact {
+    background: var(--accent);
+    color: var(--deep);
+    font-weight: 700;
+    font-size: 11.5pt;
+    padding: 3.5mm 6mm;
+    border-radius: 1.5mm;
+    white-space: nowrap;
+  }
+  .cta .note {
+    grid-column: 1 / -1;
+    margin: 2mm 0 0;
+    padding-top: 2.5mm;
+    border-top: 0.3mm solid #2a4d50;
+    font-size: 8pt;
+    color: #8fa9a6;
+  }
+
+  @media screen {
+    body { padding: 8mm 0; }
+    .sheet { box-shadow: 0 2mm 10mm rgba(12, 43, 46, 0.18); }
+  }
   @media print {
-    .sheet { max-width: none; padding: 0; }
-    body { font-size: 10pt; }
+    body { background: var(--paper); }
+    .sheet { max-width: none; width: 210mm; height: 297mm; display: flex; flex-direction: column; }
+    .cta { margin-top: auto; }
+  }
+  @media screen and (max-width: 640px) {
+    .pad { padding-left: 16px; padding-right: 16px; }
+    .hero, .middle, .cta { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: 1fr 1fr; }
+    .hero h1 { font-size: 26pt; }
   }
 </style>
 </head>
 <body>
 <div class="sheet">
 
-  <header>
-    <p class="kicker">Product sheet</p>
-    <h1>Private AI Framework</h1>
-    <p class="lede">Large language models served on your own GPUs, in your own machine room, governed by your own administrators. Your models, your data and your prompts stay inside the building.</p>
+  <header class="hero pad">
+    <div>
+      <p class="brand">Private AI Framework</p>
+      <h1>Your own AI, on your own GPUs. <em>Nothing leaves the building.</em></h1>
+      <p class="sub">Large language models served on hardware you own and governed by your own administrators: your models, your data and your prompts stay inside.</p>
+    </div>
+    <svg viewBox="0 0 260 220" role="img" aria-label="A GPU server guarded by a shield">
+      <!-- floor glow -->
+      <ellipse cx="120" cy="204" rx="104" ry="10" fill="#081f21"/>
+      <!-- server chassis -->
+      <rect x="34" y="34" width="150" height="168" rx="10" fill="#174549" stroke="#2a6a6b" stroke-width="2"/>
+      <rect x="46" y="48" width="126" height="10" rx="3" fill="#0c2b2e"/>
+      <circle cx="160" cy="53" r="2.6" fill="#ffb21e"/>
+      <circle cx="151" cy="53" r="2.6" fill="#4fbfa8"/>
+      <!-- GPU cards -->
+      <g>
+        <rect x="46" y="68" width="126" height="28" rx="4" fill="#0f3437" stroke="#2a6a6b"/>
+        <circle cx="66" cy="82" r="9" fill="none" stroke="#4fbfa8" stroke-width="2"/>
+        <circle cx="66" cy="82" r="2.5" fill="#4fbfa8"/>
+        <circle cx="94" cy="82" r="9" fill="none" stroke="#4fbfa8" stroke-width="2"/>
+        <circle cx="94" cy="82" r="2.5" fill="#4fbfa8"/>
+        <rect x="114" y="76" width="48" height="4" rx="2" fill="#2a6a6b"/>
+        <rect x="114" y="84" width="34" height="4" rx="2" fill="#2a6a6b"/>
+      </g>
+      <g>
+        <rect x="46" y="104" width="126" height="28" rx="4" fill="#0f3437" stroke="#2a6a6b"/>
+        <circle cx="66" cy="118" r="9" fill="none" stroke="#4fbfa8" stroke-width="2"/>
+        <circle cx="66" cy="118" r="2.5" fill="#4fbfa8"/>
+        <circle cx="94" cy="118" r="9" fill="none" stroke="#4fbfa8" stroke-width="2"/>
+        <circle cx="94" cy="118" r="2.5" fill="#4fbfa8"/>
+        <rect x="114" y="112" width="48" height="4" rx="2" fill="#2a6a6b"/>
+        <rect x="114" y="120" width="26" height="4" rx="2" fill="#2a6a6b"/>
+      </g>
+      <g>
+        <rect x="46" y="140" width="126" height="28" rx="4" fill="#0f3437" stroke="#2a6a6b"/>
+        <circle cx="66" cy="154" r="9" fill="none" stroke="#4fbfa8" stroke-width="2"/>
+        <circle cx="66" cy="154" r="2.5" fill="#4fbfa8"/>
+        <circle cx="94" cy="154" r="9" fill="none" stroke="#4fbfa8" stroke-width="2"/>
+        <circle cx="94" cy="154" r="2.5" fill="#4fbfa8"/>
+        <rect x="114" y="148" width="48" height="4" rx="2" fill="#2a6a6b"/>
+        <rect x="114" y="156" width="40" height="4" rx="2" fill="#2a6a6b"/>
+      </g>
+      <rect x="46" y="178" width="126" height="12" rx="3" fill="#0c2b2e"/>
+      <rect x="52" y="182" width="60" height="4" rx="2" fill="#2a6a6b"/>
+      <!-- orbit -->
+      <path d="M22 120 C 10 60, 90 10, 160 22" fill="none" stroke="#4fbfa8" stroke-width="1.4" stroke-dasharray="3 5" opacity="0.7"/>
+      <circle cx="160" cy="22" r="3.5" fill="#4fbfa8"/>
+      <!-- shield -->
+      <path d="M200 92 L240 106 V140 C240 166 222 182 200 192 C178 182 160 166 160 140 V106 Z" fill="#ffb21e" stroke="#0c2b2e" stroke-width="3"/>
+      <rect x="187" y="134" width="26" height="22" rx="3" fill="#0c2b2e"/>
+      <path d="M192 134 V126 a8 8 0 0 1 16 0 V134" fill="none" stroke="#0c2b2e" stroke-width="4"/>
+      <circle cx="200" cy="144" r="3" fill="#ffb21e"/>
+      <rect x="198.8" y="145" width="2.4" height="6" fill="#ffb21e"/>
+    </svg>
   </header>
 
-  <main>
-    <div class="blocks">
-      <section class="block">
-        <h2>Private by design</h2>
-        <ul>
-          <li>Inference runs on hardware you own. No subscription, no external service, no account with anyone else: the software runs entirely on machines you administer.</li>
-          <li>The model files sit on your disks. You choose which model answers which request, and you keep every version.</li>
-          <li>Administration is a group on the machine. Only its members can change anything, and a visitor who has not signed in sees nothing but the sign-in page.</li>
-          <li>The serving endpoint takes an API key, and its request log records the caller, the model and the timing, never the prompt text or the reply.</li>
-        </ul>
-      </section>
-
-      <section class="block">
-        <h2>Runs on your hardware</h2>
-        <ul>
-          <li>Built on llama.cpp, the open source inference engine, always a published release, never a nightly build.</li>
-          <li>NVIDIA CUDA, AMD ROCm/HIP and Vulkan on Linux and Windows; Apple Silicon Metal, and Vulkan through MoltenVK, on macOS.</li>
-          <li>Mixed and matched cards in one machine: work spread across several GPUs, weights split between them, experts of a large model kept in system memory and streamed to the card when needed.</li>
-          <li>Installed like any other software: <code>.deb</code> and <code>.rpm</code> on Linux, an MSI on Windows, a <code>.pkg</code> on macOS, with the GPU runtimes bundled, so a server needs only its driver.</li>
-          <li>Engine and framework are packaged apart: refresh the engine, upgrade the tools, each on its own schedule, without touching the other's configuration.</li>
-        </ul>
-      </section>
-
-      <section class="block">
-        <h2>Operate it simply</h2>
-        <ul>
-          <li>A manager service runs several model server instances on one host, each with its own network address, its own server profile and its own set of model profiles.</li>
-          <li>The web admin console, behind sign-in, starts, stops and restarts an instance, adds a new instance and removes one, switches start at boot, and lists the model profiles with their state.</li>
-          <li>GPU distribution is a table of the detected cards, not a command line. A memory check reads the model and refuses a profile that would not fit the machine before it is accepted.</li>
-          <li>The same operations from a desktop configurator, and from a command line for the hosts you reach over SSH.</li>
-          <li>A live hardware view, one sample a second: each GPU, its memory and what spills out of it, the PCIe link, the CPU, RAM and disk, next to the server's log, followed as it grows.</li>
-          <li>Benchmarking built in, with the method written down and versioned, so a change you measured is a change you can show, kept in a database that lets two configurations compare.</li>
-        </ul>
-      </section>
-
-      <section class="block">
-        <h2>Scale out</h2>
-        <ul>
-          <li>One OpenAI-compatible endpoint in front of every instance: authenticated, sending each request to the instance serving the model asked for, so the tools your teams already use keep working.</li>
-          <li>Every request logged for audit: who called, which model, which instance answered, the status, the latency and the token counts, never the text.</li>
-          <li>Hardware metrics kept as history, and log consultation across the instances, on the same console.</li>
-          <li>A super-manager above the nodes: one console governing many GPU servers, where an administrator of the group administers every node that joined.</li>
-          <li>The same packages, the same console and the same endpoint from one workstation to a rack of GPU servers.</li>
-        </ul>
-      </section>
+  <section class="tiles pad" aria-label="Why it matters">
+    <div class="tile">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M6 18 L20 7 L34 18 V34 H6 Z" fill="none" stroke="#0c2b2e" stroke-width="2.6" stroke-linejoin="round"/><rect x="15" y="22" width="10" height="12" fill="#ffb21e"/></svg>
+      <h3>Nothing leaves the building</h3>
+      <p>Inference on hardware you own. No subscription, no external service, no outside account.</p>
     </div>
+    <div class="tile">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="15" cy="13" r="6" fill="none" stroke="#0c2b2e" stroke-width="2.6"/><path d="M4 34 C4 25 26 25 26 34" fill="none" stroke="#0c2b2e" stroke-width="2.6"/><rect x="25" y="20" width="12" height="10" rx="2" fill="#ffb21e"/><path d="M28 20 V17 a3 3 0 0 1 6 0 V20" fill="none" stroke="#0c2b2e" stroke-width="2"/></svg>
+      <h3>Your admins decide</h3>
+      <p>Administration is a group on the machine. Visitors see only the sign-in page.</p>
+    </div>
+    <div class="tile">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="4" y="9" width="32" height="10" rx="2" fill="none" stroke="#0c2b2e" stroke-width="2.6"/><rect x="4" y="23" width="32" height="10" rx="2" fill="none" stroke="#0c2b2e" stroke-width="2.6"/><circle cx="11" cy="14" r="2.4" fill="#ffb21e"/><circle cx="11" cy="28" r="2.4" fill="#ffb21e"/></svg>
+      <h3>Every GPU you have</h3>
+      <p>NVIDIA, AMD and Apple Silicon. Mixed cards in one machine, one model split across them.</p>
+    </div>
+    <div class="tile">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M14 12 L5 20 L14 28" fill="none" stroke="#0c2b2e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M26 12 L35 20 L26 28" fill="none" stroke="#0c2b2e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="20" r="3.6" fill="#ffb21e"/></svg>
+      <h3>Works with your tools</h3>
+      <p>One OpenAI-compatible endpoint, with an API key. The tools your teams use keep working.</p>
+    </div>
+  </section>
 
-    <section class="strip">
-      <h2>How it fits</h2>
-      <p>A GPU node runs the manager service, which starts and stops the engine instances and owns their configuration. Your administrators work in the web console; your applications call one OpenAI-compatible endpoint.</p>
-      <svg viewBox="0 0 660 232" role="img" aria-labelledby="t d" preserveAspectRatio="xMidYMid meet">
-        <title id="t">One GPU node, its web console and its OpenAI-compatible endpoint</title>
-        <desc id="d">Your applications call the node's OpenAI-compatible endpoint. The web admin console, the desktop configurator and the command line talk to the manager service, which runs the engine instances on the node's GPUs.</desc>
+  <div class="middle pad">
+    <section>
+      <p class="eyebrow">What you get</p>
+      <h2>Everything to run it in-house</h2>
+      <ul class="checks">
+        <li><b>Web admin console</b>: start, stop, restart, add and remove instances</li>
+        <li><b>Several instances per host</b>, each with its own profiles</li>
+        <li><b>GPU distribution as a table</b>, and a memory check that refuses what will not fit</li>
+        <li><b>Live hardware view</b>, one sample a second, beside the server log</li>
+        <li><b>Audit log</b>: caller, model and timing, never the text</li>
+        <li><b>Built-in benchmarking</b> with a versioned method</li>
+        <li><b>Desktop configurator and command line</b>, the same operations</li>
+        <li><b>Native packages</b>, GPU runtimes bundled: a server needs only its driver</li>
+        <li><b>Built on llama.cpp releases</b>; engine and tools upgrade apart</li>
+        <li><b>One console for many GPU servers</b>, with metrics history and logs</li>
+      </ul>
+    </section>
 
-        <rect class="box" x="4" y="72" width="140" height="86" rx="6"/>
-        <text class="accent" x="18" y="98">Your applications</text>
-        <text class="small" x="18" y="118">chat, agents, IDE</text>
-        <text class="small" x="18" y="134">internal apps</text>
+    <section class="fit">
+      <p class="eyebrow">How it fits</p>
+      <h2>One node, one endpoint</h2>
+      <svg viewBox="0 0 330 262" role="img" aria-labelledby="ft fd">
+        <title id="ft">How the framework fits in</title>
+        <desc id="fd">Your applications call one OpenAI-compatible endpoint on your GPU node. Administrators use the web admin console. The manager service runs the model instances on the node's GPUs.</desc>
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#ffb21e"/></marker>
+        </defs>
 
-        <path class="arrow" d="M144 115 H 244"/>
-        <polygon class="accent" points="244,110 256,115 244,120"/>
-        <text class="label" x="150" y="104">OpenAI-compatible</text>
-        <text class="label" x="150" y="132">API, with a key</text>
+        <!-- top actors -->
+        <rect x="4" y="4" width="150" height="44" rx="8" fill="#eef4f3"/>
+        <text class="t" x="16" y="23">Your applications</text>
+        <text class="s" x="16" y="38">chat, agents, IDE, your apps</text>
 
-        <rect class="node" x="256" y="6" width="400" height="220" rx="8"/>
-        <text class="accent" x="272" y="30">Your GPU node</text>
+        <rect x="176" y="4" width="150" height="44" rx="8" fill="#eef4f3"/>
+        <text class="t" x="188" y="23">Administrators</text>
+        <text class="s" x="188" y="38">sign in to the console</text>
 
-        <rect class="box" x="272" y="42" width="176" height="42" rx="5"/>
-        <text x="284" y="60">Web admin console</text>
-        <text class="small" x="284" y="76">administrators sign in</text>
+        <path d="M79 50 V82" stroke="#ffb21e" stroke-width="2.4" marker-end="url(#ah)"/>
+        <path d="M251 50 V82" stroke="#ffb21e" stroke-width="2.4" marker-end="url(#ah)"/>
 
-        <rect class="box" x="462" y="42" width="176" height="42" rx="5"/>
-        <text x="474" y="60">Configurator and CLI</text>
-        <text class="small" x="474" y="76">the same operations</text>
+        <!-- node -->
+        <rect x="4" y="86" width="322" height="172" rx="10" fill="#0c2b2e"/>
+        <text class="ws" x="16" y="250">YOUR GPU NODE</text>
 
-        <rect class="box" x="272" y="98" width="366" height="38" rx="5"/>
-        <text x="284" y="122">Manager service: instances, files, checks, rights</text>
+        <rect x="16" y="98" width="138" height="38" rx="6" fill="#ffb21e"/>
+        <text x="26" y="114" style="font-weight:700;fill:#0c2b2e">OpenAI-compatible</text>
+        <text x="26" y="128" style="font-size:9.5px;fill:#0c2b2e">endpoint, with a key</text>
 
-        <rect class="box" x="272" y="150" width="114" height="44" rx="5"/>
-        <text x="284" y="168">Instance 1</text>
-        <text class="small" x="284" y="184">model profiles</text>
+        <rect x="176" y="98" width="138" height="38" rx="6" fill="#12393d" stroke="#2a6a6b"/>
+        <text class="w" x="186" y="114">Web admin console</text>
+        <text class="ws" x="186" y="128">behind sign-in</text>
 
-        <rect class="box" x="398" y="150" width="114" height="44" rx="5"/>
-        <text x="410" y="168">Instance 2</text>
-        <text class="small" x="410" y="184">model profiles</text>
+        <rect x="16" y="148" width="298" height="28" rx="6" fill="#12393d" stroke="#2a6a6b"/>
+        <text class="w" x="26" y="166">Manager service</text>
+        <text class="ws" x="132" y="166">instances, files, checks, rights</text>
 
-        <rect class="box" x="524" y="150" width="114" height="44" rx="5"/>
-        <text x="536" y="168">Instance 3</text>
-        <text class="small" x="536" y="184">model profiles</text>
-
-        <text class="small" x="272" y="212">The node's GPUs: NVIDIA CUDA, AMD ROCm/HIP, Vulkan</text>
+        <g>
+          <rect x="16" y="188" width="92" height="44" rx="6" fill="#174549"/>
+          <text class="w" x="26" y="206">Instance 1</text>
+          <text class="ws" x="26" y="221">model profiles</text>
+          <rect x="119" y="188" width="92" height="44" rx="6" fill="#174549"/>
+          <text class="w" x="129" y="206">Instance 2</text>
+          <text class="ws" x="129" y="221">model profiles</text>
+          <rect x="222" y="188" width="92" height="44" rx="6" fill="#174549"/>
+          <text class="w" x="232" y="206">Instance 3</text>
+          <text class="ws" x="232" y="221">model profiles</text>
+        </g>
+        <text class="ws" x="214" y="250">on the node's GPUs</text>
       </svg>
     </section>
-  </main>
+  </div>
 
-  <footer>
-    <p>Some capabilities are in development; ask us for the current status.</p>
-    <p class="contact">Talk to us: [contact]</p>
+  <section class="platforms pad" aria-label="Platforms">
+    <span class="label">Runs on</span>
+    <span class="badge">Linux</span>
+    <span class="badge">Windows</span>
+    <span class="badge">macOS on Apple Silicon</span>
+    <span class="sep" aria-hidden="true"></span>
+    <span class="badge gpu">NVIDIA CUDA</span>
+    <span class="badge gpu">AMD ROCm</span>
+    <span class="badge gpu">Vulkan</span>
+    <span class="badge gpu">Metal</span>
+  </section>
+
+  <footer class="cta pad">
+    <div>
+      <h2>Bring your AI in-house.</h2>
+      <p class="lead">Let us show you how it fits your machines and your teams.</p>
+    </div>
+    <div class="contact">Talk to us: [contact]</div>
+    <p class="note">Some capabilities are in development; ask us for the current status.</p>
   </footer>
 
 </div>

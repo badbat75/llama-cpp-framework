@@ -500,3 +500,8 @@ Lessons only: the rules are in `AGENTS.md`.
   its own `--user-data-dir`, and add `--window-size=W,H --screenshot` to see the screen view.
   Inline SVG paints in document order: a later filled `rect` covers a `text` drawn before it, which
   a screenshot catches and a PDF text dump does not.
+- Rendering a print page (`docs/flyer/`): Playwright loads from `require('<repo>/fe/ux/node_modules/playwright')`
+  in a script under `/tmp`; `page.pdf({preferCSSPageSize: true, printBackground: true})`, count pages with
+  `re.findall(rb'/Type\s*/Page[^s]', pdf)`, look at `pdftoppm -r 60 -png`. A fixed `height: 297mm` with
+  `overflow: hidden` hides overflow from the page count: compare the sheet's `scrollHeight` and
+  `clientHeight` under `emulateMedia({media: 'print'})` at 794x1123 px.
