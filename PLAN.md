@@ -543,6 +543,10 @@ the director's own certificate comes from the same CA; revocation is a refused r
 This replaces the pinned fingerprints of the 2026-11-15 design. mTLS 1.3 encrypts and authenticates
 every link; signatures only where proof is needed afterwards: the director's commands recorded in a
 node's log and the model store's manifest. The architect revises Part 2 and its slices 2 and 3.
+Also (user, 2026-11-21): no offline root (a compromised director is already total compromise); a node
+joined to a director accepts no communication that is not authenticated with the director's
+certificates it holds in its cache (no fallback, no plain or unknown peer); renewal is automatic, well
+before expiry.
 Decided (user, 2026-11-21, ARCHITECTURE.md "The model store", slice 10): nodes pull from the
 super-manager over the step's mTLS channel; the store is filled from Hugging Face (checksum checked)
 and by upload; one size cap on the store.
