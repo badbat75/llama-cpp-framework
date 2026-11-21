@@ -367,7 +367,7 @@ colour; in dark an enabled field is darker than its card.
   grows from its Remove button of 24 px, the chips' + and the pill's Add and Cancel 32 px; the
   checkbox box is 20 px (1.25rem) inside a `.check` label of at least 24 px that activates it, with no
   other target within the 24 px circle (2.5.8's spacing exception); the switch track 44 by 24 px.
-- **Motion**: none needed; a spinner, if any, stops under `prefers-reduced-motion: reduce`.
+- **Motion**: opacity fades only, 150 ms `ease-out`, all declared inside one `@media (prefers-reduced-motion: no-preference)` block: content replacing a skeleton, a chip entering, the expanded chip pill, a state badge changing (brief 17 U17g). Nothing moves or scales; skeletons never animate.
 
 ### 5.2 Components
 
@@ -612,6 +612,17 @@ Each is one React component, reused by every page.
   A heading that follows a Value list gets `--space-6` above it (`.assets + h3`, brief 13), so a
   new group never reads as one more row of the list before it. Nothing in it takes focus ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
   technique [H40](https://www.w3.org/WAI/WCAG22/Techniques/html/H40)).
+- **Skeleton** (a page's first read pending, brief 17 U17a): `aria-hidden` blocks in the shape of
+  the content to come, `.skeleton` (one line, `1lh`) and `.skeleton-box` (`8rem`), `--surface` with a
+  transparent border for forced colours, `--radius`, never animated; shown only after 300 ms, so a
+  fast reply shows no flash. The page's loading text stays the `role="status"`, visually hidden.
+- **Sortable table** (brief 17 U17c): a sortable column's `th` holds a native button with the
+  header's text and an `aria-hidden` arrow icon; the sorted `th` carries `aria-sort`; clicks cycle
+  ascending, descending, original order; a status line says the new order
+  ([APG sortable table](https://www.w3.org/WAI/ARIA/apg/patterns/table/examples/sortable-table/)).
+- **Changed mark** (brief 17 U17e): a field whose value differs from the last read or save has
+  `.changed`, an `--accent` bar `--ring-w` wide at its label row's start (`Highlight` in forced
+  colours) and "Changed, not saved." last in its description.
 - **Message**: one paragraph in place of content (empty, error, not authorized); `role="alert"` only
   when it appears after a user action, otherwise a plain paragraph. A waiting text shown when the
   content first renders and replaced by the outcome (the GPUs card's "Detecting GPUs…", brief 14) is
@@ -712,7 +723,7 @@ A brief lists each of these for its page, with the text key; a page cannot ship 
 
 | State | What shows | Announced |
 |---|---|---|
-| Loading | `<p role="status">` "Loading…" text of the page (e.g. `server-loading`) in place of the content | yes, politely ([4.1.3 Status Messages](https://www.w3.org/TR/WCAG22/#status-messages)) |
+| Loading | the page's loading text (e.g. `server-loading`) as `role="status"`, visually hidden, at once; after 300 ms a Skeleton of the page's shape (brief 17 U17a) | yes, politely ([4.1.3 Status Messages](https://www.w3.org/TR/WCAG22/#status-messages)) |
 | Empty | a Message saying what is missing and, when one exists, what to do | no |
 | Error by key | one Message per error key the route can answer (section 7, "Errors from the API"); a reply with no valid key, a malformed body or a network failure is `failed`. Never the reply's raw body | no on load; `role="alert"` after an action |
 | Signed out | the sign-in form in place of the page (section 3) | focus to its heading |

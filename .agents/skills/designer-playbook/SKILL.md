@@ -101,3 +101,6 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - React 19 features have their jobs in `fe/DESIGN.md` 5.3 (optimistic writes, pending states,
   deferred filtering, portals only past a clipping ancestor). Before asking for a portal, grep
   `index.css` for `overflow` on the overlay's ancestors.
+- Loading states are seen by holding replies in Playwright (`page.route('**/api/**')` with a delay,
+  `/api/session` let through to see each page's own): `build/ux-review/ux17.js` shoots every page
+  settled and loading. The stub serves one model profile document only (its id in `check.js`).
