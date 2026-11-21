@@ -89,9 +89,10 @@ The old routes `GET`/`PUT /api/instances/{id}/server` are removed from the bff i
    `none` are not shown.
 8. **Restart is offered, never done for the user**: wherever a write answers that a running instance
    must restart, a **Restart offer** (new component) shows one button per instance to restart.
-9. **The server profile's port is required in the create form**, though the bff allows none: two
-   profiles on the default port cannot both run, and asking now saves a later
-   `client-address-in-use`.
+9. **The create form fills in the port, and it stays required** (user, 2026-11-21: "if not specified,
+   fill in the default yourself"): it opens on the first port from 9931 upward that no server profile
+   of the list uses, which the administrator may change; the bff allows none, but two profiles on the
+   default port cannot both run, so a port is always sent.
 10. **After a delete or a remove the page stays and says so**: its content is replaced by one
     paragraph that takes the focus, with a link to the list. No message is carried to another page.
 
@@ -123,7 +124,7 @@ The old routes `GET`/`PUT /api/instances/{id}/server` are removed from the bff i
 | `server-profiles-new-title` | `New server profile` | 17b |
 | `server-profile-name` | `Name` | 17b |
 | `server-profile-name-hint` | `1 to 32 characters: a-z, 0-9 and -, starting with a letter or a digit. It names the file server@<name>.ini and cannot be changed later.` | 17b |
-| `server-profile-port-hint` | `The network port llama-server listens on. Two instances cannot run on the same address and port.` | 17b |
+| `server-profile-port-hint` | `The network port llama-server listens on. Filled in with the first port from 9931 up that no server profile uses; change it if you like. Two instances cannot run on the same address and port.` | 17b |
 | `create-button` | `Create` | 17b |
 | `create-cancel` | `Cancel` | 17b |
 | `create-creating` | `Creating…` | 17b |
@@ -297,13 +298,19 @@ named by its `h2` `server-profiles-new-title`, with the fields Name (`server-pro
 hint `server-profile-name-hint`, text input, `autocomplete="off"`) and Port (`server-port`, hint
 `server-profile-port-hint`, `inputmode="numeric"`), then the buttons `create-button` (primary) and
 `create-cancel`, then a `role="status"` line and the alert place. The focus moves to Name. Shown also
-when the list is empty; not shown while loading or after a failed read.
+when the list is empty; not shown while loading or after a failed read. Each time the form opens, Port
+holds the default: the smallest whole number from 9931 to 65535 that is not the `port` of any row of
+the list the page last read (rows with port 0 count for nothing), computed in the page with no request;
+empty only if every one is taken. Examples: `[]` → `9931`; ports 9931 and 9932 → `9933`; ports 9931
+and 9933 → `9932`; port 9930 only → `9931`. The administrator may change or clear it.
 
 **17b.2 Cancel.** Cancel, or pressing the opener again, hides the form, clears its fields, errors and
-alert, sets `aria-expanded="false"` and puts the focus on the opener.
+alert, sets `aria-expanded="false"` and puts the focus on the opener; opening it again fills Port with
+the default anew (17b.1).
 
 **17b.3 Client checks.** On Create: an empty Name shows `field-error-required` under it; a Port that is
-not a whole number from 1 to 65535 (empty included) shows `field-error-number` with 1 and 65535. Each
+not a whole number from 1 to 65535 (empty included, so a cleared default is refused in words) shows
+`field-error-number` with 1 and 65535. Each
 invalid field gets `aria-invalid="true"` and `aria-describedby` its error; the focus moves to the first
 invalid field after its error renders; nothing is sent.
 
@@ -342,7 +349,9 @@ unsaved-changes question no longer asks (the file is gone).
 
 **17b.10 Strings.** The strings file gains exactly 17b's keys of section 2.
 
-Tests that change: none beyond the new ones (`test/bff.ts` gains the POST and DELETE).
+Tests that change: none beyond the new ones (`test/bff.ts` gains the POST and DELETE). The 17b.1
+test asserts Port's value for the four example lists and that opening the form sends no request; the
+17b.3 test clears Port before Create.
 
 ### 17c: create and remove an instance (12)
 
@@ -574,5 +583,4 @@ Tests that change: `InstancePage` (a section after Server profile), `test/bff.ts
 - **Q1.** "Served here" hides the words `inherit` / `on` / `off` / `none` behind one switch
   (decision 7). Enough, or should an administrator be able to pin `on` on a profile switched on in the
   list (so switching it off in the list keeps it here)?
-- **Q2.** Should the port be required when creating a server profile (decision 9, built so), or may it
-  be left to llama.cpp's default 9931?
+- Q2 is answered (user, 2026-11-21): the form fills in the first free port from 9931 (decision 9).
