@@ -464,6 +464,11 @@ refusal is 422 `{"key", "args", "field"}`, `field` the INI key the form marks. A
 only, never against the node's device list (`checks::device_list`): `ROCm0, ROCm1` is 422
 `device-bad-name` with args `["Devices", " ROCm1"]` and field `Devices`, and nothing is written,
 while an id the node has no GPU for (`ROCm7`) is taken, the instance that names it failing to start.
+`Devices` is one of the free-text server keys (`checks::SERVER_TEXT_KEYS`), so a `;` or a `#` in the
+list is the marker refusal and not the list's: 422 `comment-markers` with args `["Devices"]` and
+field `Devices`, the shape rule never seeing a marker (its `ROCm0;x` is one entry of the right
+shape) while the INI reader cuts the value at the marker, so the file would reload as `ROCm0`, GPUs
+nobody typed. A `null` `Devices`, like a blank, is no key in the file: every GPU.
 
 The file is then read as the session's user (the record's file, as the read resolves it), its text hashed with the run's secret and compared
 with the sent revision, and written through the manager's `WriteFileIfAs`, which accepts only while
@@ -901,7 +906,14 @@ document's rows in the probe's order with the probe's moment beside them and the
 empty list with 200 (the two numbers answered all the same), the 403 that ends the session, the 503
 of a manager that outlives the 35 s bound, and the 502 that carries no detail. The pool's five routes
 are `tests/server_profiles.rs` (27 tests),
-reported green with the whole bff (504) at b535304 (its report, not a rerun here). **Nothing here has been called against
+reported green with the whole bff (504) at b535304 (its report, not a rerun here). The `[Server]
+Devices` key (R2, 3aaa4dc) is pinned in both suites, the instance's and the pool's: the read carrying
+the file's list as one string and `null` when the file names no key, a save of the list landing
+verbatim (`none` included), a save of `null` writing no key, a save of another key keeping it, the 422
+`device-bad-name` naming `Devices` with nothing written, and the same key's `;`/`#` as 422
+`comment-markers` naming `Devices`. Green with the whole bff (605) at 3aaa4dc (its report): on that
+tree `tests/server.rs` holds 83 and `tests/server_profiles.rs` 30 test attributes (a count of the
+attributes, not a run). **Nothing here has been called against
 a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 26.04 answered
 `/api/version` and `/api/instances` (that read of 2026-11-14 predates the `Instances` call, which no
 real manager has answered), [above](#running-it)), and on Windows the code is type-checked

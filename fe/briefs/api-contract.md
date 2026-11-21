@@ -230,6 +230,9 @@ question C2.
 - `values` is keyed by the INI key name, so a refusal's field maps straight to a control. Each
   value is typed JSON: a number for a numeric key (`8580`), `true` or `false` for a switch, a string
   otherwise (`"nccl"`), `null` for an unset key. A save sends them back the same way.
+  `Devices` (R2, 3aaa4dc) is a string: the server profile's GPUs in one value, the probe's names in
+  the order llama-server's `--device` takes (`"ROCm0,ROCm1"`), or `"none"` for CPU only; `null` is
+  the key absent, which is every GPU of the node.
 - `defaults` are computed on the server from the saved file. `ModelsDir` and `StateDir` are the
   instance's own defaults, never a folder of the bff's account.
 - `limits` are `[min, max]`; the thread maximum is the server machine's logical CPU count.
@@ -255,19 +258,30 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   `server-malformed`), body at most 64 KiB, `{"revision": <string>, "values": {...}}`. The same-origin
   guard applies (a `PUT` is a write): the browser's own `Origin` and `Sec-Fetch-Site` on a same-origin
   `fetch` pass it.
-- **`values`**: the 19 keys of the read, typed as the read gives them, `null` the key unset: numbers
+- **`values`**: the 21 keys of the read, typed as the read gives them, `null` the key unset: numbers
   (whole, within `i32`) for `Port`, `Threads`, `ThreadsBatch`, `ModelsMax`, `ModelsMemoryMargin`,
   `LogVerbosity`; booleans for `CudaDisableGraphs`, `AttnRotDisable`, `RocprofAttach`, `Webui`,
-  `WebuiMcpProxy`, `SaveStateOnShutdown`; `"on"`/`"off"` for `RocblasUseHipblaslt`; strings for
-  `Hostname`, `ModelsDir`, `CudaAllreduce`, `StateDir`, `OpencodeBaseUrl`, `OpencodeApiKey`. A value of
+  `WebuiMcpProxy`, `SaveStateOnShutdown`; `"on"`/`"off"` for `RocblasUseHipblaslt`; a list of strings
+  for `Tags`; strings for `Hostname`, `ModelsDir`, `CudaAllreduce`, `StateDir`, `OpencodeBaseUrl`,
+  `OpencodeApiKey`, `Devices`. A value of
   another type (a fraction, a numeric string, another word for the tri-state) is 400
   `server-malformed`. **A key absent from `values` is read as `null`: that key is unset in the file**,
-  so the fe sends every key at every save (it does: `toValues` builds all 19). Unknown keys are
-  ignored. For the three off-by-default switches `null` and `false` write the same.
+  so the fe must send every key at every save. The form at 3aaa4dc builds 19: it has no control for
+  `Tags` or `Devices`, so a Server save from it clears the profile's `[Server] Tags` and its GPU list
+  (by the code: the fields table writes every key from the body, `crates/bff/src/server.rs`
+  `body_to_file`; no run has checked it). The GPUs card is R5, open work in
+  [PLAN.md](../../PLAN.md); the GUI's Server tab carries the list with no widget so its save keeps it
+  (`server_form.rs`). Unknown keys are ignored. For the three off-by-default switches `null` and
+  `false` write the same.
 - The bff runs `server_cfg::check` (the number ranges, `LogVerbosity` 0..5, threads 1 to the CPU
-  count, `;`/`#` in `ModelsDir`, `StateDir`, `OpencodeBaseUrl`, `OpencodeApiKey` **whatever
-  `SaveStateOnShutdown` says**, `0.0.0.0` alone in `Hostname`), normalizes the base URL (a trailing
-  `/` and `/v1` stripped), then the manager runs its file checks and the address check again.
+  count, `;`/`#` in `ModelsDir`, `StateDir`, `OpencodeBaseUrl`, `OpencodeApiKey`, `Devices`
+  **whatever `SaveStateOnShutdown` says**, the shape of every entry of `Devices`
+  (`checks::device_list`: an empty entry, an entry with a space, one carrying `=`, `CPU` in any case,
+  and `none` beside another name; judged on shape only, never against the node's GPU list, so an id
+  the node has no card for is saved and the instance that names it fails to start), `0.0.0.0` alone
+  in `Hostname`), normalizes the base URL (a trailing `/` and `/v1` stripped), then the manager runs
+  its file checks and the address check again. The marker rule is checked before the list's, so a
+  `;` or a `#` anywhere in `Devices` answers `comment-markers`, not `device-bad-name`.
 - A blank (empty or spaces only) text is left unset; a blank `ModelsDir` or `StateDir` is written as
   its commented hint, on every OS; the save creates no folder.
 - `OpencodeApiKey`: a string sets it (as sent, not trimmed), `null` or blank unsets it.
@@ -279,8 +293,9 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   the status read after a done write failed or outran the time limit (594e15e); `deactivating`,
   `inactive` and `failed` give false.
 - 422 `{"key", "args", "field"}`: a refused value; `args` are strings; `field` is the INI key it
-  belongs to: `args[0]` for `not-whole-number-in-range` (`[key, value, min, max]`) and
-  `comment-markers` (`[key]`), `ModelsMax` for `load-on-startup-over-max` and
+  belongs to: `args[0]` for `not-whole-number-in-range` (`[key, value, min, max]`),
+  `comment-markers` (`[key]`) and `device-bad-name` (`[key, entry]`, R2: a `Devices` entry the shape
+  rule refuses, so the field is `Devices`), `ModelsMax` for `load-on-startup-over-max` and
   `load-on-startup-unlimited`, `Hostname` for `bind-all-with-others` (`args: []`) and
   `client-unresolvable-host` (`[host]`), `Port` for `client-address-in-use` (`[id]`). For any other
   key of the manager's checks `field` is `args[0]`, or `""` when there are no args.

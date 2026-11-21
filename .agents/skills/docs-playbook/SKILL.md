@@ -444,9 +444,24 @@ Lessons only: the rules are in `AGENTS.md`.
   that outlives the 15 s is 503 `client-unavailable` (the model profile switch and save keep their 504).
 - `AGENTS.md`'s own em-dash rule quotes the glyph it bans, so `grep -c $'\u2014' AGENTS.md` is 1 on a
   clean file: check the glyph in `git diff`, not in the whole file.
+- A `[Server]` key (R2's `Devices`) is listed in five places: `crates/bff/README.md` (the read's
+  `values` bullet, the save paragraph, "What has run"), `fe/briefs/api-contract.md` (the GET's
+  `values`, the PUT's `values`, the `server_cfg::check` bullet, the 422 row's `field` rule) and
+  `crates/config/README.md` (the Server tab's field list, the "manager runs every content check"
+  bullet). Count the keys from `FIELDS` in `crates/bff/src/server.rs` (21 at 3aaa4dc) and grep the
+  contract's count in words (`the 19 keys`): the contract counts the FORM's keys and the fe's
+  `toValues` can build fewer than `FIELDS`, and since a key absent from `values` is written unset,
+  a key with no fe control is CLEARED by a fe save (true of `Tags` and `Devices` at 3aaa4dc: by the
+  code, `body_to_file`, no test pins it, so mark it). Grep `toValues` in `git show HEAD:fe/src/ServerForm.tsx`
+  for what the form sends. Before writing WHICH refusal a value breaking two rules gets, read the
+  order in `server_cfg::check`: the text keys' `comment_markers` loop runs before `device_list`, so a
+  `;` in `Devices` is `comment-markers`, and `ini.rs` cuts the value at the marker, so the file
+  reloads as what stands before it.
 - The working tree can be ahead of HEAD in `fe/` (the coder's slice in progress): check
   `git show HEAD:fe/src/<file>` before saying what a page shows, and route the fact through the
-  strings key (`model-profile-load-failed`). The model profile page's route is `#/profiles/model/<id>` (`fe/src/route.ts`),
+  strings key (`model-profile-load-failed`). Mid-session the tree can gain whole files you never
+  touched (another agent's slice: `fe/src/*`, `fe/ux/*`, the other playbooks), so scope every
+  `git diff` to your own paths (`git diff -- crates/bff/README.md ...`) before reporting a change. The model profile page's route is `#/profiles/model/<id>` (`fe/src/route.ts`),
   not `#/presets/<id>` (the old one, redirected), and `GET` of an unregistered path is a bare 404 with no JSON body
   (`crates/bff/src/lib.rs`), which the fe reads as its generic "could not be read".
 - `cargo test -p pai-bff` prints one block per suite and the tail shows only the last: scope it with
