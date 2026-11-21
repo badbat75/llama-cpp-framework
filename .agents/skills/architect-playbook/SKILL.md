@@ -140,3 +140,8 @@ description: What the architect has learned about this project's components, int
   spaces after `=` and before a `;`/`#`/newline dropped, the value cut at the first `;` or `#`; that is
   `checks.rs` `RawSection::get`. Never judge the raw line: a hand-edit then blocks every save of the
   section. `-ts`'s `[,/]+` split gives an empty leading piece but no empty trailing one.
+- "Is this model profile served on that instance" has one rule, `pai_core::assign` (`render`, and
+  `rows` from slice 15): the bff derives `effective`, `restart` and `running` from it, never from the
+  global switch alone (an `on` override serves a switched-off profile). The fe's type guards check
+  the fields they need and ignore extra ones (`fe/src/ModelProfiles.tsx`), so additive reply fields
+  let a backend slice land without the fe.

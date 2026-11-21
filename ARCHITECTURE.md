@@ -1838,6 +1838,92 @@ merge conflicts.
      second probe after a failed or CPU-only one, so no reader waits past one `GPU_PROBE_TIMEOUT` and
      N queued readers never run N probes back to back.
 
+*Slice 15's decisions (2026-11-21, architect; each a preference unless sourced).*
+
+- **The manager has everything.** `SetServerProfile`, `SetModelProfile` (with `*` for the whole pool)
+  and their `As` forms are built with every refusal of (d') (`service.rs` `set_server_profile`,
+  `set_model_profile`), on D-Bus, the pipe and `ManagerClient` (`set_server_profile`,
+  `set_model_profile`, `acting_for`); `ReadFile` serves `assignments.ini` and the pool to any caller;
+  `Instances()` carries `server_profile` (slice 13). No protocol change; slice 15 is `pai-core` (one
+  pure function) and `pai-bff`.
+- **One rule for "served", in `pai-core`.** New `assign::rows(enabled, disabled, assignment) ->
+  (all, Vec<AssignmentRow { id, value, via_all, effective }>)`, pool order as `render`, built on
+  `render`'s own `assigned` and `is_on`: `value` the explicit key (`none` when absent or a word the
+  render ignores), `via_all` no explicit key and `*` honoured, `effective` exactly "rendered". A test
+  pins that the ids with `effective` are the sections `render` emits after `[*]`, so the bff never
+  re-implements the render. `all` is `inherit` when the render honours `*`, else `none`.
+- **Routes**, each: 401 `session-required` with no session and the manager not asked;
+  `sessions.current` (reads and writes move the idle deadline); the writes and the reads of
+  `assignments.ini` and the pool `As` the signed-in user, `Instances()` and `Status` as the bff's own
+  account (unauthenticated calls); `NotAuthorized` 403 `session-not-administrator` ending the session;
+  no manager 503 `client-unavailable`; a write past `write_timeout` 503 `client-unavailable` (slice 14's
+  as-built rule, not the contract's 504: the docs agent aligns `fe/briefs/api-contract.md`); anything
+  else 502 `client-other`. A refusal with `args` answers them as the manager gave them.
+  - `PUT /api/instances/{id}/profiles/server` `{"serverProfile": string}` -> 200 `{running}`. 400
+    `server-profile-malformed` for a body it cannot read (as slice 14's create); 404
+    `client-no-instance`, 404 `client-no-server-profile` `[profile]`, 409 `client-server-profile-in-use`
+    `[profile, instance]`, 422 `client-address-in-use`, `client-unresolvable-host`,
+    `load-on-startup-over-max` with `field` `serverProfile`. `running`: the bff reads `Instances()`
+    before the call; true when the instance named another profile (or that read failed) and `Status`
+    after the call is `active` or `activating`, or `Status` failed (the safe answer); a switch to the
+    profile it already runs is `false`.
+  - `GET /api/instances/{id}/profiles/model` -> 200 `{"all", "profiles": [rows]}`: each row the pool
+    row (`id`, `engine`, `engineAvailable`, `enabled`, `model`, without `assignments`) plus `value`,
+    `viaAll`, `effective` from `assign::rows`; 404 `client-no-instance` when `Instances()` lacks the id;
+    the pool list's errors otherwise. A page read, polled never.
+  - `PUT /api/instances/{id}/profiles/model/{profile}` `{"value": "none"|"inherit"|"on"|"off"}` -> 200
+    `{effective, running}`. 400 `assignment-malformed` for an unreadable body or a non-string value; 422
+    `model-profile-bad-value` `[value]` `field` `value` for another string (the bff checks first, the
+    manager again); `{profile}` `*` is 404 `no-model-profile-named` (the whole pool goes through the
+    next route only); 404 `client-no-instance`, 404 `no-model-profile-named` `[profile]`; the resource
+    refusals 422 with their `args` and no `field` (`model-profile-over-memory`,
+    `model-profile-model-missing`, `load-on-startup-*`). No revision, never 409 ((j) 7). The bff reads
+    the pool and `assignments.ini` before and after the write: `effective` is the after-read's (the
+    fresh value whatever another tab did); `running` is true when before and after differ and `Status`
+    is `active`/`activating`. An after-read that fails leaves the write standing: 200 with `effective`
+    from the before-read and the value, `running` true.
+  - `PUT /api/instances/{id}/profiles/model` `{"all": "inherit"|"none"}` -> 200 `{running}`
+    (`SetModelProfile(instance, "*", all)`): 400 `assignment-malformed`, 422 `model-profile-bad-value`
+    `field` `all` for another string, 404 `client-no-instance`, the resource refusals; `running` true
+    when the set of effective ids changed and the instance runs.
+- **Additions to served replies** (additive: the fe's type guards check fields present and ignore the
+  rest, `fe/src/ModelProfiles.tsx` 40, so nothing it reads breaks):
+  - `GET /api/profiles/model` rows gain `assignments: [{instance, value, viaAll, effective}]`, sorted by
+    instance, every instance of `Instances()` with an explicit key or covered by `*` ((j) 5); a section
+    of `assignments.ini` naming no instance is not listed. `assignments.ini` unreadable fails the list
+    (502 `client-other`), never an empty map.
+  - The 200 of `PUT /api/profiles/model/{id}` and of `.../enabled` gain `restart: [ids]`, sorted: the
+    instances where the profile is `effective` before the write (the save) or before or after it (the
+    switch, the after side computed from the same before-read with the switch flipped), whose `Status`
+    is `active`/`activating`. `running` becomes `restart` non-empty, or true with `restart: []` when a
+    read failed. This replaces today's "any instance up" (`model_profiles.rs` `running`), and fixes its
+    blind spot: a switched-off profile served by an `on` override now names its instance.
+  - `GET /api/instances` items gain `serverProfile` (`Instances()`'s, `null` when that call failed and
+    the row is absent). `removable` waits for slice 16.
+- **Security code (mutants):** the session gate of the four new routes (no session, manager never
+  asked; 403 ends the session) and that both writes go `As` the signed-in user (a mutant dropping
+  `acting_for` must fail a test: the fake client records the principal). Not security code:
+  `assign::rows`, the `restart`/`running` derivation, the body parse (the manager re-judges every
+  value under `configure`). Trust: unchanged from (d'); the bff vouches as before.
+- **The web UI needs a slice (the designer's brief, slice 17's instance page and assignment table);
+  the backend lands alone**: every route is new and every reply change additive.
+
+**Slice 15 done when** (test first; Linux, the Windows code type-checked): `pai-core`: `assign::rows`
+for `*` alone, explicit over `*`, `on` with the switch off, `off` under `*`, a hand-edited `* = on`, an
+id in both pool files, no section; its `effective` ids equal `render`'s sections. `pai-bff`, from a
+fake client recording each call and principal: the four routes answer 401 with no call made, 403
+ending the session on `NotAuthorized`; the server switch answers `{running: true}` for a running
+instance switched to another profile, `false` when stopped or already on it, each refusal of the list
+with its status, key, `args` and `field`, and `SetServerProfileAs` carries the principal; the
+instance's model rows carry `value`, `viaAll`, `effective` and `all` as `assign::rows` gives them, 404
+for an unknown instance; the assignment PUT's 200 has the after-read's `effective`, `running` only when
+`effective` changed on a running instance, `*` in the path is 404 and never reaches the manager, a bad
+value 422 before any call; the `all` PUT calls `SetModelProfileAs(id, "*", value)`; pool rows carry
+`assignments` sorted, an orphan section left out; the save and the switch answer `restart` with the
+running instances the profile is (or becomes) effective on, `[]` plus `running: true` when a `Status`
+fails; `GET /api/instances` carries `serverProfile`. Clippy and fmt green per crate; mutants on the
+security code above.
+
 **Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
 
 4. **The rename** (13a), no behaviour change, across `pai-core`, `pai-manager`, `pai-app`, `pai-cli`,
@@ -1902,7 +1988,8 @@ merge conflicts.
 15. **The bff's association routes**: `PUT .../profiles/server`, the model-profile routes under an
     instance, the pool rows' `assignments`, `restart`, resource refusals (old 10). The manager's
     `SetServerProfile` answers nothing about a restart: the route reads `Status` after the switch and
-    answers `{running}`, true when the instance must be restarted to apply it.
+    answers `{running}`, true when the instance must be restarted to apply it. Decisions and "done
+    when" under "Slice 15's decisions" before this list; backend only, the web UI in 17.
 16. **`CreateInstance`, then `RemoveInstance`** (two slices, `NoModelProfiles` at start), then the bff's
     `POST` and `DELETE /api/instances` (old 11, 12).
 17. **The web UI** (the web UI session, designer's brief first), then **the estimate as a read** (old 13, 14).
