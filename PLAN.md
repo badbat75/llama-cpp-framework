@@ -1037,6 +1037,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     (the `Devices` key) are built; left: R3 the per-pair memory check, R4 `device` off the web model profile
     page, R5 the web UI (a GPUs card on the server profile page, designer's brief first, after 17a; it also
     gives `pai server show` a Devices row).
+    **Fix first (found at R2's docs, 2026-11-21):** the web UI's server form (`fe/src/ServerForm.tsx`)
+    sends 19 of the document's 21 keys, and the save writes an absent key as cleared, so saving the
+    Server page drops `[Server] Tags` and `Devices`. Fix: the form sends back every key it read and did
+    not edit; one tester and coder round right after C1, before the UX pass.
     **GPU distribution on the model profile page** (user, 2026-11-20: "Non vedo gli slider per la
     spartizione dei layer"): the web UI edits `device`, `split-mode` and `tensor-split` as the GUI's GPU
     table does (fe slice 2f of brief 02, never scheduled until now). Built beside slice 14: first the
