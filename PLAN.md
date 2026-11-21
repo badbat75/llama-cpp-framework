@@ -1005,8 +1005,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     feature che offre per migliorare la UX"): the web UI (React 19.3.1) uses useOptimistic for instant
     feedback on writes with rollback on refusal, useTransition/useActionState for pending saves,
     useDeferredValue for filtering as you type, createPortal for overlays; the designer records the
-    patterns in `fe/DESIGN.md` and every brief from C1 on applies them; older pages adopt them when a
-    slice touches them.
+    patterns in `fe/DESIGN.md` and every brief from C1 on applies them. Then the whole GUI (user,
+    2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
+    pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
+    designer's audit of what is basic today and a phased brief, built in slices after C1 and before 17.
     **Tags as chips** (user, 2026-11-21): the instance tags field becomes a row of chips: a round "+"
     that, clicked, opens an oval input for one label; confirmed, it becomes a chip and a new "+"
     follows. While typing, the labels already used (on any instance or server profile) are suggested.
