@@ -118,3 +118,10 @@ the user's date and words) and commit it in the same turn, without asking; recom
 When it touches a component, protocol, identity, trust boundary, deployment or packaging shape, brief the
 `architect` in the same turn to record it in `ARCHITECTURE.md` (and in `docs/architecture/*.html` once
 built), proposed or decided. Tell the user in one line what changed in each.
+
+## Leftover processes after a review (2026-11-21)
+
+A designer review left its stub servers running, so its task showed as running for hours (the user
+noticed). Every designer brief says: stop the stubs you started, answer with SendMessage, no
+background job to wait on. After a review, `ps -eo pid,etime,cmd | grep stub.py` and stop the
+orphans by pid; `TaskStop` an agent whose task is still "waiting on its own background work".

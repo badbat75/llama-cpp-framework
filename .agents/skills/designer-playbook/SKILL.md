@@ -104,3 +104,7 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - Loading states are seen by holding replies in Playwright (`page.route('**/api/**')` with a delay,
   `/api/session` let through to see each page's own): `build/ux-review/ux17.js` shoots every page
   settled and loading. The stub serves one model profile document only (its id in `check.js`).
+- Stop every stub or server you start before you report (`kill <pid>` of the one you launched, never
+  by pattern), and start none in the background that you would wait on: on 2026-11-21 three stubs
+  (`build/ux-review/n1stub.py`, two `fe/ux/stub.py`) were left running for up to a day, and the
+  review task stayed "running" for hours after its last report.
