@@ -87,3 +87,17 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - Destructive actions use Confirm in place, not a dialog (coordinator, 2026-11-21); creates use the
   Create form in place; a write that needs a restart shows the Restart offer (`fe/DESIGN.md` 5.2).
   `pai-config` and `pai` have no server profile pool, instance create or assignment: the web is first.
+- Every `button` has `min-height: var(--control-h)` (40 px), so an icon button inside a chip or
+  pill needs its own min-height, and `HearthTokens.test.ts` H1a.12 freezes every min-height and
+  min-width: a brief that sets a size amends that list by name, as it amends R1.8's classes (brief
+  15 R2). `build/ux-review/c1stub.py` (`list=long`: 8 own tags of 32 characters) and `c1.js`
+  measure chips, the +, the pill and sideways scroll in 3 engines, 1280/320, both themes, 200 %.
+- Long labels in a chip: one line with an ellipsis, wrapping only as the last resort (user,
+  2026-11-21). An `em` media query follows the browser's text size, not the page's, so
+  `@media (max-width: 15em)` catches large text on a narrow screen; an injected
+  `html { font-size: 200% }` does not trigger it (brief 15 R3).
+- An overlay over a chip must leave its x uncovered, or 1.4.13's "hoverable" fights the click; a
+  cut chip already spans the row, so an overlay of the chip's width stays in the viewport (R5).
+- React 19 features have their jobs in `fe/DESIGN.md` 5.3 (optimistic writes, pending states,
+  deferred filtering, portals only past a clipping ancestor). Before asking for a portal, grep
+  `index.css` for `overflow` on the overlay's ancestors.

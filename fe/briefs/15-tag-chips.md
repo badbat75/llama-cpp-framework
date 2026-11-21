@@ -323,3 +323,98 @@ are `arm`, `fast`, `zz-top`. Suggested file: `InstanceTagSuggest.test.tsx`.
   profiles read at each opening, its failure silent; choosing one adds it at once (decision 10).
 - **Q6** Profile tags as fixed chips in their own labelled row, not mixed into the own row
   (decision 4).
+
+## 10. C1 review rulings (designer, 2026-11-21)
+
+- **R1, `.chip-remove`**: accepted as `.chip button` (only an own chip has a button). The class list
+  of section 3 loses `chip-remove`; C1 adds six classes. `fe/src/Reflow.test.ts` R1.8's comment
+  still says seven with `chip-remove`: it says six.
+- **R2, sizes**: not accepted at the page's control height. The global `button { min-height:
+  var(--control-h) }` makes each x and the + 40 px high (chip 50 px, + a 24 by 40 oval). `.chip`
+  and `.tag-new` keep no min-height of their own (they grow from their content); `HearthTokens.test.ts`
+  H1a.12's min-size list gains exactly these, as section 3 amended R1.8: `.chip button: min-height:
+  24px`, `.tag-add: min-height: 32px`, `.tag-add: min-width: 32px`, `.tag-new button: min-height:
+  32px`, `.tag-new button: min-width: 32px`, and the flex children that must shrink (R3)
+  `min-width: 0`.
+- **R3, reflow** ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)), amended for the user's rule
+  (2026-11-21: "very long tags are shortened with an ellipsis; avoid wrapping if possible; if really
+  not possible, wrap"):
+  - Every chip's text (own and profile) is in a `span`: `.chip > span { min-width: 0; overflow:
+    hidden; white-space: nowrap; text-overflow: ellipsis }` (an ellipsis needs a block box of its
+    own; the profile chip's bare text gains the span). No `overflow-wrap` on `.chip` itself.
+  - The cap is the row: `.chip { max-width: 100% }` (kept), no `ch` cap. A 32-character tag is
+    about 320 px and fits whole wherever the row is wider; it is cut only where it cannot fit
+    (320 px: 2 or 3 characters; 320 px at 200 %: about 12 still shown).
+  - No smaller font step **(preference)**: `--fs-md` would save about 2 characters of 32, and a
+    size that changes with the width needs a query of its own; the body size stays.
+  - Last resort, wrapping: `@media (max-width: 15em) { .chip > span { white-space: normal;
+    overflow-wrap: anywhere } }`. A media query's `em` is the browser's own text size, not the
+    page's ([Media Queries 4, units](https://www.w3.org/TR/mediaqueries-4/#units)), so it fires
+    only when the user's text setting makes the viewport under 15 text widths (320 px at 200 %
+    text is 10em), where an ellipsis would leave about a dozen characters. The UX check's injected
+    `html { font-size: 200% }` does not trigger it: there the ellipsis shows, also with no
+    sideways scroll.
+  - The full tag stays available: the cut is visual only, so the list item's text and the x's name
+    "Remove tag `<full>`" carry it to screen readers; sighted users get the expanded pill (R5). No
+    `title` (it would duplicate R5 and shows to the mouse only).
+  - The pill (defect 2) as before: `.tag-new` and its input `min-width: 0`, the pill
+    `max-width: 100%`, the input `flex: 0 1 16ch` or equal. Seen before the fix: 15 px sideways at
+    320 px with 32-character tags, 152 px with the pill open at 200 %.
+  - Pins for the tester: R1.1's overflow-wrap list gains `.chip > span` inside the `15em` block
+    only (not `.chip`); H1a.12's min-size list gains `.chip > span: min-width: 0`,
+    `.tag-new: min-width: 0`, `.tag-new input: min-width: 0` beside R2's five; the `.chip > span`
+    top-level rule declares exactly the four above; one new `@media (max-width: 15em)` block
+    holding only that rule; no `title` on any chip.
+- **R4, rows**: the group is `.field-control`, a wrapping flex row, so "From the server profile",
+  its chips and the input's error sit beside the chips at 1280 px. Each of the three takes a row of
+  its own under the chips row (`flex-basis: 100%`, as `.boot-alert` does), as section 3 draws.
+- **R5, the expanded pill** (user, 2026-11-21: "when the cursor passes over it, a temporary big
+  pill opens to show the whole text"), meeting [1.4.13 Content on Hover or Focus](https://www.w3.org/TR/WCAG22/#content-on-hover-or-focus):
+  - **When**: only for a chip whose text is cut, measured at the moment of hover or focus
+    (`span.scrollWidth > span.clientWidth`); a whole tag opens nothing. Opened by the pointer
+    entering the `li.chip` and by focus entering it (the x of an own chip; a profile chip is
+    focusable, `tabindex="0"`, so the keyboard reaches its text: profile chips follow `Add tag` in
+    the tab order, amending C1.2).
+  - **What**: a `span.chip-full` inside the `li`, `aria-hidden="true"` (the list item already reads
+    the full tag), holding the full tag. Over the chip, not in the flow: `.chip { position:
+    relative }`; `.chip-full { position: absolute; top: 0; inset-inline-start: 0; z-index: 1;
+    min-height: 100%; white-space: normal; overflow-wrap: anywhere }`, the chip's padding, border
+    and fill (`--field`; `--surface` with `--control` border in the profile row so it reads as
+    raised), `--radius` (it can be several lines), the same font. Its width is the chip's: on an
+    own chip `inset-inline-end` leaves the x uncovered (`calc(24px + var(--space-1))`), on a profile
+    chip `0`. A cut chip already spans the row, so the pill stays inside the viewport and wraps
+    downward over what follows; nothing moves.
+  - **Hoverable and persistent**: being inside the `li`, the pointer can move onto it; it closes when
+    both the pointer and focus have left the `li`. **Dismissible**: Escape (listened on the document
+    while it shows) hides it with focus unchanged; it opens again only on a new entry of pointer or
+    focus.
+  - **Criteria (jsdom, the tester stubs `scrollWidth`/`clientWidth` on the span)**:
+    **15 C1.13** with the span cut, `mouseenter` on `li` shows `.chip-full` (`aria-hidden="true"`,
+    text the full tag); `mouseleave` hides it; with the span whole, nothing shows.
+    **15 C1.14** focus on `Remove tag <tag>` (cut) shows it, and so does focus on a cut profile
+    chip; focus leaving the `li` hides it; Escape hides it, `document.activeElement` unchanged,
+    and it stays hidden until a new focus or `mouseenter`.
+    **15 C1.15** profile chips have `tabindex="0"` and follow `Add tag` in Tab order; no chip has a
+    `title`; the class list (R1.8) gains `chip-full`; R1.1's overflow-wrap list gains `.chip-full`;
+    the `.chip-full` rule declares the properties above.
+  - **UX check only** (CSS layout jsdom cannot see): at 320 px and 200 % text the pill stays inside
+    the viewport, adds no sideways scroll, covers without moving content, leaves the x clickable,
+    and its text meets the contrast table of 5.1.
+- **R6, React patterns for C1** (fe/DESIGN.md 5.3, user 2026-11-21):
+  - **Optimistic chips** (`useOptimistic` over the latched list): on an add, the new chip is listed
+    at once, while the pill stays open, read-only, with its text until the answer; on a removal,
+    the chip leaves at once and focus moves at once as decision 5 says. On 204 the latched list
+    takes the change (no visible step); on any refusal the chip comes back or leaves again,
+    restored from the latched list: an add keeps the pill and its text with the error or alert as
+    C1.7 and C1.9; a removal puts focus back on the restored chip's x, with the alert. Still one
+    write at a time (C1.5), pending drawn as today; `isPending` of `useTransition` may replace the
+    `saving` flag (the coder's call; the tests see only the DOM).
+  - This amends **C1.5** (while an add is pending the list already holds the new chip), **C1.8**
+    (while a removal is pending the chip is gone and focus is on the next x, else the previous,
+    else `Add tag`) and **C1.9** (after a refused removal the chip is back in its place, focus on
+    its x). No new criterion; C1 stays at 15 (C1.1 to C1.12 plus R5's three), tested in two rounds
+    if the tester needs: C1.1 to C1.12, then C1.13 to C1.15.
+  - **No portal for the hover pill** (R5 stands): no ancestor of the tags field clips or stacks
+    (`index.css` sets `overflow: hidden` only on `.visually-hidden` and `.session > span`, and
+    scrolls only `.table-scroll` and the jump list). A portal would need positioning by script from
+    the chip's rectangle, kept in step with scroll and resize, for nothing.

@@ -364,7 +364,7 @@ colour; in dark an enabled field is darker than its card.
 - **Targets**: every button, checkbox and link at least 24 by 24 CSS px, including its padding
   ([2.5.8 Target Size (Minimum)](https://www.w3.org/TR/WCAG22/#target-size-minimum)). Buttons and
   fields are at least 40 px high (`--control-h`), the jump list's buttons 32 px, About 24 px, a Chip
-  32 px with its Remove button 24 px, the chips' + and the pill's Add and Cancel 32 px; the
+  grows from its Remove button of 24 px, the chips' + and the pill's Add and Cancel 32 px; the
   checkbox box is 20 px (1.25rem) inside a `.check` label of at least 24 px that activates it, with no
   other target within the 24 px circle (2.5.8's spacing exception); the switch track 44 by 24 px.
 - **Motion**: none needed; a spinner, if any, stops under `prefers-reduced-motion: reduce`.
@@ -543,8 +543,8 @@ Each is one React component, reused by every page.
     ([2.5.7](https://www.w3.org/TR/WCAG22/#dragging-movements)) **(preference: buttons only)**.
 - **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
   (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
-  the label as text (wrapping anywhere inside the chip) and, when it can be removed, a 24 px
-  `.chip-remove` button (icon `x`, name "Remove tag `<label>`"). A fixed chip (not changeable here)
+  the label on one line, cut with an ellipsis where the row is narrower than it (the chip at most the row's width; the x's name carries the full label; a cut chip, on hover or focus, shows a temporary `.chip-full` pill over it with the whole label, wrapping, leaving the x uncovered, hidden by Escape: WCAG 1.4.13; profile chips are focusable for it), wrapping anywhere only under `@media (max-width: 15em)`, the user's large text on a narrow screen (user, 2026-11-21) and, when it can be removed, a 24 px
+  button (`.chip button`, icon `x`, name "Remove tag `<label>`"). A fixed chip (not changeable here)
   has no button, `--surface` fill and a transparent border, in its own list named by a visible line.
   After the chips a 32 px round `.tag-add` button (icon `plus`) opens in its place a `.tag-new` pill:
   a one-label input, Add (`check`) and Cancel (`x`); Enter or Add confirms, Escape or Cancel closes,
@@ -675,6 +675,36 @@ Each is one React component, reused by every page.
   right after the status line that names the instances, one secondary button "Restart `<id>`"
   (`rotate-cw`) per instance, then its own status line and alert (Action feedback). It appears without
   moving the focus, is gone at the next edit or write it belongs to, and restarts nothing by itself.
+
+### 5.3 React patterns
+
+The fe is on React 19.3.1 (`fe/package.json`). User direction (2026-11-21): use what React offers
+for a better UX. Each feature below has one job; the a11y rules of this guide win over all of them.
+
+- **`useOptimistic`** (a write's result shown at once): a write whose result is obvious, such as a
+  tag chip added or removed, shows that result as soon as the user acts. The real list moves only
+  on success, so a refusal puts back the earlier state by itself. Writes stay one at a time.
+  Called inside an Action or `startTransition`
+  ([react.dev](https://react.dev/reference/react/useOptimistic)).
+- **`useTransition` / `useActionState`** (the pending state of a write): `isPending` replaces a
+  hand-written "saving" flag where that simplifies the code. `useActionState` runs its calls one
+  after another, and a reducer that throws cancels the queue, so return the refusal as state
+  ([useActionState](https://react.dev/reference/react/useActionState),
+  [useTransition](https://react.dev/reference/react/useTransition)). The visible states stay as in
+  Action feedback: buttons `aria-disabled`, never `disabled`.
+- **`useDeferredValue`** (filtering as the user types: C2's suggestions, the Models filter): the
+  input follows every key and the list catches up. It is not a debounce, and it helps only when the
+  list is `memo`ized ([react.dev](https://react.dev/reference/react/useDeferredValue)).
+- **`createPortal`** (an overlay an ancestor would clip or stack under: `overflow: hidden` or a
+  stacking context): events still bubble through the React tree, but focus does not follow the DOM
+  move, so the overlay owns its focus rules
+  ([react.dev](https://react.dev/reference/react-dom/createPortal)). It is not used where no ancestor
+  clips: brief 15's hover pill stays absolute inside its chip.
+- **When not to use them**: never for a second status or alert region (each field keeps its one
+  `role="status"` and one `role="alert"`, written once per result); never where they would move focus
+  differently from the brief (an optimistic removal moves focus at once as decision 5 says, and a
+  refusal puts it back on the restored chip's x); never for a write whose result the user cannot
+  predict (the Server save keeps its save bar and Restart offer).
 
 ## 6. States every page defines
 
