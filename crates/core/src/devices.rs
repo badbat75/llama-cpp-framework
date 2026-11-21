@@ -254,6 +254,35 @@ pub fn pool_usable(gpus: &[Gpu]) -> u64 {
     gpus.iter().fold(0, |sum, g| sum.saturating_add(g.usable()))
 }
 
+/// What the estimate of one instance is measured against: the usable memory of
+/// the cards its server profile's `Devices` names, added up (R3, ARCHITECTURE.md
+/// "Resources belong to the server profile" (3)). `""` (the key a server
+/// profile does not carry) is every card, as [`pool_usable`]; `none` is a CPU
+/// only profile, so no card to measure. A name the probe does not know is not
+/// measured, and a list whose ids are all unknown leaves nothing: the check is
+/// skipped, as for a node with no card. A card named twice counts once.
+pub fn devices_usable(gpus: &[Gpu], devices: &str) -> u64 {
+    let list = devices.trim();
+    if list.is_empty() {
+        return pool_usable(gpus);
+    }
+    if list == "none" {
+        return 0;
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    list.split(',').fold(0, |sum, id| {
+        let id = id.trim();
+        if seen.contains(&id) {
+            return sum;
+        }
+        seen.push(id);
+        match gpus.iter().find(|g| g.id == id) {
+            Some(g) => sum.saturating_add(g.usable()),
+            None => sum,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,5 +471,66 @@ mod tests {
             },
         ];
         assert_eq!(pool_usable(&tiny), 32624 * MIB - GPU_RESERVE);
+    }
+
+    // R3 (ARCHITECTURE.md "Resources belong to the server profile" (3)): the
+    // memory estimate of an instance is measured on the cards its server
+    // profile's `Devices` names, every card when the key is absent, and on
+    // nothing for `none` or a list whose ids the probe does not know.
+    //
+    // The name and the signature of the function are the tester's contract,
+    // written here for the coder to adopt or rename: the pure rule is what this
+    // test pins, and the manager's behaviour at every judging point is pinned
+    // in `pai-manager`'s `manager_pair_memory_check_e2e`.
+    #[test]
+    fn devices_usable_sums_only_the_cards_the_server_profile_names() {
+        let cards = [
+            Gpu {
+                id: "CUDA0".into(),
+                name: "NVIDIA GeForce RTX 4070 SUPER".into(),
+                total_mib: 12281,
+            },
+            Gpu {
+                id: "CUDA1".into(),
+                name: "AMD Radeon AI PRO R9700".into(),
+                total_mib: 32624,
+            },
+        ];
+        // Absent (`""`: the key a server profile does not carry) is every card,
+        // the rule today.
+        assert_eq!(
+            devices_usable(&cards, ""),
+            pool_usable(&cards),
+            "no Devices names every GPU"
+        );
+        // One name is that card alone, with its own reserve.
+        assert_eq!(devices_usable(&cards, "CUDA0"), cards[0].usable());
+        // The order of the list is the devices' order, not the pool's.
+        assert_eq!(
+            devices_usable(&cards, "CUDA1,CUDA0"),
+            pool_usable(&cards),
+            "both cards named are both counted, whatever the order"
+        );
+        // A name the pool does not hold is not measured, and a list where
+        // nothing matches leaves nothing to measure: the check is skipped, as
+        // for a node with no card.
+        assert_eq!(
+            devices_usable(&cards, "ROCm9"),
+            0,
+            "an id the probe does not know leaves no card to measure: the check is skipped"
+        );
+        assert_eq!(devices_usable(&cards, "CUDA0,ROCm9"), cards[0].usable());
+        // `none` is a CPU only server profile: no card at all.
+        assert_eq!(
+            devices_usable(&cards, "none"),
+            0,
+            "`none` is CPU only: no card"
+        );
+        // One card named twice counts once.
+        assert_eq!(
+            devices_usable(&cards, "CUDA0,CUDA0"),
+            cards[0].usable(),
+            "a card named twice is not counted twice"
+        );
     }
 }

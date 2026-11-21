@@ -60,6 +60,9 @@ fn data_root_e2e() {
     // ── Manager core: the GPU memory check of a model profile pool write ──
     crate::manager::service::manager_memory_check_e2e();
 
+    // ── Manager core: the same check measured on the server profile's cards ─
+    crate::manager::service::manager_pair_memory_check_e2e();
+
     // ── Manager core: SetServerProfile, the verb that writes instances.ini ─
     crate::manager::service::manager_set_server_profile_e2e();
 

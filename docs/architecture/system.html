@@ -255,7 +255,7 @@ verifies only the calling user's own password, and the bff runs unprivileged.</f
 
 <h2>Saving a model profile, with the memory check</h2>
 <figure>
-<svg viewBox="0 0 900 200" role="img" aria-label="Model profile save flow">
+<svg viewBox="0 0 900 215" role="img" aria-label="Model profile save flow">
   <rect class="usr" x="10" y="40" width="150" height="70" rx="5"/>
   <text x="22" y="62" class="t-title">Model profile page</text>
   <text x="22" y="80" class="t-mono">PUT /api/profiles/</text>
@@ -268,8 +268,8 @@ verifies only the calling user's own password, and the bff runs unprivileged.</f
   <text x="412" y="42" class="t-title">pai-manager: SetModelProfileAs</text>
   <text x="412" y="60" class="t-small">1 bff account + principal in pai</text>
   <text x="412" y="76" class="t-small">2 checks.rs on the changed section</text>
-  <text x="412" y="92" class="t-small">3 memory check: GGUF header shape vs the GPU</text>
-  <text x="412" y="106" class="t-small">  pool from the cached --list-devices probe</text>
+  <text x="412" y="92" class="t-small">3 memory check: GGUF shape vs the GPUs the</text>
+  <text x="412" y="106" class="t-small">  server profile's Devices names (all if unset)</text>
   <text x="412" y="122" class="t-small">4 revision compared under the write lock</text>
   <rect class="lib" x="710" y="40" width="180" height="70"/>
   <text x="722" y="62" class="t-title">models.ini (+ .disabled)</text>
@@ -280,6 +280,7 @@ verifies only the calling user's own password, and the bff runs unprivileged.</f
   <line class="edge" x1="670" y1="75" x2="708" y2="75"/>
   <text x="200" y="170" class="t-small">Reply {revision, running, restart}, derived from pai_core::assign. A refusal is a keyed checks::Refusal relayed as {key, args};</text>
   <text x="200" y="186" class="t-small">a stale revision is 409; over the full-GPU estimate is refused even with fit on (user, 2026-11-17).</text>
+  <text x="200" y="202" class="t-small">Also judged at a server profile switch and a save changing Devices: only what the fewer GPUs push over (R3).</text>
 </svg>
 </figure>
 

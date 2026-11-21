@@ -1223,7 +1223,11 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// (`AddressInUse`), and the new profile's `ModelsMax` must hold the loads
     /// the instance's render starts (`load-on-startup-over-max`): that render
     /// is cut by `assignments.ini`, and a record there that cannot be read is
-    /// `Io` as the instance record is. The profile the instance's own section
+    /// `Io` as the instance record is. The switch must also move no model
+    /// profile of that render from fitting the cards the instance's current
+    /// profile names to over the cards the new one names
+    /// (`model-profile-over-memory`, R3): what was already over is not
+    /// re-judged. The profile the instance's own section
     /// names is answered before the walk of the others: no conflict with
     /// itself, and the switch to it changes no byte. Guarded as a write of a served file is: the
     /// principal and `configure` gates, the `writing` lock, and one action
@@ -1307,6 +1311,23 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 &enabled,
                 &disabled,
                 crate::server_cfg::from_text(&contents).models_max,
+            )
+            .map_err(ManagerError::Invalid)?;
+            // The memory the switch leaves: the instance's render measured on
+            // the cards the new profile names, against the cards the profile
+            // it runs today names. A model profile that fits today and not the
+            // new cards refuses (R3); one already over is no news.
+            check_shrink_memory_of(
+                &assignments,
+                instance,
+                &enabled,
+                &disabled,
+                &*self.gpus,
+                &instance_devices(instance),
+                crate::server_cfg::from_text(&contents)
+                    .devices
+                    .as_deref()
+                    .unwrap_or(""),
             )
             .map_err(ManagerError::Invalid)?;
             std::fs::create_dir_all(&dir).map_err(io)?;
@@ -2022,6 +2043,19 @@ fn profile_file(id: &str) -> Option<std::path::PathBuf> {
     crate::paths::instance_ini(&crate::paths::instance_server_profile(id)?)
 }
 
+/// The `[Server] Devices` of the server profile instance `id` names, as the
+/// memory check measures the instance's cards: `""` when the section names no
+/// profile, names one the engine has no file for, or that file cannot be read:
+/// every card of the node, the measure of a profile that carries no `Devices`.
+fn instance_devices(id: &str) -> String {
+    // A profile that cannot be read reads as every card, like a missing one.
+    profile_file(id)
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .map(|contents| crate::server_cfg::from_text(&contents).devices)
+        .unwrap_or_default()
+        .unwrap_or_default()
+}
+
 /// Whether any instance runs the server profile `name`: the profiles the
 /// sections name are what binds an address and what caps a render.
 fn profile_in_use(name: &str) -> bool {
@@ -2109,7 +2143,9 @@ fn record_holder(text: &str, profile: &str) -> Option<String> {
 /// `instances.ini` names. Both model profile files are judged for their model
 /// files too: a model profile the write puts in effect on an instance names
 /// files the node has, and a file that instance's render is already missing
-/// is never re-judged. A refusal writes nothing.
+/// is never re-judged. A save of a server profile an instance runs that
+/// changes `Devices` judges that instance's render on the cards the text
+/// written names (R3). A refusal writes nothing.
 fn check_contents(
     file: &ConfigFile,
     contents: &str,
@@ -2135,9 +2171,30 @@ fn check_contents(
             // profile no instance names loads nothing and is judged on nothing.
             checks::server_file(contents, "")?;
             let models_max = crate::server_cfg::from_text(contents).models_max;
+            // The cards this text names, against the ones the file on disk
+            // names: a save that changes `Devices` shrinks (or grows) the
+            // memory of every instance that runs this profile, so their
+            // renders are judged on the pair (R3). A save that changes no
+            // `Devices` judges nothing.
+            let held =
+                crate::server_cfg::from_text(&on_disk(&format!("server@{name}.ini"))).devices;
+            let devices = crate::server_cfg::from_text(contents).devices;
+            let changed = held != devices;
+            let assignments = on_disk(ASSIGNMENTS_FILE);
             for id in crate::paths::instance_ids() {
                 if crate::paths::instance_server_profile(&id).as_deref() == Some(name) {
                     check_render(&id, &enabled, &disabled, models_max)?;
+                    if changed {
+                        check_shrink_memory_of(
+                            &assignments,
+                            &id,
+                            &enabled,
+                            &disabled,
+                            gpus,
+                            held.as_deref().unwrap_or(""),
+                            devices.as_deref().unwrap_or(""),
+                        )?;
+                    }
                 }
             }
             Ok(())
@@ -2261,6 +2318,68 @@ fn check_render_of_full(
         refusal.values.push(id.to_string());
         refusal
     })
+}
+
+/// The memory of instance `id`'s render over the assignment record
+/// `assignments`, measured on the cards the instance's server profile names
+/// today (`devices_today`) and on the ones the text about to land names
+/// (`devices_new`): the two places where `available` can shrink, a save of an
+/// in-use server profile that changes `Devices`, and `set_server_profile`. A
+/// model profile of the render is refused only when its estimate fits today's
+/// memory AND not the new one: at these points the write moves the memory, not
+/// the need, so what was already over is no news (the growth rule of the model
+/// profile write, turned round). A side that names no card to measure (`none`,
+/// ids the probe knows none of) or a node the seam answers no pool for judges
+/// nothing. The render is estimated before the seam [`GpuTotals`] is asked, as
+/// [`check_render_memory`] does: a render with no estimate to measure judges
+/// nothing and runs no probe. The refusal is [`check_render_memory`]'s, naming
+/// the new memory.
+fn check_shrink_memory_of(
+    assignments: &str,
+    id: &str,
+    enabled: &str,
+    disabled: &str,
+    gpus: &dyn GpuTotals,
+    devices_today: &str,
+    devices_new: &str,
+) -> Result<(), pai_core::checks::Refusal> {
+    if devices_today.trim() == "none" || devices_new.trim() == "none" {
+        return Ok(());
+    }
+    let assignment = pai_core::ini::text::section_text(assignments, id);
+    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
+    let cwd = crate::launch::instance_current_dir(
+        cfg!(windows),
+        &crate::paths::data_root(),
+        &crate::paths::instance_state_dir(),
+    );
+    let needs = estimated_of(&render, &cwd);
+    if needs.is_empty() {
+        return Ok(());
+    }
+    let Some(pool) = gpus.gpus() else {
+        return Ok(());
+    };
+    let available = pai_core::devices::devices_usable(&pool, devices_new);
+    let today = pai_core::devices::devices_usable(&pool, devices_today);
+    if available == 0 || today == 0 {
+        return Ok(());
+    }
+    if let Some(need) = needs
+        .into_iter()
+        .find(|need| need.bytes > available && need.bytes <= today)
+    {
+        return Err(pai_core::checks::Refusal {
+            key: "model-profile-over-memory",
+            values: vec![
+                need.id,
+                id.to_string(),
+                (need.bytes.div_ceil(pai_core::gguf_shape::MIB)).to_string(),
+                (available / pai_core::gguf_shape::MIB).to_string(),
+            ],
+        });
+    }
+    Ok(())
 }
 
 /// The `load-on-startup` of instance `id`'s render against `models_max`, that
@@ -2459,8 +2578,10 @@ fn check_profile_memory_of(
 /// The memory check of one instance's render `render`, named `id` in the
 /// refusal, against the render that same instance has today (`today`): the
 /// first model profile of `render`, in the render's order, that this write
-/// makes larger AND whose own estimate is over the node's usable GPU memory
-/// refuses with `model-profile-over-memory` and
+/// makes larger AND whose own estimate is over the usable GPU memory of the
+/// cards the instance's server profile names (R3: `Devices`, every card when
+/// the key is absent, nothing for `none` or a `Devices` whose ids the probe
+/// does not know) refuses with `model-profile-over-memory` and
 /// `[model profile, instance, needed MiB, available MiB]`, the need rounded up
 /// to a MiB and the memory the node has rounded down to one
 /// (ARCHITECTURE.md (b) 1, 2 and 3). The need is that one model profile's
@@ -2477,7 +2598,8 @@ fn check_profile_memory_of(
 /// The estimates come from the files and the GPU totals from the seam
 /// [`GpuTotals`], which runs a probe: both renders are estimated and the growth
 /// found first, and the seam is asked only once a section has grown. A node the
-/// seam answers no pool for, an empty pool included, is measured on nothing.
+/// seam answers no pool for, an empty pool included, is measured on nothing,
+/// and so is an instance whose server profile names no card the probe knows.
 fn check_render_memory(
     render: &str,
     today: &str,
@@ -2508,7 +2630,7 @@ fn check_render_memory(
     let Some(pool) = gpus.gpus() else {
         return Ok(());
     };
-    let available = pai_core::devices::pool_usable(&pool);
+    let available = pai_core::devices::devices_usable(&pool, &instance_devices(id));
     if available == 0 {
         return Ok(());
     }
@@ -9365,6 +9487,604 @@ pub(crate) fn manager_memory_check_e2e() {
             "a save that grows a profile asks the GPUs once"
         );
         // 10B-PIN-6 END
+    }
+}
+/// E2E phase: R3, the memory check measured on the pair (the server profile of
+/// the instance, the model profile) (ARCHITECTURE.md "Resources belong to the
+/// server profile" (3)). `available` is the sum, over the cards the instance's
+/// server profile names in `Devices`, of total less the reserve (one card seen
+/// by two backends counted once, as `gpu_pool`): every card when `Devices` is
+/// absent, as today, and nothing to measure for `none` or for a `Devices` whose
+/// ids the probe does not know, where the check is skipped as it is for a node
+/// with no card. The rule is judged where it is today (a write of the model
+/// profile pool, an assignment) and at the two places where `available` can
+/// shrink: `set_server_profile`, and a save of a server profile in use that
+/// changes `Devices`. At the two new places a model profile of the instance's
+/// render is refused only when it fits today's `available` and not the new one:
+/// what was already over is never re-judged, and a save that changes no
+/// `Devices` judges nothing. The refusal is `model-profile-over-memory` with
+/// `[model profile, instance, needed MiB, available MiB]`, and writes nothing.
+///
+/// The cards are sized from the estimate of one `llama` GGUF (`write_gguf`)
+/// with the same pure API the manager uses, and the fixture pins that the
+/// profile fits the two cards together and not one of them alone: a refusal
+/// that does not come means the check, not a fixture that stopped being over
+/// its card.
+///
+/// Names the tests assume, the contract for the coder: the pure rule is
+/// `pai_core::devices::devices_usable(&[Gpu], &str) -> u64`, pinned in that
+/// module's tests; every test here drives a manager verb, so the name is free
+/// for the manager's wiring.
+#[cfg(test)]
+pub(crate) fn manager_pair_memory_check_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGpus, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use pai_core::gguf_shape::{full_gpu_bytes, local_shape, GPU_RESERVE, MIB};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    // The tree as this phase found it. It adds server profiles and moves the
+    // record, and the phases after it in `data_root_e2e` read both, so the
+    // phase puts back the names and the texts it found, at its end.
+    let found: Vec<(String, String)> = std::fs::read_dir(&sys)
+        .expect("engine config dir")
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (
+                name.clone(),
+                std::fs::read_to_string(sys.join(&name)).unwrap_or_default(),
+            )
+        })
+        .collect();
+
+    let models = dir.path().join("models");
+    std::fs::create_dir_all(&models).expect("models dir");
+    let model = models.join("qwen-pair.gguf");
+    write_gguf(
+        &model,
+        262_144,
+        &[
+            ("token_embd.weight", 200 << 20),
+            ("blk.0.attn_q.weight", 300 << 20),
+            ("blk.1.attn_q.weight", 300 << 20),
+            ("output.weight", 200 << 20),
+        ],
+    );
+    let path = model.to_string_lossy().into_owned();
+
+    // What the model needs at the context it was trained on, read from the
+    // file: the phase sizes its two cards and its refusals with this.
+    let shape = local_shape(&model).expect("fixture shape");
+    let trained = shape.trained_ctx;
+    let need = full_gpu_bytes(&shape, trained, "f16", "f16");
+    let mib_up = |bytes: u64| (bytes.div_ceil(MIB)).to_string();
+    let mib_down = |bytes: u64| (bytes / MIB).to_string();
+    // Two cards the same size, each about half the need: the profile fits the
+    // pair and not one of them.
+    let card = need / MIB / 2 + GPU_RESERVE / MIB + 8;
+    let ids = [("CUDA0", card), ("CUDA1", card)];
+    let usable_of = |names: &[&str]| -> u64 {
+        pai_core::devices::pool_usable(
+            &names
+                .iter()
+                .map(|id| pai_core::devices::Gpu {
+                    id: (*id).to_string(),
+                    name: format!("NVIDIA GeForce {id}"),
+                    total_mib: card,
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+    let on_text = format!("[qwen]\nmodel = {path}\nctx-size = {trained}\n");
+
+    let bff = Caller(":1.9".into());
+    let desktop = Caller(":1.42".into());
+    let manager_on = |gpus: FakeGpus| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_log(FakeActionLog::new())
+        .with_gpus(gpus)
+    };
+
+    let read_opt = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let seen = |name: &str| -> String {
+        if name == "listing" {
+            format!("{}\n", listing().join("\n"))
+        } else {
+            read_opt(name).unwrap_or_default()
+        }
+    };
+    let snapshot = |names: &[&str]| -> Vec<(String, String)> {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .chain(std::iter::once("listing".to_string()))
+            .map(|name| (name.clone(), seen(&name)))
+            .collect()
+    };
+    let kept = |before: &[(String, String)]| {
+        for (name, text) in before {
+            assert_eq!(&seen(name), text, "the refusal wrote nothing: {name}");
+        }
+    };
+    let pool_files = |on: &str, off: &str| {
+        std::fs::write(sys.join("models.ini"), on).expect("models.ini");
+        std::fs::write(sys.join("models.ini.disabled"), off).expect("models.ini.disabled");
+    };
+    let assignments = |text: &str| {
+        std::fs::write(sys.join("assignments.ini"), text).expect("assignments.ini");
+    };
+    // The record with `default` running the server profile `profile`.
+    let record = |profile: &str| {
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            format!("[default]\nServerProfile = {profile}\n"),
+        )
+        .expect(INSTANCES_FILE);
+    };
+    // A server profile on its own port, so the switch's address check passes
+    // whatever the other profiles of the fixture hold.
+    let server_text = |devices: &str, port: u16| {
+        format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\nDevices = {devices}\n")
+    };
+    let profile_with = |name: &str, devices: &str, port: u16| {
+        std::fs::write(
+            sys.join(format!("server@{name}.ini")),
+            server_text(devices, port),
+        )
+        .expect("server profile");
+    };
+    let profile_plain = |name: &str, port: u16| {
+        std::fs::write(
+            sys.join(format!("server@{name}.ini")),
+            format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+        )
+        .expect("server profile");
+    };
+    // The refusal this phase is about, its four args whole.
+    let over = |answer: &Result<(), ManagerError>,
+                profile: &str,
+                instance: &str,
+                needed: u64,
+                available: u64| {
+        matches!(
+            answer,
+            Err(ManagerError::Invalid(r))
+                if r.key == "model-profile-over-memory"
+                    && r.values == [
+                        profile.to_string(),
+                        instance.to_string(),
+                        mib_up(needed),
+                        mib_down(available)
+                    ]
+        )
+    };
+
+    const WATCH: [&str; 8] = [
+        "assignments.ini",
+        "instances.ini",
+        "models.ini",
+        "models.ini.disabled",
+        "models@default.ini",
+        "server@default.ini",
+        "server@narrow.ini",
+        "server@wide.ini",
+    ];
+
+    // The fixture: the model profile fits the two cards and not one of them.
+    assert!(
+        need > usable_of(&["CUDA0"]),
+        "the model profile is over one card: {need} against {}",
+        usable_of(&["CUDA0"])
+    );
+    assert!(
+        need <= usable_of(&["CUDA0", "CUDA1"]),
+        "the model profile fits the pair of cards: {need} against {}",
+        usable_of(&["CUDA0", "CUDA1"])
+    );
+
+    // ── R3-PIN-1 BEGIN. The pair at a model profile write ─────────────────
+    //
+    // The node has two cards and the instance's server profile names one: the
+    // profile that fits the pair is over the card the instance runs on.
+    {
+        record("default");
+        profile_with("default", "CUDA0", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &on_text, false);
+        assert!(
+            over(&answer, "qwen", "default", need, usable_of(&["CUDA0"])),
+            "a model profile that fits the node's two cards is refused for an instance whose \
+             server profile names one of them, naming the MiB that one card has: {answer:?}"
+        );
+        kept(&before);
+    }
+    // R3-PIN-1 END
+
+    // ── R3-PIN-2 BEGIN. `Devices` absent is every card, as today ──────────
+    //
+    // A server profile that names no card leaves the node's whole pool as the
+    // measure, so the profile that fits the pair lands.
+    {
+        record("default");
+        profile_plain("default", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &on_text, false),
+            Ok(()),
+            "a server profile with no Devices is measured on every GPU, as today: the pair \
+             fits and the save lands"
+        );
+        assert_eq!(text_of("models.ini"), on_text, "the save landed");
+    }
+    // R3-PIN-2 END
+
+    // ── R3-PIN-3 BEGIN. `none` skips the check ────────────────────────────
+    //
+    // `Devices = none` is a CPU only server profile: no card to measure
+    // against, so the write is judged on nothing, however big the model.
+    {
+        record("default");
+        profile_with("default", "none", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        let answer = m.write_file(&desktop, "models.ini", &on_text, false);
+        assert_eq!(
+            answer,
+            Ok(()),
+            "`Devices = none` names no GPU: the memory check is skipped, as for a node with \
+             no card"
+        );
+    }
+    // R3-PIN-3 END
+
+    // ── R3-PIN-4 BEGIN. an id the probe does not know skips the check ─────
+    {
+        record("default");
+        profile_with("default", "ROCm9", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &on_text, false),
+            Ok(()),
+            "a `Devices` of ids the probe knows none of leaves nothing to measure: the write \
+             lands"
+        );
+    }
+    // R3-PIN-4 END
+
+    // ── R3-PIN-5 BEGIN. the pair at an assignment ─────────────────────────
+    //
+    // The record puts the profile in effect on an instance whose server profile
+    // names one card: the render the record leaves is measured on that card.
+    {
+        record("default");
+        profile_with("default", "CUDA0", 8080);
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = off\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        let before = snapshot(&WATCH);
+        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
+        assert!(
+            over(&answer, "qwen", "default", need, usable_of(&["CUDA0"])),
+            "assigning a model profile that fits the node's two cards is refused for an \
+             instance whose server profile names one of them: {answer:?}"
+        );
+        kept(&before);
+    }
+    // R3-PIN-5 END
+
+    // ── R3-PIN-6 BEGIN. the switch of the server profile ──────────────────
+    //
+    // The instance runs a profile naming both cards, where the model profile
+    // fits. The switch to a one-card server profile shrinks `available`, so the
+    // render is judged and the switch refused, with the record untouched.
+    {
+        record("wide");
+        profile_with("wide", "CUDA0,CUDA1", 8080);
+        profile_with("narrow", "CUDA0", 8090);
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        let before = snapshot(&WATCH);
+        let answer = m.set_server_profile(&desktop, "default", "narrow");
+        assert!(
+            over(&answer, "qwen", "default", need, usable_of(&["CUDA0"])),
+            "a model profile that fits the two cards the instance runs today is refused at a \
+             switch to a one-card server profile, naming the MiB that card has: {answer:?}"
+        );
+        kept(&before);
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            "[default]\nServerProfile = wide\n",
+            "the refusal kept the instance on the profile it runs"
+        );
+    }
+    // R3-PIN-6 END
+
+    // ── R3-PIN-7 BEGIN. a save narrowing the profile's Devices ────────────
+    //
+    // The same shrink, arriving as a save of the server profile the instance
+    // runs: the render it caps is judged on the cards the text being written
+    // names, and the profile file keeps the bytes it had.
+    {
+        record("default");
+        profile_with("default", "CUDA0,CUDA1", 8080);
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(
+            &desktop,
+            "server@default.ini",
+            &server_text("CUDA0", 8080),
+            false,
+        );
+        assert!(
+            over(&answer, "qwen", "default", need, usable_of(&["CUDA0"])),
+            "a save that narrows an in-use server profile to one card is refused for a model \
+             profile that fits the two cards it names today: {answer:?}"
+        );
+        kept(&before);
+        assert!(
+            text_of("server@default.ini").contains("Devices = CUDA0,CUDA1"),
+            "the refusal left the cards the profile names standing"
+        );
+    }
+    // R3-PIN-7 END
+
+    // ── R3-PIN-8 BEGIN. what was already over is not re-judged ────────────
+    //
+    // The growth rule turned round: at the two new judging points a model
+    // profile the instance already runs over its card is no news, so the switch
+    // and the save land. Green today (no memory check runs at either point),
+    // the guard that the new check refuses only what the shrink makes over.
+    {
+        record("over1");
+        profile_with("over1", "CUDA0", 8080);
+        profile_with("over2", "CUDA0", 8090);
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "over2"),
+            Ok(()),
+            "a model profile already over the card it runs on is not re-judged at a switch: \
+             it stays over, this write moved the profile, not the need"
+        );
+        assert!(
+            text_of(INSTANCES_FILE).contains("ServerProfile = over2"),
+            "the switch landed"
+        );
+
+        // A save of an in-use profile that changes no `Devices` judges nothing,
+        // even on an instance whose render is over the card it names.
+        record("over3");
+        profile_with("over3", "CUDA0", 8080);
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        let edited = "[Server]\nPort = 8080\nHostname = 127.0.0.1\nDevices = CUDA0\nThreads = 8\n";
+        assert_eq!(
+            m.write_file(&desktop, "server@over3.ini", edited, false),
+            Ok(()),
+            "a save of a server profile in use that changes no Devices is judged on nothing"
+        );
+        assert!(
+            text_of("server@over3.ini").contains("Threads = 8"),
+            "the save landed"
+        );
+    }
+    // R3-PIN-8 END
+
+    // ── R3-PIN-9 BEGIN. the skip rule beside the new judging points ───────
+    //
+    // `none` names no card, so a switch that moves an instance onto a CPU only
+    // server profile is judged on nothing, whatever the render holds. Green
+    // today (no check at the switch), the guard that the new check skips.
+    {
+        record("pair1");
+        profile_with("pair1", "CUDA0,CUDA1", 8080);
+        profile_with("cpu", "none", 8090);
+        pool_files(&on_text, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&ids));
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "cpu"),
+            Ok(()),
+            "a switch to a `none` server profile names no GPU: the memory check is skipped"
+        );
+        assert!(
+            text_of(INSTANCES_FILE).contains("ServerProfile = cpu"),
+            "the switch landed"
+        );
+    }
+    // R3-PIN-9 END
+
+    // ── R3-PIN-10 BEGIN. the shrink check asks the seam only with an estimate
+    //
+    // The seam runs the engine's probe. `check_render_memory` asks it once a
+    // section has grown; the shrink check has the same shape: a render with no
+    // estimate to measure, judged on cards that shrank, is judged on nothing,
+    // so the probe never runs. The count is the seam's own log, read from
+    // after the manager is built: a manager that probes at its own construction
+    // is the coder's choice and is not counted here.
+    {
+        // The instance runs a two-card server profile and its render holds no
+        // model profile at all: the switch to a one-card profile shrinks the
+        // memory of nothing.
+        record("wide");
+        profile_with("wide", "CUDA0,CUDA1", 8080);
+        profile_with("narrow", "CUDA0", 8090);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let gpus = FakeGpus::new(&ids);
+        let asked = gpus.asked.clone();
+        let m = manager_on(gpus);
+        let base = asked.lock().unwrap().len();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "narrow"),
+            Ok(()),
+            "fixture: the switch of an instance whose render holds no model profile lands"
+        );
+        let asks = asked.lock().unwrap().clone();
+        assert!(
+            asks[base..].is_empty(),
+            "a switch of an instance whose render has no model profile asks the GPU seam 0 \
+             times: the probe runs only once the render has an estimate to measure: {asks:?}"
+        );
+
+        // The render holds a model profile whose estimate gives up (an `hf-repo`
+        // profile names no file of the node, so there is no header to read):
+        // the same, no probe, the switch landing.
+        record("wide2");
+        profile_with("wide2", "CUDA0,CUDA1", 8100);
+        profile_with("narrow2", "CUDA0", 8110);
+        pool_files("[fetch]\nhf-repo = a/b\n", "");
+        assignments("[default]\nfetch = on\n");
+        let gpus = FakeGpus::new(&ids);
+        let asked = gpus.asked.clone();
+        let m = manager_on(gpus);
+        let base = asked.lock().unwrap().len();
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "narrow2"),
+            Ok(()),
+            "fixture: the switch of an instance whose model profile names no file lands"
+        );
+        let asks = asked.lock().unwrap().clone();
+        assert!(
+            asks[base..].is_empty(),
+            "a switch of an instance whose render has no estimate asks the GPU seam 0 times, as \
+             the model profile write does: {asks:?}"
+        );
+    }
+    // R3-PIN-10 END
+
+    // ── R3-PIN-11 BEGIN. the save, same shape ──────────────────────────────
+    //
+    // The shrink check's other judging point: a save of an in-use server
+    // profile that changes `Devices` asks the seam only when the instance's
+    // render has something to measure.
+    {
+        // No model profile in effect.
+        record("default");
+        profile_with("default", "CUDA0,CUDA1", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let gpus = FakeGpus::new(&ids);
+        let asked = gpus.asked.clone();
+        let m = manager_on(gpus);
+        let base = asked.lock().unwrap().len();
+        assert_eq!(
+            m.write_file(
+                &desktop,
+                "server@default.ini",
+                &server_text("CUDA0", 8080),
+                false
+            ),
+            Ok(()),
+            "fixture: the save narrowing an instance with no model profile lands"
+        );
+        let asks = asked.lock().unwrap().clone();
+        assert!(
+            asks[base..].is_empty(),
+            "a save that narrows an in-use server profile of an instance whose render holds no \
+             model profile asks the GPU seam 0 times: {asks:?}"
+        );
+
+        // A render whose estimate gives up.
+        record("default");
+        profile_with("default", "CUDA0,CUDA1", 8080);
+        pool_files("[fetch]\nhf-repo = a/b\n", "");
+        assignments("[default]\nfetch = on\n");
+        let gpus = FakeGpus::new(&ids);
+        let asked = gpus.asked.clone();
+        let m = manager_on(gpus);
+        let base = asked.lock().unwrap().len();
+        assert_eq!(
+            m.write_file(
+                &desktop,
+                "server@default.ini",
+                &server_text("CUDA0", 8080),
+                false
+            ),
+            Ok(()),
+            "fixture: the save narrowing an instance whose profile names no file lands"
+        );
+        let asks = asked.lock().unwrap().clone();
+        assert!(
+            asks[base..].is_empty(),
+            "a save that narrows an in-use server profile of an instance whose render has no \
+             estimate asks the GPU seam 0 times: {asks:?}"
+        );
+    }
+    // R3-PIN-11 END
+
+    // ── R3-PIN-12 BEGIN. a mixed list counts the cards the probe knows ─────
+    //
+    // `Devices = ROCm0,ROCm9` on a node with a ROCm0 and a CUDA1: the name the
+    // probe does not know adds nothing, so the instance is measured on one card
+    // and the model profile that fits the pair is refused with that one card's
+    // MiB. Green today (`devices_usable` skips an unknown name and the write
+    // judge measures on `Devices`): the guard that the skip rule is a per name
+    // rule, not a whole list one.
+    {
+        record("default");
+        profile_with("default", "ROCm0,ROCm9", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(FakeGpus::new(&[("ROCm0", card), ("CUDA1", card)]));
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &on_text, false);
+        assert!(
+            over(&answer, "qwen", "default", need, usable_of(&["ROCm0"])),
+            "a `Devices` list of one name the probe knows and one it does not is measured on \
+             the card it knows, refusing the profile that needs both cards: {answer:?}"
+        );
+        kept(&before);
+    }
+    // R3-PIN-12 END
+
+    // The phase leaves the tree as it found it: the record it moved and the
+    // server profiles it added belong to the phases after it.
+    for entry in std::fs::read_dir(&sys).expect("listing").flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !found.iter().any(|(found, _)| *found == name) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    for (name, text) in &found {
+        std::fs::write(sys.join(name), text).expect("restore");
     }
 }
 /// The tags of an instance, the two lists apart: the `Tags` key of the

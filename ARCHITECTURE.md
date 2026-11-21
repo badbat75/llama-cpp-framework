@@ -2635,6 +2635,14 @@ pair; a bare model profile shows `needMiB` only.
    when: a profile that fits two cards is refused at a switch to a one-card server profile and at a save
    narrowing `Devices`, nothing written; a profile already over is not re-judged; `none` and an
    unknown id skip.
+   *As built (2026-11-21, reviewed):* `available` is `pai_core::devices::devices_usable` (`devices.rs`
+   264): the sum of `usable()` over the cards `Devices` names, every card when unset, 0 for `none` or
+   ids the probe knows none of (0 skips, as a node with no card); the existing check reads it through
+   `instance_devices` (`service.rs` 2050, 2625). The two new points (`check_shrink_memory_of`, 2333)
+   refuse only a model profile that fits today's cards and not the new ones: `set_server_profile`
+   (1320) and a save of an in-use server profile whose `Devices` changed (`check_contents`, 2187); a
+   save that keeps `Devices` judges nothing. Pinned by `manager_pair_memory_check_e2e` (R3-PIN-1..9).
+   Drawn in `docs/architecture/system.html`.
 4. **R4 keys and the read** (`pai-core`, `pai-bff`): `device` back to the not-on-web list (the pin test
    in `pai-app` green); the instance's model profile rows gain `needMiB`, the reply `availableMiB`.
 5. **R5 web UI** (designer's brief first): the server profile's GPUs card; the GD card without the
