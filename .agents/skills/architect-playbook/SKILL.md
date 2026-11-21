@@ -163,5 +163,11 @@ description: What the architect has learned about this project's components, int
   belongs in `-core`.
 - Drawn views live in `docs/architecture/{infrastructure,system}.html` (hand SVG, colours from CSS
   tokens, A4 `@page`): update them when a component, account, port or route group changes.
+- Placement facts (llama.cpp v1.0.0, checked 2026-11-21): the router overlays its own argv on every
+  model's preset after the `[*]` cascade (`server-models.cpp` 791-795, `merge` overwrites), so a
+  server-profile flag beats any model profile key (only `unset_reserved_args` ones are dropped);
+  `--device` is parsed at the router's start (unknown name: it exits); `--fit` is on by default and
+  fills unset placement; `tensor-split` is positional, extra weights ignored; `--list-devices` prints
+  no PCI bus id (the props have it), so identical cards differ only by ordinal.
 - History tiers (13d) must have each step a whole multiple of the previous one, or the fold is not
   exact: 720 points over 7 days would be 14 min, which 1 h does not divide (15 min used).

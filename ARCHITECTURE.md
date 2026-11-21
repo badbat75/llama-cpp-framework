@@ -2444,6 +2444,192 @@ Prometheus) later; (b), (c) and (d) are not taken. The slices run in order: 1 re
 (5 s over 1 h, 20 s over 4 h, about 720 points), configurable (the tiers above); every `pai` member
 reads instance logs; the disk card follows the engine's default models folder only.
 
+### Resources belong to the server profile (step 10 item 13, "placement follows"): proposed, awaiting the user's choice
+
+The user's words (2026-11-21, translated): "A bare model profile cannot know the GPU/CPU distribution
+until it is applied to an instance. There is a server profile that associates the resources to use with
+the profile, so a profile associated with that hardware has those resources. Maybe we also need to
+profile the available hardware: GPU VRAM, RAM, GPU, CPU and the SDKs used?"
+
+**What exists (read 2026-11-21 at bcac0a6).** A model profile (`models.ini` section) may carry `device`,
+`split-mode`, `tensor-split` (the GD card, 3585c39, edits these three: `checks::WEB_MODEL_PROFILE_KEYS`),
+`n-gpu-layers`, `fit`, `fit-target` (web, Hardware card) and `n-cpu-moe`, `override-tensor` (not on the
+web). A server profile (`server@<p>.ini` `[Server]`, `ServerConfig`) already carries two resources:
+`Threads` and `ThreadsBatch` (`-t`, `--threads-batch` on the router's argv, `launch::server_args`), and
+`ModelsMemoryMargin`. The memory check ((b) 2) compares the full-GPU estimate of one model profile with
+every GPU of the node (user, 2026-11-17 and 2026-11-20: "a per-instance `Devices` key waits until
+asked"; it is asked now). The node's GPUs are the manager's probe (`Devices()`, G2); the installed engine
+and runtime versions are the `versions/` files the bff reads (`GET /api/node`, slice 13); the bff takes
+the thread limit of the server form from its own `available_parallelism` (`bff/src/server.rs` 104),
+which is only right while the bff and the node are one machine; `pai-app`'s `hwmon::system_ram` reads
+`MemTotal` (moving to `pai-hwmon` in 13d slice 1).
+
+**Facts the design rests on** (llama.cpp v1.0.0, `build/linux/llama.cpp`, read 2026-11-21):
+
+1. *The router's own argv wins over every model profile.* `load_models` cascades `[*]` into each section,
+   then overlays the router's command-line options on every model's preset (`preset.merge(base_preset)`,
+   `tools/server/server-models.cpp` 791-795; `common_preset::merge` overwrites, `common/preset.cpp` 136).
+   Only the reserved options are dropped first (`unset_reserved_args`, 285-302: models dir, max, margin,
+   preset, keys, TLS, connect; not `device`, `threads`, `tensor-split`). So a flag the server profile
+   puts on the router's argv is the value of that option in every child, whatever a model profile says.
+   That is already true today for `Threads`.
+2. *`--device` is parsed by the router at its start*: `parse_device_list` loads the backends and throws
+   `invalid device` for an unknown or CPU name (`common/arg.cpp` 1127-1145, option at 2701, env
+   `LLAMA_ARG_DEVICE`); so an instance given a vanished device does not start (fails closed, the journal
+   or the instance log says why).
+3. *`--fit` is on by default* and "adjusts unset arguments to fit in device memory" (`common/arg.cpp`
+   2852, `common/common.h` 497), with a per-device margin `--fit-target` (default 1024 MiB each,
+   `common.h` 502). With `n-gpu-layers` and `tensor-split` left unset, llama.cpp itself derives the
+   placement over the devices it is given.
+4. *`tensor-split` is positional over the device list*: the first `n_devices` weights are used, the rest
+   ignored; all zero means an even split (`src/llama-model.cpp` 1746-1765). A weight list written for
+   two cards stays valid on one or three.
+5. *`--list-devices` prints name, description and memory only* (`common/arg.cpp` 1149-1172). The PCI bus
+   id exists in the device properties (`ggml_backend_dev_props.device_id`, set by the CUDA/HIP and
+   Vulkan backends: `ggml/include/ggml-backend.h` 178-181, `ggml-cuda.cu` 6159, `ggml-vulkan.cpp` 15878)
+   but is not printed: two identical cards (the user's two R9700) are told apart only by ordinal.
+6. *No llama-server flag caps host memory* (none in `common/arg.cpp`); a RAM limit is an OS mechanism:
+   systemd's `MemoryMax=` (systemd.resource-control(5),
+   https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html) or a Windows
+   job object's `JobMemoryLimit` (https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_extended_limit_information),
+   both of which kill or fail allocations rather than plan placement.
+
+#### (1) The node inventory
+
+What the node holds, one read: the GPUs (`id` as `device` takes it, `name`, `backend`, `totalMib`,
+`freeMib` at `probedAt`: G2's rows, unchanged), `ramMib` (total physical memory), `cpuThreads` (logical
+CPUs the manager may use: `std::thread::available_parallelism`,
+https://doc.rust-lang.org/std/thread/fn.available_parallelism.html) and the installed engine and
+runtimes (the `versions/` files, slice 13). The backends the engine can load are the distinct
+`backend` values of the GPU rows: no second source.
+
+- **Where from.** The manager, not the bff: across machines (Part 2) only the node's manager sees its
+  hardware, and on one machine the bff's `PrivateDevices=yes` hides the GPUs anyway. `Devices()` /
+  `DevicesAs()` gain `ram_mib` and `cpu_threads` (D-Bus `(t, a(ssstt), t, u)`, pipe fields of the same
+  names; additive while protocol 3 is in no release); RAM from `hwmon::system_ram` once 13d slice 1 has
+  moved it to `pai-hwmon` (the manager links it), else a reader of `MemTotal` (proc_meminfo(5)) and
+  `GlobalMemoryStatusEx` (Microsoft Learn) in `pai-core`. The versions stay the bff's file read (the
+  files are world-readable and per node; across machines they join the same reply in step 14).
+- **The bff.** `GET /api/node/devices` gains `ramMib` and `cpuThreads` (same gate, same deadline); the
+  server form's `limits.Threads` comes from `cpuThreads` instead of the bff's own count.
+- **Stable identity.** Options: (i) the ggml name (`ROCm0`), as the probe and `device` already use; free,
+  but an ordinal can move when a runtime is missing (the "ROCm availability" note in
+  `crates/app/src/devices.rs`) or a card is added; (ii) the PCI bus id, which needs a llama.cpp patch
+  printing `device_id` in `--list-devices` (fact 5; one line, a candidate upstream PR) and a resolve
+  step from bus id to the current name at every launch (the instance's `run-instance` cannot ask the
+  manager's probe on Linux: it execs llama-server). **Recommended: (i) now**, shown with the card's
+  name and size, (ii) when a moved ordinal is seen on a real node; fact 2 makes (i) fail closed.
+- **Step 14.** The super-manager reads each node's inventory through the same method over its transport
+  and caches it per node; a server profile names devices of its own node only (profiles are per node and
+  per engine), so nothing crosses nodes.
+
+#### (2) The server profile's resource set
+
+| Key in `[Server]` | Values | Maps to | Absent |
+| --- | --- | --- | --- |
+| `Devices` (new) | an ordered list of probe ids (`ROCm0,ROCm1`), or `none` (CPU only) | the router's `--device` (fact 1: wins over every model profile's `device`) | no flag: every GPU of the node, as today |
+| `Threads`, `ThreadsBatch` (exist) | counts | `-t`, `--threads-batch` (already) | llama.cpp's default |
+| `ModelsMemoryMargin` (exists) | MiB per device | `--models-memory-margin` | 0 |
+| RAM budget | not now (decision 4) | | |
+| Backend | not a key: the backend is in each id | | |
+
+- **Validation at a save** (`checks.rs`, one refusal per rule, keyed): `Devices` by G1's `device_list`
+  rule (no spaces, no CPU, `none` alone; key `device-bad-name` `[Devices, entry]`, already in both
+  strings files). Not judged against the probe, for G1's reason (a card can vanish for a while and must
+  not block saving other keys); the web UI flags an id the inventory lacks, and the instance then does
+  not start (fact 2). Mixed backends (`ROCm0,Vulkan1`) stay a warning, the UI's, as in the GUI. A
+  `Threads` above `cpuThreads` stays legal (llama.cpp takes it); the form's limit already caps it.
+- **Who writes it**: `configure` (the server profile save, unchanged path: `render_for`, so `Devices`
+  becomes a `ServerConfig` field or a save drops it). The value reaches llama-server as one argv entry
+  (`Command::arg`, no shell), so the content rule is about llama.cpp's parse, not injection.
+
+#### (3) The model profile's placement keys
+
+| Option | What the model profile keeps | Cost | Risk |
+| --- | --- | --- | --- |
+| **(a) Intent in the model profile, devices in the server profile, placement by llama.cpp** | `split-mode`, `tensor-split` as positional weights over the server profile's `Devices` (fact 4), `n-gpu-layers`, `n-cpu-moe`, `fit-target` as optional pins; unset ones derived by `--fit` at load (fact 3) | one key and one flag (`Devices` -> `--device`); the render stays a byte copy; the memory check reads the pair | a profile tuned with pins for two cards keeps them on one card (an `n-cpu-moe` too low fails at load: the launch fails, as a bad pin does today); the cure is a second model profile for that hardware |
+| (b) Per-assignment overrides | the same, plus placement per (instance, model profile) in `assignments.ini` values or a new file, injected into the render | a value grammar for assignments, a render that edits sections, new routes and a new card | the most precise; the tuning (optimize-preset) is then per pair, which the pool was meant to avoid |
+| (c) Placement keys move to the server profile | nothing | the keys go on the router's argv | one `n-cpu-moe` or `tensor-split` for every model of an instance of N models: wrong for all but one; fits Strata's one model per server (13c) only |
+
+**Recommended: (a)**, (b) only when a pinned profile is wanted on two different server profiles at once
+(nothing needs it today). Under (a) the manager derives nothing itself: it passes `--device`, and
+llama.cpp fits the rest.
+
+**The memory estimate per (server profile, model profile) pair.** `needed` unchanged (the full-GPU
+estimate of the model profile, (b) 2). `available` becomes the sum, over the cards the instance's
+server profile names in `Devices`, of total less `GPU_RESERVE` (one card seen by two backends counted
+once, as `gpu_pool`); `Devices` absent: every card, as today; `none`, or no named id in the probe:
+skipped, as for a CPU-only node or a failed probe. Judged where it is today (model profile write,
+assignment), plus two places where `available` can shrink: a save of a server profile in use that
+changes `Devices`, and `SetServerProfile`; there a profile in the instance's render is refused when it
+fits today's `available` and not the new one (the growth rule turned round: never re-judge what was
+already over). Refusal `model-profile-over-memory` `[profile, instance, needed, available]`, unchanged.
+This replaces the user's 2026-11-17 and 2026-11-20 rule "every GPU of the node" (decision 3). The read
+(j) 9 becomes the instance's model profile rows with `needMiB` and the reply's `availableMiB` from the
+pair; a bare model profile shows `needMiB` only.
+
+#### (4) The GD card, brief 16 and the files in place
+
+- **The GD card** (fe brief 14, built): `device` leaves the model profile page: the key moves from
+  `WEB_MODEL_PROFILE_KEYS` back to `MODEL_PROFILE_KEYS_NOT_ON_WEB`; the order and the per-GPU list move
+  to the server profile. The card keeps `split-mode` and the weights, as positions ("1st GPU, 2nd
+  GPU") with a note that they apply to the GPUs of the server profile each instance uses, and, when the
+  model profile is assigned, the names of those GPUs per instance (read from the server profiles; no
+  new route). The free-memory line moves with the GPU list.
+- **Brief 16.** 17a moves the Server form as it is (not blocked). A new sub-slice after 17a, the
+  server profile's **GPUs** card: pick and order probe ids (the GD card's Move up / Move down reused),
+  "All GPUs" (absent) and "None, CPU only" (`none`), each card's name, size and free memory as of
+  `probedAt`, an id the inventory lacks flagged; the thread fields read `cpuThreads`. The designer's
+  brief first.
+- **The GUI and `pai`** keep editing a model profile's `device` (macOS runs llama-server itself, with no
+  server profile pool); under the manager that `device` applies only while the server profile leaves
+  `Devices` unset (fact 1). Whether the GUI gains the `Devices` field is a later step.
+- **Existing files** (pre-release, no migration code): every key stays where it is and keeps its
+  meaning. A server profile without `Devices` behaves exactly as today; a model profile's `device`,
+  `tensor-split`, `n-gpu-layers`, `n-cpu-moe` still reach llama-server, `device` only until its server
+  profile sets `Devices`. Nothing is moved or rewritten.
+
+#### (5) Slices (each test first; Linux, the Windows code type-checked)
+
+1. **R1 inventory** (`pai-core`, `pai-manager`, `pai-bff`): `Devices()` gains `ram_mib` and
+   `cpu_threads`; the route gains `ramMib`, `cpuThreads`; `limits.Threads` from it. Done when: a fake
+   answer gives both fields on D-Bus and the pipe and in the route; the server document's thread limit
+   follows the manager's figure, not the bff's.
+2. **R2 `Devices`** (`pai-core`, `pai-bff`): the `ServerConfig` field, `render_for`, `launch::server_args`
+   adds `--device <value>` (absent: no flag; `none`: `--device none`), the save refuses by
+   `device_list`, the bff's server document carries it. Done when: the argv pins all three cases; a
+   save of `ROCm0, ROCm1` is 422 `device-bad-name` naming `Devices`; a save of another key keeps
+   `Devices`.
+3. **R3 the pair check** (`pai-manager`): `available` from `Devices`; the two new judging points. Done
+   when: a profile that fits two cards is refused at a switch to a one-card server profile and at a save
+   narrowing `Devices`, nothing written; a profile already over is not re-judged; `none` and an
+   unknown id skip.
+4. **R4 keys and the read** (`pai-core`, `pai-bff`): `device` back to the not-on-web list (the pin test
+   in `pai-app` green); the instance's model profile rows gain `needMiB`, the reply `availableMiB`.
+5. **R5 web UI** (designer's brief first): the server profile's GPUs card; the GD card without the
+   device list.
+
+Later, each when asked: the bus-id patch ((1) option ii), a RAM budget (decision 4), per-assignment
+overrides ((3) b), CPU pinning between instances (`--cpu-mask`, `common/arg.cpp` 1508).
+
+**Security.** No new boundary: the inventory rides `Devices`/`DevicesAs` (the quiet `control` check,
+the `As` gate for the bff); `Devices` is written under `configure` as every server key. A `pai` member
+can already name any device in a model profile; naming it in a server profile adds only that it
+applies to every model of the instance. A wrong id fails the instance's start, never the manager. The
+RAM and CPU counts are read by root and given only to callers the gate admits.
+
+#### (6) Decisions for the user (recommendation first)
+
+1. **Where placement lives**: (a) devices in the server profile, split weights and optional pins in the
+   model profile, llama.cpp `--fit` derives the rest; (b) per-assignment overrides; (c) all placement
+   keys in the server profile.
+2. **How a server profile names a GPU**: the probe's name (`ROCm0`) now, the bus id later if ordinals
+   move; or the PCI bus id now (a llama.cpp patch and a resolve step at launch).
+3. **The memory check counts**: only the GPUs of the instance's server profile (every GPU when
+   `Devices` is unset); or every GPU of the node, as decided on 2026-11-17.
+4. **RAM**: shown in the inventory, no budget yet; or a budget the check reads (allowing a CPU share and
+   relaxing the strict full-GPU rule); or a limit the OS enforces (`MemoryMax=`, a job object).
+
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
