@@ -1054,18 +1054,16 @@ test('1a.27e (2.8): a withheld key is rendered nowhere, even when the bff sends 
     [...serverSection!.querySelectorAll('input')].map((i) => i.type),
     'no key box',
   ).toEqual([])
-  // Page-wide (brief 12 section 3 moved the Instance tags textbox into the
-  // header): the page has exactly two inputs, and the scan names which.
+  // Page-wide (brief 12 section 3 put the Instance tags field in the header,
+  // brief 15 section 3 made it chips): the page has exactly one input while no
+  // new-tag pill is open, and the scan names it.
   const inputs = [...main.querySelectorAll<HTMLInputElement>('input')]
   expect(
     inputs.map((i) => i.type),
-    'the page-wide inputs are exactly the Start at boot checkbox and the Instance tags textbox: no box anywhere on the page can hold a key',
-  ).toEqual(['checkbox', 'text'])
+    "the page-wide input is exactly the Start at boot checkbox: no box anywhere on the page can hold a key (brief 15: the tags field's box exists only inside an open pill)",
+  ).toEqual(['checkbox'])
   expect(inputs[0], "the checkbox is the header's Start at boot").toBe(
     within(main).getByRole('checkbox', { name: en('boot-toggle') }),
-  )
-  expect(inputs[1], "the textbox is the header's Instance tags").toBe(
-    within(main).getByRole('textbox', { name: en('instance-tags-own') }),
   )
 })
 
@@ -1162,11 +1160,11 @@ const TAB_PATH = [
   en('run-restart'),
   about(en('boot-label')),
   en('boot-toggle'),
-  // fe/briefs/12-instance-tags.md, section 5: the Instance tags form follows
-  // Start at boot: its About toggle, the textbox, Save tags.
+  // fe/briefs/12-instance-tags.md, section 5, as fe/briefs/15-tag-chips.md
+  // section 3 leaves it: the field's About toggle, then the + button (the
+  // instances of this fixture have no tags, so the field shows no chip).
   about(en('instance-tags-own')),
-  en('instance-tags-own'),
-  en('instance-tags-save'),
+  en('instance-tag-add'),
   ...[
     [about('Port'), en('option-default'), 'Port'],
     [

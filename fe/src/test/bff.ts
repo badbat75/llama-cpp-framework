@@ -268,12 +268,22 @@ export const EN: Record<string, string> = {
   'instance-port': 'Port {0}',
   'instance-tags': 'Tags',
   'instance-tags-own': 'Instance tags',
+  // Brief 15 (fe/briefs/15-tag-chips.md, slice C1): the tags as chips. Each
+  // English is section 2's, verbatim. instance-tags-hint is section 2's new text,
+  // and instance-tags-save, instance-tags-saved and instance-tags-profile are
+  // gone with the text input they served.
   'instance-tags-hint':
-    'Labels you give this instance to tell it apart; they change nothing in how it runs or which requests reach it. Separate them with commas or spaces, using a-z, 0-9 and -. The tags of its server profile are shown with them and are not changed here.',
-  'instance-tags-profile': 'From the server profile: {0}',
-  'instance-tags-save': 'Save tags',
+    'Labels you give this instance to tell it apart; they change nothing in how it runs or which requests reach it. Add one with the + button, using a-z, 0-9 and -; each change is saved at once. The tags of its server profile are shown below and are not changed here.',
+  'instance-tags-from-profile': 'From the server profile',
+  'instance-tag-add': 'Add tag',
+  'instance-tag-new': 'New tag',
+  'instance-tag-confirm': 'Add',
+  'instance-tag-cancel': 'Cancel',
+  'instance-tag-remove': 'Remove tag {0}',
+  'instance-tag-shown': '{0} is already a tag of this instance.',
   'instance-tags-saving': 'Saving tags…',
-  'instance-tags-saved': 'Tags saved.',
+  'instance-tag-added': 'Tag {0} added.',
+  'instance-tag-removed': 'Tag {0} removed.',
   // Slice 1c (section 5.7, 4.8): a save that timed out.
   'save-timeout':
     'Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure.',

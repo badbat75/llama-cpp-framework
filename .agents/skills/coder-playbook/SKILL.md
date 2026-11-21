@@ -57,6 +57,34 @@ Lessons only: the rules are in `AGENTS.md`.
   `fe/ux` (`NODE_PATH=<repo>/fe/ux/node_modules node /tmp/<x>.js`): a wrapping flex row that did NOT wrap has
   a width equal to its children's widths plus the gaps, and `align-items: baseline` puts the children's
   `top` at different pixels on ONE line, so top equality says nothing about wrapping.
+- The full `npm --prefix fe/ux run check` runs all three browsers here and finishes in about 3 min
+  (13 states, 90 pages per browser); `check.js` prints its finding lines ONLY at the end, and a browser
+  that throws mid-check records one line and the next runs, so the summary is complete. (It used to die
+  at WebKit's context, "is-controlled-by-automation set but automation is not allowed in the context".)
+- A CSS test pins the SELECTOR as a string, not just its declarations: `block('.chip > .chip-full')` and a
+  `TOP_SELECTORS.filter(...)` equality list. So a specificity ruling (brief 15 R7: a direct span child of
+  `.chip` is matched by `.chip > span` at 0,1,1, which outranks a bare `.chip-full` at 0,1,0, so the
+  expanded pill showed the ellipsis it exists to escape) is fixed in the sheet by the child selector
+  `.chip > .chip-full` / `.chips-profile .chip > .chip-full`, declarations unchanged.
+- The ux stub's tag vocabulary is the API's: `tags` is the UNION and `instanceTags` the instance's own, so the
+  profile's chips are `tags` minus `instanceTags`. A state that wants 8 profile chips needs a union of 16 and
+  `instanceTags` of the 8 own; `(LONG_TAGS, LONG_TAGS)` brings the profile none, and no page can render them.
+- axe 4.14's `target-size` (`wcag22aa`, 24 px, WCAG 2.5.8) answers `true` for a small target that is FULLY
+  obscured, and `false` for one in the tab order that is only partly covered. A page a few px taller shifts a
+  control out from under the sticky `.save-bar` and turns a 20x20 checkbox that passed for months into two
+  findings: the finding is the checkbox, not the change. Baseline it by measuring both trees.
+- `HearthTokens.test.ts`'s H1a.12 is an exact ordered list of EVERY `min-height`/`min-width` in `index.css`
+  (`selector: property: value`, in written order), as `Reflow.test.ts` R1.1 is for `overflow-wrap`: any new rule
+  that sets one of those needs its line there, which is the tester's edit.
+- A CSS-reading test's block helper must start counting braces AFTER the opening `{` at depth 1. One that starts
+  at depth 0 stops at the first INNER `}`, so a media block with ONE rule reads as holding none, and its
+  "the one rule it holds" assertion can never go green: report it, do not pad the sheet with an empty rule.
+- A wrapping chip list capped by `max-width: 100%` on the chip is capped by its PARENT, so the `ul` of a flex row
+  needs `min-width: 0` too: with the list uncapped the widest item grows the document's `scrollWidth` and the
+  ux check reports `overflow: scrollWidth N > 320`.
+- React: `flushSync` (from `react-dom`) is the only way a committed state is readable in the next statement, and a
+  `startWrite` nested inside `flushSync` does not commit. A `useOptimistic` overlay ENDS a task after the answer
+  resolves, so a test that focuses an item the answer restored cannot be written with it.
 - `cargo clippy -p <crate> --all-targets -- -D warnings` builds the lib WITHOUT the tests, so a
   `pub(crate)` item of a private module that only `#[cfg(test)]` code calls is dead there. Split it: keep
   the production function, mark the wrapper the tests call `#[cfg(test)]` (a fn simply stops being built,
@@ -107,10 +135,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - A test helper of a test module whose ONLY callers are `#[cfg(unix)]` tests (a bound and a
   thread-race wrapper beside the FIFO tests) is `dead_code` in the Windows `--all-targets` clippy. The
   file's own convention is the fix and it moves no assertion: gate the helper `#[cfg(unix)]` and say the
-  reason in its doc (the gpu_probe helper module gates `use scripted::*` that way). A red you must NOT
-  touch is a `let mut want` whose only `mut` use is a `#[cfg(unix)] want.insert(..)`: `unused_mut` on
-  windows-gnu (`manager/service.rs:9913` (10145 on 2026-11-21), from 5c8232b), pre-existing, outside any slice. Report it, and
-  prove production is clean with the same crate WITHOUT `--all-targets`. The same region reddens the
+  reason in its doc (the gpu_probe helper module gates `use scripted::*` that way; shipped for the
+  fakes' `FakeService::stopped`/`running` and for a `let mut want` whose only `mut` use is a
+  `#[cfg(unix)] want.insert(..)`: that one becomes the pair `#[cfg(unix)] let mut want` /
+  `#[cfg(not(unix))] let want` with the same rows, the `insert` gate untouched). The same region reddens the
   Windows `cargo check --all-targets` with
   `unresolved import` when a `#[cfg(unix)] mod`'s users sit behind a bare `use <mod>::*;`: the un-gated
   import is the defect to report, never a production change.
@@ -136,7 +164,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - Flakes to state in the report, not chase: xtask's script-sandbox tests share ONE temp dir per process
   (keyed by `std::process::id()`, the same in every thread), so a full `cargo test -p xtask` can fail one
   `linux::system_files` script test that passes in isolation and on a rerun; the bff's `tests/session.rs`
-  is a wall of timing tests and loses one occasionally.
+  is a wall of timing tests and loses one occasionally; `fe`'s `NodeNav.test.tsx` "bob's session reads
+  again" counts `/api/node` reads and loses one in a full `npm --prefix fe test`, green alone and rerun.
 - A name a source lint matches is the lint's data. `crates/config/src/tests/control_lint.rs`'s
   `CONFIG_PATHS` names the config paths the GUI may read by the path fn's name: a `paths.rs` rename
   silently emptied the list and the lint passed with no bite. Update the lint's data in the same slice and
@@ -283,6 +312,15 @@ Lessons only: the rules are in `AGENTS.md`.
   with no `boot_enabled`, in a test whose own doc says "each status and each boot flag", while
   `each_instance_carries_its_own_boot_flag` asserted the six) no code answers both: the JSON literals decide
   (three tests need the field), quote both lines.
+- R1 as amended: a page-load route asks the manager NO `devices` (the call can run the engine's probe for
+  up to 30 s under the 5 s read bound), so the server document's `limits.Threads`/`ThreadsBatch` cap at the
+  bff's OWN `available_parallelism` (`server::document` takes no `cpus`; the save path reads its count at
+  the call). `GET /api/node/devices` is the only `devices()` caller; a new call from a shared route reddens
+  every suite whose fake implements no `devices()` with a 502 and adds a `"devices"` line to every exact
+  `app.calls()` pin. `grep -n 'app.calls()' crates/bff/tests/<route>.rs` is the list.
+- A fallback a test pins through a fixture answering NO answer (`ClientError::Unavailable`) and through a
+  count of 0 keeps the route's status untouched: read the count as a tolerant value beside the file, never
+  as a call whose failure reaches the route's `match`.
 - A save route's BODY SHAPE gate outranks a record-resolution pin: `server.rs` gates `Tags` as
   `Kind::Tags::reads(None) == false` (the read always sends a list, so an absent `Tags` would clear the
   profile's tags), pinned shipped by `a_tags_that_is_not_a_list_of_strings_is_server_malformed`. A test that
@@ -394,7 +432,26 @@ Lessons only: the rules are in `AGENTS.md`.
   per form field (`ui_bindings` names the widgets it checks), and the form's dirty compare is
   a whole-struct `!=`, so a field set on `server_form` and `server_form_base` together is
   inert. `config_to_form` and `form_to_config` are exhaustive struct literals: a new
-  `ServerConfig` field reddens both.
+  `ServerConfig` field reddens both. A no-widget field needs NO GUI wiring: `gui.rs`'s
+  `load_server_into_ui` fills the tab with ONE `set_server_form(form)` of the whole struct
+  (R2's `Devices` rode it as a plain `string`, back through `opt_nonblank`, like `tags`).
+  And the CLI keeps a key it has no flag for with NO production change: `ServerCmd::Set`
+  loads the WHOLE config and `ServerSet::apply` copies only the flags that arrived, so
+  `server set` preserves `Devices` as shipped (its R2 test was green before any edit);
+  the tester's `devices: _` in `show_lines_prints_every_field` is the Show row's stub,
+  so `server show` prints no Devices row in that slice.
+- A new `[Server]` key the web UI carries is five places: the `ServerConfig` field, `from_keys`, a
+  `render_for_os` slot (the `tags_line` pattern: set renders `Key = value`, unset renders `""`, so give the slot
+  its own line and the unset render carries a blank), `server_cfg::check`, and ONE `FIELDS` row in
+  `crates/bff/src/server.rs` (`field_of` needs no arm: its default answers `args.first()` for any `checks::KEYS`
+  key, and the refusal's text and field come from there). Adding the key to the shipped
+  `crates/core/defaults/server@default.ini` reddens `tests/server.rs`'s hash and last-line pins: an
+  unset-by-default key needs no line there, and the bff README's `[Server]` key count is the `FIELDS` count.
+  A free-text key needs the marker rule in TWO parallel lists, and the core marker test is TWO tests, one
+  red per list: `checks::SERVER_TEXT_KEYS` (the manager's `server_file`, judging the raw line) and
+  `server_cfg::check`'s `texts` array (the GUI, CLI and bff, judging the value as set). A key whose own
+  rule judges a shape no marker can ride in (`Devices`: `device_list` reads `ROCm0;x` as ONE valid entry)
+  is the case that shows it, the marker rule being its only refusal. Order is free: each test sets one key.
 - `binding_lint::strings_t_keys_and_the_language_file_match` reddens the whole `-p pai-config`
   suite when a strings key is used only OUTSIDE `crates/config` (a `checks::KEYS` refusal key
   the manager and core name, e.g. `server-bad-tags`): the whitelist data (`GUI_ONLY_KEYS`,
@@ -477,6 +534,17 @@ Lessons only: the rules are in `AGENTS.md`.
   `ClientError::Unavailable`, never a reply), and `client.rs`'s passing
   `any_other_error_name_is_other_and_keeps_name_and_message` pins every unmapped name as `Other`. Quote the
   variant list and the test line in the report.
+- A D-Bus signature pin is zbus's OWN rendering: `Signature`'s `Display` writes a struct with NO commas, so
+  the assertion is `"(ta(ssstt)tu)"`. The comma form `(t, a(ssstt), t, u)` is doc prose, and a test that
+  pins it can never go green; quote the sibling pin of the same file (`"(ssstt)"`) as the proof.
+- A wire change that makes new fields REQUIRED reddens a sibling test in the SAME file whose fixture omits
+  them (the pipe `an_acting_client_asks_the_devices_for_the_signed_in_user` answers
+  `{"probed_at": 0, "devices": []}` where `a_devices_row_of_the_wrong_shape_is_other` demands `Other` for a
+  reply with no `ram_mib`). Nothing in the code answers both: quote the pair, keep the strict parse.
+- The host's own reading (R1, `pai_core::host::ram_mib()` / `cpu_threads()`) is read ONLY in the
+  production seam, never in a fake, so a test that hands its fake an inventory sees its own numbers. A test
+  that calls the REAL seam and compares a whole `NodeDevices` (`tests/gpu_probe.rs` `devices_of`) has no
+  literal that fits: `ram_mib: 0` reds on any machine with RAM. Report it, do not widen the literal.
 - A widened GPU probe caches the parsed rows, not a reduced pool, and its cache rule is what the tests pin
   ("As built" (c) of the GPU distribution design reversed the first rule): cache only a probe that parsed a
   device line of the node's OWN (`!device.is_cpu()`); a CPU-only probe answers `(Some(at), [])` and caches
@@ -500,6 +568,17 @@ Lessons only: the rules are in `AGENTS.md`.
   against the NEW profile's cap (a step down to a lower cap is refused). Judge the render cut by the
   `assignments.ini` the call read with its `on_disk` closure, never by `render_of` (that one swallows a
   read failure with `.ok()`, so a broken record reads as an empty one and the switch lands).
+- R3's pair memory check: at the shipped points `check_render_memory` measures
+  `devices_usable(pool, instance_devices(id))` (core's pure rule, `""` = the whole pool, `none`/unknown
+  ids = 0 = skip); the two shrink points (`set_server_profile`, and a `write_file` of an in-use
+  `server@<p>.ini` whose `Devices` differ from the file on disk, compared as `from_text().devices`
+  Options so a no-change save judges nothing) refuse only `need > new && need <= today`, the growth rule
+  turned round, so a profile already over rides through. Gate `none` on either side BEFORE asking the GPU
+  seam (the probe can run 30 s and answers nothing a CPU-only profile needs), and build the render from
+  the `assignments` the verb read, as `check_render_of_full` does. The shrink check asks the seam the
+  same way `check_render_memory` does: render + `estimated_of` first, `return Ok(())` when
+  `needs.is_empty()`, only then `gpus.gpus()` (R3-PIN-10/11 count the seam's own `asked` log from a
+  base read AFTER the manager is built, so a probe at construction is not counted).
 - The per-instance render is the launch's real file (`assign::render`): judge a record with
   `checks::model_profile_conflicts` on that text, and skip the startup budget for an instance with no
   `server@<id>.ini`, as `check_renders` does: the launch refuses it and no render is judged on defaults of a
@@ -518,9 +597,9 @@ Lessons only: the rules are in `AGENTS.md`.
   needs is the `record` the verb already read under `writing`, so pass it in, no second read.
 - The manager's create/remove verbs have no test of their own: they are phases (`manager_instance_crud_e2e`,
   `manager_dbus_instance_crud_e2e`) of the ONE `tests::data_root_e2e`, so the filter is `data_root_e2e` and
-  a `create_instance` filter runs 0 tests. In the windows-gnu check the fakes' `stopped`/`running` builders
-  are `dead_code` (their only callers are the `#[cfg(unix)]` pipe phases), beside the known `let mut want`;
-  both are test-region, `cargo check` (no `-D warnings`) ends `Finished`.
+  a `create_instance` filter runs 0 tests. The fakes' `stopped`/`running` builders and the `want` binding
+  beside them are `#[cfg(unix)]`-gated (their only callers are the Linux/unix phases of the e2e), so the
+  windows-gnu `--all-targets` clippy is green.
 - `set_key` and `remove_key` already keep the section's trailing blank separator line: a writer that trims the section tail is the one that eats it. If a brief pins "every other byte kept", drop the tail trim, and expect the older assertion in the same test function (the `none` path, section text pinned without the blank) to go red: PIN-4a and that one are unsatisfiable together. Report the pair, keep the brief's rule.
 - A `models@<id>.ini` render is written after the record change and its failure is the CALL's answer, so a
   verb's doc states which one the caller sees; the renders go through `render_all_locked` (no lock
@@ -983,6 +1062,30 @@ Lessons only: the rules are in `AGENTS.md`.
 - `set_model_profile` writes `assignments.ini`, not the pool, so its memory check needs the render of the
   record in hand (`assign::render` of `text`, as `check_model_files_of` builds it) beside `render_of`'s
   today: a check that judges the pool pair against itself sees no growth and lands every assignment.
+- A field helper that collects its alerts with `within(main).getAllByRole('alert').filter(inField)` is
+  red before the assertion runs whenever the page has NO alert at all (`getAllByRole` throws on an empty
+  set), so a test asserting the field's alerts are `[]` needs a permanent alert outside the field. None is
+  possible: `RunControls.test.tsx:563` asserts `queryAllByRole('alert')` is `[]` in the same `main`. The
+  helper's `getAllByRole` is the defect. Same for a status helper that pins "one status line".
+- A tab-order test that compares `stops.slice(at[0] + 1, at[at.length - 1])` with `order.slice(1)` can
+  never pass: the slice drops the LAST element named in the title (JS `slice` end is exclusive) while the
+  expected array keeps it. The received and the expected differ by exactly that node.
+- A test under `vi.useFakeTimers({ toFake: ['setTimeout', ...] })` that flushes with the file's
+  `await new Promise((r) => setTimeout(r, 0))` helper never settles: it dies at the 5 s test timeout, and
+  the document its timeout leaves behind reddens the NEXT tests of the file with `Unable to find an
+  accessible element with the role "main"`, so one bad clock looks like three failures. Prove it with two
+  runs: the neighbour alone (`-t "C1.12: a pill"`) is green, the neighbour plus the timed-out test
+  (`-t "C1.1[12]"`) is red.
+- A brief's px sizes for a new control (`min-height: 32px`, `height`, `width`) collide with the exhaustive
+  CSS pins: `HearthTokens.test.ts` H1a.12 lists EVERY `min-height`/`min-width` pair of the sheet,
+  `HearthFonts.test.ts` every `font-family` selector, `Reflow.test.ts` R1.1 every `overflow-wrap` rule. A
+  new control is written with the tokens the pinned rules already use (`var(--control-h)` through the
+  shared field/button rules), declaring none of those properties.
+- R1.8 freezes the set of classes the sheet selects, and amending that freeze is the tester's edit, not the
+  coder's: a new control needs no class of its own when it is the only `button` inside its container
+  (`.chip button` styles the chip's x). Name the class in the report so the tester can amend the list.
+- A scratch probe's `console.log` is swallowed in a passing vitest file; `process.stdout.write` prints.
+  Delete every probe file before reporting, and say the probe's result, not its path.
 
 ## `fe/`: the page's identity, the address, and jsdom's history
 
@@ -1077,6 +1180,35 @@ Lessons only: the rules are in `AGENTS.md`.
   `eprintln!` in your OWN function, `cargo test -p <crate> --lib <test> -- --nocapture`, read the line,
   remove the line, then rerun fmt, clippy and the test. The manager's list holds
   `big, default, ghost, lan-2, secret, shared, spare, zero` at `service.rs:9721`, where the test wants 5.
+
+## Slice 15 C1 (2026-11-21): the instance tags as chips
+
+- Two lists, two roles, and they are NOT interchangeable: the chips shown are the field's OWN list
+  (latched at mount, only a 204 moves it, so a poll never moves a chip), while the body of every write is
+  built from the READ's own tags, and the "from the server profile" line filters the union against the
+  chips. A write built from the read while the chips come from the state loses a chip the user added
+  seconds ago; a profile line filtered against the read keeps a tag that is already a chip.
+- A pill whose Confirm on an empty box CLOSES (focus back on the `+`) while Enter on an empty box leaves
+  it open is not a slip: a test loop presses Enter on blank and expects the box to stay, then clicks
+  Confirm on blank and expects the pill gone. One `add(byButton)` flag answers both.
+- Focus moves that a test reads in the same tick (`document.activeElement` right after the click) need
+  `flushSync` around the state change, then `document.getElementById(id).focus()`: the id of a control
+  that mounts in this commit does not exist before the commit.
+- The field is `<fieldset className="field-control" aria-labelledby="<id>-label">` under a
+  `<span id="<id>-label">` (the shape of the private `LabelField`), NOT a `GroupField`: `GroupField` puts
+  its `<legend>` in the group, and this field's label row carries the About toggle, whose name
+  (`About Instance tags`) a tab-order test counts as a stop.
+- A page-level focus map that names a control of a child field is a string the compiler cannot check: when
+  the slice removes that control (the tags `Save tags` button) the page's `getElementById(...)?.focus()`
+  silently lands on `body` (no lint, no type error, only a `document.activeElement` test reddens it). When
+  the target depends on the child's own state the page cannot see (the pill open: focus its box, else the
+  `+`), the presence test is the lookup itself: `document.getElementById(`${id}-box`) !== null` is exactly
+  "rendered", since the child renders the box only while it is open. Keep the ids of a field in ONE place
+  and grep the page for the removed id (`grep -rn "tags-save" fe/src`) when a control goes away.
+- A section of the page that can be dirty on its own calls `useWarnOnLeave(dirty)` and the shared
+  `useDirtyReport(dirty, onDirty)` itself; a page-level `useWarnOnLeave(tagsDirty)` beside the Server
+  form's own listener arms the browser ask TWICE (a `beforeunload` probe reads one, but the leave guard
+  double-asks). The page only ORs the two sections' dirty flags for the app.
 
 ## xtask: the runtime closure and the loader
 

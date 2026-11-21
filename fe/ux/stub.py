@@ -22,8 +22,16 @@ PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 # session: "admin" (a signed-in `pai` member), "reader" (signed in, no
 # configure), "out" (no session); inst: the instance's state; key: "withheld"
 # when the bff hides OpencodeApiKey from the reader; list: "one" (today's single
-# instance) or "many" (the four tiles of 08-hearth-h6-overview.md section 3).
-STATE = {"session": "admin", "inst": "active", "key": "withheld", "list": "one"}
+# instance) or "many" (the four tiles of 08-hearth-h6-overview.md section 3);
+# tags: "few" (the three of brief 12) or "long" (the widest the rule allows, the
+# 8 tags of 32 characters of brief 15 section 7).
+STATE = {
+    "session": "admin",
+    "inst": "active",
+    "key": "withheld",
+    "list": "one",
+    "tags": "few",
+}
 
 # A long unbroken name: the banner has to hold it at 320 px.
 USER = "abcdefghijklmnopqrstuvwxyz012345"
@@ -44,6 +52,21 @@ INSTANCES_MANY = [
     {"id": "embed", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": []},
     {"id": MANY_ID, "engine": "strata", "state": "activating", "port": 65535, "tags": [LONG_TAG + str(n) for n in range(8)], "instanceTags": [LONG_TAG + str(n) for n in range(2)], "boot": True},
 ]
+
+# The tags of the one instance the check opens (brief 15 section 7), as
+# `tags=` picks them. Each tuple is the pair the list item carries: the union
+# `tags` and the instance's own `instanceTags` (section 0). "few" is the shape
+# of brief 12 (HEAD's fixture); "long" is the widest the rule allows
+# (section 10 R3), both lists at its cap: the instance owns 8 tags of 32
+# characters, and its server profile brings 8 of its own the instance does not
+# carry, so the union is 16. The check then renders the 8 removable chips and
+# the 8 fixed ones of `.chips-profile` (fe/ux/check.js).
+LONG_OWN = [LONG_TAG + str(n) for n in range(8)]  # 32 characters, TAG_MAX
+LONG_PROFILE = [LONG_TAG[:30] + "p" + str(n) for n in range(8)]  # 32 as well
+OWN_TAGS = {
+    "few": (["edge", "v2", "gpu"], ["v2", "gpu"]),
+    "long": (LONG_OWN + LONG_PROFILE, LONG_OWN),
+}
 
 # GET /api/profiles/model: rows with every engine shape the list shows.
 MODEL_PROFILES = [
@@ -179,10 +202,11 @@ class Handler(SimpleHTTPRequestHandler):
         if p == "/api/instances":
             if STATE["list"] == "many":
                 return self.json(200, INSTANCES_MANY)
-            # The one instance of the page the check opens: its port, and tags
-            # where the profile brings one the instance does not carry (12), and
-            # its boot (13 N.1), on, as its /boot read says.
-            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": True}])
+            # The one instance of the page the check opens: its port, its tags
+            # (brief 15, `tags=`) where the profile brings one the instance does
+            # not carry (12), and its boot (13 N.1), on, as its /boot read says.
+            tags, profile = OWN_TAGS[STATE["tags"]]
+            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 8080, "tags": tags, "instanceTags": profile, "boot": True}])
         # The boot row of the tiles and the instance page's boot field
         # (08-hearth-h6-overview.md section 3): on for default, off for every
         # other instance.

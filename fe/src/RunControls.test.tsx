@@ -183,20 +183,19 @@ function inBoot(main: HTMLElement, el: HTMLElement): boolean {
 }
 
 /**
- * True when `el` is in the Instance tags form (brief 12, 12 T1.5), whose own
- * status, alert and Sign in (the Action feedback of fe/DESIGN.md 5.2) are not
- * the run controls'.
+ * True when `el` is the Instance tags field's own Action feedback (brief 15,
+ * section 3: the status, alert and Sign in the layout puts after the fieldset
+ * and before the Server section), never one of the run controls'.
  */
 function inTags(main: HTMLElement, el: HTMLElement): boolean {
-  const box = within(main).queryByRole('textbox', {
+  const field = within(main).queryByRole('group', {
     name: en('instance-tags-own'),
   })
-  const form = box?.closest('form') ?? null
-  return form !== null && form.contains(el)
+  return field !== null && before(field, el) && before(el, serverTitle(main))
 }
 
 /** The run status: the one status line of the header (before the Server h2),
- * outside Start at boot and outside the Instance tags form. */
+ * outside Start at boot and outside the Instance tags field. */
 function runStatus(main: HTMLElement): HTMLElement {
   const h2 = serverTitle(main)
   const all = within(main)

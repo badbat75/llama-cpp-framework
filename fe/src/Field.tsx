@@ -51,7 +51,7 @@ function describes(
 }
 
 /** The About button after the label; its name carries the label. */
-function HintToggle({
+export function HintToggle({
   label,
   open,
   hintId,
@@ -76,7 +76,15 @@ function HintToggle({
 }
 
 /** The hint, one paragraph per line of its text. */
-function Hint({ id, text, open }: { id: string; text: string; open: boolean }) {
+export function Hint({
+  id,
+  text,
+  open,
+}: {
+  id: string
+  text: string
+  open: boolean
+}) {
   return (
     <div id={id} className="field-hint" hidden={!open}>
       {text.split('\n').map((line, i) => (

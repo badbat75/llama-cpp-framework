@@ -696,7 +696,10 @@ for a better UX. Each feature below has one job; the a11y rules of this guide wi
   tag chip added or removed, shows that result as soon as the user acts. The real list moves only
   on success, so a refusal puts back the earlier state by itself. Writes stay one at a time.
   Called inside an Action or `startTransition`
-  ([react.dev](https://react.dev/reference/react/useOptimistic)).
+  ([react.dev](https://react.dev/reference/react/useOptimistic)). It does not fit when focus must move in the same flush as the change
+  and as the answer (a chip removed takes focus to its neighbour, a refused one gives it back): its
+  value ends with the transition, a task later, so there plain state with a rollback to the last
+  saved value does the job (brief 15 C1 review).
 - **`useTransition` / `useActionState`** (the pending state of a write): `isPending` replaces a
   hand-written "saving" flag where that simplifies the code. `useActionState` runs its calls one
   after another, and a reducer that throws cancels the queue, so return the refusal as state

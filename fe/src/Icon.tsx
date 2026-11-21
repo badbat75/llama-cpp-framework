@@ -24,6 +24,9 @@ export type IconName =
   | 'triangle-alert'
   | 'lock-open'
   | 'circle-alert'
+  | 'plus'
+  | 'x'
+  | 'check'
 
 /** The children of the svg, the shapes of the brief's list, in its order. */
 const SHAPES: Record<IconName, ReactNode> = {
@@ -102,6 +105,19 @@ const SHAPES: Record<IconName, ReactNode> = {
       <line x1="12" x2="12.01" y1="16" y2="16" />
     </>
   ),
+  plus: (
+    <>
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </>
+  ),
+  x: (
+    <>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </>
+  ),
+  check: <path d="M20 6 9 17l-5-5" />,
 }
 
 /** The icon of `name`, to be the first child of the element that holds it. */

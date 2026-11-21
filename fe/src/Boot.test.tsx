@@ -159,21 +159,20 @@ function button(main: HTMLElement, key: string): HTMLButtonElement {
 }
 
 /** The run status: the header's status outside Start at boot and outside the
- * Instance tags form (brief 12, 12 T1.5: its Action feedback is its own). */
+ * Instance tags field (brief 15, section 3: its Action feedback is its own). */
 function runStatus(main: HTMLElement): HTMLElement {
   const h2 = serverTitle(main)
   const boot = within(main).queryByRole('group', { name: en('boot-label') })
-  const form =
-    within(main)
-      .queryByRole('textbox', { name: en('instance-tags-own') })
-      ?.closest('form') ?? null
+  const tags = within(main).queryByRole('group', {
+    name: en('instance-tags-own'),
+  })
   const all = within(main)
     .getAllByRole('status')
     .filter(
       (s) =>
         before(s, h2) &&
         !(boot?.contains(s) ?? false) &&
-        !(form?.contains(s) ?? false),
+        !(tags !== null && before(tags, s) && before(s, h2)),
     )
   expect(all, 'one run status').toHaveLength(1)
   return all[0]!
@@ -1019,7 +1018,7 @@ function tabbable(main: HTMLElement): HTMLElement[] {
   )
 }
 
-test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, the textbox, Save tags, then the Server section', async () => {
+test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, Add tag, then the Server section', async () => {
   const { main } = await loaded({
     run: SESSION_ENDED,
     boot: boot(false, SESSION_ENDED),
@@ -1027,16 +1026,15 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
   const aboutPort = within(main).getByRole('button', {
     name: `${en('field-about')} Port`,
   })
-  // Brief 12, section 5: the Instance tags form follows Start at boot, so its
-  // three stops come before the Server form's first field.
+  // Brief 12, section 5, as brief 15 section 3 leaves it: the tags field
+  // follows Start at boot, so its stops come before the Server form's first
+  // field. This fixture's instance has no tags, so the field has its About
+  // toggle and the + alone.
   const tagsAbout = within(main).getByRole('button', {
     name: `${en('field-about')} ${en('instance-tags-own')}`,
   })
-  const tagsBox = within(main).getByRole('textbox', {
-    name: en('instance-tags-own'),
-  })
-  const tagsSave = within(main).getByRole('button', {
-    name: en('instance-tags-save'),
+  const tagAdd = within(main).getByRole('button', {
+    name: en('instance-tag-add'),
   })
   const names = (expected: [string, HTMLElement][]) => {
     const map = new Map(expected.map(([n, el]) => [el as Element, n]))
@@ -1051,8 +1049,7 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['About Start at boot', aboutBoot(main)],
     ['Start at boot', bootBox(main)],
     ['About Instance tags', tagsAbout],
-    ['Instance tags', tagsBox],
-    ['Save tags', tagsSave],
+    ['Add tag', tagAdd],
     ['About Port', aboutPort],
   ]
   expect(names(expected)).toEqual(expected.map(([n]) => n))
@@ -1070,8 +1067,7 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['Start at boot', bootBox(main)],
     ['boot Sign in', bootSignIns(main)[0]!],
     ['About Instance tags', tagsAbout],
-    ['Instance tags', tagsBox],
-    ['Save tags', tagsSave],
+    ['Add tag', tagAdd],
     ['About Port', aboutPort],
   ]
   expect(names(expected)).toEqual(expected.map(([n]) => n))

@@ -71,10 +71,12 @@ const MISSING_ID = 'No-Such-Model-Profile'
 const AS_OF = S['model-profile-gpu-probed-at'].split('{0}')[0]
 
 // The states to look at: the stub's /__set query, the route, the expect: the
-// selectors (with the text they carry) only that state shows, and the optional
+// selectors (with the text they carry) only that state shows, the optional
 // click: selectors clicked in order once the state is rendered (each one only
-// when it is visible, and then awaited open). A page that
-// is blank, still loading, showing an error or the wrong route has no axe
+// when it is visible, and then awaited open), the optional open: one control
+// clicked and the element its click brings awaited, and the optional hover: the
+// pointer entering one element and the element its cut text brings awaited. A page
+// that is blank, still loading, showing an error or the wrong route has no axe
 // violation, so each state proves itself rendered before it is read.
 const STATES = [
   // 09 S1a.1: signed out, the sign-in page is the whole of main at every
@@ -122,10 +124,7 @@ const STATES = [
     // signed-in session, the `dl.tile-facts` of H6b.
     set: 'session=admin&list=many',
     hash: '#/',
-    expect: [
-      { selector: 'li.tile', count: 4 },
-      { selector: 'dl.tile-facts' },
-    ],
+    expect: [{ selector: 'li.tile', count: 4 }, { selector: 'dl.tile-facts' }],
   },
   {
     name: 'instance-server',
@@ -139,6 +138,39 @@ const STATES = [
       { selector: '#page-heading', text: 'default' },
       { selector: '[id$="-Port-label"]', text: S['server-port'] },
     ],
+  },
+  {
+    // Brief 15 section 7, section 10 R3 (the tags as chips): the widest the
+    // rule allows, both lists at its cap, 8 tags of 32 characters the
+    // instance's own and 8 the profile brings. A chip's text has no break
+    // point, so at 320 px, and at 200 % text, it has to break inside the chip.
+    name: 'instance-tags-long',
+    set: 'session=admin&key=shown&tags=long',
+    hash: '#/instances/default',
+    expect: [
+      { selector: '#page-heading', text: 'default' },
+      { selector: 'li.chip', count: 8 },
+      { selector: '.chips-profile li.chip', count: 8 },
+    ],
+    // Its section 10 R5: where the text is cut, the pointer entering the chip
+    // opens the expanded pill, and the read that follows sees it open (its
+    // contrast, and that it adds no sideways scroll). At 1280 px a 32-character
+    // tag is whole and nothing opens: the hover is a finding only where the
+    // text is cut, which is the rule.
+    hover: { on: 'li.chip', then: 'li.chip .chip-full' },
+  },
+  {
+    // The new-tag pill opened, in the chip row (brief 15 section 7): the box
+    // with its Add and Cancel, opened on the widest tags. R3 measured 152 px
+    // of sideways scroll at 200 % text here, from a box that would not shrink.
+    name: 'instance-tags-pill',
+    set: 'session=admin&key=shown&tags=long',
+    hash: '#/instances/default',
+    expect: [
+      { selector: '#page-heading', text: 'default' },
+      { selector: '.tag-add' },
+    ],
+    open: { click: '.tag-add', then: '.tag-new input' },
   },
   {
     name: 'model-profiles',
@@ -292,15 +324,64 @@ async function clicked(page, state) {
   return found
 }
 
+/** The state's `open`: one control is clicked and the element its click brings
+ *  is awaited. The new-tag pill has no `aria-expanded`, so `click` cannot read
+ *  it. A control that is not visible at this width is left alone; one that is
+ *  visible and brings nothing is a finding. */
+async function opened(page, state) {
+  if (state.open === undefined) return []
+  const { click, then } = state.open
+  const loc = page.locator(click)
+  if (!(await loc.isVisible())) return []
+  try {
+    await loc.click()
+    await page.locator(then).waitFor({ timeout: RENDER_MS })
+  } catch {
+    return [`open: "${click}" visible, "${then}" never appeared`]
+  }
+  return []
+}
+
+/** The state's `hover`: the pointer enters `on` and `then` is awaited. The cut
+ *  is measured the way 15 section 10 R5 measures it (`scrollWidth >
+ *  clientWidth` on the chip's text), because it is the only moment the pill
+ *  opens: where the text is whole, opening nothing is what the rule asks, and
+ *  that is no finding. The pill stays open for the read that follows. */
+async function hovered(page, state) {
+  if (state.hover === undefined) return []
+  const { on, then } = state.hover
+  // `on` names a kind of element the state has several of (the chips of both
+  // rows), and strict mode throws on `isVisible` for a selector that matches
+  // more than one, so the pointer enters the first: the same chip the cut probe
+  // below reads, whose span `querySelector` answers.
+  const loc = page.locator(on).first()
+  if (!(await loc.isVisible())) return []
+  const cut = await page.evaluate((sel) => {
+    const span = document.querySelector(`${sel} span`)
+    return span !== null && span.scrollWidth > span.clientWidth
+  }, on)
+  if (!cut) return []
+  try {
+    // The pill is drawn over its chip (15 section 10 R5), so the open pill
+    // covers the target the pointer sits on: the hover is forced, and `then` is
+    // the read that says the pill opened.
+    await loc.hover({ force: true })
+    await page.locator(then).waitFor({ timeout: RENDER_MS })
+  } catch {
+    return [`hover: "${on}" cut, "${then}" never appeared`]
+  }
+  return []
+}
+
 /** The state on the page: the stub's set, then the route. The stub keeps every
  *  key a /__set did not carry, so the state's own set goes after a reset to
- *  the default list of instances: the two tile states ask for list=many
- *  themselves, and a state that ran before them leaves no list behind for the
- *  pages after it. A hash change does not reload the app, so every state
- *  starts from a blank page. */
+ *  the default list of instances and the default tags: the two tile states ask
+ *  for list=many themselves, the tags state for tags=long, and a state that ran
+ *  before them leaves neither behind for the pages after it. A hash change does
+ *  not reload the app, so every state starts from a blank page. */
 async function load(page, state) {
   const found = []
-  for (const q of ['list=one', state.set]) {
+  for (const q of ['list=one&tags=few', state.set]) {
     const res = await fetch(`${BASE}/__set?${q}`)
     if (!res.ok) {
       found.push(`set request: ${res.status} ${res.statusText}`)
@@ -397,6 +478,8 @@ async function textPass(browser, name, lines) {
           found.push(missing)
         } else {
           found.push(...(await clicked(page, state)))
+          found.push(...(await opened(page, state)))
+          found.push(...(await hovered(page, state)))
           await sleep(SETTLE_MS)
           await page.addStyleTag({ content: css })
           await sleep(TEXT_SETTLE_MS)
@@ -463,6 +546,8 @@ async function check(browser, name, lines) {
               // The clicks run on the rendered page, before the settle: the
               // page at rest is read with them done.
               found.push(...(await clicked(page, state)))
+              found.push(...(await opened(page, state)))
+              found.push(...(await hovered(page, state)))
               await sleep(SETTLE_MS)
               found.push(...(await problems(page, width)))
               if (stored) {
@@ -520,6 +605,11 @@ async function main() {
       ran.push(name)
       try {
         await check(browser, name, lines)
+      } catch (e) {
+        // One throw in one browser must not lose what every state of every
+        // browser produced: the failing line is recorded like a finding, the
+        // next browser runs, and the summary prints.
+        lines.push(`${name}: check threw: ${e.message.split('\n')[0]}`)
       } finally {
         await browser.close()
       }

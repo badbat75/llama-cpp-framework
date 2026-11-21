@@ -8,18 +8,21 @@ import {
   useId,
   useRef,
   useState,
-  type FormEvent,
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Dialog from './Dialog.tsx'
-import { CheckboxField, GroupField, TextField } from './Field.tsx'
+import {
+  CheckboxField,
+  FieldError,
+  GroupField,
+  Hint,
+  HintToggle,
+} from './Field.tsx'
 import { Icon, type IconName } from './Icon.tsx'
 import {
   errorText,
-  sameTags,
-  tagsFrom,
   writeTags,
   type Answer,
   type Instance,
@@ -27,7 +30,7 @@ import {
   type TagsRefusal,
 } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
-import { useWarnOnLeave } from './SaveBar.tsx'
+import { useDirtyReport, useWarnOnLeave } from './SaveBar.tsx'
 import type { Runs } from './ServerForm.tsx'
 import ServerSection, { InstanceNotFound } from './ServerSection.tsx'
 import type { Session, SignedOut } from './session.ts'
@@ -317,18 +320,12 @@ export default function InstancePage({
 
   /** One section's unsaved changes: the page is dirty while either the Server
    * form or the tags field has any (12 T1.13), and the app hears about it only
-   * when the page's own state changes. The Server form arms the browser's own
-   * ask for itself, so the page arms it for the tags: one section, one
-   * listener. */
-  const [warnTags, setWarnTags] = useState(false)
-  useWarnOnLeave(warnTags)
+   * when the page's own state changes. Each section arms the browser's own ask
+   * for itself. */
   const report = useCallback(
     (section: 'server' | 'tags', d: boolean) => {
       if (section === 'server') serverDirty.current = d
-      else {
-        tagsDirty.current = d
-        setWarnTags(d)
-      }
+      else tagsDirty.current = d
       const any = serverDirty.current || tagsDirty.current
       if (dirty.current === any) return
       dirty.current = any
@@ -410,12 +407,15 @@ export default function InstancePage({
     flushSync(() => setAsking(null))
     if (!kept) return
     // Back on the control the sign-in answers for: the run button that was
-    // clicked, Start at boot's checkbox, the tags field's Save tags (12 T1.11).
+    // clicked, Start at boot's checkbox, and in the tags field the New tag box
+    // while its pill is open, else the Add tag button (15 C1.10). The box is
+    // in the document only while the pill is open.
+    const pillOpen = document.getElementById(`${uid}-tags-box`) !== null
     const control =
       from === 'boot'
         ? `${uid}-boot-control`
         : from === 'tags'
-          ? `${uid}-tags-save`
+          ? `${uid}-tags-${pillOpen ? 'box' : 'add'}`
           : `${uid}-${clicked.current}`
     document.getElementById(control)?.focus()
   }
@@ -713,14 +713,16 @@ function Boot({
 }
 
 /**
- * The instance's own tags (fe/briefs/12-instance-tags.md, 12 T1.5 to T1.14):
- * one text box, outside the Server form, in a `form` of its own: Save tags or
- * Enter writes it with `PUT /api/instances/<id>/tags`. The box is the user's:
- * filled by the first read of the page, never rewritten by a poll or by the
- * answer of a save; only the profile line follows the reads. The page keys it
- * by its sign-ins, so a sign-in as another account mounts a box holding the
- * tags of the read (12 T1.11). Its controls are
- * `<fieldId>-control`, `<fieldId>-save` and `<fieldId>-sign-in`.
+ * The instance's own tags as chips (fe/briefs/15-tag-chips.md, slice C1, as its
+ * section 10 rules): each chip's `x` and each label the pill adds write the
+ * whole list at once with `PUT /api/instances/<id>/tags`, beside the fixed
+ * chips of the tags its server profile brings. The chips are React's optimistic
+ * list (R6): a write takes them at once, and the list it sends is latched with
+ * it, so a poll that lands on the way changes nothing and a refusal puts the
+ * chips back (15 C1.11). The page keys the field by its sign-ins, so a sign-in
+ * as another account starts it from the read (12 T1.11). Its controls are
+ * `<fieldId>-add`, `<fieldId>-box`, `<fieldId>-remove-<tag>` and
+ * `<fieldId>-sign-in`.
  */
 function TagsField({
   id,
@@ -743,17 +745,30 @@ function TagsField({
   /** Whether the box holds a list other than the one read or last saved. */
   onDirty: (dirty: boolean) => void
 }) {
-  // The box's text: null while nothing was typed, so the box holds the list
-  // the page opened with (T1.12).
-  const [text, setText] = useState<string | null>(null)
-  // The list of the read that opened the page, latched at mounting: the box is
-  // filled from it and no later read rewrites it (decision 7, T1.12).
-  const [base] = useState(() => instance.instanceTags.join(', '))
-  // The list a 204 wrote, null while nothing has been saved on this page.
-  const [saved, setSaved] = useState<string[] | null>(null)
+  // The chips (15 section 10 R6): the field's own list, latched at the read
+  // that opened the page and moved only by a write. The page reads the list
+  // again after every 204 and on its own poll, and no read touches this, so no
+  // poll moves a chip (15 C1.11). A write puts the list it sends over the chips
+  // at once, and the answer keeps it (a 204, no visible step) or puts back the
+  // list before the write (a refusal, 15 C1.9). Both moves are flushed: C1.8
+  // and C1.9 ask for the chip and the focus to move in the same flush as the
+  // click, and as the answer, and React's `useOptimistic` list is given up a
+  // task after the answer, at the transition's end, so the chips are this
+  // state and nothing more.
+  const [latched, setLatched] = useState<string[]>(instance.instanceTags)
+  // The pill: open, and what is typed in it. A label is trimmed only when it
+  // is sent, so what the user typed stays in the box (15 C1.4).
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState('')
+  // One write at a time, drawn as busy (15 C1.5): the flag is the field's, set
+  // and cleared in the same flush as the chips and the line that go with it, so
+  // the chips read busy exactly while the write is on its way.
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState('')
-  // The 422 of the rule, under the box; one keystroke clears it.
+  // The hint of the field, shown by its About toggle.
+  const [about, setAbout] = useState(false)
+  // The 422 of the rule and the duplicate check, under the box; one keystroke
+  // clears them.
   const [error, setError] = useState<string | undefined>(undefined)
   const [stored, setAlert] = useState<{
     text: string
@@ -761,38 +776,17 @@ function TagsField({
     at: number
   } | null>(null)
   const alert = stored?.signIn && stored.at !== renewals ? null : stored
-  const value = text ?? base
-  // The tags the profile brings: the union's ones that are not in the list
-  // this read reports (T1.5), in their order.
-  const profile = instance.tags.filter(
-    (tag) => !instance.instanceTags.includes(tag),
-  )
+  // The tags the profile brings: the ones this read carries that the field
+  // does not show as chips (12 T1.5).
+  const profile = instance.tags.filter((tag) => !latched.includes(tag))
 
-  // The tags are unsaved while the box, split as the manager reads it, differs
-  // from the list read at opening or last saved with a 204, so `v2,gpu` is
-  // `v2, gpu` (12 T1.13). It is said at once, in the turn that changed it:
-  // the page's guard for leaving is the app's (38), and an answer that lands
-  // outside a render has to reach it before the answer is over. Null while
-  // nothing has been said, so the mounting says it too: the page remounts the
-  // field at a sign-in as another account (12 T1.11), and the box it fills
-  // from the read is clean.
-  const reported = useRef<boolean | null>(null)
-  const report = useCallback(
-    (text: string, savedList: string[] | null) => {
-      const d = !sameTags(tagsFrom(text), savedList ?? tagsFrom(base))
-      if (reported.current === d) return
-      reported.current = d
-      onDirty(d)
-    },
-    [base, onDirty],
-  )
-
-  // What the box holds and what a 204 wrote are all the judgement reads: the
-  // list of the opening read is latched, so a page read moves nothing, and the
-  // box of a field nobody typed in is the list it was filled with (T1.12).
-  useEffect(() => {
-    report(value, saved)
-  }, [value, saved, report])
+  // A label typed in the box is the only thing leaving would lose (15 C1.12):
+  // it is the field's unsaved change, said at once to the browser and to the
+  // page, as the Server form says its own. A write answers at once, so it is
+  // never a change waiting to be saved.
+  const dirty = draft.trim() !== ''
+  useWarnOnLeave(dirty)
+  useDirtyReport(dirty, onDirty)
 
   // Read by a send's answer: the sign-in count when the answer arrives (43b).
   const renewalsNow = useRef(renewals)
@@ -800,82 +794,380 @@ function TagsField({
     renewalsNow.current = renewals
   }, [renewals])
 
-  async function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
+  // The chip whose full label shows (15 section 10 R5), by its tag: only a
+  // chip whose text the ellipsis cut opens the pill, and the cut is read at
+  // the moment the pointer or the focus enters, from the span's box.
+  const [expanded, setExpanded] = useState<string | null>(null)
+  // Escape keeps the pill closed until the pointer or the focus enters the
+  // chip again (R5: Content on Hover or Focus, dismissible).
+  const dismissed = useRef(false)
+  // Each chip's text span, by its tag, for that measure.
+  const spans = useRef(new Map<string, HTMLElement | null>())
+  const isCut = (tag: string) => {
+    const box = spans.current.get(tag)
+    return (
+      box !== null && box !== undefined && box.scrollWidth > box.clientWidth
+    )
+  }
+  // Both flush: the pointer and the keyboard reach a chip outside React's own
+  // events (`focus()` of a test, a real click), and R5 asks the pill to be
+  // there the moment the focus is on the `x`, and gone the moment it leaves.
+  const showFull = (tag: string) => {
+    dismissed.current = false
+    if (isCut(tag)) flushSync(() => setExpanded(tag))
+  }
+  const hideFull = (tag: string) =>
+    flushSync(() => setExpanded((shown) => (shown === tag ? null : shown)))
+  // Escape closes it, wherever the focus is, and leaves the focus where it
+  // stands (R5, WCAG 2.1.1: nothing is reachable only by the pointer).
+  useEffect(() => {
+    if (expanded === null) return
+    const away = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      dismissed.current = true
+      setExpanded(null)
+    }
+    document.addEventListener('keydown', away)
+    return () => document.removeEventListener('keydown', away)
+  }, [expanded])
+
+  /** Puts the focus on the field's control `suffix` names (`-add`, `-box`,
+   * `-remove-<tag>`): the caller has flushed the state that puts it there. */
+  function focusControl(suffix: string) {
+    document.getElementById(`${fieldId}${suffix}`)?.focus()
+  }
+
+  /** Opens the pill with an empty box, and the focus in it (15 C1.3). */
+  function openPill() {
     if (saving) return
-    const tags = tagsFrom(value)
-    setError(undefined)
-    setAlert(null)
-    setStatus(t('instance-tags-saving'))
-    setSaving(true)
-    const result = await writeTags(id, tags)
-    if (typeof result === 'object' && result.key === 'server-bad-tags') {
-      // The rule's refusal is the field's error, and the focus goes to the box
-      // the error describes (12 T1.9). The answer's state lands at once: the
-      // page's unsaved changes are what the answer left, and the app hears
-      // about them in the same turn.
-      flushSync(() => {
-        setSaving(false)
-        setStatus('')
-        setError(refusalText(id, result))
-      })
-      document.getElementById(`${fieldId}-control`)?.focus()
-      return
-    }
-    if (result === 'saved') {
-      // The list written is the box's own from now on, so the tags are saved
-      // and the page's unsaved changes go with them (12 T1.14).
-      flushSync(() => {
-        setSaving(false)
-        setStatus(t('instance-tags-saved'))
-        setSaved(tags)
-        report(tags.join(', '), tags)
-      })
-      onSaved()
-      return
-    }
     flushSync(() => {
-      setSaving(false)
-      setStatus('')
-      setAlert({
-        text:
-          typeof result === 'object'
-            ? refusalText(id, result)
-            : alertText(result),
-        signIn: result === 'signed-out' || result === 'revoked',
-        at: renewalsNow.current,
+      setError(undefined)
+      setDraft('')
+      setOpen(true)
+    })
+    focusControl('-box')
+  }
+
+  /** Closes it: the box is empty, the `+` is back, and has the focus (15
+   *  C1.3), so nothing is left that leaving would lose (15 C1.12). */
+  function closePill() {
+    flushSync(() => {
+      setOpen(false)
+      setDraft('')
+    })
+    focusControl('-add')
+  }
+
+  /** Puts `tags` over the chips at once and sends `write` with it (15 section
+   *  10 R6): the chip moves, the box and the `+` and `x` read busy, before the
+   *  handler returns. When the write answers, `settled` says what the field is
+   *  left with, in one flush: `keep` is the list the chips stay on, the tags
+   *  sent for a 204 (the chips do not move again), the list from before the
+   *  write for a refusal (the chip that left comes back, the one that was
+   *  added goes), and `then` is the line or the alert that goes with it. The
+   *  answer reaches the caller once that has landed, so it can put the focus
+   *  where the answer asks. */
+  function send<T>(
+    tags: string[],
+    write: () => Promise<T>,
+    settled: (result: T) => { keep: string[]; then: () => void },
+  ): Promise<T> {
+    flushSync(() => {
+      setSaving(true)
+      setLatched(tags)
+    })
+    return write().then((result) => {
+      const { keep, then } = settled(result)
+      flushSync(() => {
+        setSaving(false)
+        setLatched(keep)
+        then()
       })
+      return result
     })
   }
 
+  /** The alert a refused write is: the text of its key, and the Sign in
+   *  button when the session ended (15 C1.9, C1.10). */
+  function refusalAlert(result: TagsRefusal | string) {
+    return {
+      text:
+        typeof result === 'object'
+          ? refusalText(id, result)
+          : alertText(result),
+      signIn: result === 'signed-out' || result === 'revoked',
+      at: renewalsNow.current,
+    }
+  }
+
+  /** Sends the list with the label in the box appended: one write, at once
+   * (15 C1.4). A box with nothing to add sends nothing: the pill is over when
+   * the click on Add ends it, and stays when the key only submits the box. */
+  async function addTag(byButton: boolean) {
+    if (saving) return
+    const tag = draft.trim()
+    if (tag === '') {
+      if (byButton) closePill()
+      return
+    }
+    const key = tag.toLowerCase()
+    if (instance.tags.some((kept) => kept.toLowerCase() === key)) {
+      // The only check the field makes (decision 7, 15 C1.4): the tag is one
+      // the read shows, as a chip of its own or as the profile's, in any
+      // spelling. The limits of a tag stay the manager's: a label this field
+      // added in a write is not a reason to refuse, and a label whose letters
+      // the manager will not take (an upper-case one) goes to it as it is
+      // typed, where its rule answers in the box.
+      setError(t('instance-tag-shown', tag))
+      focusControl('-box')
+      return
+    }
+    // A label is one tag whatever its spelling, so the one typed takes the
+    // place of the chip that carries it in another spelling.
+    const next = [...latched.filter((kept) => kept.toLowerCase() !== key), tag]
+    setError(undefined)
+    setAlert(null)
+    setStatus(t('instance-tags-saving'))
+    const result = await send(
+      next,
+      () => writeTags(id, next),
+      (answer) =>
+        answer === 'saved'
+          ? {
+              // The chip is there before the page reads the list again (15
+              // C1.6): the write put it there, the pill is over, and the `+`
+              // takes the focus.
+              keep: next,
+              then: () => {
+                setOpen(false)
+                setDraft('')
+                setStatus(t('instance-tag-added', tag))
+              },
+            }
+          : typeof answer === 'object' && answer.key === 'server-bad-tags'
+            ? {
+                // The rule's refusal is the box's error, and the focus goes to
+                // the box it describes, which keeps what was typed (15 C1.7).
+                keep: latched,
+                then: () => {
+                  setStatus('')
+                  setError(refusalText(id, answer))
+                },
+              }
+            : {
+                // The chip goes back, the pill stays open with its text: the
+                // field keeps what the user had (15 C1.9).
+                keep: latched,
+                then: () => {
+                  setStatus('')
+                  setAlert(refusalAlert(answer))
+                },
+              },
+    )
+    if (result === 'saved') {
+      focusControl('-add')
+      onSaved()
+      return
+    }
+    if (typeof result === 'object' && result.key === 'server-bad-tags') {
+      focusControl('-box')
+    }
+  }
+
+  /** Sends the list without `tag` (15 C1.8). */
+  async function removeTag(tag: string) {
+    if (saving) return
+    // The focus moves the moment the chip leaves, not when the write answers
+    // (R6, decision 5): to the chip that takes its place, to the one before it
+    // at the end of the row, and to the `+` when the row is empty (15 C1.8).
+    const rest = latched.filter((kept) => kept !== tag)
+    const next = rest[Math.min(latched.indexOf(tag), rest.length - 1)]
+    focusControl(next === undefined ? '-add' : `-remove-${next}`)
+    setError(undefined)
+    setAlert(null)
+    setStatus(t('instance-tags-saving'))
+    const result = await send(
+      rest,
+      () => writeTags(id, rest),
+      (answer) =>
+        answer === 'saved'
+          ? {
+              keep: rest,
+              then: () => setStatus(t('instance-tag-removed', tag)),
+            }
+          : {
+              // The chip is back in its place (R6, 15 C1.9): the latched list
+              // never left, and the alert says why.
+              keep: latched,
+              then: () => {
+                setStatus('')
+                setAlert(refusalAlert(answer))
+              },
+            },
+    )
+    if (result === 'saved') {
+      onSaved()
+      return
+    }
+    // The restored chip's `x` takes the focus back (15 C1.9).
+    focusControl(`-remove-${tag}`)
+  }
+
   return (
-    <form onSubmit={(e) => void submit(e)}>
-      <TextField
-        id={fieldId}
-        label={t('instance-tags-own')}
-        hint={t('instance-tags-hint')}
-        placeholder=""
-        value={value}
-        error={error}
-        onChange={(v) => {
-          setText(v)
-          setError(undefined)
-          report(v, saved)
-        }}
+    <div className="field">
+      {/* The label row is outside the group (brief 15 section 3): the group
+          holds the chips and the pill only, so the About toggle comes before
+          it and the group's tab stops are the chips' x and the +. */}
+      <div className="field-label">
+        <span id={`${fieldId}-label`}>{t('instance-tags-own')}</span>
+        <HintToggle
+          label={t('instance-tags-own')}
+          open={about}
+          hintId={`${fieldId}-hint`}
+          onToggle={() => setAbout((o) => !o)}
+        />
+      </div>
+      <fieldset className="field-control" aria-labelledby={`${fieldId}-label`}>
+        <div className="chips-row">
+          {latched.length > 0 && (
+            <ul className="chips" role="list">
+              {latched.map((tag) => (
+                <li
+                  className="chip"
+                  key={tag}
+                  onMouseEnter={() => showFull(tag)}
+                  onMouseLeave={() => hideFull(tag)}
+                  onFocus={() => showFull(tag)}
+                  onBlur={() => hideFull(tag)}
+                >
+                  <span
+                    ref={(el) => {
+                      spans.current.set(tag, el)
+                    }}
+                  >
+                    {tag}
+                  </span>
+                  {expanded === tag && <ChipFull tag={tag} />}
+                  <button
+                    type="button"
+                    id={`${fieldId}-remove-${tag}`}
+                    aria-disabled={saving || undefined}
+                    onClick={() => void removeTag(tag)}
+                  >
+                    <Icon name="x" />
+                    <span className="visually-hidden">
+                      {t('instance-tag-remove', tag)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {open ? (
+            <div className="tag-new">
+              <label className="visually-hidden" htmlFor={`${fieldId}-box`}>
+                {t('instance-tag-new')}
+              </label>
+              <input
+                id={`${fieldId}-box`}
+                type="text"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                autoComplete="off"
+                readOnly={saving}
+                value={draft}
+                {...(error === undefined
+                  ? {}
+                  : {
+                      'aria-invalid': true,
+                      'aria-describedby': `${fieldId}-error`,
+                    })}
+                onChange={(e) => {
+                  setDraft(e.target.value)
+                  setError(undefined)
+                }}
+                onBlur={(e) => {
+                  // A box holding a label stays (15 C1.3, decision 6).
+                  if (e.target.value.trim() === '') closePill()
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void addTag(false)
+                  else if (e.key === 'Escape') closePill()
+                }}
+              />
+              <button
+                type="button"
+                aria-disabled={saving || draft.trim() === '' || undefined}
+                onClick={() => void addTag(true)}
+              >
+                <Icon name="check" />
+                <span className="visually-hidden">
+                  {t('instance-tag-confirm')}
+                </span>
+              </button>
+              <button type="button" onClick={closePill}>
+                <Icon name="x" />
+                <span className="visually-hidden">
+                  {t('instance-tag-cancel')}
+                </span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              id={`${fieldId}-add`}
+              className="tag-add"
+              aria-disabled={saving || undefined}
+              onClick={openPill}
+            >
+              <Icon name="plus" />
+              <span className="visually-hidden">{t('instance-tag-add')}</span>
+            </button>
+          )}
+        </div>
+        {profile.length > 0 && (
+          <>
+            <p className="tags-profile" id={`${fieldId}-profile`}>
+              {t('instance-tags-from-profile')}
+            </p>
+            <ul
+              className="chips chips-profile"
+              role="list"
+              aria-labelledby={`${fieldId}-profile`}
+            >
+              {profile.map((tag) => (
+                <li
+                  className="chip"
+                  key={tag}
+                  tabIndex={0}
+                  onMouseEnter={() => showFull(tag)}
+                  onMouseLeave={() => hideFull(tag)}
+                  onFocus={() => showFull(tag)}
+                  onBlur={() => hideFull(tag)}
+                >
+                  <span
+                    ref={(el) => {
+                      spans.current.set(tag, el)
+                    }}
+                  >
+                    {tag}
+                  </span>
+                  {expanded === tag && <ChipFull tag={tag} />}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {error !== undefined && (
+          <FieldError id={`${fieldId}-error`} text={error} />
+        )}
+      </fieldset>
+      <Hint
+        id={`${fieldId}-hint`}
+        text={t('instance-tags-hint')}
+        open={about}
       />
-      {profile.length > 0 && (
-        <p className="tags-profile muted">
-          {t('instance-tags-profile', profile.join(', '))}
-        </p>
-      )}
-      <button
-        id={`${fieldId}-save`}
-        type="submit"
-        className="secondary tags-save"
-        aria-disabled={saving || undefined}
-      >
-        {t('instance-tags-save')}
-      </button>
       <p role="status" className="tags-status">
         {status}
       </p>
@@ -894,6 +1186,20 @@ function TagsField({
           {t('session-sign-in')}
         </button>
       )}
-    </form>
+    </div>
+  )
+}
+
+/**
+ * The whole label of a chip whose text the ellipsis cut (fe/briefs/15-tag-chips.md
+ * section 10 R5): the pill over the chip, opened while the pointer or the
+ * keyboard is on it, closed when both have left, and by Escape. It draws the
+ * whole label, so the list item that carries it is not read twice.
+ */
+function ChipFull({ tag }: { tag: string }) {
+  return (
+    <span className="chip-full" aria-hidden="true">
+      {tag}
+    </span>
   )
 }

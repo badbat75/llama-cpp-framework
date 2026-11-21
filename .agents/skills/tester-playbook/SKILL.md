@@ -23,7 +23,7 @@ Lessons only: the rules are in `AGENTS.md`.
   LAST step: make the render's path a directory (`create_dir(sys.join("models@blocked.ini"))`), so
   `write_served_file`'s rename fails, and assert the whole-tree snapshot is unchanged.
 - A mutant of the session gate that keeps compiling: `sessions.current(&headers).unwrap_or_else(||
-  (String::new(), crate::session::Identity { user: String::new() }))` (a `peek` swap is a compile red:
+(String::new(), crate::session::Identity { user: String::new() }))` (a `peek` swap is a compile red:
   `peek` answers `Option<Identity>`, not the tuple).
 - A Rust test that cannot compile is not a red. Before reporting a list of tests that should fail, write
   a throwaway test that exercises the new signature (call it, print the result, the `panicked at .. not a
@@ -38,6 +38,12 @@ future` of a non-async block), run it, then delete it and write the real tests. 
   never as passing. To see one phase's red at all, add a temporary `#[test]` in `tests/mod.rs` calling
   just that phase, run it, delete it and prove the delete with `grep -c` (a phase behind a red one
   reports nothing in the shared run, so its red is otherwise unprovable).
+- A phase whose pins are a mix of reds and day-one guards: gate each RED pin's own opening brace
+  (`{` -> `if std::env::var_os("X_REST_FIRST").is_none() {`, braces balanced), run once with the variable
+  set, and the guard pins and every later phase report. An `is_some() { return; }` line skips the WHOLE
+  phase, not the block: it proves nothing about the pins after it. `sed` the guard back to `{` after the
+  run and prove with `grep -c`. A gate read in the test body DOES see a variable set on the cargo command
+  line (the note above is about a harness process, not a unit test's body).
 - When a phase can only be proven in a red state, seed the pre-save state into a file and show the
   refusal, then write the final test asserting the good outcome. The red of a test that asserts success,
   naming the exact refusal, is a better report than an artificial case.
@@ -109,6 +115,12 @@ future` of a non-async block), run it, then delete it and write the real tests. 
 - Register a new phase in the body of `data_root_e2e` in the same edit that writes it. A phase that is not
   called there is invisible to the e2e run: its solo run looks green and the full-suite failure blames
   the tree.
+- An e2e phase that rewrites a file a LATER phase pins (a `[Server]` profile whose `ModelsMax` the next
+  block reads): snapshot the text at the phase's start (`let found = read(name).expect(..)`), write it
+  back with `std::fs::write` at the block's end. Prove the restore's teeth with a mutant that swaps the
+  write line for `let _ = found;` (compiles, so the red is the later phase's panic line, not a compile).
+- A phase's own "the write landed" loop and the restore coexist: read the snapshot BEFORE the loop, never
+  after, and keep the block's asserts on the writes (the restore belongs to the tree, not to the pin).
 - A phase that drives a real save goes through `config_seam_e2e` (`crates/app/src/server_control.rs`:
   redirect the tree, save through the seam, reload, assert), never through a direct write of
   the files: that passes without the seam.
@@ -145,10 +157,14 @@ future` of a non-async block), run it, then delete it and write the real tests. 
 - `crates/app/src/tests/gate_lint.rs` is pulled in by `#[path]` from `crates/cli/src/tests/mod.rs` (and
   `crates/config/src/tests/control_lint.rs`), not declared in app's `tests/mod.rs`.
 - The bff's unit-test list is in `crates/bff/src/lib.rs` (its `tests/*.rs` are NOT the unit tests). The
-  bff's `build.rs` embeds the web UI from `PAI_BFF_FE_DIR`, so `cargo test -p pai-bff` fails "the web UI
-  is not built" until `xtask build framework` has run; to test the bff without it, set
-  `PAI_BFF_FE_DIR=<repo>/crates/bff/fe-fixture` (a stub `index.html`). `tests/fe.rs` needs the real
-  `fe/dist`.
+  bff's `build.rs` embeds the web UI and exports `PAI_BFF_FE_DIR` for `tests/fe.rs`, so `cargo test -p
+pai-bff` fails "the web UI is not built" until `xtask build framework` has run. The build script's OWN
+  input is `PRIVATE_AI_FE_DIST` (absolute, or it asserts): the script already falls back to
+  `crates/bff/fe-fixture` (a stub `index.html`) when `fe/dist/index.html` is missing, so an
+  unset-variable run is the fixture; a stale `fe/dist` is overridden with
+  `PRIVATE_AI_FE_DIST=$PWD/crates/bff/fe-fixture`. Setting `PAI_BFF_FE_DIR` in the shell does nothing
+  (cargo's `rustc-env` wins). `tests/fe.rs` runs on the fixture too (it reads `env!("PAI_BFF_FE_DIR")`
+  and branches on `fixture()`), so a fixture run is 6 green, not a stub failure.
 - A route that validates the instance id against the record answers `no_instance` for every id the fake
   does not list, so a second instance needs a list the test can set: in `crates/bff/tests/server.rs` that
   is `Live::instances` (empty = the one `default`) behind `App::set_instances`. Each `tests/*.rs` has its
@@ -181,13 +197,53 @@ vitest` from the repo root resolves a different config and lies about the files 
   the containment pins' own red in a scratch copy with the first pin cut (they sit behind it).
 - A new fe CSS class reds `Reflow.test.ts` R1.8's frozen `CLASSES` list, and a new `overflow-wrap`
   declaration reds R1.1's `sets('overflow-wrap')` list: both are allowlists the CODER amends, so name them
-  in the report and leave them for after the layout test.
+  in the report and leave them for after the layout test. The same is true of `HearthTokens.test.ts`
+  H1a.12's min-size list: a brief that rules a control's size (15 R2: the chip x 24 px, the + and the
+  pill's icons 32 px) wants entries ADDED, and all three lists are compared with `toEqual`, so a ruling
+  that adds a class (`chip-full`), a declaration (`.chip-full { overflow-wrap: anywhere }`) or a size is a
+  test edit of the same slice, never a "leave it for the coder".
+- Those allowlist arrays are in a fixed order: the H1a.12 list is the order the rules appear in
+  `index.css`, R1.1's is sorted by selector. Run the test and read the diff's insertion point, do not
+  guess: a well-aimed entry in the wrong slot reds as a whole-list mismatch that names nothing.
+- A CSS text pin whose selector ALSO appears inside a `@media` block: the flat rule regex matches it
+  TWICE, so a `block(sel)` "exactly one rule" assert reds on a rule that exists. Strip every at-rule
+  (header plus its block, by brace depth) into a `topBlock(sel)`, pin the top-level rule there, and pin
+  the media block on its own: its header, the selectors its body holds, and its declarations.
+- An at-rule reader whose header regex match ENDS at the block's `{` starts the brace walk INSIDE it, so
+  its depth is 1, not 0: from 0 the walk stops at the block's first inner `}` and the body of a
+  one-rule block is an unbalanced `.chip > span {` on which the rule regex finds NOTHING, which reads as
+  "the media block holds no rule" (a red the tester owns, not the coder's).
+- A media block's body is a list of RULES, not of declarations: `decls(body)` returns the rule's header
+  as if it were a declaration (`.chip > span { white-space: normal`). Take the inner rule's own body
+  (the same `matchAll`'s group 2) and read the declarations from it.
+- In an ordered min-size allowlist, the entries of ONE rule follow the test loop's order
+  (`min-height` then `min-width`), NOT the lines of the sheet: `.tag-new input` writes `min-width` above
+  `min-height`, and the list must name min-height first.
+- A red the coordinator reports in a file whose area is NOT in the coder's diff (a routing/sign-in test,
+  no routing file touched): run it solo three times and read the full-suite map. Three green solos plus a
+  green in the full run is a flake, and the report says so with the runs; editing production code to
+  chase it is out of the tester's scope.
+- React 19 builds `onMouseEnter`/`onMouseLeave` from pointerover/pointerout and mouseover/mouseout
+  (react-dom registers `onPointerEnter` on `["pointerout", "pointerover"]`), so
+  `fireEvent.mouseEnter(el)`, a non-bubbling `mouseenter`, reaches NO React handler: fire pointerOver +
+  mouseOver + mouseEnter (and the three mirrors to leave), which covers a handler and a plain listener.
+- jsdom focus for a React handler: `el.focus()` dispatches `focus` AND the bubbling `focusin`, which
+  React's root-delegated `onFocus` hears; `fireEvent.focus(el)` is non-bubbling and invisible to it.
+  Same for a `tabindex="0"` element that is not focusable in the fixture: assert
+  `document.activeElement === el` first, its red then names the missing `tabindex`.
+- An optimistic list (R6, `useOptimistic`): its refusal ends in the SAME state as the pessimistic code
+  (the chip back, focus on it), so a refusal pin greens on day one and proves nothing about optimism.
+  Pin the optimism in the PENDING state, where the two differ: the new chip listed while the PUT is
+  held, the removed chip gone and focus already moved. Say in the report which pin is a shape guard.
+- A brief that AMENDS an existing criterion (15 R5 amends C1.2's tab order, R6 amends C1.5, C1.8, C1.9):
+  rename the test `15 C1.n (as 15 section 10 Rm amends it): <the new wording>` and keep every assertion
+  the ruling does not contradict, so the run's list of reds answers the criteria one by one.
 - A fe test with two halves in one `test()` (the fe check, then a 422 refusal): the first red stops the
   second, so prove the second alone in a scratch COPY in the same dir (`cp src/X.test.tsx
 src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count == 1`, run `-t SCRATCH`,
-`rm`, prove with `ls` + `ls src | grep -c`). A copy in `src/` keeps every helper, no re-import. The
-same file's helpers declared BELOW the test are reachable from it: a `function` declaration hoists, so a
-GD2.6 test calls GD2.7's `splitFormat`.
+  `rm`, prove with `ls` + `ls src | grep -c`). A copy in `src/` keeps every helper, no re-import. The
+  same file's helpers declared BELOW the test are reachable from it: a `function` declaration hoists, so a
+  GD2.6 test calls GD2.7's `splitFormat`.
 - Run `npx prettier --write <touched files>` BEFORE the final test run: prettier rewrites long
   `test('<criterion>: ...')` titles into several lines, so a run before that reformats looks like a
   changed test set. It also rewrites comments (a sentence that ends a comment line right after an operator
@@ -236,11 +292,56 @@ GD2.6 test calls GD2.7's `splitFormat`.
   break them.
 - A test that builds a struct literally is the one that reds when a field is added: grep the struct's
   literal sites before writing the report, and add the field to the shared constructor, not to each test.
+- A new `[Server]` key of `ServerConfig` is a five-file fan-out of exhaustive-literal guards that red BY
+  CONSTRUCTION once the field exists (`launch::server_args_covers_every_config_field`,
+  `server_cfg::rich_config_round_trips_through_ini`, cli's `server_set_apply_copies_every_field` and
+  `show_lines_prints_every_field` (its destructure wants `field: _,`), config's
+  `rich_server_config_round_trips`, bff's `rich_cfg`), plus `crates/config/src/server_form.rs`'s
+  `form_to_config` (production: the GUI has no field, so stub `devices: None` and report the GUI's
+  key-preservation gap). The field's own stub (the struct's field plus the one `from_keys` read line) is
+  what keeps the workspace compiling; a field NO render line makes every "the file keeps the key" pin a
+  real red, and `render`/`check`/`server_args` stay the coder's. In `crates/bff/tests/server.rs` the
+  hand-maintained `KEYS` array is the document's contract: gain the key there and
+  `unset_keys_are_null_in_the_shipped_file` reds naming exactly the missing field.
+- `checks::device_list` takes an EMPTY value as unset (`Ok(())`), as every list rule here: pin the blank
+  as taken and the refusal table on the shapes only (`"ROCm0, ROCm1"` is refused for the ` ROCm1` entry,
+  so the refusal's `values` are `["Devices", " ROCm1"]` with the leading space, the entry as split).
+- A key judged ONLY by a shape rule is invisible to the marker rule: `RawSection::get` cuts the value at
+  the first `;`/`#`, so `server_file`'s `device_list` reads `ROCm0` from `ROCm0;x` and passes. The teeth
+  live in the raw-keys loop (`SERVER_TEXT_KEYS`), so pin the refusal at BOTH layers, the file check (the
+  raw line, args `["Devices"]`) and `server_cfg::check` (the value as set), plus the bff's route 422 with
+  `field` and "nothing written" on EVERY save route. The day-one red reads `Ok(())` / 200, and the bff
+  unit `refused(..)` panic prints the whole rendered file WITH the marker line: that is the defect's
+  evidence, not a harness typo.
+- A server key a client has no field for (R2's `Devices`): each whole-file writer is judged on its own
+  merge rule. `pai server set` is a merge BY CONSTRUCTION (`ServerSet` has no such flag and `apply`
+  copies only the flags it is given), so its "the file keeps the key" test greens on day one; the GUI's
+  `form_to_config` (`devices: None`) is the real red, pinned like the `Tags` test in `server_form.rs`.
+  `pai config import` writes a file only when the manager lacks it (`Ok(Some(_)) => continue` in
+  `migration.rs`), an inspected absence with no test to write.
 - A field added to a struct every client decodes (`InstanceInfo`) is a three-level red: the row's own
   signature pin (D-Bus `a(sssqasas)`, pinned as `<Row as Type>::SIGNATURE.to_string()`, zvariant has no
   `Signature::as_str`), the transport's decode of the OLD shape (pin it refused), and every JSON document
   that carries the item whole. Grep the JSON literals (`grep -c '"engine":' crates/bff/tests/*.rs`) and
   gain the field in each, in the same step, so the collateral reds are one list, not a mystery.
+- The same field on the Rust struct reds COMPILE, not behaviour: `E0560 has no field named` at every
+  literal and `E0609 no field` at every read, so write each fixture ONCE per file (the manager's
+  `cards()` / `listed()`, the bff's `probed()` / `listed()`) and the red list stays short. Read the
+  reply's whole shape as one tuple, not field by field: a D-Bus reply widened at the end
+  (`ta(ssstt)tu`) is pinned as `<(u64, Vec<DeviceRow>, u64, u32) as Type>::SIGNATURE`, which compiles
+  and passes the day it is written, so report it as the wire guard beside the round trip's red.
+  Write that literal in zvariant's form, NO commas between a struct's members: a pin whose own string
+  carries commas is a red the coder can never pass (the sibling row pin `(ssstt)` shows the form).
+- A test that asserts a struct of hardware readings for EXACT equality (the probe box of
+  `pai-manager/src/tests/gpu_probe.rs` answering `NodeDevices`) cannot name the machine's RAM and CPU
+  count, so a new figure of that kind forces the reading to be a seam the test hands in. Leave those
+  literals alone (they red at compile, the coder gains the field) and report the shape: pin the figure in
+  the fake that answers a number (`FakeGpus::with_inventory(..)`), and say a production path reading the
+  host answers its own numbers and reds there. Where the test drives the REAL seam (a scripted exe, the
+  RAM and CPUs read off the live machine), split the assert: `assert_eq!` on the members the fixture
+  decides (the moment and the list, taken through a `probe_answer(&node)` helper so the whole struct is
+  never a literal), plus `node.ram_mib > 0 && node.cpu_threads > 0`, never a host value; two answers of
+  that same seam DO compare whole. A fake seam keeps a fixed literal (no inventory answers 0 on both).
 - When a route gains a read (the record read in front of the file read), retarget the EXISTING call-log
   pins of that route, not only the new tests: a pin that asserts `["read server@default.ini"]` after a
   read that must now be `["instances", "read ..."]` is a red the coder reads as a broken fake. Grep the
@@ -267,6 +368,10 @@ GD2.6 test calls GD2.7's `splitFormat`.
 - `//!` is legal ONLY above the file's first item: a section header appended at the tail of a test file
   with `//!` is `E0753: expected outer doc comment`, one error per line. Write mid-file headers with `//`,
   and when a script turns them back into the module doc, stop at the first `use`.
+- A doc comment on a struct FIELD must start every line with `///`: one bare prose line is
+  `expected ':', found ','`, a SYNTAX error of the LIB target. It stops the crate's test binary from
+  building at all, so the field reds you wrote report nothing and the run reads as "no red found". Read
+  the FIRST error of the run before judging the list.
 - A route added under a path an existing test pins as 405 for every verb (`POST /api/instances`,
   `DELETE /api/instances/{id}`) makes that pin a false red: narrow it, in the same edit, to the verbs no
   route answers, and pin the new paths' own unrouted verbs as a new test.
@@ -274,6 +379,14 @@ GD2.6 test calls GD2.7's `splitFormat`.
   only" (a stop needs no model profile). Give the odd verb its own `Option<...>` cell defaulted `None` in
   `Answer::ok()`, so every `Answer { verb, ..Answer::ok() }` literal keeps compiling and behaving: the
   refusals of the shared verb stay what they were.
+- The server documents' thread limit is the bff's OWN `available_parallelism` (amended R1: a document
+  read must ask the manager no `devices`, that call can run the engine probe for 30 s under the 5 s read
+  bound). Pin it by arming the fake's `devices()` (it records and answers 8, the machine has 24) and
+  asserting `limits.Threads == [1, cpus]` plus `!calls.iter().any(|c| c == "devices")` on both the
+  instance document and `GET /api/profiles/server/{id}` (server.rs's full-router harness routes it on
+  the same fake). `limits_are_the_checked_ranges_and_the_cpu_count` is the un-armed guard of the same value.
+- A fake's new verb that answers `Err(Unavailable)` by default is safe only for a route no test pins:
+  grep the routes that would now read it, and say which answers the default reaches.
 - When the stub takes a parameter, pin it as the constant the code must pass (`const _: fn(&_, &str,
 &str, &[&str]) = ..;`), not as a needle in the body: a source lint drops comments, so a comment naming
   the needle greens. Pin the argument as DATA (a `starts_with("const ...: &str = \"")`-style assert) and
@@ -314,6 +427,34 @@ GD2.6 test calls GD2.7's `splitFormat`.
 - The manager's fakes are `manager::service::fakes` (`crates/manager/src/manager/service.rs`); pai-app's
   test backend is `fake::scoped` (`crates/app/src/server_control.rs`). Grep which one a crate has before
   naming it.
+- The manager's GPU memory check runs at TWO judging points today (`check_profile_memory` at a model-profile
+  pool write, `check_profile_memory_of` at an assignment): a rule that must also fire where `available`
+  shrinks (a server-profile switch, a save of a profile in use) is green at NEITHER today, so pin those as
+  the reds and keep "a save that changes no `Devices` judges nothing" and "already over is not re-judged" as
+  day-one guards. Size a fixture's cards from the estimate of the GGUF the phase itself writes
+  (`full_gpu_bytes` + `pool_usable` + `GPU_RESERVE`, the same pure API the check uses) and assert the profile
+  fits the pair and NOT one card: a refusal that never arrives then names the fixture, not the rule.
+  `devices::Gpu::usable()` is already there (total less the reserve), `pool_usable` sums it over `gpu_pool`
+  (one card seen by two backends once), and `checks::device_list` takes `Devices = none` alone, refusing it
+  beside another name.
+- The GPU seam's "a write asked it 0 times" pin: read the count AFTER `manager_on` as a delta
+  (`let base = asked.lock().unwrap().len(); .. asks[base..].is_empty()`), so a probe at the manager's
+  own construction, the coder's choice, never reddens the absence.
+- The shrink check (the two points where `available` shrinks: a server profile switch, a save of an
+  in-use profile that changes `Devices`) asked the seam BEFORE it estimated anything, while
+  `check_render_memory` asks only once a section grew, so "a render with nothing to estimate asks the
+  seam 0 times" is the red there and the mixed list (`ROCm0,ROCm9` on a node with a ROCm0 and a CUDA1,
+  refused with the one card's MiB) is a day-one guard: `devices_usable` skips an unknown name per name.
+  The render with nothing to estimate is an empty `models.ini`, or a profile in effect with an
+  `hf-repo` key (a `FETCH_KEYS` section names no file of the node, so the estimate gives up), and
+  neither judging point runs the model-file check, so those writes LAND and the count is the only pin.
+- A gate's env var name has no `-`: bash reads `R3-PIN-10=1 cargo ..` as a command name, so the run
+  tests the UNGATED file and the red names the pin you meant to skip. Marker `R3-PIN-10`, variable
+  `SKIP10`. Match a cut's boundary lines with `strip().startswith`, their prose runs on.
+- A pin block with two sub-cases (the rule at no-profiles, then at no-estimate): prove the second's red
+  by DELETING the first's lines in a scratch copy, not by gating, since a gate skips the whole block.
+  Each sub-case writes its own fixture (`record` / `profile_with` / `pool_files` / `assignments`) and
+  redeclares its `gpus` / `asked` / `base`, so the cut copy compiles.
 - `WriterLog` records `(name, pid)`: a pid-keyed helper (`asked_admin`, `asked_bff`, `set_unique_name`,
   `is_authorized_quietly`) needs a unique name per test, else a parallel test's write counts as yours.
 - A new verb of a probe that a test file already fakes (the fake exe and its counter file of
@@ -510,6 +651,17 @@ GD2.6 test calls GD2.7's `splitFormat`.
   when the manager refuses a call made as the signed-in user, and answers 502 `client-not-authorized` on a
   session-free read where the manager refused the bff itself. The guard for the second lives in
   `tests/instances.rs` and `tests/control.rs`: run those by name and report them as guards.
+- A rule AMENDED to an absence (a read that used to ask a verb must now ask none) is pinned by arming
+  the fake's verb (the fake keeps: it records, and answers a number that differs from the bff's own,
+  e.g. 8 vs the machine's 24) and asserting the call log has NO entry for it and the derived figure is
+  the bff's own. The same slice must retarget every exact call-log pin the earlier slice prefixed with
+  the verb (grep the file for the quoted verb, e.g. `"devices"`): an unretargeted pin is a false green
+  of the new rule and a red the coder reads as a broken fake. The pair route can ride the same
+  full-router harness (`/api/profiles/server/{id}` routes beside `/api/instances/{id}/server`); a
+  separate test file whose fake does NOT implement the verb answers the trait default (`Err(Other)`,
+  records nothing), so it has no pin to retarget: report "no devices expectation found" for it.
+- A fake's new verb that answers `Err(Unavailable)` by default is safe only for a route no test pins:
+  grep the routes that would now read it, and say which answers the default reaches.
 
 ## Source lints and text pins
 
@@ -744,6 +896,20 @@ expected [ …(N) ]` naming the keys: that is the coder's hook, report it as suc
   label, the textbox carries the name" pin is GREEN on a read-only card and RED on an editable one: pin
   it in the file whose field is already editable to carry the red, repeat it as a guard, report which is
   which.
+- A field moved from a `form` (label on the input) to a `fieldset` (legend = `role="group"`) reds every
+  helper that locates it by its textbox plus `closest('form')` (the `inTags` of RunControls,
+  SessionRevoked, Timeout and Boot's `runStatus`, which keep the field's own status out of "one run
+  status in the header"), every whole-page tab path, and any "the page has exactly N inputs" inventory
+  whose text input is now inside a pill. Retarget all of them to `queryByRole('group', { name })` in the
+  same step, and report them as one collateral line per file, named by the ONE reason.
+- Pin a field's Action feedback by a ZONE, not by a node, when the brief's layout sketch is a code block
+  whose indentation is the only clue: "the one `role=status` inside the group, or between the group and
+  the section's `h2`" passes both readings and still excludes the header's run status, the boot field's
+  and the save bar's. A strict "after the fieldset" pin reds a compliant implementation that nests them.
+- Icon-only buttons whose words are a visually hidden span (`+` "Add tag", "Add", "Cancel",
+  "Remove tag v2") are reached by `getByRole('button', { name })` on the exact words, never by their
+  classes and never by `input.closest('div')` for the pill: exact-name matching keeps "Add" apart from
+  "Add tag", so the pill's two buttons need no container walk.
 - A card's controls are NOT in the document when its `h1` is (the cards render with the read): a
   `getByRole('combobox', ..)` right after the `h1` reds "Unable to find an accessible element with the
   role combobox", which hides the slice's real red. Use `findByRole`, and assert the fixture's `values`
@@ -1493,3 +1659,87 @@ A card that keeps its own `role="status"` in the DOM from its first render (a mo
   the case is an administrator's hand edit. In one loop over `(style, record)` fixtures the first
   case's red blocks the second, so prove the second by adding the final newline to the FIRST fixture
   for one run (LF then greens), and restore with `cp` + `cmp -s`.
+
+## Four harness defects of one fe chip file (brief 15 C1, 2026-11-21)
+
+Fixing the defects the coder lists in a file, each verified against the brief first:
+
+- A list helper on `getAllByRole` is a defect at every call site that asserts ABSENCE (it throws
+  before `toEqual([])` runs). Sweep the file, do not fix only the named one: `tagAlerts` (named) and
+  `tagSignIns` (not named, used at the "the Sign in is gone" pin of C1.10) both go
+  `queryAllByRole`. The teeth stay: each call site that expects one asserts `toHaveLength(1)` or
+  indexes `[0]!`.
+- A shared flush helper that awaits a real `setTimeout` under `vi.useFakeTimers` never settles: the
+  test dies at the 5 s vitest timeout and the aborted render leaves `<div />`, so the NEXT tests in
+  the file red "no role main" and read as a broken harness. Branch inside the helper on
+  `vi.isFakeTimers()` and use `vi.advanceTimersByTimeAsync(0)` (vitest 5 exposes it); keep
+  `vi.useRealTimers()` FIRST in `afterEach` so the shared flush there takes the real branch.
+- A "nothing between A and B" tab-order pin built as `stops.slice(at[0] + 1, at[at.length - 1])`:
+  `slice`'s end is EXCLUSIVE, so it drops B while the expectation `order.slice(1)` keeps it. The fix
+  is `+ 1`, never trimming the expectation.
+- "The chips stay" counted as `within(field).getAllByRole('listitem').length` counts the brief's
+  SECOND labelled list (the profile's fixed chips) too. Use the file's own-list helper and map the
+  chip texts: `[..]` of texts pins more than a count and needs no fixture knowledge.
+- A brief-pinned focus rule can red on an id the slice DELETED: the page's sign-in switch
+  (`InstancePage.tsx:415`) still focuses `${uid}-tags-save`, the brief-12 Save tags button C1 removes,
+  `getElementById` answers null and focus stays on `<body>`. That is a code red, keep the test. When a
+  slice deletes a control, grep the page for its id suffix (`grep -n "tags-save" fe/src/*.tsx`) and
+  report the line; prove the half of a two-part test behind the first red with a scratch copy in
+  `src/` (`-t SCRATCH`, then `rm` + `ls src | grep -c Scratch` -> 0).
+
+## Pins of a sizing ruling, and a write built off a late read (brief 15 C1, 2026-11-21)
+
+- The H1a.12 min-size ledger lists EVERY `min-height`/`min-width` and forbids `24px` on a rule whose
+  last compound is `button`. A brief that rules a 24 px icon button (a chip's x) therefore cannot be
+  pinned by adding `.chip button: min-height: 24px` to that frozen list: the sheet sizes such a
+  control with `width`/`height`, which the ledger does not list. Add to the ledger only the `min-*`
+  the ruling FORCES (a flex child's `min-width: 0`), never every size the brief names, and append
+  entries in SHEET order (the tags block sits after `.save-actions`), which is not sorted order.
+- "Takes a row of its own" under a wrapping flex row (`.field-control`) is `flex-basis: 100%`, the
+  sheet's own pattern (`.boot-status`, `.boot-alert`): an item's width alone reads as beside the
+  chips at 1280 px. Pin the descendant form when the sheet already scopes the rule
+  (`.field-control .field-error`), and say in the report which selector you chose.
+- A re-read whose answer must stay pending: `instances: () => (reads++ === 0 ? reply(200, x) : new
+Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body is consumed once,
+  so the second read throws and the red reads as a fetch failure. Pin a "the write is built from what
+  is on screen, not from the last read" rule by answering the list with a value NO chip carries
+  (`instanceTags: ['other']`) and asserting the write body: the three reds name a dropped add, a
+  re-sent removal and the read's value.
+- The UX check has no state that opens a control by clicking, and a pill with no `aria-expanded`
+  cannot be read open: add an `open: { click, then }` entry beside the state's `click`, call the
+  helper in BOTH the main pass and the 200 % text pass (the width ruling is measured there), and
+  return [] when the control is not visible at that width. Give the stub a `tags=few|long` key so the
+  widest state (8 tags of 32 characters) resets per state, like `list=many` does.
+
+## A CSS ruling that renames a selector (brief 15 section 10 R7, 2026-11-21)
+
+- A rename that out-ranks a sibling (`.chip-full` at 0,1,0 losing to `.chip > span`'s 0,1,1, so the
+  expanded pill showed the ellipsis it exists to escape) fans out to EVERY selector allowlist that
+  names the class: the brief's "tests that change" list is the designer's view, not the sheet's.
+  `grep -rn '<class>' fe/src/*.test.ts*` first: here three files, and R1.8's CLASS list is NOT one of
+  them (the element keeps its class, only the rule's selector grows).
+- `sets()` in `Reflow.test.ts` names a rule by `flat` (whitespace-collapsed selector, media rules
+  included) and sorts both sides, so a rename is one entry, slot-free. The H1a.12 ledger is
+  `sel: prop: value` in SHEET order, so a rename keeps its slot: read the diff's insertion point.
+- Pin the renamed rule with `block(sel)`: its own "exactly one rule whose selector is X" assert reds as
+  `expected [] to deeply equal [X]`, naming the missing selector. Pin the sibling's override as
+  `TOP_SELECTORS.filter(..).toEqual(['.chips-profile .chip > .chip-full'])`: an exact list names the
+  old selector in the diff, `toHaveLength(1)` names nothing.
+
+## The UX check's hover state, and one throw losing every result (brief 15 C1 review 2)
+
+- Playwright 1.65: `Locator.isVisible()` resolves with `{ strict: true }` (read in
+  `fe/ux/node_modules/playwright-core/lib/coreBundle.js`), so a state's `hover: { on: 'li.chip' }` over
+  16 chips throws AT `isVisible`, which sits OUTSIDE the helper's `try`: it escapes `check` and kills
+  `main` before it prints one collected line. The two pins: `.first()` on the locator (the same chip
+  the cut probe reads, `document.querySelector` answering the first), and a per-browser `catch` in
+  `main` pushing `${name}: check threw: ...`, so the run ends with every line and the summary.
+- `hover()` needs `{ force: true }` on a control a ruling draws a covering pill over: once the pill is
+  open the pointer's target is covered, the actionability hit-target check throws, and the helper
+  reads that as "the pill never appeared", a finding that is the harness's, not the page's.
+- WebKit dies mid-sweep on a loaded machine (`webkit: check threw: browserContext.newPage: Target
+  page, context or browser has been closed`) while chromium and firefox report normally. Prove it with
+  a webkit-only scratch copy of `check.js` IN `fe/ux/` (so its relative `require`s and `stub.py`
+  resolve), `BROWSERS = ['webkit']`, run twice: 0 failing solo is a flake, say so. The per-browser
+  `catch` in `main` is what makes it visible at all: with a bare throw the run loses chromium's and
+  firefox's lines with it.

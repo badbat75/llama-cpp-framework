@@ -687,7 +687,7 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     }
   expect(
     sizes,
-    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7)',
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3)',
   ).toEqual([
     '#root: min-height: 100vh',
     'button: min-height: var(--control-h)',
@@ -729,6 +729,39 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     '.save-messages: min-width: 0',
     // H5c.7: the row of the bar's buttons shrinks with the bar.
     '.save-actions: min-width: 0',
+    // Brief 15 section 10 R2 and R3 (the tags as chips). R2: the global
+    // `button { min-height: var(--control-h) }` makes the chip's x, the + and
+    // the pill's icons 40 px high (the chip a 50 px pill, the + a 24 by 40
+    // oval), so each control names its own size: the x the 24 px floor of
+    // 2.5.8, the + and the pill's icons the 32 px circles of section 3. The
+    // rule that names one is `.chip button` (its R1: the x has no class of its
+    // own). `.chip` and `.tag-new` keep no min-height here: they grow from
+    // their content, so a chip is as high as its x and the pill as high as its
+    // box, which is what keeps the chip row at one chip per line at 320 px.
+    // The order below is the order of the rules in the sheet, as it is for
+    // every entry of this list.
+    // R3: the chip's text, the pill and its box are flex children that shrink
+    // below their content, so a 32-character tag and the open pill fit 320 px
+    // and 200 % text (the ellipsis of the span, the 152 px of sideways scroll
+    // the pill measured before its box shrank).
+    // The row itself is a flex child of the group, so it shrinks below the
+    // width of one chip (R3: the cap is the row, `.chip { max-width: 100% }`).
+    '.chips: min-width: 0',
+    '.chip > span: min-width: 0',
+    '.chip button: min-height: 24px',
+    // R5: the expanded pill covers its chip, so it is at least as tall as it;
+    // its height comes from its text when it is several lines. Its section 10
+    // R7: the rule is `.chip > .chip-full`, because the pill is a span child of
+    // the chip and `.chip > span` (0,1,1) outranks a bare `.chip-full`.
+    '.chip > .chip-full: min-height: 100%',
+    '.tag-add: min-height: 32px',
+    '.tag-add: min-width: 32px',
+    '.tag-new: min-width: 0',
+    // 2.5.8: the box of the open pill is a target like every text field.
+    '.tag-new input: min-height: var(--control-h)',
+    '.tag-new input: min-width: 0',
+    '.tag-new button: min-height: 32px',
+    '.tag-new button: min-width: 32px',
   ])
   const used = new Set<string>()
   for (const r of RULES)

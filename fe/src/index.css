@@ -2096,13 +2096,228 @@ html:has(.save-bar) {
 
 /* The instance's own tags (12-instance-tags.md 3): the field is the page's
    TextField, so these are only the profile line under it, the save button
-   under that, and the feedback under the button. */
+   under that, and the feedback under the button. Brief 15 section 10 R4: the
+   row wraps, so the line, its chips and the input's error take a row each. */
 .tags-profile {
+  display: flex;
+  flex-wrap: wrap;
+  flex-basis: 100%;
   margin: var(--space-1) 0 0;
 }
 
-.tags-save {
-  margin-top: var(--space-3);
+/* The field's error inside the tags group, the third line of the field (15
+   section 10 R4): under the chips, on a row of its own. */
+.field-control .field-error {
+  flex-basis: 100%;
+}
+
+/* The tags as chips (15-tag-chips.md 3, fe/DESIGN.md 5.2 "Chip"): the row
+   holds the chips of this instance, then the + that opens the pill for one
+   label. The tags the server profile brings are the same pills with no x, in
+   a row of their own under the line that names them. */
+.chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 34rem;
+}
+
+/* The list of chips is a flex child of the row: R3 keeps it inside the row
+   (`min-width: 0` lets a flex child go below its content), so a list of eight
+   tags of 32 characters wraps by chips and never grows the page sideways. Each
+   chip is capped by the list (`.chip { max-width: 100% }`), so the chip that
+   does not fit is the one that cuts its text. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A chip is a pill that grows with its text, at least as high as its x: the
+   inline padding closes to --space-1 behind the x, which sits at its end.
+   15 section 10 R3: the pill never outgrows the row, the text is the flex
+   child that shrinks (the span below), so the pill declares no break of its
+   own: a tag is one word with no break point. */
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-w) solid var(--control);
+  border-radius: var(--radius-pill);
+  background: var(--field);
+  color: var(--text);
+  font-weight: 400;
+}
+
+/* The label's text (15 section 10 R3): a flex child that shrinks below its
+   content, cut with the ellipsis when it is longer than the pill left for it.
+   No title attribute is set on it, and the chip sets none: the ellipsis says
+   "cut", the pill beside the chip shows the whole label (R5). */
+.chip > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* R3's last resort, below its first: 15em is 240 px, the point where the
+   ellipsis leaves a word of barely three letters to read. There the text
+   breaks inside the pill instead, at the letter (CSS Text 3, overflow-wrap:
+   anywhere), so the pill grows by lines and the page never scrolls sideways
+   (brief 10 R1.1: `anywhere`, not `break-word`). This block holds only this. */
+@media (max-width: 15em) {
+  .chip > span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* The x that takes a chip away, at the end of the chip: an icon-only control
+   with no box of its own, its inline padding closed by the negative margin so
+   the chip's padding reads as --space-1 behind it. No other target is in its
+   box, the chips' gap is --space-2, so WCAG 2.5.8 needs no more room: the box
+   is the 24 px square of its floor. The profile's chip has no button, so the
+   chip's own button is this x. */
+.chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-height: 24px;
+  margin-inline-end: calc(var(--space-1) - var(--space-3));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text);
+}
+
+/* The profile's chips, a row of their own under the line that names them
+   (15 section 10 R4): the row wraps, so a chip row that takes the full width
+   starts under the chips of the instance, the way `.tags-profile` above does. */
+.chips-profile {
+  flex-basis: 100%;
+}
+
+/* The profile's chip: no x, told from an own chip by that, by its own row and
+   by its fill, never by colour alone (WCAG 1.4.1). The transparent border is
+   the edge forced colours shows. R5.5: it shrinks below its content, so a
+   profile tag of 32 characters stays inside the 320 px row. */
+.chips-profile .chip {
+  flex: 0 1 auto;
+  background: var(--surface);
+  border: var(--border-w) solid transparent;
+}
+
+/* The chip's full value (15 section 10 R5): the whole label, for the chip
+   whose text the ellipsis cut, shown while the pointer or the keyboard is on
+   the chip. Over the chip and not in its flow, so nothing moves; as high as
+   the chip at least, and taller when the label wraps to several lines; its
+   width the chip's, less the x at the end so the x stays clickable. The chip
+   is its box (`.chip { position: relative }`). The fill, border, radius and
+   padding are the chip's, the radius the card's, since it can be several
+   lines. `aria-hidden`: the list item already reads the whole tag.
+   R7: the selector is the child of the chip, not a bare class. The pill IS a
+   span child of `li.chip`, so `.chip > span` (0,1,1: nowrap, hidden,
+   ellipsis) would outrank `.chip-full` (0,1,0) and the pill the cut chip
+   opens would show the ellipsis it was made to escape, losing the whole label
+   (WCAG 1.4.10). As `.chip > .chip-full` it is 0,2,0 and wins. */
+.chip > .chip-full {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  inset-inline-end: calc(24px + var(--space-1));
+  z-index: 1;
+  min-height: 100%;
+  flex: 0 1 auto;
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-w) solid var(--control);
+  border-radius: var(--radius);
+  background: var(--field);
+  color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* In the profile row the pill has no x to leave uncovered, and its fill is the
+   raised surface with the control's border (R5). R7: likewise the child
+   selector, 0,3,0, so it outranks `.chip > span` there too. */
+.chips-profile .chip > .chip-full {
+  inset-inline-end: 0;
+  background: var(--surface);
+}
+
+/* The + that opens the pill, and the pill for one label: the box with no
+   border of its own, about 16 characters wide, then Add and Cancel as
+   borderless icons at its end. The row wraps, so a long tag list and the pill
+   both fit 320 px. R2: the global `button { min-height: var(--control-h) }`
+   would make the + a 24 by 40 oval, so it names its own 32 px circle, the
+   floor of WCAG 2.5.8 with room for the icon. */
+.tag-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border: var(--border-w) solid var(--control);
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* R3: the pill is a flex child that shrinks with the row, and never wider than
+   it, so an open pill next to a long tag list does not outgrow 320 px. */
+.tag-new {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: var(--space-1);
+  border: var(--border-w) solid var(--control);
+  border-radius: var(--radius-pill);
+  background: var(--field);
+}
+
+/* The box of the pill: no border, no background of its own, the font of the
+   pill it sits in (it is not a field on its own), the control's height so the
+   pill is as high as the row's other controls. R3: it is a flex child that
+   shrinks, so a long tag typed in it never pushes the row sideways. */
+.tag-new input {
+  flex: 0 1 16ch;
+  min-width: 0;
+  min-height: var(--control-h);
+  padding-inline: var(--space-1);
+  border: 0;
+  background: none;
+  font: inherit;
+}
+
+/* R2: the pill's icons are the same 32 px circles as the +, borderless. */
+.tag-new button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text);
 }
 
 .tags-status {

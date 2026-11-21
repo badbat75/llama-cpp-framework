@@ -401,7 +401,7 @@ are `arm`, `fast`, `zz-top`. Suggested file: `InstanceTagSuggest.test.tsx`.
     the viewport, adds no sideways scroll, covers without moving content, leaves the x clickable,
     and its text meets the contrast table of 5.1.
 - **R6, React patterns for C1** (fe/DESIGN.md 5.3, user 2026-11-21):
-  - **Optimistic chips** (`useOptimistic` over the latched list): on an add, the new chip is listed
+  - **Optimistic chips** (flushed state over the latched list; amended at the C1 review: `useOptimistic` drops its value only when the transition ends, a task after the answer, but focus must move in the same flush as the click and as the answer, C1.8 and C1.9, so plain state with a rollback to the latched list does it): on an add, the new chip is listed
     at once, while the pill stays open, read-only, with its text until the answer; on a removal,
     the chip leaves at once and focus moves at once as decision 5 says. On 204 the latched list
     takes the change (no visible step); on any refusal the chip comes back or leaves again,
@@ -418,3 +418,16 @@ are `arm`, `fast`, `zz-top`. Suggested file: `InstanceTagSuggest.test.tsx`.
     (`index.css` sets `overflow: hidden` only on `.visually-hidden` and `.session > span`, and
     scrolls only `.table-scroll` and the jump list). A portal would need positioning by script from
     the chip's rectangle, kept in step with scroll and resize, for nothing.
+- **R7, C1 review 2 (designer, 2026-11-21)**:
+  - **R6 deviation accepted**: the chips are plain flushed state with a rollback to the latched
+    list, not `useOptimistic` (see R6). In the browser: an added chip shows while pending and goes
+    on a 503 (pill and text kept, alert); a removed chip goes at once with focus on the next x, and
+    on a 503 comes back with focus on its x.
+  - **Defect, R5**: the expanded pill is cut too. `span.chip-full` is a direct span child of
+    `li.chip`, so `.chip > span` (specificity 0,1,1: nowrap, hidden, ellipsis) beats `.chip-full`
+    (0,1,0), and the pill shows `abcdefghijkl…` (320 px at 200 %, all engines), defeating
+    [1.4.10](https://www.w3.org/TR/WCAG22/#reflow)'s "without loss of information". My R3 pin named
+    that selector without seeing the clash. Fix: the pill's two rules become `.chip > .chip-full`
+    and `.chips-profile .chip > .chip-full` (0,2,0 and 0,3,0), with the same declarations; the
+    `.chip > span` rule stays. Tests that change: `InstanceTagChips.test.tsx` ~1587 and ~1611 (the
+    rule's selector), `HearthTokens.test.ts` ~754 (`.chip > .chip-full: min-height: 100%`).

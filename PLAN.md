@@ -1066,7 +1066,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     had no preference). Web UI only (`PUT /api/instances/{id}/tags` unchanged); designer's brief first.
     Long tags (user, 2026-11-21): shortened with an ellipsis on one line; a smaller font if needed;
     wrapping only when nothing else fits. Hovering a shortened tag (and focusing it from the keyboard)
-    opens a temporary larger pill with the whole text.
+    opens a temporary larger pill with the whole text. C1 (chips, "+", x, the long-tag rule, the hover
+    pill) is built; left: C2, the suggestions (brief 15). Test flakes seen at C1, to fix test-side when
+    a slice touches them: `ModelProfilePage.test.tsx` 2d.63 (title asserted before the effect writes
+    it), `NodeNav.test.tsx` ~211 (a read count), `SignInOnly.test.tsx` S1a.10.
     **Resources belong to the server profile, placement follows** (user, 2026-11-21): a bare model profile
     cannot know its GPU/CPU distribution until it runs on an instance. The server profile should bind the
     resources an instance may use (which GPUs, RAM, CPU threads, the backend SDK), so a model profile
