@@ -724,6 +724,11 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
 
 Covers: R11. Started once the steps the coordinator can do alone are done (user, 2026-11-14).
 
+**When step 10 is done (user, 2026-11-21):** cut the first pre-release, 2.99.1 (W14), with the `release`
+skill: every OS's packages, the release commit, the tag `v2.99.1` and a GitHub pre-release (the tag and
+the release still get the user's go-ahead at that moment, "Actions with real effects"); then bump the
+framework to 2.99.2 and carry on toward it.
+
 Decided with the user on 2026-11-14: one local service on the machine, installed beside the manager by
 the same packages, listening on localhost and, when configured, on the LAN with authentication. It
 serves three things: the configurator's web UI (what `pai-config` does: server, presets, start and
