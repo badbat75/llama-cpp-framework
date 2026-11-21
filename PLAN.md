@@ -1059,6 +1059,18 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     phase by three product arguments: `llama.cpp`, `strata` and `pai` (today's `framework`), so each
     builds, packages and installs on its own. The design decides the backend argument, the package
     names, Strata's licence in the packages and what happens to the strata-framework repo.
+13d. **Hardware monitoring, metrics and log consultation** (user, 2026-11-21). In the web UI: a live
+    view of the node's hardware streamed as the native GUI's HW Monitor does (`crates/app/src/hwmon.rs`:
+    GPU busy, VRAM, GTT, memory activity, PCIe, CPU, I/O wait, RAM, swap, disk, one sample a second),
+    and a history chart of the same metrics. Behind it a monitoring and logging module that collects
+    the metrics and acts as a log router when an administrator consults logs: the logs stay on each
+    host for now (no central log collector yet; the journal on Linux, the instance log files on
+    Windows), read on demand. External tools are welcome where they fit (the user named OpenTelemetry,
+    which also carries logs). First the architect's design: options (OpenTelemetry collector and SDK,
+    Prometheus-style exporters and a time-series store, or the manager's own sampler with a small
+    history store), what runs on each node, retention, the trust boundary (who reads logs, the group
+    `pai`), how it reaches the super-manager (step 14) later, packaging on Linux and Windows; then a
+    designer brief for the live view and the chart.
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
     (user, 2026-11-17: after nodes and instances). It logs every request (user, 2026-11-18): the
