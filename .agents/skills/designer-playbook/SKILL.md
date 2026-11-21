@@ -72,3 +72,10 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - The web has no model facts (no `block_count`) until 2g, so the GUI's block sliders for
   `tensor-split` cannot be rebuilt; the GUI itself falls back to raw ratios when no model is read
   (`crates/config/src/gpu_split.rs` `build_rows`). Brief 14 uses ratio fields with a share text.
+- In a `display: flex` label, an id span with `overflow-wrap: anywhere` shrinks to one character per
+  line before the name beside it wraps ("CUD/A0" at 1280 px, brief 14): put id and name in one inline
+  span, or let the label wrap. `build/ux-review/gdstub.py` (devices states, profile keys, scriptable
+  PUT, `/__reqs`) and `gd1.js states|keys|save` drive the GPU card in 3 engines.
+- The labels in use across the node are `GET /api/instances` items' `tags`/`instanceTags` plus
+  `GET /api/profiles/server` rows' `tags` (brief 15). The fe's icons were all decorative beside
+  text until brief 15's chips: an icon-only button keeps its words in a visually hidden span.

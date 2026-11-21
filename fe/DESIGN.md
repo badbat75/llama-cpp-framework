@@ -76,10 +76,11 @@ Decided with the user on 2026-11-14.
 - **Tags** (T1, `fe/briefs/12-instance-tags.md`) are labels only (the router routes by model name).
   A server profile has tags and an instance has its own; the instance shows the union, the
   profile's first. The tile shows the union unlabelled; the instance page edits only the instance's
-  own (input **Instance tags**, saved by its own button, outside the Server form; unsaved tags make leaving ask, as the Server
-  form does; the profile's tags read-only until the server profile page) and lists the
-  rest as "From the server profile: ...". Tags are data, joined by ", " as in the file
-  (`Tags = coding, fast`), never translated **(preference: text, not chips)**.
+  own, as Chips (brief 15, user 2026-11-21: group **Instance tags**, each add and removal saved at
+  once, outside the Server form; a typed, unconfirmed tag makes leaving ask, as the Server form
+  does; the profile's tags are fixed chips under "From the server profile", read-only until the
+  server profile page). Tags are data, never translated; the tile joins them by ", " as in the file
+  (`Tags = coding, fast`).
 - **Model profiles** are one mixed list for every engine. Each model profile has an engine, chosen
   from the **available engines** the bff lists (today only llama.cpp). A model profile's engine is the
   engine whose model profile file holds it (each engine keeps its own files: llama.cpp's `presets.ini` and
@@ -361,7 +362,8 @@ colour; in dark an enabled field is darker than its card.
   review).
 - **Targets**: every button, checkbox and link at least 24 by 24 CSS px, including its padding
   ([2.5.8 Target Size (Minimum)](https://www.w3.org/TR/WCAG22/#target-size-minimum)). Buttons and
-  fields are at least 40 px high (`--control-h`), the jump list's buttons 32 px, About 24 px; the
+  fields are at least 40 px high (`--control-h`), the jump list's buttons 32 px, About 24 px, a Chip
+  32 px with its Remove button 24 px, the chips' + and the pill's Add and Cancel 32 px; the
   checkbox box is 20 px (1.25rem) inside a `.check` label of at least 24 px that activates it, with no
   other target within the 24 px circle (2.5.8's spacing exception); the switch track 44 by 24 px.
 - **Motion**: none needed; a spinner, if any, stops under `prefers-reduced-motion: reduce`.
@@ -538,6 +540,21 @@ Each is one React component, reused by every page.
     removed, so focus never drops; the result is said by one visually hidden `role="status"`
     region ("ROCm0: position 1 of 2"). Never a drag handle alone
     ([2.5.7](https://www.w3.org/TR/WCAG22/#dragging-movements)) **(preference: buttons only)**.
+- **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
+  (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
+  the label as text (wrapping anywhere inside the chip) and, when it can be removed, a 24 px
+  `.chip-remove` button (icon `x`, name "Remove tag `<label>`"). A fixed chip (not changeable here)
+  has no button, `--surface` fill and a transparent border, in its own list named by a visible line.
+  After the chips a 32 px round `.tag-add` button (icon `plus`) opens in its place a `.tag-new` pill:
+  a one-label input, Add (`check`) and Cancel (`x`); Enter or Add confirms, Escape or Cancel closes,
+  blur closes only an empty pill. Each add and removal is written at once (Action feedback, one
+  write at a time, controls `aria-disabled` meanwhile); focus after an add returns to the +, after
+  a removal to the next chip's button, else the previous, else the +. Suggestions, when the labels
+  come from elsewhere, are an APG combobox with a list popup and no automatic selection: the input
+  is the `combobox`, the `ul.tag-options` `listbox` sits in the flow under the row (never floating),
+  arrows move `aria-activedescendant`, the active option drawn with the inset focus ring; choosing
+  one adds it at once ([APG Combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/)). These
+  icon-only buttons hold their words in a visually hidden span.
 - **Save bar**: sticky at the bottom of a form, always rendered on an editable form. Left: a status
   line (`role="status"`); right: **Discard** and **Save changes**. Both use `aria-disabled="true"`,
   not `disabled`, while there is nothing to save, so focus never drops when the form becomes clean
@@ -595,7 +612,10 @@ Each is one React component, reused by every page.
   new group never reads as one more row of the list before it. Nothing in it takes focus ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
   technique [H40](https://www.w3.org/WAI/WCAG22/Techniques/html/H40)).
 - **Message**: one paragraph in place of content (empty, error, not authorized); `role="alert"` only
-  when it appears after a user action, otherwise a plain paragraph.
+  when it appears after a user action, otherwise a plain paragraph. A waiting text shown when the
+  content first renders and replaced by the outcome (the GPUs card's "Detecting GPUs…", brief 14) is
+  a plain paragraph too, not a `role="status"`; a card's own status region (a move's result) is
+  always in the DOM, so a page's tests find the save bar's status line by its place in the bar.
 - **Notice**: a bordered paragraph above a form, or above a table whose rows hold controls (e.g.
   the "engine not available" Notice of section 2.2). (The read-only Notice for a non-administrator
   was removed on 2026-11-15.) It is a flex row (`align-items: flex-start`, gap `--space-2`): an
