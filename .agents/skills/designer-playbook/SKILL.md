@@ -117,3 +117,7 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   say so in the brief (C2: the list shrank beside the row and a 32-character option scrolled 267 px).
   In Playwright, `goto` to the same hash URL does not reload: open a new page per scenario
   (`build/ux-review/c2.js`, `c2long.js` for a long option).
+- Lucide shapes can be checked without `node_modules`: `curl -s https://unpkg.com/lucide-static@1.74.0/icons/<name>.svg`
+  (the version `Icon.tsx` copies from). Adding a nav entry ripples into every test that lists the nav's
+  links in order (`App`, `ModelProfiles`, `ProfilesNav`, `HearthNav`, `NodeNav`, `HearthIcons`): name
+  them in the brief (brief 18 section 6).

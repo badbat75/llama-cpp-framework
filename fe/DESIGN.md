@@ -39,7 +39,8 @@ only an administrator can be (section 3). Since slice S1a (`fe/briefs/09-signin-
 | Instances > *instance* | `#/instances/<id>` | Header: name, engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Then **Server profile** (the one it runs, a link, and the switch), **Model profiles** (one "Served here" switch per profile of the pool), **Remove instance** (not for `default`, only when stopped). The Server form is no longer here (slice 17a). **Logs** later | Server tab's target, run controls, Settings' "start at boot", View logs | administrator | 1a, 1b, 1c; T1 (port, tags); 17a to 17e (`fe/briefs/16-server-profiles-and-instances.md`); Logs later |
 | Profiles > Server profiles | `#/profiles/server`, `#/profiles/server/<id>` | The pool: id, port, tags, used by; New server profile (create form in place). A profile's page: Used by, Delete while unused, the whole Server form and save | Server tab (of `default` only) | administrator | 17a, 17b (`fe/briefs/16-server-profiles-and-instances.md`) |
 | Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its engine the first row of the Assets card (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); GD1, GD2 (GPU distribution: `fe/briefs/14-gpu-distribution.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
-| About (last entry) | `#/about` | Per host: the framework's version, each installed engine and its GPU backend packages with their versions (`GET /api/node`) | (none; the window title's version) | administrator | 13 (`fe/briefs/13-node-about.md`) |
+| Node info | `#/node` (hub mode: `#/nodes/<node>`) | The node: host name, OS, kernel, framework version; each installed engine and its GPU backend packages; per GPU (numbered `h3`) vendor, PCI address, driver and Vulkan driver (`GET /api/node`) | (none) | administrator | AN5 (`fe/briefs/18-about-node-info.md`) |
+| About (last entry) | `#/about` | The web service's machine: the framework's version and the operating system with its version (`GET /api/version`) | (none; the window title's version) | administrator | 13; AN5 (`fe/briefs/18-about-node-info.md`) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
@@ -115,7 +116,7 @@ Decided with the user on 2026-11-14.
   no disclosure (principle 4; `fe/briefs/13-node-about.md` decisions 1 to 3). Signed in, after it (or right after Overview when the
   instances read is loading, failed or empty), the "Profiles" group: a `p.nav-label` and a `ul`
   labelled by it, with "Server profiles" (`server` icon) then "Model profiles" (slice 17a; an
-  instance has one server profile and many model profiles). Last, in a `ul` of its own, **About** (`info` icon; brief 13). Each group label is text, not a link. Signed out, or while the session is read, there
+  instance has one server profile and many model profiles). Last, in a `ul` of its own with no label, **Node info** (`cpu` icon) then **About** (`info` icon; briefs 13 and 18); in hub mode Node info moves into each node's group. Each group label is text, not a link. Signed out, or while the session is read, there
   is no nav and no Menu button, and `main` spans the whole `.layout` row from 960 px up
   (`.layout > main:only-child`; `fe/briefs/09-signin-only.md` S1a.4, S1a.12).
 - The current page's nav link has `aria-current="page"`. On a page below a nav entry that has no
@@ -609,6 +610,9 @@ Each is one React component, reused by every page.
   its `<dd>` value, laid out as Forms in section 4 (label column from 720px). Values from the file
   unchanged, in monospace for paths, flags and values, wrapping anywhere (`overflow-wrap: anywhere`,
   `min-width: 0`); an empty value is the page's "(none)" text in the body font and `--muted`.
+  Several things of one kind (the node page's GPUs, brief 18) are one `h3` and one `dl` each, every
+  row always present (a missing fact is a muted word), the `h3` numbered ("GPU 1: <name>") so
+  identical names stay distinct headings.
   A heading that follows a Value list gets `--space-6` above it (`.assets + h3`, brief 13), so a
   new group never reads as one more row of the list before it. Nothing in it takes focus ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
   technique [H40](https://www.w3.org/WAI/WCAG22/Techniques/html/H40)).
