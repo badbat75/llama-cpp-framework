@@ -65,7 +65,7 @@ exist yet. Change this file first when a shape changes.
 | --- | --- | --- | --- |
 | `GET /api/version` | anyone | exists | `{"version"}` |
 | `GET /api/node` | signed in | 13, being built (bff slice 13) | `{"name", "api", "version", "engines"}` |
-| `GET /api/node/devices` | signed in | GD (bff slice G2, designed) | `{"probedAt", "devices"}` |
+| `GET /api/node/devices` | signed in | GD (bff slice G2, served 66b2bb3), `ramMib`/`cpuThreads` served (a1a3458) | `{"probedAt", "ramMib", "cpuThreads", "devices"}` |
 | `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13; `removable` 16, served (e262708) | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
@@ -150,24 +150,31 @@ CPU-only engine, sorted by name; a backend's `name` is the package suffix (`cuda
 its display name the fe's string. Read at each request. The fe does not read `api` yet. Source:
 `ARCHITECTURE.md` "Slice 13's decisions".
 
-### `GET /api/node/devices` (GD, bff slice G2, designed)
+### `GET /api/node/devices` (GD, bff slice G2, served 66b2bb3; the inventory fields a1a3458)
 
 The host's GPUs for the model profile page's GPU distribution card (`fe/briefs/14-gpu-distribution.md`).
 A page read behind a session (moves the idle deadline); the bff asks the manager's `DevicesAs` as the
 signed-in user, which runs the engine's `--list-devices` once and caches it until the manager
 restarts. 200:
 
-    {"probedAt": "2026-11-20T09:14:03Z",
+    {"probedAt": "2026-11-20T09:14:03Z", "ramMib": 65536, "cpuThreads": 16,
      "devices": [{"id": "ROCm0", "name": "AMD Radeon AI PRO R9700", "backend": "ROCm",
                   "totalMib": 32624, "freeMib": 32420}]}
 
 Probe order, the CPU left out, duplicate views of one card and integrated GPUs included; `freeMib` is
 free memory at the probe, never now (the fe dates it with `probedAt`; no refresh, user 2026-11-20).
-`{"probedAt": null, "devices": []}` when no probe answered; a CPU-only host is `devices: []` with a
+`ramMib` is the node's total RAM in whole MiB and `cpuThreads` the logical CPUs its process may use,
+read by the manager off the machine it runs on and answered whatever the probe did (a1a3458): the
+host's, not the engine's. Each 0 is the node's "no figure", a reading that failed, so the fe shows
+nothing for it: never `0 MiB`, never a thread field capped at 0. `{"probedAt": null, "ramMib": <int>,
+"cpuThreads": <int>, "devices": []}` when no probe answered; a CPU-only host is `devices: []` with a
 time. Errors: 401 `session-required` (manager not asked); 403 `session-not-administrator` (the session
 is ended); 503 `client-unavailable` (no manager, or no answer within 35 s, the cold probe's 30 s plus
-5); 502 `client-other`. The fe gives this `GET` 40 s, not 15. Source: `ARCHITECTURE.md` "GPU
-distribution on the model profile page".
+5); 502 `client-other`. The fe gives this `GET` 40 s, not 15. This is not what the Server form reads
+today: its `limits` thread maximum is the web service's own CPU count, and reading `cpuThreads` there
+is R5, open work in `PLAN.md`. Source: `ARCHITECTURE.md`, the design block "GPU distribution on the
+model profile page" (in "Nodes and instances") and "Resources belong to the server profile",
+"(1) The node inventory" (its R1 bullets).
 
 ### `PUT /api/instances/{id}/tags` (T1, being built)
 

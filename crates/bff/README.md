@@ -125,7 +125,7 @@ runtime (axum).
 | `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, each a string: 201 `{"id"}` with the id the body sent, once the manager wrote the instance, for a signed-in user, as that user, under the write's 15 s. A body that is not those three strings is 400 `instance-malformed`, the manager not connected to; every rule of the instance itself is the manager's and keeps its key ([below](#creating-and-removing-an-instance)) |
 | `DELETE /api/instances/{id}` | 204 with no body once the manager took the instance away, for a signed-in user, as that user, under the write's 15 s: 409 `instance-protected` `[id]` for `default` and `instance-running` `[id]` for one that is up, 404 `client-no-instance` for an id the record does not name ([below](#creating-and-removing-an-instance)) |
 | `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}]}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. Like `GET /api/version`, the read asks the manager nothing and leaves the session's idle deadline where it was ([below](#the-node)) |
-| `GET /api/node/devices` | `{"probedAt": "<UTC text>|null", "devices": [{"id", "name", "backend", "totalMib", "freeMib"}]}`: the node's compute devices, asked of the manager as the signed-in user, on a bound long enough for the engine probe it runs (35 s); 401 `session-required` with no session, the manager not asked ([below](#the-node)) |
+| `GET /api/node/devices` | `{"probedAt": "<UTC text>|null", "ramMib": <int>, "cpuThreads": <int>, "devices": [{"id", "name", "backend", "totalMib", "freeMib"}]}`: the node's compute devices beside the host's RAM and logical CPUs, asked of the manager as the signed-in user, on a bound long enough for the engine probe it runs (35 s); 401 `session-required` with no session, the manager not asked ([below](#the-node)) |
 | `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
 | `GET /api/session` | `{"user"}` of the cookie's session, for anyone |
 | `DELETE /api/session` | Signs out, for anyone: 204, the cookie cleared |
@@ -311,8 +311,14 @@ UI reads it for the labels of the navigation and for the About page
   id with the digits the engine appends taken off: `ROCm0` is `ROCm`), and the device memory in MiB
   **as it was at the probe**: `probedAt` is that moment as UTC text (`2026-11-20T09:14:03Z`), `null`
   when no probe answered. No list is 200 with `devices: []`, never an error page: a node with no card
-  has nothing to distribute. The bound is `DEVICES_TIMEOUT` (35 s, `lib.rs`): the manager's own probe
-  bound `GPU_PROBE_TIMEOUT` (30 s) plus the transport's 5 s, because the first read of a node starts a
+  has nothing to distribute. Beside the list travels the host's own inventory (a1a3458): `ramMib`,
+  the node's total RAM in whole MiB, and `cpuThreads`, the logical CPUs its process may use, read by
+  the manager off the machine it runs on (`crates/core/src/host.rs`, put into the document by
+  `devices_document`: `/proc/meminfo`'s `MemTotal`, `GlobalMemoryStatusEx`, `available_parallelism`)
+  and answered whatever the probe did, the two being the host's and not the engine's. Each 0 is the
+  host's own "no figure" (a reading that failed) and travels as it is: the bff scales, rounds and
+  interprets nothing. The bound is `DEVICES_TIMEOUT` (35 s, `lib.rs`): the manager's own probe bound
+  `GPU_PROBE_TIMEOUT` (30 s) plus the transport's 5 s, because the first read of a node starts a
   llama-server on it to read its cards. Its failures are the model profile reads'
   (`model_profiles::read_answer`): 403 `session-not-administrator` and the session ended when the
   manager refused that user, 503 `client-unavailable` for no manager or an answer that does not land
@@ -409,11 +415,13 @@ guide).
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no answer within 5 s |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail: a manager built before the `As` methods, which refuses `ReadFileAs`, lands here |
 
-- **`values`**: the 20 `[Server]` keys of `pai_core::server_cfg::ServerConfig` by INI name, read as
+- **`values`**: the 21 `[Server]` keys of `pai_core::server_cfg::ServerConfig` by INI name, read as
   the configurator reads the file (`server_cfg::from_text`): a number, `true`/`false` or a string,
   `null` when unset or unreadable (`Port = abc`). `CudaAllreduce` is normalized to lowercase;
   `CudaDisableGraphs`, `AttnRotDisable` and `RocprofAttach` are `false` when absent;
-  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `Tags` is always a list of strings, `[]` when
+  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `Devices` is the file's GPU list in one string
+  (`ROCm0,ROCm1`, the order `--device` takes, or `none`), `null` when the file names no key: every GPU
+  of the node. `Tags` is always a list of strings, `[]` when
   the file has no key. `OpencodeApiKey` is `null` exactly when the
   manager's read reported the key withheld, the key in the file's text included.
 - **`withheld`**: `["OpencodeApiKey"]` exactly when the manager's read reported the key withheld, so
@@ -426,8 +434,14 @@ guide).
   overrides it, `ModelsDir` the instance's (`paths::instance_models_dir`), `StateDir` the instance's own folder
   (`paths::instance_state_dir()` joined with the id), never the bff account's.
 - **`limits`**: `[min, max]` of `Port`, `ModelsMax` and `ModelsMemoryMargin` as the manager checks
-  them (`checks::server_int_range`), and of `Threads` and `ThreadsBatch` 1 to this machine's logical
-  CPU count.
+  them (`checks::server_int_range`), and of `Threads` and `ThreadsBatch` 1 to the logical CPU count
+  of the machine this service runs on (`server.rs` `own_cpu_count`, `available_parallelism`; a host
+  answering nothing is 1). The two saves cap those fields at the same count (`available_parallelism`
+  in `server.rs` `save` and `server_profiles.rs` `save`). That count is the bff's own, not the
+  node's: the server reads ask the manager no device list (a1a3458), because `Devices` can start the
+  engine's probe and these reads keep the 5 s bound, so the node's `cpuThreads`
+  ([above](#the-node)) is not read here. The Server form reading it is R5, open work in
+  [PLAN.md](../../PLAN.md).
 - **`interfaces`**: `net_ifaces::interfaces()` as `[{"value", "label"}]`.
 - **`revision`**: a keyed SipHash-2-4 of the file's text, printed as 16 hex digits (`server.rs`):
    the key is a 16-byte secret drawn from the OS's random source at each bff start (`lib.rs`
@@ -439,14 +453,17 @@ guide).
 ### Saving the server file
 
 `PUT /api/instances/{id}/server` (`server.rs` `save`) is the Server form's save, as the signed-in
-user. The body is `{"revision", "values"}`: the revision the GET answered and the 20 typed values, `Tags` a list of
+user. The body is `{"revision", "values"}`: the revision the GET answered and the 21 typed values, `Tags` a list of
 strings.
 The body becomes the file's text through the one fields table the GET reads with, and passes
 `pai_core::server_cfg::check` with this machine's CPU count, all before any manager is connected
 to: a body that is not that JSON, or a value of the wrong type, is 400 `server-malformed`; a check
 refusal is 422 `{"key", "args", "field"}`, `field` the INI key the form marks. A body over
 `origin::MAX_BODY` (64 KiB) is refused by the extractor layer in front of the whole router:
-413 `payload-too-large`, before the session is read.
+413 `payload-too-large`, before the session is read. `Devices` is judged by the shape of its list
+only, never against the node's device list (`checks::device_list`): `ROCm0, ROCm1` is 422
+`device-bad-name` with args `["Devices", " ROCm1"]` and field `Devices`, and nothing is written,
+while an id the node has no GPU for (`ROCm7`) is taken, the instance that names it failing to start.
 
 The file is then read as the session's user (the record's file, as the read resolves it), its text hashed with the run's secret and compared
 with the sent revision, and written through the manager's `WriteFileIfAs`, which accepts only while
@@ -876,12 +893,14 @@ nothing for an id the record does not name or a section naming no profile, are
 (467): the document, an empty host name answered as `localhost`, the version files read at each request
 (an empty file a null version, a non-file, a file over the cap, a line that is not printable ASCII and a
 package of no engine all left out, the backends sorted), `engines: []` with no folder, and 401 with no
-session, the manager never asked. The device list read is `tests/node_devices.rs` (12 tests), reported
-green with the whole bff (470, 20 targets) at 66b2bb3 (its report, not a rerun here): the 401 that
-connects to nothing, the connect naming the signed-in user and the one `DevicesAs` call, the document's
-rows in the probe's order with the probe's moment beside them, a CPU-only node and a node no probe
-answered answering an empty list with 200, the 403 that ends the session, the 503 of a manager that outlives the 35 s bound, and the
-502 that carries no detail. The pool's five routes are `tests/server_profiles.rs` (27 tests),
+session, the manager never asked. The device list read is `tests/node_devices.rs` (12 tests,
+66b2bb3), reported green with the whole bff (596) at a1a3458 (its report, not a rerun here): the 401
+that connects to nothing, the connect naming the signed-in user and the one `DevicesAs` call, the
+document's rows in the probe's order with the probe's moment beside them and the host's `ramMib` and
+`cpuThreads` as the manager answered them, a CPU-only node and a node no probe answered answering an
+empty list with 200 (the two numbers answered all the same), the 403 that ends the session, the 503
+of a manager that outlives the 35 s bound, and the 502 that carries no detail. The pool's five routes
+are `tests/server_profiles.rs` (27 tests),
 reported green with the whole bff (504) at b535304 (its report, not a rerun here). **Nothing here has been called against
 a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 26.04 answered
 `/api/version` and `/api/instances` (that read of 2026-11-14 predates the `Instances` call, which no
@@ -1127,8 +1146,9 @@ the test changes (`a_domain_that_arrives_after_the_start_is_answered`,
 drives `GET /api/node` through `router_with_session_and_versions_dir` with a versions directory of the
 test (a tempdir, never a real install) and a fake manager it asserts is never called;
 `tests/node_devices.rs` drives `GET /api/node/devices` through `router_with_session` over a fake manager
-client whose `devices()` answers a fixed list, is delayed past the route's bound for the 503, and pins
-the principal of each connect, never a bus, pipe, PAM, LogonUser or an engine;
+client whose `devices()` answers a fixed list and a fixed host inventory (numbers no real host has, so a
+document carrying them carries the fake's answer), is delayed past the route's bound for the 503, and
+pins the principal of each connect, never a bus, pipe, PAM, LogonUser or an engine;
 `tests/server_profiles.rs` drives the five pool routes through `router_with_session` over the same
 fake manager and a fake authenticator (27 tests, b535304): the session gate of all five and the idle
 deadline each moves, the 403 that ends the session, the list as the manager's rows in its order, the

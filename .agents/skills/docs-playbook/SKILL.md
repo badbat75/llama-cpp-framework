@@ -309,7 +309,8 @@ Lessons only: the rules are in `AGENTS.md`.
   the number does not name them, so a manager at 3 from before the slice answers them as an unknown
   method: grep `protocol ` for a sentence that implies the number is the proof.
 - The node's device list (66b2bb3) splits across two pages on purpose: the manager's shape (D-Bus
-  `(t probed_at, a(ssstt) devices)`, the pipe's keys, who is asked, `probed_at` 0 when no probe
+  `(t probed_at, a(ssstt) devices, t ram_mib, u cpu_threads)`, the
+  pipe's keys, who is asked, `probed_at` 0 when no probe
   answered) goes in `crates/config/README.md`'s "Through the manager" beside `ServerProfiles`, and the
   bff's JSON and its status codes in `crates/bff/README.md`'s "The node". The probe's own rules (one at
   a time behind a `probing` lock, only a probe that read a non-CPU card cached, keyed by the exe's
@@ -325,6 +326,23 @@ Lessons only: the rules are in `AGENTS.md`.
   pinning test is `src/tests/timeouts.rs` alone; a route's own bound is pinned inside its suite
   (`the_devices_deadline_is_the_probe_bound_plus_five_seconds` in `tests/node_devices.rs`), so name two
   tests. `DEVICES_TIMEOUT` is `GPU_PROBE_TIMEOUT` plus the transport's 5 s: say which two, not just 35.
+- A reply widened in place (a1a3458 added `ram_mib` / `cpu_threads` to the `Devices` reply at
+  protocol 3, no bump) touches four places: the manager's `Devices()` bullet in
+  `crates/config/README.md` (both signatures, the strict decode, and the sentence saying
+  `PROTOCOL` does not name the pair, beside the same sentence for the pool and instance verbs),
+  the pipe and D-Bus module headers (the coder's), the device bullet and route row of
+  `crates/bff/README.md`, and the route of `fe/briefs/api-contract.md`. The suite that pins a
+  widened reply keeps its own count, so the "What has run" number is what moves (`node_devices.rs`
+  stayed 12 tests while the bff went 470 to 596): quote the commit's own counts. A 0 that means
+  "no figure" needs saying on all three pages: the host reads (`crates/core/src/host.rs`) answer 0
+  when they fail, the bff scales nothing, and the fe shows neither `0 MiB` nor a 0 cap.
+- Two CPU counts live side by side and the docs must not merge them: the server document's
+  `limits.Threads` / `ThreadsBatch` maximum is the bff's own (`server.rs` `own_cpu_count`, 1 when
+  the host answers nothing; the two saves repeat `available_parallelism` inline), not the node's
+  `cpuThreads` of `GET /api/node/devices`. The reason is a bound, not a choice: `Devices` can run
+  the engine's probe for 30 s and the document reads keep 5 s. The Server form reading
+  `cpuThreads` is R5, open work in `PLAN.md`: say it is open, and name whose count the page reads
+  today.
 - The client module headers carry the transport's shape as soon as the coder builds it
   (`crates/core/src/client/pipe.rs`, `crates/core/src/client/dbus.rs`: the `As` forms, `Version`,
   `acting_for`, what an older manager answers): read them before planning a comment edit, they usually

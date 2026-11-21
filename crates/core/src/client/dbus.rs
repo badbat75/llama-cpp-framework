@@ -60,8 +60,9 @@ type InstanceRow = (String, String, String, u16, Vec<String>, Vec<String>);
 type ServerProfileRow = (String, String, u16, Vec<String>, String);
 
 /// One row of `Devices`, as the bus answers it: `(s id, s name, s backend,
-/// t total_mib, t free_mib)`, the list beside the moment of the probe:
-/// `(t probed_at, a(ssstt) devices)`. The sizes are uint64: a card's total in
+/// t total_mib, t free_mib)`, the list beside the moment of the probe and the
+/// host's inventory: `(t probed_at, a(ssstt) devices, t ram_mib, u cpu_threads)`.
+/// The sizes are uint64: a card's total in
 /// MiB grows past a uint16, and a signed type has no reading for a device
 /// with no memory. A probe that answered nothing is 0 with an empty list.
 type DeviceRow = (String, String, String, u64, u64);
@@ -408,11 +409,11 @@ mod tests {
         );
     }
 
-    /// The row of the device list (G2, ARCHITECTURE.md 1, "Wire"): `Devices()`
-    /// answers `(t probed_at, a(ssstt) devices)`, each row the id `device`
-    /// takes, the product name, the backend and the two sizes as uint64. The
-    /// sizes are `t`, not `q` or `i`: a card's total in MiB grows past a uint16,
-    /// and a signed type has no reading for a device with no memory.
+    /// The row of the device list (G2, ARCHITECTURE.md 1, "Wire"): one row of
+    /// the `a(ssstt)` `Devices()` answers, the id `device` takes, the product
+    /// name, the backend and the two sizes as uint64. The sizes are `t`, not
+    /// `q` or `i`: a card's total in MiB grows past a uint16, and a signed type
+    /// has no reading for a device with no memory.
     #[test]
     fn the_devices_row_is_the_struct_of_the_wire() {
         assert_eq!(
