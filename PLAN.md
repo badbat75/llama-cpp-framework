@@ -1034,7 +1034,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     patterns in `fe/DESIGN.md` and every brief from C1 on applies them. Then the whole GUI (user,
     2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
-    designer's audit of what is basic today and a phased brief, built in slices after C1 and before 17
+    designer's audit of what is basic today and a phased brief, built in slices after C1; after U17b it
+    waits for slice 17 (user, 2026-11-21: slice 17 at the top of the backlog)
     (fe brief 17: U17a skeletons and U17c sorting built; left U17b, U17h, U17e, U17d, U17f, U17g in that order).
     **One models folder for every engine** (user, 2026-11-21: "usa una folder unica per i modelli tra i
     differenti motori"; asked whether a server profile may still name another: "unica e basta"): one
@@ -1049,7 +1050,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     **Choosing the model file on the web model profile page** (user, 2026-11-21: "a quando la selezione
     degli asset nel repo dei modelli? (ora testo libero)"): `hf-repo` offers the GGUF files (quants) of
     the Hugging Face repo, read by the node as the GUI's `crates/app/src/hf.rs` does; `model` offers the
-    GGUF files already in the models folder. After the UX pass (U17), before slice 17; the architect's
+    GGUF files already in the models folder. After slice 17 and the rest of the UX pass; the architect's
     design first (the node calls huggingface.co: outbound network, the HF token in the machine-wide
     state still to place), then the designer's brief, then tester and coder rounds. Decided (user,
     2026-11-21, ARCHITECTURE.md "Choosing the model file on the web"): public repos only (the token comes
