@@ -79,6 +79,10 @@ Lessons only: the rules are in `AGENTS.md`.
   (`### Migration from 2.4` is `#migration-from-24`). Check it in the built site (`--out <dir>`).
 - After a product rename, grep the scripts the names lints do not scan (`tools/*.ps1`) for the old
   data paths, and describe what the script does today rather than the new name.
+- A name the user decides (the director for the super-manager, 2026-11-21) lands in `ARCHITECTURE.md`
+  and the `PLAN.md` step's prose first: root `AGENTS.md`'s Map bullet and the requirement's `R` row
+  keep the old name. Grep the old word in every `.md` and say "formerly the old name" once, in the `R`
+  row, not in every file.
 - After an install-layout change, grep the old prefix (`/opt/private-ai`) in the root `README.md`,
   `docs/build-*.md`, `AGENTS.md` and `crates/*/README.md`: the root README repeats the paths. A check
   done by hand on the old layout (an `strace`, a run) is not true of the new one: say it was not repeated.
@@ -468,11 +472,13 @@ Lessons only: the rules are in `AGENTS.md`.
   `values`, the PUT's `values`, the `server_cfg::check` bullet, the 422 row's `field` rule) and
   `crates/config/README.md` (the Server tab's field list, the "manager runs every content check"
   bullet). Count the keys from `FIELDS` in `crates/bff/src/server.rs` (21 at 3aaa4dc) and grep the
-  contract's count in words (`the 19 keys`): the contract counts the FORM's keys and the fe's
-  `toValues` can build fewer than `FIELDS`, and since a key absent from `values` is written unset,
-  a key with no fe control is CLEARED by a fe save (true of `Tags` and `Devices` at 3aaa4dc: by the
-  code, `body_to_file`, no test pins it, so mark it). Grep `toValues` in `git show HEAD:fe/src/ServerForm.tsx`
-  for what the form sends. Before writing WHICH refusal a value breaking two rules gets, read the
+  contract's count in words (`19`, `21`): a key absent from the body's `values` is written unset, so
+  the form must send them all; since a130769 it sends the values it read with its edits over them
+  (`ServerForm.tsx` `merged`, pinned by `fe/src/ServerSaveKeys.test.tsx`), so `Tags` and `Devices`,
+  the keys with no control, survive a Server save (at 3aaa4dc the body was `toValues`'s 19 and a save
+  cleared the other two). Grep `toValues` and `merged` in
+  `git show HEAD:fe/src/ServerForm.tsx` for what the form sends, and keep saying that a hand-built
+  body which omits a key still clears it. Before writing WHICH refusal a value breaking two rules gets, read the
   order in `server_cfg::check`: the text keys' `comment_markers` loop runs before `device_list`, so a
   `;` in `Devices` is `comment-markers`, and `ini.rs` cuts the value at the marker, so the file
   reloads as what stands before it.
@@ -539,7 +545,13 @@ Lessons only: the rules are in `AGENTS.md`.
   (`gui.rs`'s `InstanceDirs`), the launch and the readers join the id (`launch::instance_command`,
   `slot_state::restore_newest`, `cli.rs` with `default`), so "the placeholder names the instance's
   folder" is wrong; the shipped Linux file names `ModelsDir` (`/var/lib/llama.cpp/models`, the
-  engine's tmpfiles.d entry) and no `StateDir`.
+  engine's tmpfiles.d entry) and no `StateDir`. That path is today's Linux models default
+  (`paths::instance_models_dir`, filled by `launch::with_instance_defaults`): grep
+  `/var/lib/private-ai/.llama.cpp` after any models-folder change (root `AGENTS.md`, three cells of
+  `crates/config/README.md`, `fe/briefs/configurator-inventory.md`; the dated `fe/briefs/02-models.md`
+  Q&A and the example model paths in `02-models.md` and `api-contract.md` still carry the old one).
+  The accepted `/var/lib/private-ai/models` (ARCHITECTURE.md "One models folder for every engine") is
+  planned, so name it as planned, never as the current folder.
 - A `python3 - <<PY` write of a whole file can land silently unwritten (three line-level rewrites of
   `crates/bff/README.md` reported success and left the bytes; `>>` and `sed -i` landed): re-read the
   file after a scripted write, and prefer the edit tool for a line edit.

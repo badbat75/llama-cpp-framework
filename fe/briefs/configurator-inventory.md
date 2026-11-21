@@ -497,7 +497,7 @@ Every item below was read in code.
 | bench.db, gpu.lock, sweep-pending | `data_root()/bench/` or `BenchDb` | GUI user | not reachable; the bff would need its own DB or a shared one |
 | Benchmark runs | spawns `llama-bench`, HTTP to llama-server, `/dev/kfd`/`/dev/nvidia*` scan, journal for the memory record, prompt/spec/image files at any path, `$TMP` report | GUI user | needs GPU device access, journal group, file access |
 | opencode.json | `~/.config/opencode/opencode.json` (`paths.rs:351`) | GUI user | per user by nature: the bff cannot write a user's file |
-| HF search/list/download | `curl`; token from env or `~/.cache/huggingface/token`; `llama-server` download child; writes `<ModelsDir>/.hf-staging` and the four subfolders | GUI user | needs write access to ModelsDir (`/var/lib/private-ai/.llama.cpp` on Linux), network egress (`RestrictAddressFamilies` allows INET), its own token |
+| HF search/list/download | `curl`; token from env or `~/.cache/huggingface/token`; `llama-server` download child; writes `<ModelsDir>/.hf-staging` and the four subfolders | GUI user | needs write access to ModelsDir (`/var/lib/llama.cpp/models` on Linux), network egress (`RestrictAddressFamilies` allows INET), its own token |
 | Model scans (pickers, Delete dialog, GGUF Model info, tensor picker, `effective_ctx`) | walks `ModelsDir/{models,mmprojs,mtps,dflashs}`; GGUF via libggml-base | GUI user | needs read access to ModelsDir; the bff links pai-core only (no gguf module) |
 | Linked-file delete | deletes files and empty folders under ModelsDir (`linked_files.rs:278-309`) | GUI user | needs write access; today the only code path that deletes user files |
 | Device probe | `llama-server --list-devices` (`devices.rs:273-290`), `sdk-devices` child | GUI user | machine-wide; the bff can spawn it if it may open the GPUs |
@@ -516,7 +516,7 @@ Every item below was read in code.
   - `ENGINE_DIR = "llama.cpp"` (:24).
   - `engine_config_dir` (:118-134): `/etc/llama.cpp` on Linux, `%ProgramData%\llama.cpp\config` on Windows.
   - `windows_machine_dirs` (:167-176): `%ProgramData%\llama.cpp\{config,logs,models,state}`.
-  - `instance_models_dir` (:190-206) `/var/lib/private-ai/.llama.cpp`; `instance_state_dir` (:212-224); `instance_log` (:228) `llama-server@<id>.log`.
+  - `instance_models_dir` (:190-206) `/var/lib/llama.cpp/models`; `instance_state_dir` (:212-224); `instance_log` (:228) `llama-server@<id>.log`.
   - `engine_install_dir` reads `HKLM\Software\llama.cpp InstallDir` (:510-524); `/opt/llama.cpp` on macOS (:528).
   - `llama_bin` / `llama_server_exe` / `llama_bench_exe` (:421-633).
   - `default_models_dir` = `~/.llama.cpp` (`CSC`).

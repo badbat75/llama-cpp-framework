@@ -267,10 +267,11 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   `OpencodeApiKey`, `Devices`. A value of
   another type (a fraction, a numeric string, another word for the tri-state) is 400
   `server-malformed`. **A key absent from `values` is read as `null`: that key is unset in the file**,
-  so the fe must send every key at every save. The form at 3aaa4dc builds 19: it has no control for
-  `Tags` or `Devices`, so a Server save from it clears the profile's `[Server] Tags` and its GPU list
-  (by the code: the fields table writes every key from the body, `crates/bff/src/server.rs`
-  `body_to_file`; no run has checked it). The GPUs card is R5, open work in
+  so the fe must send every key at every save. The form does: since a130769 the body is the values the
+  read returned with the form's edits over them (`ServerForm.tsx` `merged`, the same merge the dirty
+  compare uses), so a Server save keeps `Tags` and `Devices`, the two keys it has no control for
+  (pinned by `fe/src/ServerSaveKeys.test.tsx`; at 3aaa4dc the body carried only the 19 of `toValues`
+  and a save cleared the other two). The GPUs card is R5, open work in
   [PLAN.md](../../PLAN.md); the GUI's Server tab carries the list with no widget so its save keeps it
   (`server_form.rs`). Unknown keys are ignored. For the three off-by-default switches `null` and
   `false` write the same.
