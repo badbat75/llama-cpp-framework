@@ -94,3 +94,7 @@ Lessons only: the rules are in `AGENTS.md` and `PLAN.md`.
 
 Exit code 0 does not mean the agent finished. Now and then (3 of 185 logs on 2026-11-18) the local model writes a tool call as plain text (`<tool_call><function=bash>...`): OpenCode takes it for the final answer and ends the run, leaving the work half done in the tree. Read the end of the log before trusting a run; if it ends in a raw tool call, rerun the same brief, telling the agent to read the uncommitted diff first and finish it.
 - A rewrite of a skill by the local model invents facts (names of files and functions that never existed, a false lesson about the tree): have an independent agent grep every named path and identifier before committing it, and give the correction to a Claude agent.
+
+## The roadmap page is updated at every closed slice
+
+The user asked (2026-11-21) for a roadmap with estimated dates, kept current: https://claude.ai/artifact/9UmGaM7x8X9R34PKZKiK1P (private). After each slice commit, move its card to "Just closed" with the commit hash, put the next ones in "Now", redo the dates from the pace so far and change the "Status as of" line. A new session reads the page with the Artifact tool's `read` (its source is in the old session's scratchpad) and republishes to the same `url`.
