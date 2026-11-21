@@ -186,3 +186,6 @@ description: What the architect has learned about this project's components, int
   `llama.cpp.conf`, 0755 private-ai; Windows `EngineDataModels`, ALL SERVICES modify, Users read), so a
   desktop download on Linux cannot write it; `/var/lib/private-ai` is the service user's home at 0750,
   so nothing a `pai` member must reach can sit under it.
+- systemd re-applies `StateDirectoryMode=` to EVERY listed `StateDirectory=` at each start and chowns
+  one recursively to `User=`/`Group=` when the owner differs (systemd.exec(5)): a mode or group set by
+  tmpfiles on such a folder is undone; keep shared folders (the models folder, group `pai`) out of it.

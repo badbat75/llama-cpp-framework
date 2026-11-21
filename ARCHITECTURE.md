@@ -2720,7 +2720,8 @@ for item 13's machine-wide state, because llama-server needs the same token when
 and `private-ai-bff` read, written only through the manager by `configure`), handed to the instances
 as `HF_TOKEN` in their environment and to the bff's curl on stdin, never in an argv or a reply.
 
-**(4) Which models folder, and who reads it.** Per **node**, not per instance: a model profile belongs
+**(4) Which models folder, and who reads it.** (Superseded in part on 2026-11-21: the walk lists the one
+folder of "One models folder for every engine", below; the bounds stay.) Per **node**, not per instance: a model profile belongs
 to the node's pool and may be assigned to several instances. The listing is the union of the distinct
 effective `ModelsDir`s of the engine's server profiles (each `ModelsDir`, else
 `paths::instance_models_dir()`), each folder with the server profiles that use it. The manager walks
@@ -2834,7 +2835,7 @@ flows (the token exchange's is 8 hours, with no refresh token).
   registers their own. 4. **Whose account**: one Hugging Face account per node, shared by every
   administrator; or one per administrator (needs per-user state, which item 13 rules out).
 
-### One models folder for every engine (user, 2026-11-21): proposed
+### One models folder for every engine (user, 2026-11-21): accepted (user, 2026-11-21), `/var/lib/private-ai/models`
 
 The user's words (2026-11-21, translated): one models folder per node shared by every engine
 (llama.cpp now, Strata later), and `[Server] ModelsDir` leaves the server profiles ("unica e basta").
@@ -2859,14 +2860,37 @@ A GUI download runs as the desktop user into the folder, which on Linux that use
 
 | OS | Path | Created by | Owner and rights |
 | --- | --- | --- | --- |
-| Linux | `/var/lib/private-ai-models` (recommended; question 1) | `private-ai-framework-core`, a tmpfiles.d entry `private-ai.conf` applied by its postinst as the engine's is today | `d /var/lib/private-ai-models 2775 private-ai pai -`: the instances' account `private-ai` writes (an `hf-repo` download), members of `pai` write (a GUI or `pai` download as themselves), setgid so new entries stay group `pai`, everyone reads as today's folder does |
+| Linux | `/var/lib/private-ai/models` (user, 2026-11-21) | `private-ai-framework-core`, a tmpfiles.d entry `private-ai.conf` applied by its postinst as the engine's is today | `d /var/lib/private-ai 0751 private-ai private-ai -`, `d /var/lib/private-ai/models 2775 private-ai pai -` and `a+ /var/lib/private-ai/models - - - - d:group:pai:rwx` (tmpfiles.d(5): `d` adjusts an existing directory's mode, `a+` adds ACL entries): the instances' account `private-ai` writes (an `hf-repo` download), members of `pai` write (a GUI or `pai` download as themselves), setgid and the default ACL keep what either creates group `pai` and group writable, everyone reads as today's folder does |
 | Windows | `%ProgramData%\private-ai\models` | the framework's MSI | SYSTEM and Administrators full, ALL SERVICES (`S-1-5-80-0`, every instance's virtual account) modify, the local group `pai` modify, Users read; removed only when empty |
 | macOS | per user, `~/.llama.cpp` (today's default, unchanged) | nothing (`pai-config` creates it) | the user |
 
-Why not `/var/lib/private-ai/models`: `/var/lib/private-ai` is the service user's home at 0750, so a
-`pai` member could not reach a folder under it without opening the home to everyone (0751). The
-instance units gain `UMask=0002` (systemd.exec(5)), so the folders llama.cpp creates are group writable
-and a `pai` member can delete what an instance downloaded. A later engine runs as `private-ai` too, or
+**Opening the service user's home.** `/var/lib/private-ai` is `private-ai`'s home (sysusers entry) and
+today a `StateDirectory=` of the instance template with `StateDirectoryMode=0750`, which systemd
+re-applies to every listed directory at each instance start (systemd.exec(5), "The innermost specified
+directories will have their access mode adjusted"): a 0751 set by tmpfiles would be undone at the next
+start. So the template lists only the data root, `StateDirectory=private-ai/.local/share/private-ai`
+(still 0750, still re-applied), and the home's mode comes from the tmpfiles line above, 0751. The
+models folder must never be a `StateDirectory=` either: systemd would chown it back to
+`private-ai:private-ai` (same page, the recursive ownership change), dropping the group `pai`.
+
+What 0751 exposes and what stays private:
+
+- **Exposed**: any local user may *traverse* the home, not list it; an entry is reachable only by a
+  name already known, and then only as far as that entry's own mode allows. The models folder is
+  meant to be read (as `/var/lib/llama.cpp/models` 0755 is today). Other entries llama.cpp or the
+  framework create in the home with the default umask (0755 folders, 0644 files) become readable to
+  anyone who guesses the name; today that is an earlier `LLAMA_CACHE` default `~/.llama.cpp`, model
+  files only. Any future file holding a secret must not sit loose in the home.
+- **Private**: the data root `.local/share/private-ai/` (0750, re-applied at each start), with every
+  instance's state folder and conversation snapshots under `state/<id>`; the home's listing; nothing
+  else of the manager's lives there (its files are in `/etc/llama.cpp`, `/etc/private-ai`, root only).
+  The parents `.local` and `.local/share` are created by systemd for the data root with its default
+  mode (unverified: the slice checks it on a real start; 0755 there shows only that the data root
+  exists).
+
+The default ACL replaces a unit-wide `UMask=0002`: only what is created in the models folder becomes
+group writable, so a `pai` member can delete what an instance downloaded while the instance's other
+files keep today's modes. A later engine runs as `private-ai` too, or
 reads by the world-readable mode. The engines' folders (`/var/lib/llama.cpp/models`,
 `%ProgramData%\llama.cpp\models`) are no longer created; an existing one is left alone (no migration).
 
@@ -2902,20 +2926,19 @@ lists a node's folder through the manager, so one path serves both).
 - **F2. The clients.** The bff, `pai`, the GUI and the manager callers. Done when: the bff's server read
   has no `ModelsDir` and a body with it saves a file without it; `pai server set ModelsDir x` is refused
   as unknown; the GUI's Server tab has no models field and the Models tab scans `paths::models_dir()`.
-- **F3. Packaging.** `-core`'s tmpfiles entry and postinst, `UMask=0002` in the instance template, the
-  engine's models line removed, the shipped defaults without `ModelsDir`; the framework MSI's folder and
-  SDDL, `llama.cpp.wxs` without `models\`. Done when: the package content tests show the entry
-  `2775 private-ai pai`, the unit line, and no `/var/lib/llama.cpp/models`; the MSI text checks show the
+- **F3. Packaging.** `-core`'s tmpfiles entry (the home 0751, the models folder 2775 and its default
+  ACL) and postinst, the instance template's `StateDirectory=` reduced to the data root, the engine's
+  models line removed, the shipped defaults without `ModelsDir`; the framework MSI's folder and SDDL,
+  `llama.cpp.wxs` without `models\`. Done when: the package content tests show the three tmpfiles
+  lines, a `StateDirectory=` that no longer lists `private-ai` alone, and no `/var/lib/llama.cpp/models`;
+  on the user's install, `stat` shows the home 0751 after an instance start and the models folder
+  `drwxrwsr-x private-ai pai`; the MSI text checks show the
   new folder's SDDL with `pai` and `S-1-5-80-0` modify.
 - Then **M3** as amended in (3).
 
-**(5) Questions for the user** (recommendation first).
-
-1. **Linux path**: `/var/lib/private-ai-models` (no change to the service user's home); or
-   `/var/lib/private-ai/models` with that home opened to 0751.
-2. **Who writes**: the instances and the members of `pai` (GUI and `pai` downloads keep working); or the
-   instances only (downloads only through llama-server or the manager).
-3. **macOS**: keep today's per-user `~/.llama.cpp`; or a framework folder in the user's tree.
+**(5) Decisions (user, 2026-11-21).** 1. Linux path `/var/lib/private-ai/models`, the service user's
+home opened to 0751 as above (the architect had recommended `/var/lib/private-ai-models`). 2. The
+instances and the members of `pai` write. 3. macOS keeps the per-user `~/.llama.cpp`.
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 

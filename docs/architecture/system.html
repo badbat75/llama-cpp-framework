@@ -196,7 +196,7 @@ signed-in user; the manager answers it only to the bff's account and only for a 
 <tr><td>Run</td><td><code>Start</code>, <code>Stop</code>, <code>Restart</code></td><td><code>control</code></td></tr>
 <tr><td>Writes</td><td><code>WriteFile</code>, <code>WriteFileIf</code>, <code>SetBootEnabled</code>, <code>SetModelProfile</code>, <code>SetServerProfile</code>, <code>SetInstanceTags</code>, <code>CreateInstance</code>, <code>RemoveInstance</code>, <code>CreateServerProfile</code>, <code>DeleteServerProfile</code></td><td><code>configure</code>: a <code>pai</code> member (Linux: polkit, own password)</td></tr>
 <tr><td>bff only</td><td><code>Authenticate</code> and every <code>&lt;Method&gt;As</code></td><td>the bff's account (uid on Linux, service SID on Windows)</td></tr>
-<tr><td class="planned">Accepted, not built</td><td><code>ModelFiles</code> and <code>ModelFilesAs</code>: the GGUF files of every models folder of the node's server profiles, by absolute path, bounded walk</td><td><code>configure</code>; the <code>As</code> form for a current <code>pai</code> member</td></tr>
+<tr><td class="planned">Accepted, not built</td><td><code>ModelFiles</code> and <code>ModelFilesAs</code>: the GGUF files of the node's one models folder (<code>paths::models_dir()</code>), by absolute path, bounded walk</td><td><code>configure</code>; the <code>As</code> form for a current <code>pai</code> member</td></tr>
 <tr><td class="planned">Planned (13d)</td><td><code>Metrics</code>, <code>MetricsHistory</code>, <code>ReadLog</code> and their <code>As</code> forms</td><td>proposed: <code>control</code> for metrics, <code>pai</code> for logs</td></tr>
 </table>
 
@@ -312,8 +312,8 @@ verifies only the calling user's own password, and the bff runs unprivileged.</f
   <text x="452" y="112" class="t-title t-planned">pai-manager: ModelFilesAs</text>
   <text x="452" y="130" class="t-small">configure, principal in pai</text>
   <rect class="lib" x="690" y="90" width="200" height="60"/>
-  <text x="702" y="112" class="t-title">models folders</text>
-  <text x="702" y="130" class="t-small">each server profile's ModelsDir</text>
+  <text x="702" y="112" class="t-title">models folder</text>
+  <text x="702" y="130" class="t-small">one per node, every engine</text>
   <line class="edge" x1="160" y1="75" x2="198" y2="75"/>
   <line class="edge-plan" x1="380" y1="45" x2="438" y2="40"/>
   <text x="384" y="36" class="t-small">HTTPS</text>
@@ -359,7 +359,7 @@ each request to the instance serving the model, logging every request.</li>
 <li><span class="planned">Step 14, the super-manager</span>: nodes governed over mutual TLS with the
 manager protocol unchanged; the bff in hub mode; a model store the nodes pull from (accepted 2026-11-21).</li>
 <li><span class="planned">The model file pickers</span> (accepted 2026-11-21): the bff lists a Hugging Face
-repo itself, the manager lists the node's models folders.</li>
+repo itself, the manager lists the node's one models folder.</li>
 </ul>
 </body>
 </html>
