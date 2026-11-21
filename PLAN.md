@@ -1006,6 +1006,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     follows. While typing, the labels already used (on any instance or server profile) are suggested.
     No edit of a chip: remove it and add it again. How a chip is removed is the designer's (the user
     had no preference). Web UI only (`PUT /api/instances/{id}/tags` unchanged); designer's brief first.
+    Long tags (user, 2026-11-21): shortened with an ellipsis on one line; a smaller font if needed;
+    wrapping only when nothing else fits.
     **Resources belong to the server profile, placement follows** (user, 2026-11-21): a bare model profile
     cannot know its GPU/CPU distribution until it runs on an instance. The server profile should bind the
     resources an instance may use (which GPUs, RAM, CPU threads, the backend SDK), so a model profile
