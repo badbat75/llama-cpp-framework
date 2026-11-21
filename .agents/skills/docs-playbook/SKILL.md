@@ -303,11 +303,28 @@ Lessons only: the rules are in `AGENTS.md`.
   Grep `guarded method`, `protocol ` and the count in words. `ARCHITECTURE.md`'s protocol table and its
   "the seven guarded ones" repeat it and are the architect's. Count the guarded methods from the code,
   not from the prose: `grep -c "async fn .*_as(" crates/manager/src/manager/dbus.rs` (twelve at
-  b535304), and note the page carried TWO word counts (the `As` bullet's "ten", the source map's "nine",
+  b535304, thirteen at 66b2bb3), and note the page carried TWO word counts (the `As` bullet's "ten", the source map's "nine",
   already inconsistent before the slice). A slice that adds verbs without bumping `PROTOCOL` (b535304
   added `CreateServerProfile`, `DeleteServerProfile` and `ServerProfiles` on 3) needs a sentence saying
   the number does not name them, so a manager at 3 from before the slice answers them as an unknown
   method: grep `protocol ` for a sentence that implies the number is the proof.
+- The node's device list (66b2bb3) splits across two pages on purpose: the manager's shape (D-Bus
+  `(t probed_at, a(ssstt) devices)`, the pipe's keys, who is asked, `probed_at` 0 when no probe
+  answered) goes in `crates/config/README.md`'s "Through the manager" beside `ServerProfiles`, and the
+  bff's JSON and its status codes in `crates/bff/README.md`'s "The node". The probe's own rules (one at
+  a time behind a `probing` lock, only a probe that read a non-CPU card cached, keyed by the exe's
+  mtime, the same probe the memory check measures against) are the manager's, so they go in the
+  "manager runs every content check" bullet where `ProbedGpus` is already described, not in a new
+  bullet. `Devices` is `Action::Control` asked **quietly** (`authorize_quietly`): the polkit action's
+  description in `xtask/src/linux/system_files.rs` still says "start, stop, restart", so
+  `build-packaging.md`'s row, which quotes that file, stays as it is and the rule goes in the
+  authorization bullet (report the lag, it is code's).
+- A read with a bound of its own breaks two absolute sentences in `crates/bff/README.md`: "The reads of
+  the router keep the 5 s `MANAGER_TIMEOUT`" (grep `keep the 5 s`) and "The limits the service runs
+  with, 5 s of read and 15 s of write" in "What has run" (grep `limits the service runs with`) whose
+  pinning test is `src/tests/timeouts.rs` alone; a route's own bound is pinned inside its suite
+  (`the_devices_deadline_is_the_probe_bound_plus_five_seconds` in `tests/node_devices.rs`), so name two
+  tests. `DEVICES_TIMEOUT` is `GPU_PROBE_TIMEOUT` plus the transport's 5 s: say which two, not just 35.
 - The client module headers carry the transport's shape as soon as the coder builds it
   (`crates/core/src/client/pipe.rs`, `crates/core/src/client/dbus.rs`: the `As` forms, `Version`,
   `acting_for`, what an older manager answers): read them before planning a comment edit, they usually

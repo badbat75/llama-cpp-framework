@@ -4,8 +4,8 @@
 HTTP service, plain HTTP on the address the administrator chose (`[Bff] Listen`), serving the web UI
 built from `fe/` and the API it calls. Today every API route
 beside the sign-in is for a signed-in user: the framework version, this host's name with the engine and
-runtime versions its packages installed, the manager's instances with their state, the run verbs, the
-start-at-boot flag, an instance's tags, an instance's server file read and saved, the model profile
+runtime versions its packages installed, the node's compute devices ([below](#the-node)), the manager's
+instances with their state, the run verbs, the start-at-boot flag, an instance's tags, an instance's server file read and saved, the model profile
 list, the model profile on/off switch and one model profile, read and saved, and the server profile
 pool: its list, a new profile, one profile read and saved, and its delete
 ([below](#the-server-profile-pool)); the manager checks its sign-in: the password and the group `pai`
@@ -120,6 +120,7 @@ runtime (axum).
 | `GET /api/version` | `{"version": "<framework version>"}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
 | `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the ports, the tags and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
 | `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}]}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. Like `GET /api/version`, the read asks the manager nothing and leaves the session's idle deadline where it was ([below](#the-node)) |
+| `GET /api/node/devices` | `{"probedAt": "<UTC text>|null", "devices": [{"id", "name", "backend", "totalMib", "freeMib"}]}`: the node's compute devices, asked of the manager as the signed-in user, on a bound long enough for the engine probe it runs (35 s); 401 `session-required` with no session, the manager not asked ([below](#the-node)) |
 | `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
 | `GET /api/session` | `{"user"}` of the cookie's session, for anyone |
 | `DELETE /api/session` | Signs out, for anyone: 204, the cookie cleared |
@@ -278,6 +279,22 @@ UI reads it for the labels of the navigation and for the About page
   engine's install folder from `HKLM\Software\llama.cpp` `InstallDir`. Anywhere else is no folder,
   a tree build and macOS included, and a folder that cannot be read answers the same as an empty
   one: `engines` is `[]`.
+- **The compute devices are `GET /api/node/devices`** (`node.rs` `devices`, 66b2bb3, the design's G2 in
+  [ARCHITECTURE.md](../../ARCHITECTURE.md)): unlike the document, this read asks the manager, as the
+  signed-in user through `DevicesAs`, in a blocking task over one connect and one call, and
+  `Sessions::current` moves the session's idle deadline (it is a page read, not a poll). The answer is
+  the manager's probe of `llama-server --list-devices` in the probe's own order, the CPU pseudo-device
+  already left out by the manager, each row the id `device` takes, the product name, the backend (the
+  id with the digits the engine appends taken off: `ROCm0` is `ROCm`), and the device memory in MiB
+  **as it was at the probe**: `probedAt` is that moment as UTC text (`2026-11-20T09:14:03Z`), `null`
+  when no probe answered. No list is 200 with `devices: []`, never an error page: a node with no card
+  has nothing to distribute. The bound is `DEVICES_TIMEOUT` (35 s, `lib.rs`): the manager's own probe
+  bound `GPU_PROBE_TIMEOUT` (30 s) plus the transport's 5 s, because the first read of a node starts a
+  llama-server on it to read its cards. Its failures are the model profile reads'
+  (`model_profiles::read_answer`): 403 `session-not-administrator` and the session ended when the
+  manager refused that user, 503 `client-unavailable` for no manager or an answer that does not land
+  within the bound, 502 `client-other` for anything else, never the manager's detail. **No page calls
+  it yet**: the fe's GPU distribution card is the open brief `fe/briefs/14-gpu-distribution.md`.
 
 ## The session
 
@@ -414,7 +431,8 @@ the file still holds exactly the text read: a write that lands between the read 
 refused by the manager, answered with the same 409, and nothing is written. The read, the write and
 the status that answers `running` are three calls of one connect, and the whole save runs under the
 write's own limit: `WRITE_TIMEOUT`, 15 s (`lib.rs`), an estimate that a measured save's figure will
-replace. The reads of the router keep the 5 s `MANAGER_TIMEOUT`. The reply is 200
+replace. The reads of the router keep the 5 s `MANAGER_TIMEOUT`, the device list ([below](#the-node)) the
+one read on a longer bound. The reply is 200
 `{"revision", "running"}`: the revision of the text the file holds now, and whether the instance's
 process runs (`active` or `activating`); a status read that fails after a write that succeeded
 answers `running: true`. The 503, the 504 and the 200 of a call nobody waited for turn on one fact:
@@ -607,11 +625,12 @@ The moved text goes through the manager's content checks, the configurator's own
 holds, so ids stay unique across the pair. A refusal is 422 with the check's key, its values and
 `field`, the model profile key for the form to mark: `load-on-startup` for both
 `load-on-startup-*` keys, `model` for `model-profile-no-model` and `model-profile-model-missing`
-(their args name the model profile, the latter's also the instance and the file, never a key), the
-key named in the check's args for the others, and no `field` for a
-refusal about the model profile's name (`invalid-model-profile-id`, `model-profile-name-taken`) or about
-the node's GPU memory (`model-profile-over-memory`, its args the model profile, an instance and two
-memory figures, none of them a key). The destination is
+(their args name the model profile, the latter's also the instance and the file, never a key),
+`tensor-split` for `tensor-split-format` (its args are the whole value), the key named in the check's
+args for the others (so `device-bad-name` marks `device`: its args are the key and the entry), and no
+`field` for a refusal about the model profile's name (`invalid-model-profile-id`,
+`model-profile-name-taken`) or about the node's GPU memory (`model-profile-over-memory`, its args the
+model profile, an instance and two memory figures, none of them a key). The destination is
 written first, so a refusal leaves both files as they were.
 
 | Status | Body | When |
@@ -678,7 +697,10 @@ no connect to the manager.
 `ARCHITECTURE.md`) is the model profile page's save: `{"revision", "values"}` in, `{"revision", "running"}`
 out. `values` is an object of the keys the page touched, a string the text to write and `null` the
 key to remove, and the section is rewritten in place: the keys the body does not list, the comments
-and the rest of the file stand.
+and the rest of the file stand. The keys the body may touch are `checks::WEB_MODEL_PROFILE_KEYS`: the
+GPU distribution keys `device`, `split-mode` and `tensor-split` joined them at 66b2bb3 (the design's
+G1), the page
+having no control for them yet (`fe/briefs/14-gpu-distribution.md`).
 
 The body is read in full before a file is opened, and is refused whole:
 
@@ -721,7 +743,7 @@ and `true` when that state cannot be read after the write landed, the safe answe
 | 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
 | 409 | `model-profile-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
 | 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
-| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node) and `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB the node has, no `field`: a model profile the write makes larger does not fit the node's usable GPU memory) |
+| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node), `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB the node has, no `field`: a model profile the write makes larger does not fit the node's usable GPU memory), `device-bad-name` (args the key and the entry, `field` the key: a `device`, `device-draft` or `mmproj-device` entry llama.cpp's parser throws on, judged on the value the preset reader sees, never against the node's probe) and `tensor-split-format` (args the whole value, `field` `tensor-split`: weights the engine's parser throws on) |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
 | 502 | `client-other` | anything else, never the manager's detail |
@@ -753,8 +775,11 @@ were green again on 2026-11-18 at 8a2dc5b, with the read, the save and `--lib` (
 36a892d, pinning the document's seven fields, the values as the parser holds them, a repeated key's last line, the
 url comment, the global `*`, the router's own 404 below the path, and the revision stable across a
 neighbour section and a final line break (`cargo test -p pai-bff --test model_profile_read`). The save adds
-`tests/model_profile_save.rs`, over the same fake manager: 48 tests (3eb24b2, 26f5413, plus 16e6693's
-over-memory 422 carrying no `field`), and the body read on
+`tests/model_profile_save.rs`, over the same fake manager: 52 tests (3eb24b2, 26f5413, plus 16e6693's
+over-memory 422 carrying no `field`, plus 66b2bb3's four: the GPU distribution keys landing in the
+section, a refusal of one marking its control (`device-bad-name` the key it names, `tensor-split-format`
+`tensor-split`), a device the probe does not know being saved, and a `;` in a device value staying the
+bff's own comment-marker 422), and the body read on
 its own in `src/tests/model_profile_body.rs`: 24 tests, pinning the body's shape and its refusals, the key
 set, the comment-marker 422 and its `field`, the revision compare and the compare and swap's 409, the
 edits in key order and the untouched commented line, and the 200 that writes nothing; both rerun green
@@ -770,9 +795,10 @@ skipping `[*]` in both files
 (`the_global_section_is_not_a_model_profile`), the switch's 404 for it with nothing written
 (`switch_for_the_global_section_is_404_and_moves_nothing`), and the 200 for a move whose writes
 landed when the read back, or the states, run out. A read back that fails after a landed move, and
-the ids `**` and ` * `, have no test (`PLAN.md` 11b). The limits the service runs with, 5 s of read
-and 15 s of write, are pinned by `the_write_limit_outlasts_the_read_limit`
-(`src/tests/timeouts.rs`). The list with its port, tags and boot flag, and the tags write, are
+the ids `**` and ` * `, have no test (`PLAN.md` 11b). The limits the service runs with, 5 s of read,
+15 s of write and the device read's 35 s, are pinned by `the_write_limit_outlasts_the_read_limit`
+(`src/tests/timeouts.rs`) and `the_devices_deadline_is_the_probe_bound_plus_five_seconds`
+(`tests/node_devices.rs`). The list with its port, tags and boot flag, and the tags write, are
 `tests/instances.rs` (35 tests: 33 of them green 2026-11-20 inside the whole bff suite (455) at
 ff406b8, the two of the boot flag at b5fdf9e); the
 rule's refusals of a server profile's tags, and their `field`, are pinned in `src/server.rs`'s own
@@ -785,7 +811,12 @@ nothing for an id the record does not name or a section naming no profile, are
 (467): the document, an empty host name answered as `localhost`, the version files read at each request
 (an empty file a null version, a non-file, a file over the cap, a line that is not printable ASCII and a
 package of no engine all left out, the backends sorted), `engines: []` with no folder, and 401 with no
-session, the manager never asked. The pool's five routes are `tests/server_profiles.rs` (27 tests),
+session, the manager never asked. The device list read is `tests/node_devices.rs` (12 tests), reported
+green with the whole bff (470, 20 targets) at 66b2bb3 (its report, not a rerun here): the 401 that
+connects to nothing, the connect naming the signed-in user and the one `DevicesAs` call, the document's
+rows in the probe's order with the probe's moment beside them, a CPU-only node and a node no probe
+answered answering an empty list with 200, the 403 that ends the session, the 503 of a manager that outlives the 35 s bound, and the
+502 that carries no detail. The pool's five routes are `tests/server_profiles.rs` (27 tests),
 reported green with the whole bff (504) at b535304 (its report, not a rerun here). **Nothing here has been called against
 a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 26.04 answered
 `/api/version` and `/api/instances` (that read of 2026-11-14 predates the `Instances` call, which no
@@ -901,6 +932,9 @@ the test changes (`a_domain_that_arrives_after_the_start_is_answered`,
 `PRIVATE_AI_DATA_ROOT` on the child and an ephemeral port, SIGTERM and SIGINT included; `tests/node.rs`
 drives `GET /api/node` through `router_with_session_and_versions_dir` with a versions directory of the
 test (a tempdir, never a real install) and a fake manager it asserts is never called;
+`tests/node_devices.rs` drives `GET /api/node/devices` through `router_with_session` over a fake manager
+client whose `devices()` answers a fixed list, is delayed past the route's bound for the 503, and pins
+the principal of each connect, never a bus, pipe, PAM, LogonUser or an engine;
 `tests/server_profiles.rs` drives the five pool routes through `router_with_session` over the same
 fake manager and a fake authenticator (27 tests, b535304): the session gate of all five and the idle
 deadline each moves, the 403 that ends the session, the list as the manager's rows in its order, the
