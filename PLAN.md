@@ -1095,10 +1095,6 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     `devices.rs`:5 still describe the retired every-GPU memory rule.
     **Also (found by the designer at C1, 2026-11-21):** the Server form's Hostname checkboxes are 20x20,
     an axe target-size (WCAG 2.5.8) finding at 1280 px; fix in U17e or 17a, whichever touches the form first.
-    **Fix first (found at R2's docs, 2026-11-21):** the web UI's server form (`fe/src/ServerForm.tsx`)
-    sends 19 of the document's 21 keys, and the save writes an absent key as cleared, so saving the
-    Server page drops `[Server] Tags` and `Devices`. Fix: the form sends back every key it read and did
-    not edit; one tester and coder round right after C1, before the UX pass.
     **GPU distribution on the model profile page** (user, 2026-11-20: "Non vedo gli slider per la
     spartizione dei layer"): the web UI edits `device`, `split-mode` and `tensor-split` as the GUI's GPU
     table does (fe slice 2f of brief 02, never scheduled until now). Built beside slice 14: first the

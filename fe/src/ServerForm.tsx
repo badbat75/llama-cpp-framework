@@ -426,12 +426,14 @@ export default function ServerForm({
   const saveId = `${fid}-save`
   const askSignIn = useSignInDialog(signInId)
 
-  const values = toValues(draft, rows)
+  // A save sends the whole document: every key the read returned with the
+  // form's edits over it, because a key absent from the body is written
+  // cleared (a `Tags` or `Devices` left out would erase the profile's line).
+  const merged = (d: Draft) => ({ ...loaded.values, ...toValues(d, rows) })
+  const values = merged(draft)
   const dirty =
     JSON.stringify(values) !==
-    JSON.stringify(
-      toValues(fromValues(loaded.values, doc.defaults, rows), rows),
-    )
+    JSON.stringify(merged(fromValues(loaded.values, doc.defaults, rows)))
 
   useDirtyReport(dirty, onDirty)
   useWarnOnLeave(dirty)
