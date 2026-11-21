@@ -99,6 +99,10 @@ Exit code 0 does not mean the agent finished. Now and then (3 of 185 logs on 202
 
 The user asked (2026-11-21) for a roadmap with estimated dates, kept current: https://claude.ai/artifact/9UmGaM7x8X9R34PKZKiK1P (private). After each slice commit, move its card to "Just closed" with the commit hash, put the next ones in "Now", redo the dates from the pace so far and change the "Status as of" line. A new session reads the page with the Artifact tool's `read` (its source is in the old session's scratchpad) and republishes to the same `url`.
 
+Sections mean status (user, 2026-11-21): "Just closed" holds only done cards, newest first; "Now" only
+what an agent is working on; "Next" only work not started. Move a card when its status changes, and
+update the page in the same turn as the slice's commit, not later.
+
 ## Documents kept current at every closed slice (user, 2026-11-21)
 
 Beside the roadmap page: `docs/flyer/product-sheet.html` (the product vision for prospects: change it only
