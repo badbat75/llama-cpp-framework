@@ -182,3 +182,7 @@ description: What the architect has learned about this project's components, int
   code, authorization code with PKCE S256 and refresh_token grants; public apps without a secret;
   redirect URIs exact except `http` loopback (any port); no revocation endpoint; scopes `gated-repos`
   (public gated, granted) and `read-repos` (private). A bff on a LAN address fits the device flow.
+- Models folder today (2026-11-21): created by the ENGINE's packages (Linux tmpfiles
+  `llama.cpp.conf`, 0755 private-ai; Windows `EngineDataModels`, ALL SERVICES modify, Users read), so a
+  desktop download on Linux cannot write it; `/var/lib/private-ai` is the service user's home at 0750,
+  so nothing a `pai` member must reach can sit under it.

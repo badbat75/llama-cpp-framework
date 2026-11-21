@@ -2779,7 +2779,7 @@ no cache; the walk is cheap and the page asks when the picker opens.
 
 **(8) Decisions (user, 2026-11-21): the recommended answer to each.** 1. Public repos only now; the
 token with item 13's machine-wide state. 2. Every models folder of the node's server profiles, grouped
-by folder. 3. Hugging Face only, a fixed endpoint, no mirror. The questions as they were asked:
+by folder (superseded on 2026-11-21 by "One models folder for every engine": M3 lists that one folder). 3. Hugging Face only, a fixed endpoint, no mirror. The questions as they were asked:
 
 1. **The token**: public repos only now, the token with item 13's machine-wide state (one secret the
    manager owns, given to the instances and the bff); or the token in this step already.
@@ -2833,6 +2833,89 @@ flows (the token exchange's is 8 hours, with no refresh token).
   project registers, its client id the default in `bff.ini` and overridable; or each administrator
   registers their own. 4. **Whose account**: one Hugging Face account per node, shared by every
   administrator; or one per administrator (needs per-user state, which item 13 rules out).
+
+### One models folder for every engine (user, 2026-11-21): proposed
+
+The user's words (2026-11-21, translated): one models folder per node shared by every engine
+(llama.cpp now, Strata later), and `[Server] ModelsDir` leaves the server profiles ("unica e basta").
+No migration of existing folders (pre-release). `StateDir` is untouched.
+
+**What exists.** A model folder is a server profile key: `ServerConfig.models_dir`, rendered by
+`render_for`, refused for a `;` in `checks.rs` (line 412), served by the bff's key list
+(`crates/bff/src/server.rs` 289), shown in the GUI's Server tab and set by `pai`. An unset one becomes
+the engine's folder under the manager (`launch::with_instance_defaults`, from
+`paths::instance_models_dir()`: Linux `/var/lib/llama.cpp/models`, Windows
+`%ProgramData%\llama.cpp\models`), else `server_cfg::default_models_dir()` (`~/.llama.cpp`, macOS and
+a tree build). It reaches llama-server only as `LLAMA_CACHE` (`launch.rs` 200), so it is also where an
+`hf-repo` download lands. The engine's packages create the folder: Linux `llama.cpp.conf` tmpfiles
+`d /var/lib/llama.cpp/models 0755 private-ai private-ai` (`system_files.rs` 115), Windows
+`llama.cpp.wxs` `EngineDataModels` (SYSTEM and Administrators full, ALL SERVICES `S-1-5-80-0` modify,
+Users read). The shipped `server@default.ini` sets `ModelsDir = /var/lib/llama.cpp/models` (Linux).
+A GUI download runs as the desktop user into the folder, which on Linux that user cannot write today.
+
+**(1) The folder, owned by the framework.** One function, `pai_core::paths::models_dir()`, replacing
+`instance_models_dir()` and `default_models_dir()`; `PRIVATE_AI_DATA_ROOT` redirects it to
+`<root>/models` for the tests.
+
+| OS | Path | Created by | Owner and rights |
+| --- | --- | --- | --- |
+| Linux | `/var/lib/private-ai-models` (recommended; question 1) | `private-ai-framework-core`, a tmpfiles.d entry `private-ai.conf` applied by its postinst as the engine's is today | `d /var/lib/private-ai-models 2775 private-ai pai -`: the instances' account `private-ai` writes (an `hf-repo` download), members of `pai` write (a GUI or `pai` download as themselves), setgid so new entries stay group `pai`, everyone reads as today's folder does |
+| Windows | `%ProgramData%\private-ai\models` | the framework's MSI | SYSTEM and Administrators full, ALL SERVICES (`S-1-5-80-0`, every instance's virtual account) modify, the local group `pai` modify, Users read; removed only when empty |
+| macOS | per user, `~/.llama.cpp` (today's default, unchanged) | nothing (`pai-config` creates it) | the user |
+
+Why not `/var/lib/private-ai/models`: `/var/lib/private-ai` is the service user's home at 0750, so a
+`pai` member could not reach a folder under it without opening the home to everyone (0751). The
+instance units gain `UMask=0002` (systemd.exec(5)), so the folders llama.cpp creates are group writable
+and a `pai` member can delete what an instance downloaded. A later engine runs as `private-ai` too, or
+reads by the world-readable mode. The engines' folders (`/var/lib/llama.cpp/models`,
+`%ProgramData%\llama.cpp\models`) are no longer created; an existing one is left alone (no migration).
+
+**(2) `ModelsDir` leaves the server profiles.**
+
+| Option | What a file still holding `ModelsDir` does | Verdict |
+| --- | --- | --- |
+| **A. Dropped from `ServerConfig`**: read past, never rendered, so the line vanishes at the next save | Loads; the key changes nothing; gone after a save | **Recommended**: no save is blocked by an old line |
+| B. Refused by the manager on a server file write | Every save of that profile fails until the line is removed by hand | Rejected |
+| C. Kept and ignored | The form shows a key that does nothing | Rejected |
+
+Per component with A: `pai-core` drops the field, `models_dir_or_default`, the `ModelsDir` entry of
+`checks.rs`' `;` rule and the models half of `with_instance_defaults`; `launch` sets `LLAMA_CACHE` to
+`paths::models_dir()` always; `server_control::dirs_left_unset` keeps only `StateDir`. The bff drops
+`ModelsDir` from its key list (a body carrying it is filtered like any unknown key; the read no longer
+answers it). `pai` refuses `server set ModelsDir` as an unknown key. The GUI's Server tab loses the
+field; the Models tab's scans, Browse, downloads and the hardware window read `paths::models_dir()`
+(`server_cfg::models_dir` goes). The import of an earlier `server.ini` drops the line by rendering.
+The shipped defaults lose `ModelsDir`. A model profile's `model` stays a path anywhere (absolute or
+relative to the instance's directory): only where the framework puts and lists files is fixed.
+
+**(3) The picker's M3 amended.** `ModelFilesAs` lists `paths::models_dir()` alone, which supersedes
+decision 2 of (8): `{"source":"local","dir":"/abs","files":[...],"truncated":false,"error":null}`, same
+file rows. The manager keeps the walk (the bff could now read the folder itself, but the hub of step 14
+lists a node's folder through the manager, so one path serves both).
+
+**(4) Slices** (each test first; before M3).
+
+- **F1. `pai-core`.** `paths::models_dir()`, `ServerConfig` without `models_dir`, `LLAMA_CACHE` from
+  it. Done when: a server file holding `ModelsDir` loads and its render has no `ModelsDir` line;
+  `LLAMA_CACHE` equals `paths::models_dir()` whatever the file says; the redirected root gives
+  `<root>/models`; `checks.rs` no longer names `ModelsDir`.
+- **F2. The clients.** The bff, `pai`, the GUI and the manager callers. Done when: the bff's server read
+  has no `ModelsDir` and a body with it saves a file without it; `pai server set ModelsDir x` is refused
+  as unknown; the GUI's Server tab has no models field and the Models tab scans `paths::models_dir()`.
+- **F3. Packaging.** `-core`'s tmpfiles entry and postinst, `UMask=0002` in the instance template, the
+  engine's models line removed, the shipped defaults without `ModelsDir`; the framework MSI's folder and
+  SDDL, `llama.cpp.wxs` without `models\`. Done when: the package content tests show the entry
+  `2775 private-ai pai`, the unit line, and no `/var/lib/llama.cpp/models`; the MSI text checks show the
+  new folder's SDDL with `pai` and `S-1-5-80-0` modify.
+- Then **M3** as amended in (3).
+
+**(5) Questions for the user** (recommendation first).
+
+1. **Linux path**: `/var/lib/private-ai-models` (no change to the service user's home); or
+   `/var/lib/private-ai/models` with that home opened to 0751.
+2. **Who writes**: the instances and the members of `pai` (GUI and `pai` downloads keep working); or the
+   instances only (downloads only through llama-server or the manager).
+3. **macOS**: keep today's per-user `~/.llama.cpp`; or a framework folder in the user's tree.
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
