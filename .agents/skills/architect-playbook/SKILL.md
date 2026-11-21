@@ -171,3 +171,10 @@ description: What the architect has learned about this project's components, int
   no PCI bus id (the props have it), so identical cards differ only by ordinal.
 - History tiers (13d) must have each step a whole multiple of the previous one, or the fold is not
   exact: 720 points over 7 days would be 14 min, which 1 h does not divide (15 min used).
+- HF and models-folder facts (checked 2026-11-21): `hf.rs` curl runs with `-L` and takes the endpoint
+  from `MODEL_ENDPOINT`/`HF_ENDPOINT`, fine for a desktop user, an SSRF lever in a service: a service
+  caller needs a fixed endpoint and no redirects (curl limits a redirect's protocol, never its host).
+  `--max-filesize` aborts an unknown-length answer only from curl 8.4.0 (man curl). The tree answer's
+  `lfs.oid` is the file's sha256 (read in `files_from_tree`). `paths::instance_models_dir()` on Linux
+  is `/var/lib/llama.cpp/models`, while root `AGENTS.md` still says `/var/lib/private-ai/.llama.cpp`:
+  trust the code.

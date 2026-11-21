@@ -2669,6 +2669,122 @@ RAM and CPU counts are read by root and given only to callers the gate admits.
 4. **RAM**: shown in the inventory, no budget yet; or a budget the check reads (allowing a CPU share and
    relaxing the strict full-GPU rule); or a limit the OS enforces (`MemoryMax=`, a job object).
 
+### Choosing the model file on the web (step 10, "Choosing the model file"): proposed 2026-11-21
+
+The requirement (user, 2026-11-21): on the web model profile page, `hf-repo` offers the GGUF files
+(quants) of the Hugging Face repo instead of free text, and `model` offers the GGUF files already in
+the models folder. A second source, the super-manager's model store (Part 2, "The model store"), must
+fit beside Hugging Face later without a redesign.
+
+**What exists.** `pai-app` `hf.rs` (module header) does the HF side for the GUI and `pai`: `parse_spec`
+and `valid_repo_id` (the repo id rule, also applied to every id the remote answers), `list_repo` (two
+GETs, `api/models/<repo>/refs` then `tree/<commit>?recursive=true`, grouped into `Candidate`s by a mirror
+of llama.cpp's file rules, each with its shards, size, sidecars and the tree's `lfs.oid`), all through
+the system `curl` with the URL and headers on stdin (`-K -`), `-L`, `--connect-timeout 20`,
+`--max-time 120`, a token from `HF_TOKEN` or the HF CLI file, and the endpoint from `MODEL_ENDPOINT` /
+`HF_ENDPOINT`. `pai-bff` cannot link `pai-app` (playbook). The models folder an instance uses is its
+server profile's `ModelsDir`, else `paths::instance_models_dir()` (`launch::with_instance_defaults`);
+the bff's account cannot read it on Linux (`/var/lib/private-ai` is 0750 `private-ai`, and a
+`ModelsDir` may be anywhere), the manager (root, LocalSystem) can. The manager's model file check
+already resolves a `model` value against the instance's working directory (`service.rs`
+`missing_model_files`) and skips a profile carrying `hf-repo` (`FETCH_KEYS`: llama-server fetches it).
+
+**(1) Who calls Hugging Face.**
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. The bff** (unprivileged `private-ai-bff`, sandboxed unit, already `AF_INET`; Windows `NT SERVICE\private-ai-bff`) | Move the listing half of `hf.rs` to `pai-core` | A hostile or spoofed answer is parsed by the least privileged process; the caller is already a signed-in `pai` member | **Recommended** |
+| B. The manager (root, LocalSystem) | Same move, a new method | Remote JSON parsed as root; the manager gains outbound network for a read the bff can do | Rejected |
+| C. A helper run as the engine's account | A transient unit or a child per call, a new seam | No gain over A: the listing writes nothing | Rejected |
+| D. The browser, straight to huggingface.co | No backend code | The bff's CSP and the token would have to reach the browser; the node's outbound policy no longer applies | Rejected |
+
+A also suits step 14: a repo's file list is the same from any machine, so the hub's bff lists it and
+only the download needs the node.
+
+**(2) The outbound boundary (SSRF).** The browser sends a repo id only, never a URL or a host. The bff
+holds it to `valid_repo_id` before any network (refused `hf-repo-invalid`, nothing fetched), and builds
+the two URLs from a **fixed** endpoint `https://huggingface.co/`: the bff ignores `MODEL_ENDPOINT` and
+`HF_ENDPOINT` (a mirror can come later as a `bff.ini` key). curl gets, on top of today's config:
+`--proto =https`, **no `-L`** (a redirect answers `hf-repo-moved`, so no request reaches a host the
+answer names; curl cannot restrict a redirect's host, only its protocol: `--proto-redir`, man curl),
+`--connect-timeout 10`, `--max-time 20` (under a route deadline of 25 s), and `--max-filesize 16M` (curl
+8.4.0 and later also abort an answer of unknown length at the limit; older copies only refuse a
+declared length: man curl, `--max-filesize`). At most two HF calls run at once in the bff (`hf-busy`,
+429, beyond). Every id and path in the answer stays held to `valid_repo_id` and `safe_repo_path`, as
+today. Only a session reaches the route, so an anonymous visitor cannot make the node call out.
+
+**(3) The token: public repos first.** The first slices send none: a gated, private or missing repo
+answers HF's 401, 403 or 404, all one refusal `hf-repo-unavailable` (args: the repo). The token waits
+for item 13's machine-wide state, because llama-server needs the same token when it fetches an
+`hf-repo` at load: the proposal then is one secret the manager owns (beside `bff.ini`'s secret, root
+and `private-ai-bff` read, written only through the manager by `configure`), handed to the instances
+as `HF_TOKEN` in their environment and to the bff's curl on stdin, never in an argv or a reply.
+
+**(4) Which models folder, and who reads it.** Per **node**, not per instance: a model profile belongs
+to the node's pool and may be assigned to several instances. The listing is the union of the distinct
+effective `ModelsDir`s of the engine's server profiles (each `ModelsDir`, else
+`paths::instance_models_dir()`), each folder with the server profiles that use it. The manager walks
+them (new `ModelFiles` / `ModelFilesAs`, `configure`, a current `pai` member as for every `As` method):
+regular files ending `.gguf` (any case), recursive to depth 6, symlinked directories not followed,
+dot-folders skipped (`.hf-staging`, the store's staging), at most 5000 entries per folder (then
+`truncated: true`), a split model shown once as its first shard (`-00001-of-0000N.gguf`, what llama.cpp
+loads), a folder that cannot be read answered as that folder's `error` and not as the route's failure.
+The value offered is the **absolute** path, so it names the same file on every instance whatever its
+working directory. Risk accepted: a `pai` member can point a `ModelsDir` anywhere and so list `.gguf`
+names there through root; a `pai` member is an administrator.
+
+**(5) The routes** (behind a session; errors as `{key, args}`).
+
+- `GET /api/hf/files?repo=<org>/<repo>` answers
+  `{"source":"hf","repo":"o/r","revision":"<commit>","files":[{"tag":"Q4_K_M","file":"<path in repo>","shards":1,"size":<bytes>,"sha256":"<lfs oid>","sidecars":{"mmproj":"<path>"|null},"value":{"hf-repo":"o/r:Q4_K_M"},"default":true}]}`.
+  `value` is what a pick writes into the profile: `hf-repo = <repo>:<tag>`, plus `hf-file` only when the
+  tag alone does not name one file (llama.cpp's `--hf-file`). The store will answer the same shape with
+  `"source":"store"` at its own route (Part 2), so the picker reads either.
+- `GET /api/node/model-files` answers
+  `{"source":"local","dirs":[{"dir":"/abs","serverProfiles":["default"],"files":[{"path":"/abs/models/o/r/x.gguf","size":<bytes>,"shards":1,"category":"models"|"mmprojs"|"mtps"|"dflashs"|null}],"truncated":false,"error":null}]}`;
+  `category` is the first subfolder under the folder (the GUI's `model_scan::Category::subdir` layout),
+  so the `model` picker offers `models` and uncategorized files and the same reply can later feed the
+  `mmproj` and drafter pickers.
+- Keys: `hf-repo-invalid` 400, `hf-repo-unavailable` 404, `hf-repo-moved` 502 (args: the repo),
+  `hf-unreachable` 504 (connect, timeout), `hf-bad-answer` 502 (not JSON, too large, no branch),
+  `hf-tool-missing` 503 (no curl), `hf-busy` 429; the model files route relays the manager's refusals as
+  every `As` route does (`session-*`, `client-*`), and the folder errors `models-dir-unreadable` (args:
+  the folder) inside the reply.
+
+**(6) Caching.** HF listings: in the bff's memory, keyed by repo, 10 minutes, at most 64 repos, gone at
+restart (a listing is pinned to a commit, so a stale one still names files that exist). Local folders:
+no cache; the walk is cheap and the page asks when the picker opens.
+
+**(7) Slices** (each test first; Linux, the Windows code type-checked).
+
+- **M1. The listing in `pai-core`.** `parse_spec`, `valid_repo_id`, `safe_repo_path`, the `Fetch` seam,
+  `Curl` and `list_repo`/`build_listing` move to `pai-core` `hf`; `pai-app` keeps search, download and
+  fit and calls the moved code. A curl profile for the bff: fixed endpoint, `--proto =https`, no `-L`,
+  the bounds of (2). Done when: `pai-app`'s hf tests pass unchanged; new `pai-core` tests pin the bff
+  profile's config lines (no `location`, `proto`, `max-filesize`, timeouts) and that the endpoint
+  ignores `HF_ENDPOINT`.
+- **M2. `GET /api/hf/files`.** Done when, against a fake `Fetch`: an invalid repo is 400 and fetches
+  nothing; no session is 401 and fetches nothing; 401, 403 and 404 map to `hf-repo-unavailable`; a 3xx
+  to `hf-repo-moved`; a second call within 10 minutes fetches nothing; a third concurrent call is 429;
+  `value` carries `hf-file` only for an ambiguous tag.
+- **M3. `ModelFilesAs` and `GET /api/node/model-files`.** Done when, on temp folders named by two server
+  profiles (one shared by two profiles, one unset taking the redirected default): files listed by
+  absolute path, shards collapsed, depth and entry bounds hold, a symlinked folder is not followed, a
+  dot-folder is skipped, an unreadable folder is its own `error`, a non-`pai` principal is refused, and
+  the bff relays the reply.
+- **M4. The pickers.** The designer's brief, then the fe: `hf-repo` and `model` as pickers fed by M2 and
+  M3 (whether free text stays is the brief's). Done when: the designer's review.
+- **Later**: the token (item 13's state), the store source (Part 2), `mmproj` and drafter pickers from
+  M3's `category`.
+
+**(8) Questions for the user** (recommendation first).
+
+1. **The token**: public repos only now, the token with item 13's machine-wide state (one secret the
+   manager owns, given to the instances and the bff); or the token in this step already.
+2. **Which folders**: every models folder of the node's server profiles, grouped by folder; or only the
+   folder of the `default` instance's server profile.
+3. **A mirror**: Hugging Face only (fixed endpoint); or an endpoint the administrator sets in `bff.ini`.
+
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
@@ -2835,6 +2951,47 @@ them) and it cannot impersonate the super-manager to other nodes.
   `manager::pipe`). The super-manager supports the current and the previous major; upgrade it first.
   The join state lives in the node's config directory and survives package upgrades.
 
+### The model store (R13, user 2026-11-21): proposed
+
+The user's words (2026-11-21, translated): "The super-manager will host the models for all the nodes
+and offer an endpoint to the hosts to download them locally."
+
+- **What it is.** A folder of GGUF files the super-manager keeps, each with a manifest entry
+  `{name, size, sha256, origin}` (`origin`: the HF repo, commit and path it was taken from, or
+  "uploaded"). For a file taken from Hugging Face the sha256 is checked at ingestion against the tree's
+  `lfs.oid`, which `hf.rs` already reads; the manifest is the store's truth.
+- **Who may download.** Only a joined node: the one whose SPKI hash the registry pinned at the join.
+  A node fetches only when told to by a `configure` call the super-manager forwards for a signed-in
+  administrator (`StoreFetch{name}`, its principal logged by the node like every change), or by its own
+  `pai` member; nobody else, and never anonymously.
+- **Channel and identity.**
+
+  | Option | Cost | Risk | Verdict |
+  | --- | --- | --- | --- |
+  | **A. The node pulls: HTTPS `GET /store/<name>` on a super-manager listener, TLS 1.3 mutual, each side pinning the other's SPKI from the join** | A listener in the super-manager (unprivileged, its own port); HTTP range requests give resume for free (RFC 9110, "Range Requests") | The super-manager must be reachable from the nodes, the reverse of the answer to question 1 | **Recommended**: it is what the user asked ("an endpoint to download"), and a big transfer is a plain stream, not 1 MiB JSON frames |
+  | B. The super-manager pushes over the node's listener (`StoreWrite{name, offset, bytes}` frames) | No new listener | Base64 in 1 MiB JSON frames (a third larger), a long-held connection on the node's manager, resume by offset hand-made | Fallback if nodes cannot reach the super-manager |
+
+  The node's manager (root, LocalSystem) does the transfer, since only it holds the node key
+  (`/etc/private-ai/node/`, 0600 root). It parses only TLS and HTTP headers; the body is hashed and
+  written, never interpreted.
+- **Integrity.** The node writes `<ModelsDir>/.store-staging/<sha256>.partial`, hashes while writing,
+  and renames into `<ModelsDir>/models/store/<name>` (owned by the engine's account) only when size and
+  sha256 match the manifest entry it read first over the same channel; a mismatch deletes the partial
+  and refuses `store-hash-mismatch`. A name is held to the repo-path rule (`safe_repo_path`), so no
+  manifest entry writes outside the staging and target folders.
+- **Resume.** A failed or cancelled transfer keeps its partial; the next fetch sends `Range: bytes=<len>-`
+  with `If-Range` on the sha256 as entity tag, so a changed file restarts from zero.
+- **Storage and quotas.** The store lives in the super-manager's state directory
+  (`/var/lib/private-ai-super/store/`), capped by `[Store] MaxBytes` (refused `store-full`); a node
+  checks its free space against the entry's size before it starts (`node-disk-full`). No per-node quota
+  until a user asks for one.
+- **Beside a node's own HF downloads.** Both stay: a profile with `hf-repo` still makes llama-server
+  fetch from Hugging Face on the node, and the GUI's download still works. The store is a second source
+  in the picker (`"source":"store"`, the same shape as `GET /api/hf/files`, Part 1 "Choosing the model
+  file on the web"); once on disk a store file is a local file like any other, listed by
+  `GET /api/node/model-files` and written as an absolute `model` path. A file already present with the
+  same sha256 is not fetched again.
+
 ### Slices
 
 Each test first; the coordinator may split further. Linux first; the Windows halves of 1 to 4 are
@@ -2865,6 +3022,12 @@ type-checked like the rest of the Windows code.
 8. **The web UI.** Designer's brief, then nodes on the Overview and node-scoped pages.
 9. **Packaging.** The Linux package; checked by `xtask package` and its contents; installing is the
    user's run, then the end-to-end check on two machines.
+10. **The model store** (after 9). The manifest, ingestion from Hugging Face with the sha256 check, the
+   pull listener, `StoreFetch` on the node with staging, hash and rename, range resume, `GET /api/store/files`.
+   Done when, with test keys over loopback: an unpinned node is closed before any byte; a pinned node
+   fetches a file whose sha256 matches and it appears in `GET /api/node/model-files`; a corrupted body
+   is refused `store-hash-mismatch` and leaves no file at the target; a cut transfer resumes from its
+   partial; a full store refuses `store-full`.
 
 What can wait: per-node rights, a central identity, nodes that dial out (NAT), a CA, gRPC streaming
 for live logs, the super-manager on Windows, a CLI for the super-manager, the gateway across nodes
@@ -2901,3 +3064,8 @@ for live logs, the super-manager on Windows, a CLI for the super-manager, the ga
 
 Answers (user, 2026-11-15): 1. yes, the nodes are reachable (same LAN or VPN); 2. enough for now;
 3. the manager's listener is acceptable; 4. Linux only at first, with Linux and Windows nodes.
+
+The model store (2026-11-21), recommendation first: 5. **Direction**: the nodes pull from a listener on
+the super-manager (it must be reachable from them); or the super-manager pushes over the node's
+listener. 6. **Ingestion**: the store takes files from Hugging Face (sha256 checked against the tree)
+and by upload; or Hugging Face only. 7. **Quota**: one cap on the store; or a cap per node as well.
