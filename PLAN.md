@@ -1079,6 +1079,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     (user, 2026-11-21). Test flakes seen at C1, to fix test-side when
     a slice touches them: `ModelProfilePage.test.tsx` 2d.63 (title asserted before the effect writes
     it), `NodeNav.test.tsx` ~211 (a read count), `SignInOnly.test.tsx` S1a.10.
+    **Create and delete model profiles from the web** (user, 2026-11-22): a model profile can be deleted
+    only when it is switched off (in `models.ini.disabled`) and assigned to no instance; otherwise the
+    manager refuses with a keyed refusal naming the reason (the instances it is assigned to). The web
+    also creates a model profile (an id and its model file), born switched off. Deleting drops its tags
+    (`model-tags.ini`). Built with slice 17; the architect's design first (new manager methods, since the
+    manager has none for create or delete today; the GUI keeps writing the pool files whole), then the
+    designer's brief.
     **About and node info** (user, 2026-11-22): the About page keeps only the framework's version and
     the operating system, with its version, of the machine the service runs on (the node's bff, or the
     director's); everything else it shows today (host name, engine and GPU runtime versions) moves to the
