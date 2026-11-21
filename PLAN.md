@@ -1040,7 +1040,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
     designer's audit of what is basic today and a phased brief, built in slices after C1; after U17b it
-    waits for C2, 2g/2j, slice 17, model profile tags, then R4 and R5 (user, 2026-11-21,
+    waits for C2, About and node info, 2g/2j, slice 17, model profile tags, then R4 and R5 (user, 2026-11-21,
     2026-11-22)
     (fe brief 17: U17a skeletons, U17c sorting and U17b tile chips built; left U17h, U17e, U17d, U17f, U17g in that order).
     **One models folder for every engine** (user, 2026-11-21: "usa una folder unica per i modelli tra i
@@ -1079,6 +1079,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     (user, 2026-11-21). Test flakes seen at C1, to fix test-side when
     a slice touches them: `ModelProfilePage.test.tsx` 2d.63 (title asserted before the effect writes
     it), `NodeNav.test.tsx` ~211 (a read count), `SignInOnly.test.tsx` S1a.10.
+    **About and node info** (user, 2026-11-22): the About page keeps only the framework's version and
+    the operating system, with its version, of the machine the service runs on (the node's bff, or the
+    director's); everything else it shows today (host name, engine and GPU runtime versions) moves to the
+    node's info, which also gains the version of every engine (llama.cpp, Strata, ...), the operating
+    system and its version, and the GPU driver versions. Right after C2, before 2g/2j: the architect's
+    design for the new `GET /api/node` fields (where each version is read, and from which account),
+    then the designer's brief for both pages.
     **Tags on model profiles** (user, 2026-11-22): a model profile carries tags too, as chips with the
     same suggestions (C1, C2), for three uses: labels and a filter on the Models page, routing (the router
     and the director pick a model by tag, step 14 and item 14), and shown to clients in the model list
