@@ -687,7 +687,7 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     }
   expect(
     sizes,
-    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3)',
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9)',
   ).toEqual([
     '#root: min-height: 100vh',
     'button: min-height: var(--control-h)',
@@ -698,6 +698,9 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     '.nav a: min-height: 32px',
     'main: min-width: 0',
     '.theme-switch: min-width: var(--control-h)',
+    // 17c.9: the sortable header's text is a button, so it names its own 24 px
+    // floor (2.5.8); it has no class of its own.
+    '.model-profiles th button: min-height: 24px',
     '.model-profiles-switch: min-height: 24px',
     '.model-profiles-switch: min-width: 24px',
     '.model-profiles-switch-status: min-height: 1lh',

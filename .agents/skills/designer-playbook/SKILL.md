@@ -108,3 +108,7 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   by pattern), and start none in the background that you would wait on: on 2026-11-21 three stubs
   (`build/ux-review/n1stub.py`, two `fe/ux/stub.py`) were left running for up to a day, and the
   review task stayed "running" for hours after its last report.
+- The UX check now runs 102 states per browser and takes about 10 minutes (2026-11-21): a
+  `timeout 400` killed it with no output. Send it to a file (`> build/ux-review/<slice>/check.txt`),
+  read the lines without a leading space (the stub's BrokenPipe tracebacks are noise). `u17c-box.js`
+  measures the Model profiles table's scroll box overflow at 320 px, with and without a CSS change.

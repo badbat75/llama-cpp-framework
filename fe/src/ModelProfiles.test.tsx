@@ -807,15 +807,28 @@ test('2a.11: the engine is shown as data, and an engine not available reads "<en
   ])
 })
 
-test('2a.13, 2c.37, 2d.60: a row acts through its link then its switch; nothing else in the table acts', async () => {
+test('2a.13, 2c.37, 2d.60: a row acts through its link then its switch; nothing else in a row acts (U17c: the table has the two header sort buttons, in its head)', async () => {
   // 2c replaces 2a.13: each row gains its on/off switch (administrator only:
   // only administrators sign in, user 2026-11-15). 2d.60 replaces the plain
   // name with a link, so a row has two controls: the link, then the switch.
+  // U17c puts a sort button in the Model profile and Engine headers: buttons are
+  // in the head, never in a data row.
   const { main } = open()
   const t = await table(main)
-  for (const role of ['button', 'checkbox'] as const) {
-    expect(within(t).queryAllByRole(role), role).toHaveLength(0)
-  }
+  for (const row of dataRows(t))
+    for (const role of ['button', 'checkbox'] as const)
+      expect(
+        within(row).queryAllByRole(role),
+        `${role}: a data row holds no ${role}`,
+      ).toHaveLength(0)
+  expect(
+    within(t).queryAllByRole('checkbox'),
+    'no checkbox: the switch says switch',
+  ).toHaveLength(0)
+  expect(
+    within(t).getAllByRole('button'),
+    'the two header buttons of U17c, and no other button in the table',
+  ).toHaveLength(2)
   expect(within(t).queryAllByRole('switch')).toHaveLength(2)
   expect(within(t).queryAllByRole('link')).toHaveLength(2)
   expect(t.querySelectorAll('input')).toHaveLength(2)
@@ -860,9 +873,10 @@ test('2a.18: leaving #/profiles/model and coming back reads the model profiles a
 
 // ── Keyboard and screen reader (20, 21) ─────────────────────────────────
 
-test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, instances, Model profiles), the filter field, then each row link and switch', async () => {
+test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, instances, Model profiles), the filter field, the two header sort buttons, then each row link and switch', async () => {
   // 2c.53 replaces 2a.20: the administrator's switches follow the filter.
   // 2d.60 puts each row's link before its switch.
+  // U17c puts the sortable headers' buttons after the field, in the table's head.
   const { main } = open()
   await table(main)
   await within(nav()).findByRole('list', { name: en('nav-instances') })
@@ -879,6 +893,8 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
     en('nav-model-profiles'),
     en('nav-about'),
     en('model-profiles-filter-label'),
+    en('model-profiles-column-name'),
+    en('model-profiles-column-engine'),
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     'gemma-3-12b-it',

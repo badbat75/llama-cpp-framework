@@ -971,7 +971,7 @@ test('2c.44, 2c.50: typing in the filter keeps the texts; the next change emptie
 
 // ── Keyboard (52, 53) ───────────────────────────────────────────────────
 
-test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, the Sign in after a 401, then each row link and switch in row order', async () => {
+test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops): Tab goes skip link, banner, nav, the filter, Clear filter, the Model profile and Engine header buttons, the Sign in after a 401, then each row link and switch in row order', async () => {
   // 2d.60 puts each row's link before its switch.
   const { main } = await open({ modelProfileSwitch: SESSION_ENDED })
   const head = [
@@ -988,13 +988,20 @@ test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, t
     en('nav-about'),
     en('model-profiles-filter-label'),
   ]
+  // 17c.2: the two sortable header buttons are tab stops; they sit in the
+  // table's thead, so after the filter row and before the first row.
+  const cols = [
+    en('model-profiles-column-name'),
+    en('model-profiles-column-engine'),
+  ]
   const rowsTwice = IDS.flatMap((id) => [id, id])
-  expect(tabbable().map(nameOf)).toEqual([...head, ...rowsTwice])
+  expect(tabbable().map(nameOf)).toEqual([...head, ...cols, ...rowsTwice])
   // "e" is in every id, so the filter shows Clear and keeps every row.
   type(filterField(main), 'e')
   expect(tabbable().map(nameOf)).toEqual([
     ...head,
     en('model-profiles-filter-clear'),
+    ...cols,
     ...rowsTwice,
   ])
   press(switchOf(main, 'Qwen3-27B'))
@@ -1003,6 +1010,7 @@ test('2c.53, 2d.60: Tab goes skip link, banner, nav, the filter, Clear filter, t
     ...head,
     en('model-profiles-filter-clear'),
     en('session-sign-in'),
+    ...cols,
     ...rowsTwice,
   ])
 })

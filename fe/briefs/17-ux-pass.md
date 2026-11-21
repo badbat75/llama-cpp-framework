@@ -167,6 +167,24 @@ announces the change; a later filter change replaces it with the count as today.
 Tests that change: the list tests pinning the header cells' exact markup (`ModelProfiles.test.tsx`
 column checks) now find the text inside a button.
 
+### U17c review (designer, 2026-11-21)
+
+In the browser (`build/ux-review/u17c.js`, `u17c-box.js`: Chromium, Firefox, WebKit, 1280 and 320
+px, light and dark, 200 % text). Met: the two buttons and their names, the arrow icons
+(`aria-hidden`), `aria-sort` and the cycle by click, Enter and Space, the numeric order on the stub's
+fixture, Engine taking `aria-sort`, focus kept on the button with its ring, the status line (sort
+sentence ahead of the count under a filter, the count alone after typing), 24 px buttons (43 px at
+200 %), no page scroll sideways.
+
+- **Defect, the width at 320 px**: the icon and its gap widen the nowrap header (`.model-profiles th`
+  keeps `white-space: nowrap`), so at 100 % text the table, which fitted before, now overflows its
+  scroll box by 12 to 15 px in all three engines: the Status switches are cut. Ruling:
+  `.model-profiles th button { white-space: normal; text-align: start }`, so "Model profile" wraps
+  above its arrow when the column is narrow. Checked: hiding the icon brings the overflow back to 0.
+  **Fixed and re-measured**: overflow 0 at 320 px in all three engines, both themes, every switch
+  whole; at 200 % the box scrolls 169 px, less than the 221 px of the table before U17c (a data
+  table may scroll in its box, 1.4.10). Accepted.
+
 ## U17b. Tags as chips on the Overview tiles
 
 React: none. **Rule**: the Tags fact of a tile (`.tile-facts dd`) holds a `ul.chips` (`role="list"`)

@@ -744,6 +744,27 @@ tr:last-child td {
   overflow-wrap: normal;
 }
 
+/* The sortable headers (17-ux-pass.md U17c.9, the APG's sortable table): the
+   header's text is a button, so it reads as the header: no border and no fill,
+   the header's own font and colour, and the 24 px target floor of 2.5.8. It has
+   no class of its own, so the rule names the element. The `th` keeps
+   `white-space: nowrap`, and the icon and its gap widen the head row, so the
+   button undoes the nowrap and the text wraps above the arrow in a narrow
+   column; a wrapped header reads from the inline start. */
+.model-profiles th button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  white-space: normal;
+  text-align: start;
+}
+
 .model-profiles td:nth-child(2) {
   white-space: normal;
   overflow-wrap: normal;

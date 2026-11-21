@@ -303,6 +303,11 @@ export const EN: Record<string, string> = {
   'model-profiles-column-name': 'Model profile',
   'model-profiles-column-engine': 'Engine',
   'model-profiles-column-status': 'Status',
+  // Slice U17c (fe/briefs/17-ux-pass.md): the sortable headers' announcements, on
+  // the filter's own status line.
+  'model-profiles-sorted-asc': 'Sorted by {0}, A to Z.',
+  'model-profiles-sorted-desc': 'Sorted by {0}, Z to A.',
+  'model-profiles-sorted-file': 'In file order.',
   'model-profiles-status-on': 'On',
   'model-profiles-status-off': 'Off',
   'model-profiles-engine-not-available': '{0} (not available)',

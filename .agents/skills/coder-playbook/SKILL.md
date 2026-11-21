@@ -78,7 +78,20 @@ Lessons only: the rules are in `AGENTS.md`.
   findings: the finding is the checkbox, not the change. Baseline it by measuring both trees.
 - `HearthTokens.test.ts`'s H1a.12 is an exact ordered list of EVERY `min-height`/`min-width` in `index.css`
   (`selector: property: value`, in written order), as `Reflow.test.ts` R1.1 is for `overflow-wrap`: any new rule
-  that sets one of those needs its line there, which is the tester's edit.
+  that sets one of those needs its line there, which is the tester's edit. Brief 17 U17c is that red twice over:
+  the brief named only `HearthH2a.test.ts`'s list and the tester updated that one, leaving the same list in
+  `HearthTokens.test.ts` red, so name BOTH files whenever a CSS rule of that kind is added.
+- `white-space` and `text-align` have NO sheet-wide exhaustive list (unlike `min-height`/`min-width`,
+  `font-family`, `overflow-wrap`, `box-shadow`), so adding them to a rule needs no tester file: the pins
+  that name them are per-selector (`Reflow.test.ts` R1.5 on `.model-profiles th`/`td:nth-child(2)`/
+  `td:last-child`, `HearthH9a.test.ts` on `.jump ul button`, `HearthAssets.test.tsx` on the toggle and the
+  h3 button), and a rule's declaration count is pinned only for the selectors the brief counts.
+- `strings.test.ts`'s "every value is used" scans source text for `t(` + a string literal, so a key that reaches
+  `t` as a VARIABLE, or as one arm of a ternary in the first argument, counts as unused and reddens that test
+  with no code change of its own. Write one `t('<key>')` literal per key, at a call site, and pass the value on.
+- `fe`'s tab-order tests (`ModelProfilesFilter.test.tsx` 2b.35/2d.60, `ModelProfilesSwitch.test.tsx`
+  2c.53/2d.60) list EVERY focusable of the page by accessible name, in order, so any new control (a sortable
+  header's button, brief 17 U17c) reddens them by name: the tester's list, never a production change.
 - A CSS-reading test's block helper must start counting braces AFTER the opening `{` at depth 1. One that starts
   at depth 0 stops at the first INNER `}`, so a media block with ONE rule reads as holding none, and its
   "the one rule it holds" assertion can never go green: report it, do not pad the sheet with an empty rule.
@@ -1240,6 +1253,18 @@ Lessons only: the rules are in `AGENTS.md`.
   `useDirtyReport(dirty, onDirty)` itself; a page-level `useWarnOnLeave(tagsDirty)` beside the Server
   form's own listener arms the browser ask TWICE (a `beforeunload` probe reads one, but the leave guard
   double-asks). The page only ORs the two sections' dirty flags for the app.
+
+## Slice U17c (2026-11-21): one live region, two sources
+
+- The Model profiles status line (`p.model-profiles-filter-status`) carries the sort's words AND the
+  filter's count, and the suite pins both shapes: every older test asserts the line EQUALS the count
+  (no header clicked, so the announcement is empty), while `U17cSort.test.tsx`'s rule case asserts the
+  line CONTAINS the sort's sentence with a filter on. Compose the two by joining the non-empty parts
+  with a space; an `if (filter !== '')` that overwrites the announcement satisfies neither the case
+  that clicked a header nor the 12 green ones of that file.
+- A filter that matches nothing and a sort announcement never coexist: the table renders only when
+  `shown.length > 0`, and with it the sortable header buttons, so there is no header to click while the
+  no-match sentence stands. No precedence rule between the two is needed, and none is pinned.
 
 ## xtask: the runtime closure and the loader
 

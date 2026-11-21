@@ -1,8 +1,18 @@
 // The Model profiles page (#/profiles/model, fe/briefs/02-models.md, slice 2a,
 // under the nav's Profiles group since 05b): the model profiles of every engine
 // read from the bff's /api/profiles/model, with a filter over them (slice 2b),
-// and each row's on/off switch (slice 2c).
-import { useEffect, useId, useRef, useState } from 'react'
+// and each row's on/off switch (slice 2c), and its Model profile and Engine
+// headers sorting the list (brief 17, U17c).
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { flushSync } from 'react-dom'
 import {
   apiError,
@@ -26,6 +36,55 @@ type ModelProfile = {
   engineAvailable: boolean
   enabled: boolean
   model: string
+}
+
+/**
+ * The sort of the list (brief 17 U17c): one column, ascending or descending,
+ * and `null` for the file order, the order the list was read in. Only the
+ * Model profile and Engine columns sort: switched-on first is already the file
+ * order's grouping, so Status has nothing to reorder.
+ */
+export type Sort = { column: Column; dir: Dir }
+
+type Column = 'name' | 'engine'
+type Dir = 'asc' | 'desc'
+
+/**
+ * The header clicked (U17c.3, U17c.4, U17c.5): a column not sorted sorts
+ * ascending; ascending turns to descending; descending is the file order
+ * again.
+ */
+function nextSort(sort: Sort | null, column: Column): Sort | null {
+  if (sort === null || sort.column !== column) return { column, dir: 'asc' }
+  return sort.dir === 'asc' ? { column, dir: 'desc' } : null
+}
+
+/** The words of a column, in the header and in the status line (U17c). */
+function columnLabel(column: Column): string {
+  return column === 'name'
+    ? t('model-profiles-column-name')
+    : t('model-profiles-column-engine')
+}
+
+/** The words of a sort, said on the filter's own status line (U17c). */
+function sortText(sort: Sort | null): string {
+  if (sort === null) return t('model-profiles-sorted-file')
+  const column = columnLabel(sort.column)
+  return sort.dir === 'asc'
+    ? t('model-profiles-sorted-asc', column)
+    : t('model-profiles-sorted-desc', column)
+}
+
+/**
+ * The comparison of the brief: `localeCompare` with the base sensitivity and
+ * numbers read as numbers (`Qwen3` before `Qwen3.6`), turned for descending.
+ */
+function compare(a: string, b: string, dir: Dir): number {
+  const cmp = a.localeCompare(b, undefined, {
+    sensitivity: 'base',
+    numeric: true,
+  })
+  return dir === 'asc' ? cmp : -cmp
 }
 
 /** What the read gave: the model profiles, or the error key of its message. */
@@ -146,15 +205,29 @@ function switchedText(p: ModelProfile, running: boolean): string {
     : t('model-profiles-switched-off', p.id, p.engine)
 }
 
+/** One row's switch value, kept in place in the list as read (2c.47). */
+function rowEnabled(
+  rows: ModelProfile[],
+  i: number,
+  enabled: boolean,
+): ModelProfile[] {
+  return rows.map((p, j) => (j === i ? { ...p, enabled } : p))
+}
+
 export default function ModelProfiles({
   filterText,
   onFilterText,
+  sort,
+  onSort,
   onSignedOut,
   onRenewed,
 }: {
   /** The text kept by the shell, for the tab's life (02-models.md, 62). */
   filterText: string
   onFilterText: (text: string) => void
+  /** The sort kept by the shell for the tab's life, as the filter is (U17c). */
+  sort: Sort | null
+  onSort: (sort: Sort | null) => void
   onSignedOut: (reason: SignedOut) => void
   onRenewed: (session: Session) => boolean
 }) {
@@ -190,6 +263,8 @@ export default function ModelProfiles({
           answer={answer}
           filter={filterText}
           onFilter={onFilterText}
+          sort={sort}
+          onSort={onSort}
           onRenewed={onRenewed}
           onReread={reread}
         />
@@ -206,12 +281,16 @@ function Body({
   answer,
   filter,
   onFilter,
+  sort,
+  onSort,
   onRenewed,
   onReread,
 }: {
   answer: Answer | undefined
   filter: string
   onFilter: (text: string) => void
+  sort: Sort | null
+  onSort: (sort: Sort | null) => void
   onRenewed: (session: Session) => boolean
   onReread: () => void
 }) {
@@ -241,6 +320,8 @@ function Body({
       read={answer}
       filter={filter}
       onFilter={onFilter}
+      sort={sort}
+      onSort={onSort}
       onRenewed={onRenewed}
       onReread={onReread}
     />
@@ -257,19 +338,25 @@ function matches(p: ModelProfile, filter: string): boolean {
 
 /**
  * The filter field, its status line, the switches' feedback and the rows the
- * filter lets through, each with its switch (2c). The text is the shell's
- * (62), never this component's: it outlives the page.
+ * filter lets through and the sort orders, each with its switch (2c). The text
+ * and the sort are the shell's (62), never this component's: they outlive the
+ * page. The rows read the deferred text, so typing stays smooth on a long list
+ * (U17c: `useDeferredValue`); the field itself shows what is typed.
  */
 function Filtered({
   read,
   filter,
   onFilter,
+  sort,
+  onSort,
   onRenewed,
   onReread,
 }: {
   read: ModelProfile[]
   filter: string
   onFilter: (text: string) => void
+  sort: Sort | null
+  onSort: (sort: Sort | null) => void
   onRenewed: (session: Session) => boolean
   onReread: () => void
 }) {
@@ -278,6 +365,9 @@ function Filtered({
   const [modelProfiles, setModelProfiles] = useState(read)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
+  // What the last header click sorted, said on the filter's status line until
+  // the field is typed again (U17c).
+  const [announced, setAnnounced] = useState('')
   const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
     null,
   )
@@ -292,51 +382,78 @@ function Filtered({
       mounted.current = false
     }
   }, [])
-  const shown = modelProfiles
-    .map((p, i) => ({ p, i }))
-    .filter(({ p }) => matches(p, filter))
-
-  function setEnabled(i: number, enabled: boolean) {
-    setModelProfiles((ps) =>
-      ps.map((p, j) => (j === i ? { ...p, enabled } : p)),
+  const deferred = useDeferredValue(filter)
+  // The rows the filter lets through, in the sort's order: the file order is
+  // the order they were read in, so a tie keeps it (U17c.5).
+  const shown = useMemo(() => {
+    const rows = modelProfiles
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => matches(p, deferred))
+    if (sort === null) return rows
+    const key = (p: ModelProfile) => (sort.column === 'name' ? p.id : p.engine)
+    return rows.sort(
+      (a, b) => compare(key(a.p), key(b.p), sort.dir) || a.i - b.i,
     )
-  }
+  }, [modelProfiles, deferred, sort])
+  // The header clicked: the shell keeps the new sort, the status line says it.
+  const sortBy = useCallback(
+    (column: Column) => {
+      const next = nextSort(sort, column)
+      setAnnounced(sortText(next))
+      onSort(next)
+    },
+    [sort, onSort],
+  )
 
-  async function change(i: number, enabled: boolean) {
-    if (busy) return
-    const p = modelProfiles[i]!
-    const previous = p.enabled
-    last.current = i
-    setEnabled(i, enabled)
-    setBusy(true)
-    setStatus('')
-    setAlert(null)
-    const result = await writeEnabled(p.id, enabled)
-    if (!mounted.current) return
-    if (typeof result === 'object' && 'running' in result) {
-      setEnabled(i, result.enabled)
-      setStatus(switchedText({ ...p, enabled: result.enabled }, result.running))
+  // The switch written (2c.45, 2c.47): the row's value kept in place, the
+  // write, its word, and the row's value as the machine left it.
+  const change = useCallback(
+    async (i: number, enabled: boolean) => {
+      if (busy) return
+      const p = modelProfiles[i]!
+      const previous = p.enabled
+      last.current = i
+      setModelProfiles((ps) => rowEnabled(ps, i, enabled))
+      setBusy(true)
+      setStatus('')
+      setAlert(null)
+      const result = await writeEnabled(p.id, enabled)
+      if (!mounted.current) return
+      if (typeof result === 'object' && 'running' in result) {
+        setModelProfiles((ps) => rowEnabled(ps, i, result.enabled))
+        setStatus(
+          switchedText({ ...p, enabled: result.enabled }, result.running),
+        )
+        setBusy(false)
+        return
+      }
+      setAlert({
+        text: failureText(p.id, result),
+        signIn: result === 'signed-out' || result === 'revoked',
+      })
+      if (result === 'signed-out' || result === 'revoked') {
+        setModelProfiles((ps) => rowEnabled(ps, i, previous))
+        setBusy(false)
+        return
+      }
+      // The write may have happened: that row's value as read again (2c.48).
+      const again = await readModelProfiles()
+      if (!mounted.current) return
+      const row = Array.isArray(again)
+        ? again.find((r) => r.id === p.id)
+        : undefined
+      setModelProfiles((ps) =>
+        rowEnabled(ps, i, row === undefined ? previous : row.enabled),
+      )
       setBusy(false)
-      return
-    }
-    setAlert({
-      text: failureText(p.id, result),
-      signIn: result === 'signed-out' || result === 'revoked',
-    })
-    if (result === 'signed-out' || result === 'revoked') {
-      setEnabled(i, previous)
-      setBusy(false)
-      return
-    }
-    // The write may have happened: that row's value as read again (2c.48).
-    const again = await readModelProfiles()
-    if (!mounted.current) return
-    const row = Array.isArray(again)
-      ? again.find((r) => r.id === p.id)
-      : undefined
-    setEnabled(i, row === undefined ? previous : row.enabled)
-    setBusy(false)
-  }
+    },
+    [busy, modelProfiles],
+  )
+  // The table's rows are memoised (U17c), so the callback it is handed is stable.
+  const onChange = useCallback(
+    (i: number, enabled: boolean) => void change(i, enabled),
+    [change],
+  )
 
   function closeAsking() {
     flushSync(() => setAsking(false))
@@ -353,22 +470,31 @@ function Filtered({
     else onReread()
   }
 
+  /** The field typed: the count of the rows replaces the sort's word (U17c). */
+  function typed(text: string) {
+    setAnnounced('')
+    onFilter(text)
+  }
+
   function clear() {
-    onFilter('')
+    typed('')
     field.current?.focus()
   }
 
-  let statusText = ''
-  if (filter !== '') {
-    statusText =
-      shown.length === 0
+  // The status line: the sort that was just made, ahead of the count of the
+  // rows the filter lets through (U17c: typing clears the sort's words, so a
+  // later filter change leaves the count as it was before the headers).
+  const count =
+    filter === ''
+      ? ''
+      : shown.length === 0
         ? t('model-profiles-no-match')
         : t(
             'model-profiles-filter-count',
             String(shown.length),
             String(modelProfiles.length),
           )
-  }
+  const statusText = [announced, count].filter((s) => s !== '').join(' ')
 
   return (
     <>
@@ -386,11 +512,11 @@ function Filtered({
             spellCheck={false}
             aria-describedby="model-profiles-filter-hint"
             value={filter}
-            onChange={(e) => onFilter(e.target.value)}
+            onChange={(e) => typed(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape' && filter !== '') {
                 e.preventDefault()
-                onFilter('')
+                typed('')
               }
             }}
           />
@@ -433,7 +559,9 @@ function Filtered({
           uid={uid}
           rows={shown}
           busy={busy}
-          onChange={(i, enabled) => void change(i, enabled)}
+          sort={sort}
+          onSort={sortBy}
+          onChange={onChange}
         />
       )}
       {asking && (
@@ -456,26 +584,61 @@ function Filtered({
  * child of the scroll box of 10 R1.3: the box is generic (no role, no name, no
  * tabindex), every row holding a focusable control, so Tab reaches each column
  * and scrolls the box to what it focuses.
+ *
+ * The Model profile and Engine headers are buttons that sort the list (brief 17
+ * U17c, the APG's sortable table): the sorted column's `th` carries `aria-sort`
+ * and its arrow points one way, the others carry none and point both ways. The
+ * rows are memoised so a keystroke in the filter, whose deferred value lands in
+ * a later render, redraws them once.
  */
-function Table({
+const Table = memo(function Table({
   uid,
   rows,
   busy,
+  sort,
+  onSort,
   onChange,
 }: {
   uid: string
   rows: { p: ModelProfile; i: number }[]
   /** A write runs: every switch aria-disabled, its changes ignored (2c.45). */
   busy: boolean
+  sort: Sort | null
+  onSort: (column: Column) => void
   onChange: (i: number, enabled: boolean) => void
 }) {
+  /** One sortable header cell: the column's text in a button, its arrow. */
+  const header = (column: Column, label: string) => {
+    const dir = sort !== null && sort.column === column ? sort.dir : null
+    return (
+      <th
+        scope="col"
+        aria-sort={
+          dir === null ? undefined : dir === 'asc' ? 'ascending' : 'descending'
+        }
+      >
+        <button type="button" onClick={() => onSort(column)}>
+          {label}
+          <Icon
+            name={
+              dir === null
+                ? 'arrow-up-down'
+                : dir === 'asc'
+                  ? 'arrow-up'
+                  : 'arrow-down'
+            }
+          />
+        </button>
+      </th>
+    )
+  }
   return (
     <div className="table-scroll">
       <table className="model-profiles" aria-labelledby="page-heading">
         <thead>
           <tr>
-            <th scope="col">{t('model-profiles-column-name')}</th>
-            <th scope="col">{t('model-profiles-column-engine')}</th>
+            {header('name', columnLabel('name'))}
+            {header('engine', columnLabel('engine'))}
             <th scope="col">{t('model-profiles-column-status')}</th>
           </tr>
         </thead>
@@ -522,4 +685,4 @@ function Table({
       </table>
     </div>
   )
-}
+})

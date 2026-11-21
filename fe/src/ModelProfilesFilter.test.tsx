@@ -503,7 +503,7 @@ test('2b.34, 2d.62: the text is in no URL and no storage, and the page reopens w
 
 // ── Keyboard and screen reader (35, 36) ─────────────────────────────────
 
-test('2b.35, 2c.53, 2d.60: with text, Tab reaches the field, Clear filter, then the shown row link and switch; focus on arrival stays on the h1', async () => {
+test('2b.35, 2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops): with text, Tab reaches the field, Clear filter, the Model profile and Engine header buttons, then the shown row link and switch; focus on arrival stays on the h1', async () => {
   // 2c.53 replaces 2b.35: the administrator's switches follow Clear filter.
   // Focus moves to the h1 only after a route change, never on a first load.
   startAt('#/')
@@ -518,16 +518,21 @@ test('2b.35, 2c.53, 2d.60: with text, Tab reaches the field, Clear filter, then 
   await waitFor(() => expect(document.activeElement).toBe(h1))
   type(input, 'q')
   // 2d.60: each shown row's name is a link; it precedes the row's switch.
+  // 17c.2: the header buttons sit in the table's thead, so after the filter's
+  // Clear and before the first row's link.
   const order = tabbable().map(nameOf)
-  expect(order.slice(-5)).toEqual([
+  expect(order.slice(-7)).toEqual([
     en('nav-about'),
     en('model-profiles-filter-label'),
     en('model-profiles-filter-clear'),
+    en('model-profiles-column-name'),
+    en('model-profiles-column-engine'),
     'Qwen3-27B',
     'Qwen3-27B',
   ])
   const t = await table(main)
   expect(tabbable().filter((el) => t.contains(el))).toEqual([
+    ...within(t).getAllByRole('button'),
     ...within(t).getAllByRole('link'),
     ...within(t).getAllByRole('switch'),
   ])

@@ -27,6 +27,11 @@ export type IconName =
   | 'plus'
   | 'x'
   | 'check'
+  // U17c (fe/briefs/17-ux-pass.md): the arrows of the sortable table's headers,
+  // the up-and-down one while the column is not sorted.
+  | 'arrow-up'
+  | 'arrow-down'
+  | 'arrow-up-down'
 
 /** The children of the svg, the shapes of the brief's list, in its order. */
 const SHAPES: Record<IconName, ReactNode> = {
@@ -118,6 +123,26 @@ const SHAPES: Record<IconName, ReactNode> = {
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
+  'arrow-up': (
+    <>
+      <path d="m5 12 7-7 7 7" />
+      <path d="M12 19V5" />
+    </>
+  ),
+  'arrow-down': (
+    <>
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
+    </>
+  ),
+  'arrow-up-down': (
+    <>
+      <path d="m21 16-4 4-4-4" />
+      <path d="M17 20V4" />
+      <path d="m3 8 4-4 4 4" />
+      <path d="M7 4v16" />
+    </>
+  ),
 }
 
 /** The icon of `name`, to be the first child of the element that holds it. */

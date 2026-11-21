@@ -898,6 +898,17 @@ test.each([
     '24px',
   ],
   [
+    // U17c (fe/briefs/17-ux-pass.md): the sortable headers' buttons, the same
+    // 2.5.8 floor as the switch label.
+    '.model-profiles th button',
+    () =>
+      prop(
+        flatBy('.model-profiles th button', 'the header sort button').body,
+        'min-height',
+      ),
+    '24px',
+  ],
+  [
     '.jump ul button',
     () => prop(flatBy('.jump ul button', 'the jump rule').body, 'min-height'),
     '32px',

@@ -21,7 +21,7 @@ import {
   type InstancesStore,
 } from './Instances.tsx'
 import { Mark } from './Mark.tsx'
-import ModelProfiles from './ModelProfiles.tsx'
+import ModelProfiles, { type Sort } from './ModelProfiles.tsx'
 import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
@@ -88,6 +88,9 @@ export default function App() {
   const [filter, setFilter] = useState<{ owner: string; text: string } | null>(
     null,
   )
+  // The Model profiles list's sort, kept for the tab's life as the filter is,
+  // so it outlives the page (brief 17, U17c).
+  const [sort, setSort] = useState<Sort | null>(null)
   // Raised on every page change: the new page's h1 takes the focus.
   const [focus, setFocus] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -351,8 +354,10 @@ export default function App() {
 
   const leave = async () => {
     await signOut()
-    // Sign out empties the kept filter: the next sign-in may be someone else.
+    // Sign out empties the kept filter and the kept sort: the next sign-in may
+    // be someone else.
     setFilter(null)
+    setSort(null)
     signedOut('sign-out')
     go('#/')
   }
@@ -526,6 +531,8 @@ export default function App() {
               host={host}
               filterText={filter?.text ?? ''}
               onFilterText={typedFilter}
+              sort={sort}
+              onSort={setSort}
               onSignedOut={signedOut}
               onRenewed={renewed}
               onDirty={setDirty}
@@ -622,6 +629,8 @@ function Page({
   host,
   filterText,
   onFilterText,
+  sort,
+  onSort,
   onSignedOut,
   onRenewed,
   onDirty,
@@ -633,6 +642,9 @@ function Page({
   host: string | null
   filterText: string
   onFilterText: (text: string) => void
+  /** The Model profiles list's sort, kept for the tab's life (U17c). */
+  sort: Sort | null
+  onSort: (sort: Sort | null) => void
   onSignedOut: (reason: SignedOut) => void
   onRenewed: (session: Session) => boolean
   onDirty: (dirty: boolean) => void
@@ -666,6 +678,8 @@ function Page({
       <ModelProfiles
         filterText={filterText}
         onFilterText={onFilterText}
+        sort={sort}
+        onSort={onSort}
         onSignedOut={onSignedOut}
         onRenewed={onRenewed}
       />

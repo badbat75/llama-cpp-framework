@@ -225,6 +225,19 @@ vitest` from the repo root resolves a different config and lies about the files 
 - Those allowlist arrays are in a fixed order: the H1a.12 list is the order the rules appear in
   `index.css`, R1.1's is sorted by selector. Run the test and read the diff's insertion point, do not
   guess: a well-aimed entry in the wrong slot reds as a whole-list mismatch that names nothing.
+  `HearthH2a.test.ts`'s sizes are a `test.each`, so a new entry reports as
+  `section 1 sizes: <selector>`, one line naming the selector.
+- `App.test.tsx`'s `1a strings` compares the test helper's `EN` map (`src/test/bff.ts`) against
+  `en_US.json`, so putting a brief's new strings in `EN` (which `en()` needs to name them) reds that
+  test naming exactly the keys the sheet lacks. Report it as the strings criterion's red, never as
+  collateral, and never work around it by writing the English inline in the new file.
+- `Icon.tsx` answers an unknown name with an EMPTY svg (`SHAPES[name]` is undefined), so the red of a
+  new icon is `expected [] to deeply equal [ <path d>, .. ]` with all eight svg attributes passing.
+  A literal name is a COMPILE red (the prop is the `IconName` union), which is why the shape tests
+  import the module through a variable (`const ICON_MODULE = './Icon.tsx'`) and cast: a union widening
+  the coder forgets then shows as the path-data red, not as a file that will not run.
+- A fe test file has no exported helper to reuse (importing one registers its tests), so a CSS-text
+  reader is COPIED into the new file, as `U17aSkeletons.test.tsx` and `Reflow.test.ts` each did.
 - A CSS text pin whose selector ALSO appears inside a `@media` block: the flat rule regex matches it
   TWICE, so a `block(sel)` "exactly one rule" assert reds on a rule that exists. Strip every at-rule
   (header plus its block, by brace depth) into a `topBlock(sel)`, pin the top-level rule there, and pin
@@ -278,9 +291,18 @@ vitest` from the repo root resolves a different config and lies about the files 
   (the chip back, focus on it), so a refusal pin greens on day one and proves nothing about optimism.
   Pin the optimism in the PENDING state, where the two differ: the new chip listed while the PUT is
   held, the removed chip gone and focus already moved. Say in the report which pin is a shape guard.
+- A criterion that allows TWO shapes for one text (the announcement alone, or ahead of the count) is
+  pinned with `toContain(sentence)`, never `toBe`; its paired "a later change replaces it with the count"
+  pin greens on day one and sits BEHIND the red, so prove it in a scratch copy with the announcement pin
+  cut (report it as a guard).
 - A brief that AMENDS an existing criterion (15 R5 amends C1.2's tab order, R6 amends C1.5, C1.8, C1.9):
   rename the test `15 C1.n (as 15 section 10 Rm amends it): <the new wording>` and keep every assertion
   the ruling does not contradict, so the run's list of reds answers the criteria one by one.
+- A new tab stop in a `thead` (17c.2's header buttons) joins an exact `tabbable()` list AFTER the
+  filter row's Clear button, not after the filter field, and before the page-level `session-sign-in`
+  of a 401, which sits in `main` above the table. A shared `head` array ending at the filter label
+  cannot carry it: keep the new stops in their own array and place them in each list, since a list
+  with Clear is not a list without it.
 - A fe test with two halves in one `test()` (the fe check, then a 422 refusal): the first red stops the
   second, so prove the second alone in a scratch COPY in the same dir (`cp src/X.test.tsx
 src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count == 1`, run `-t SCRATCH`,
