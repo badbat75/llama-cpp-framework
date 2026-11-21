@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System view</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1d232b; --muted: #5a6470; --line: #3a4552;
+  --box: #f3f5f8; --box2: #e7ecf3; --accent: #1f5fae; --planned: #b45a00;
+  --planned-bg: #fff6ec; --trust: #b3261e; --user: #2e7d32;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181d; --fg: #e6e9ee; --muted: #a2acb8; --line: #b6c0cc;
+    --box: #1e242c; --box2: #27303a; --accent: #7fb0ff; --planned: #ffb466;
+    --planned-bg: #2a2118; --trust: #ff8a80; --user: #81c784;
+  }
+}
+@media print {
+  :root {
+    --bg: #ffffff; --fg: #000000; --muted: #444444; --line: #333333;
+    --box: #f3f5f8; --box2: #e7ecf3; --accent: #1f5fae; --planned: #b45a00;
+    --planned-bg: #fff6ec; --trust: #b3261e; --user: #2e7d32;
+  }
+  figure, table { break-inside: avoid; }
+  h2 { break-after: avoid; }
+}
+@page { size: A4; margin: 14mm; }
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; max-width: 980px; padding: 24px 16px; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+h1 { font-size: 1.6rem; margin: 0 0 .2rem; }
+h2 { font-size: 1.2rem; margin: 2rem 0 .5rem; }
+p, li { max-width: 75ch; }
+code { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .9em; }
+.sub { color: var(--muted); margin-top: 0; }
+figure { margin: 1rem 0; }
+figcaption { color: var(--muted); font-size: .9rem; }
+svg { width: 100%; height: auto; display: block; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; margin: .5rem 0; }
+th, td { border: 1px solid var(--box2); padding: 4px 6px; text-align: left; vertical-align: top; }
+th { background: var(--box); }
+.planned { color: var(--planned); font-weight: 600; }
+svg text { fill: var(--fg); font: 12px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+svg .t-title { font-weight: 700; font-size: 13px; }
+svg .t-small { font-size: 10.5px; fill: var(--muted); }
+svg .t-mono { font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; }
+svg .t-planned { fill: var(--planned); }
+svg .t-trust { fill: var(--trust); font-size: 10.5px; font-weight: 600; }
+svg .node { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+svg .svc { fill: var(--box); stroke: var(--accent); stroke-width: 1.4; }
+svg .lib { fill: var(--box2); stroke: var(--line); stroke-width: 1; }
+svg .usr { fill: var(--box); stroke: var(--user); stroke-width: 1.4; }
+svg .plan { fill: var(--planned-bg); stroke: var(--planned); stroke-width: 1.4; stroke-dasharray: 6 4; }
+svg .edge { stroke: var(--line); stroke-width: 1.3; fill: none; marker-end: url(#arrow); }
+svg .edge-back { stroke: var(--line); stroke-width: 1.1; fill: none; stroke-dasharray: 5 3; marker-end: url(#arrow); }
+svg .link { stroke: var(--muted); stroke-width: 1; fill: none; stroke-dasharray: 1 3; }
+svg .edge-plan { stroke: var(--planned); stroke-width: 1.4; fill: none; stroke-dasharray: 6 4; marker-end: url(#arrow-plan); }
+svg .life { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
+svg .act { fill: var(--box2); stroke: var(--line); stroke-width: 1; }
+svg .trust { stroke: var(--trust); stroke-width: 1.4; fill: none; stroke-dasharray: 2 4; }
+svg .ah { fill: var(--line); }
+svg .ah-plan { fill: var(--planned); }
+</style>
+</head>
+<body>
+<h1>System view</h1>
+<p class="sub">Private AI Framework: the crates and binaries, the manager's API, the bff's routes, and
+how sign-in, a profile save and a start or stop travel through them. Source: <code>ARCHITECTURE.md</code>,
+<code>AGENTS.md</code>, <code>crates/bff/README.md</code> and the code, 2026-11-21. When this page and
+those disagree, they win.</p>
+
+<figure>
+<svg viewBox="0 0 900 52" role="img" aria-label="Legend">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arrow-plan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-plan" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <rect class="svc" x="4" y="12" width="26" height="18" rx="3"/><text x="36" y="25">binary (built)</text>
+  <rect class="lib" x="140" y="12" width="26" height="18"/><text x="172" y="25">library crate</text>
+  <rect class="usr" x="270" y="12" width="26" height="18" rx="3"/><text x="302" y="25">user-facing</text>
+  <rect class="plan" x="390" y="12" width="26" height="18" rx="3"/><text x="422" y="25" class="t-planned">planned</text>
+  <line class="edge" x1="500" y1="21" x2="540" y2="21"/><text x="546" y="25">call</text>
+  <line class="link" x1="590" y1="21" x2="630" y2="21"/><text x="636" y="25">links</text>
+  <line class="trust" x1="690" y1="21" x2="730" y2="21"/><text x="736" y="25" class="t-trust">trust boundary</text>
+</svg>
+</figure>
+
+<h2>Components</h2>
+<figure>
+<svg viewBox="0 0 900 470" role="img" aria-label="Component view">
+  <!-- user facing -->
+  <rect class="usr" x="20" y="20" width="170" height="60" rx="5"/>
+  <text x="32" y="42" class="t-title">fe/ web UI</text>
+  <text x="32" y="60" class="t-small">React + Vite, TypeScript</text>
+  <text x="32" y="74" class="t-small">embedded in pai-bff</text>
+
+  <rect class="usr" x="20" y="200" width="170" height="50" rx="5"/>
+  <text x="32" y="222" class="t-title">pai-config</text>
+  <text x="32" y="240" class="t-small">Slint GUI, HW Monitor</text>
+  <rect class="usr" x="20" y="270" width="170" height="50" rx="5"/>
+  <text x="32" y="292" class="t-title">pai (pai-cli)</text>
+  <text x="32" y="310" class="t-small">the same operations, headless</text>
+
+  <!-- bff -->
+  <rect class="svc" x="260" y="20" width="220" height="110" rx="5"/>
+  <text x="272" y="42" class="t-title">pai-bff</text>
+  <text x="272" y="60" class="t-small">axum, sessions in memory</text>
+  <text x="272" y="76" class="t-small">Host guard, routes below</text>
+  <text x="272" y="92" class="t-small">filters body keys, relays refusals</text>
+  <rect class="plan" x="272" y="100" width="196" height="22" rx="3"/>
+  <text x="280" y="115" class="t-small t-planned">router (item 14), metrics SSE (13d)</text>
+  <line class="edge" x1="190" y1="50" x2="258" y2="50"/>
+  <text x="200" y="44" class="t-small">HTTP</text>
+
+  <!-- manager -->
+  <rect class="svc" x="260" y="200" width="220" height="130" rx="5"/>
+  <text x="272" y="222" class="t-title">pai-manager</text>
+  <text x="272" y="240" class="t-small">the service: API, authorization,</text>
+  <text x="272" y="254" class="t-small">every content check, the records</text>
+  <text x="272" y="272" class="t-mono">run-instance &lt;id&gt;</text>
+  <text x="272" y="288" class="t-mono">save-slots &lt;id&gt;</text>
+  <text x="272" y="304" class="t-small">GPU probe: llama-server --list-devices</text>
+  <rect class="plan" x="272" y="310" width="196" height="16" rx="3"/>
+  <text x="280" y="322" class="t-small t-planned">13c Strata engine, 13d sampler</text>
+  <line class="edge" x1="370" y1="130" x2="370" y2="198"/>
+  <text x="378" y="168" class="t-small">Authenticate, &lt;Method&gt;As</text>
+  <line class="edge" x1="190" y1="225" x2="258" y2="235"/>
+  <line class="edge" x1="190" y1="295" x2="258" y2="280"/>
+
+  <!-- engine -->
+  <rect class="svc" x="560" y="200" width="160" height="60" rx="5"/>
+  <text x="572" y="222" class="t-title">llama-server</text>
+  <text x="572" y="240" class="t-small">--models-preset models@&lt;id&gt;.ini</text>
+  <line class="edge" x1="480" y1="240" x2="558" y2="230"/>
+  <text x="488" y="226" class="t-small">systemd / SCM</text>
+  <rect class="plan" x="740" y="200" width="140" height="60" rx="5"/>
+  <text x="752" y="222" class="t-title t-planned">Strata (13c)</text>
+  <text x="752" y="240" class="t-small">second engine</text>
+
+  <rect class="plan" x="560" y="20" width="200" height="70" rx="5"/>
+  <text x="572" y="42" class="t-title t-planned">pai-supermanager (step 14)</text>
+  <text x="572" y="60" class="t-small">nodes over mutual TLS,</text>
+  <text x="572" y="74" class="t-small">same manager protocol</text>
+  <line class="edge-plan" x1="480" y1="70" x2="558" y2="60"/>
+  <line class="edge-plan" x1="640" y1="90" x2="480" y2="215"/>
+
+  <!-- libraries -->
+  <rect class="lib" x="20" y="370" width="200" height="80"/>
+  <text x="32" y="390" class="t-title">pai-app</text>
+  <text x="32" y="408" class="t-small">configurator logic without a GUI,</text>
+  <text x="32" y="422" class="t-small">hwmon, bench, hf_fit, migration</text>
+  <text x="32" y="436" class="t-small">linked by pai-config and pai</text>
+
+  <rect class="lib" x="260" y="370" width="300" height="80"/>
+  <text x="272" y="390" class="t-title">pai-core</text>
+  <text x="272" y="408" class="t-small">paths, INI, server config, launch, checks.rs,</text>
+  <text x="272" y="422" class="t-small">client (D-Bus, pipe), GGUF header, devices, assign</text>
+  <text x="272" y="436" class="t-small">linked by every binary</text>
+
+  <rect class="plan" x="600" y="370" width="170" height="80" rx="3"/>
+  <text x="612" y="390" class="t-title t-planned">pai-hwmon (13d)</text>
+  <text x="612" y="408" class="t-small">readings, ring, tiers</text>
+  <text x="612" y="422" class="t-small">for the manager and pai-app</text>
+
+  <line class="link" x1="105" y1="320" x2="105" y2="368"/>
+  <line class="link" x1="220" y1="410" x2="258" y2="410"/>
+  <line class="link" x1="370" y1="330" x2="370" y2="368"/>
+
+  <line class="trust" x1="230" y1="10" x2="230" y2="350"/>
+  <path class="trust" d="M240 170 H530 V350"/>
+  <text x="440" y="186" class="t-trust">privileged</text>
+</svg>
+<figcaption>Only <code>pai-config</code> links Slint. <code>xtask</code> (build, package, install) and
+<code>docs-site</code> are build tools, not shipped. macOS has no manager and no bff: there
+<code>pai-config</code> spawns llama-server itself.</figcaption>
+</figure>
+
+<h2>The manager's API</h2>
+<p>One request, one reply, on D-Bus (<code>org.privateai.Manager1</code>) or the named pipe (u32 length,
+JSON, 1 MiB); the caller is the OS identity of the connection. A <code>&lt;Method&gt;As</code> form names a
+signed-in user; the manager answers it only to the bff's account and only for a current member of
+<code>pai</code>, re-checked at each call.</p>
+<table>
+<tr><th>Group</th><th>Methods</th><th>Who</th></tr>
+<tr><td>Reads</td><td><code>ListInstances</code>, <code>Status</code>, <code>BootEnabled</code>, <code>ServerProfiles</code>, <code>ReadFile</code>, <code>Devices</code>, <code>Version</code></td><td>the listing and states to anybody; files and devices by right (<code>control</code> asked quietly for <code>Devices</code>)</td></tr>
+<tr><td>Run</td><td><code>Start</code>, <code>Stop</code>, <code>Restart</code></td><td><code>control</code></td></tr>
+<tr><td>Writes</td><td><code>WriteFile</code>, <code>WriteFileIf</code>, <code>SetBootEnabled</code>, <code>SetModelProfile</code>, <code>SetServerProfile</code>, <code>SetInstanceTags</code>, <code>CreateInstance</code>, <code>RemoveInstance</code>, <code>CreateServerProfile</code>, <code>DeleteServerProfile</code></td><td><code>configure</code>: a <code>pai</code> member (Linux: polkit, own password)</td></tr>
+<tr><td>bff only</td><td><code>Authenticate</code> and every <code>&lt;Method&gt;As</code></td><td>the bff's account (uid on Linux, service SID on Windows)</td></tr>
+<tr><td class="planned">Planned (13d)</td><td><code>Metrics</code>, <code>MetricsHistory</code>, <code>ReadLog</code> and their <code>As</code> forms</td><td>proposed: <code>control</code> for metrics, <code>pai</code> for logs</td></tr>
+</table>
+
+<h2>The bff's routes</h2>
+<p>Only <code>/</code>, <code>/assets/*</code> and the three session routes answer without a session;
+every other route is 401 <code>session-required</code> without one. Errors are <code>{key, args}</code>.</p>
+<table>
+<tr><th>Group</th><th>Routes</th></tr>
+<tr><td>Session</td><td><code>GET|POST|DELETE /api/session</code></td></tr>
+<tr><td>Node</td><td><code>GET /api/version</code>, <code>GET /api/node</code>, <code>GET /api/node/devices</code></td></tr>
+<tr><td>Instances</td><td><code>GET|POST /api/instances</code>, <code>DELETE /api/instances/{id}</code>, <code>POST .../{id}/start|stop|restart</code>, <code>GET|PUT .../{id}/boot</code>, <code>GET|PUT .../{id}/server</code>, <code>PUT .../{id}/tags</code></td></tr>
+<tr><td>Server profiles</td><td><code>GET|POST /api/profiles/server</code>, <code>GET|PUT|DELETE /api/profiles/server/{id}</code></td></tr>
+<tr><td>Model profiles</td><td><code>GET /api/profiles/model</code>, <code>GET|PUT /api/profiles/model/{id}</code>, <code>PUT .../{id}/enabled</code></td></tr>
+<tr><td>Associations</td><td><code>PUT /api/instances/{id}/profiles/server</code>, <code>GET|PUT /api/instances/{id}/profiles/model</code>, <code>PUT .../model/{profile}</code></td></tr>
+<tr><td class="planned">Planned</td><td>13d: <code>/api/node/metrics/stream</code>, <code>/api/node/metrics/history</code>, <code>/api/instances/{id}/log</code>; step 14: the same routes under <code>/api/nodes/{node}/</code>; item 14: the OpenAI-compatible router</td></tr>
+</table>
+
+<h2>Sign-in (sequence)</h2>
+<figure>
+<svg viewBox="0 0 900 380" role="img" aria-label="Sign-in sequence diagram">
+  <text x="70" y="24" class="t-title">Browser</text>
+  <text x="310" y="24" class="t-title">pai-bff</text>
+  <text x="540" y="24" class="t-title">pai-manager</text>
+  <text x="760" y="24" class="t-title">PAM / LogonUser</text>
+  <line class="life" x1="95" y1="32" x2="95" y2="370"/>
+  <line class="life" x1="330" y1="32" x2="330" y2="370"/>
+  <line class="life" x1="575" y1="32" x2="575" y2="370"/>
+  <line class="life" x1="810" y1="32" x2="810" y2="370"/>
+
+  <line class="edge" x1="95" y1="60" x2="328" y2="60"/>
+  <text x="105" y="54" class="t-mono">POST /api/session {user, password}</text>
+  <rect class="act" x="324" y="66" width="12" height="20"/>
+  <text x="342" y="80" class="t-small">Host guard</text>
+  <line class="edge" x1="336" y1="100" x2="573" y2="100"/>
+  <text x="346" y="94" class="t-mono">Authenticate(user, password)</text>
+  <rect class="act" x="569" y="106" width="12" height="44"/>
+  <text x="586" y="120" class="t-small">caller is the bff's account?</text>
+  <text x="586" y="134" class="t-small">no: NotAuthorized, password unread</text>
+  <line class="edge" x1="581" y1="166" x2="808" y2="166"/>
+  <text x="592" y="160" class="t-small">PAM service private-ai / LogonUser</text>
+  <line class="edge-back" x1="808" y1="190" x2="583" y2="190"/>
+  <text x="650" y="184" class="t-small">password ok or not</text>
+  <rect class="act" x="569" y="196" width="12" height="20"/>
+  <text x="586" y="210" class="t-small">member of pai?</text>
+  <line class="edge-back" x1="569" y1="232" x2="338" y2="232"/>
+  <text x="380" y="226" class="t-mono">(ok, can_configure)</text>
+
+  <line class="edge-back" x1="324" y1="262" x2="97" y2="262"/>
+  <text x="105" y="256" class="t-small">ok and pai: 200, session cookie (30 min idle)</text>
+  <line class="edge-back" x1="324" y1="292" x2="97" y2="292"/>
+  <text x="105" y="286" class="t-small">ok, not pai: 403 session-not-administrator</text>
+  <line class="edge-back" x1="324" y1="322" x2="97" y2="322"/>
+  <text x="105" y="316" class="t-small">wrong password: 401 session-bad-credentials</text>
+  <line class="edge-back" x1="324" y1="352" x2="97" y2="352"/>
+  <text x="105" y="346" class="t-small">manager unreachable: 503 session-unavailable</text>
+
+  <line class="trust" x1="210" y1="32" x2="210" y2="370"/>
+  <line class="trust" x1="455" y1="32" x2="455" y2="370"/>
+</svg>
+<figcaption>The password never leaves the machine and is checked only by the manager: pam_unix's helper
+verifies only the calling user's own password, and the bff runs unprivileged.</figcaption>
+</figure>
+
+<h2>Saving a model profile, with the memory check</h2>
+<figure>
+<svg viewBox="0 0 900 200" role="img" aria-label="Model profile save flow">
+  <rect class="usr" x="10" y="40" width="150" height="70" rx="5"/>
+  <text x="22" y="62" class="t-title">Model profile page</text>
+  <text x="22" y="80" class="t-mono">PUT /api/profiles/</text>
+  <text x="22" y="94" class="t-mono">model/{id}</text>
+  <rect class="svc" x="200" y="40" width="160" height="70" rx="5"/>
+  <text x="212" y="62" class="t-title">pai-bff</text>
+  <text x="212" y="80" class="t-small">session; keep known keys;</text>
+  <text x="212" y="94" class="t-small">{revision, values}</text>
+  <rect class="svc" x="400" y="20" width="270" height="120" rx="5"/>
+  <text x="412" y="42" class="t-title">pai-manager: SetModelProfileAs</text>
+  <text x="412" y="60" class="t-small">1 bff account + principal in pai</text>
+  <text x="412" y="76" class="t-small">2 checks.rs on the changed section</text>
+  <text x="412" y="92" class="t-small">3 memory check: GGUF header shape vs the GPU</text>
+  <text x="412" y="106" class="t-small">  pool from the cached --list-devices probe</text>
+  <text x="412" y="122" class="t-small">4 revision compared under the write lock</text>
+  <rect class="lib" x="710" y="40" width="180" height="70"/>
+  <text x="722" y="62" class="t-title">models.ini (+ .disabled)</text>
+  <text x="722" y="80" class="t-small">atomic rename; models@&lt;id&gt;.ini</text>
+  <text x="722" y="94" class="t-small">rendered per instance</text>
+  <line class="edge" x1="160" y1="75" x2="198" y2="75"/>
+  <line class="edge" x1="360" y1="75" x2="398" y2="75"/>
+  <line class="edge" x1="670" y1="75" x2="708" y2="75"/>
+  <text x="200" y="170" class="t-small">Reply {revision, running, restart}, derived from pai_core::assign. A refusal is a keyed checks::Refusal relayed as {key, args};</text>
+  <text x="200" y="186" class="t-small">a stale revision is 409; over the full-GPU estimate is refused even with fit on (user, 2026-11-17).</text>
+</svg>
+</figure>
+
+<h2>Start and stop</h2>
+<figure>
+<svg viewBox="0 0 900 170" role="img" aria-label="Start and stop flow">
+  <rect class="usr" x="10" y="30" width="150" height="56" rx="5"/>
+  <text x="22" y="52" class="t-title">Server page / pai</text>
+  <text x="22" y="70" class="t-mono">POST .../{id}/start</text>
+  <rect class="svc" x="200" y="30" width="160" height="56" rx="5"/>
+  <text x="212" y="52" class="t-title">pai-manager</text>
+  <text x="212" y="70" class="t-small">StartAs: control</text>
+  <rect class="svc" x="400" y="30" width="200" height="56" rx="5"/>
+  <text x="412" y="52" class="t-title">systemd / SCM</text>
+  <text x="412" y="70" class="t-small">start job; 204 once accepted</text>
+  <rect class="svc" x="640" y="30" width="250" height="56" rx="5"/>
+  <text x="652" y="52" class="t-title">run-instance &lt;id&gt;</text>
+  <text x="652" y="70" class="t-small">reads its server profile, runs llama-server</text>
+  <line class="edge" x1="160" y1="58" x2="198" y2="58"/>
+  <line class="edge" x1="360" y1="58" x2="398" y2="58"/>
+  <line class="edge" x1="600" y1="58" x2="638" y2="58"/>
+  <text x="10" y="120" class="t-small">Stop: the unit's ExecStop runs save-slots first (conversation snapshots, bounded by TimeoutStopSec=300 on Linux; Windows: the parent</text>
+  <text x="10" y="136" class="t-small">stops the child on Stop). The page polls GET /api/instances for the state; a stop can last minutes, so callers that act after a stop</text>
+  <text x="10" y="152" class="t-small">must wait for it. Start at boot is the unit's enabled state or the SCM start type, read and set through the manager.</text>
+</svg>
+</figure>
+
+<h2>What is planned</h2>
+<ul>
+<li><span class="planned">13c Strata</span>: a second engine run and configured by the manager.</li>
+<li><span class="planned">13d monitoring</span> (proposed): the live hardware view, history and on-demand
+log reads, through new manager methods and bff routes.</li>
+<li><span class="planned">Item 14, the router</span>: one OpenAI-compatible endpoint in the bff that sends
+each request to the instance serving the model, logging every request.</li>
+<li><span class="planned">Step 14, the super-manager</span>: nodes governed over mutual TLS with the
+manager protocol unchanged; the bff in hub mode.</li>
+</ul>
+</body>
+</html>

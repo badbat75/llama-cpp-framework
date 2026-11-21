@@ -161,3 +161,7 @@ description: What the architect has learned about this project's components, int
   VictoriaLogs' mTLS is Enterprise only; Promtail EOL 2026-03-02. The bff's unit has
   `PrivateDevices=yes` (no `/dev/nvidia*`) and a step 14 node has no bff: node-side collection
   belongs in `-core`.
+- Drawn views live in `docs/architecture/{infrastructure,system}.html` (hand SVG, colours from CSS
+  tokens, A4 `@page`): update them when a component, account, port or route group changes.
+- History tiers (13d) must have each step a whole multiple of the previous one, or the fold is not
+  exact: 720 points over 7 days would be 14 min, which 1 h does not divide (15 min used).

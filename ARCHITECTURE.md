@@ -5,6 +5,9 @@ then the design records. Kept by the `architect` agent (`.opencode/agents/archit
 the guides that hold the details rather than copying them: when this page and a guide disagree, the
 guide and the code win, and this page is fixed.
 
+Drawn views of this page: [docs/architecture/infrastructure.html](docs/architecture/infrastructure.html)
+(deployment) and [docs/architecture/system.html](docs/architecture/system.html) (components and flows).
+
 Part 1 is the baseline, what exists on 2026-11-15. Part 2 is the design of `PLAN.md` step 14 (R13, a
 super-manager), proposed and waiting for the user's acceptance.
 
@@ -2186,8 +2189,8 @@ repos/<repo>` and its latest release); sizes are the release archives' downloads
 **(a) The manager's own sampler, a small history store, a stream through the bff.**
 
 - On a node: nothing new runs. A sampler thread in `pai-manager` (root, LocalSystem) calls the moved
-  readings once a second into a ring in memory; once a minute it folds the last minute into a store
-  on disk. The disk card follows each instance's models directory (deduplicated), not one user's.
+  readings once a second into a ring in memory and folds them into the history tiers (below). The
+  disk card follows the engine's default models folder only (user, 2026-11-21).
 - Interface: three manager methods with their `As` forms, request and reply as every other one, so
   D-Bus, the pipe and step 14's mTLS link carry them unchanged: `Metrics(after: seq)` (the samples
   after a sequence number, from the ring; a gap says so), `MetricsHistory(from, to)` (the tier that
@@ -2200,9 +2203,8 @@ repos/<repo>` and its latest release); sizes are the release archives' downloads
   existing `Host` guard and session cookie, and it needs no new crate.
 - Footprint: no process, account, port or package. The store: SQLite through `rusqlite` with
   `bundled`, already in the workspace (`crates/app/Cargo.toml`); SQLite is public domain
-  ([sqlite.org/copyright](https://www.sqlite.org/copyright.html)). Estimate, not measured: about 25
-  values a second for two GPUs; at one row per minute per device with average and maximum, 30 days stay
-  in the low tens of MB.
+  ([sqlite.org/copyright](https://www.sqlite.org/copyright.html)). Fixed size (RRD-style tiers,
+  below): about 1 MB whatever the uptime. The full estimate is "Resources of (a)" below.
 - Linux and Windows: the sources exist and are tested in `pai-app`; on Windows they have run under a
   desktop user, never as LocalSystem in session 0 (a slice's check on the user's Windows build).
 - Trust: the browser to the bff (session, a `pai` member); the bff to the manager (`MetricsAs`,
@@ -2278,9 +2280,9 @@ is a central store to feed; that requirement is explicitly not now.
 **Who may do what.** Metrics: `control`, asked quietly, as `Devices` (hardware load is no secret, and
 the GUI shows it to any desktop user). Logs: an administrator (a `pai` member) on the web, the
 manager reading them as root; this widens Linux journal access from root and `systemd-journal`/`adm`/
-`wheel` to `pai` for the instance units only (decision 3). Logs may hold request details; whether
-llama-server writes prompt text at its default verbosity is unverified, which is part of why the read
-is admin-only.
+`wheel` to `pai` for the instance units only: every `pai` member reads instance logs (user,
+2026-11-21). Logs may hold request details; whether llama-server writes prompt text at its default
+verbosity is unverified, which is part of why the read is admin-only.
 
 **Fails closed.** `ReadLog` refuses an instance not in `instances.ini` before anything runs; on Linux
 the manager runs `journalctl` with an argument vector it builds (no shell): `-u llama.cpp@<id>.service
@@ -2293,32 +2295,108 @@ SSE stream reads the session as a gate without moving its idle deadline (as the 
 checked at each event. Bounds: one poller in the bff whatever the number of viewers, a cap on
 concurrent streams per session, history replies capped in points.
 
-**Retention defaults** (decision 2): the ring 1 s for 15 minutes in memory (live view and catch-up,
-lost at a manager restart); on disk 1 minute average and maximum for 30 days, pruned hourly. The store:
+**History: RRD-style tiers** (user, 2026-11-21: the resolution follows the range, about the same
+number of points per chart, configurable). The live ring keeps 1 s samples for 15 minutes in memory
+(the live view and an SSE catch-up, lost at a manager restart). History is a fixed set of tiers, each
+a step and a retention, so a fixed number of buckets used as a ring (slot = time / step modulo the
+count); each bucket holds, per series, min, average, max and the count of samples (0 is a gap, drawn
+as one). The first tier folds the 1 s samples; each next tier folds whole buckets of the one before
+(min of mins, max of maxes, the average weighted by count), which is exact only when each step is a
+whole multiple of the previous one. Defaults, 720 points at each tier's full range:
+
+| Tier | Step | Retention | Buckets |
+| --- | --- | --- | --- |
+| 1 | 5 s | 1 h | 720 |
+| 2 | 20 s | 4 h | 720 |
+| 3 | 2 min | 24 h | 720 |
+| 4 | 15 min | 7 days | 672 |
+| 5 | 1 h | 30 days | 720 |
+
+(15 minutes, not the 14 that 720 points would give, so the 1 h step stays a whole multiple.) A query
+`MetricsHistory(from, to)` takes the finest tier whose retention reaches back to `from`, and returns
+its buckets in the range: 720 points when the range is a tier's retention, fewer for a range between
+two (a 2 h range gets tier 2, 360 points); the bff never asks for more than the largest tier holds.
+
+Configuration: `[Metrics] Tiers = 5s:1h, 20s:4h, 2m:24h, 15m:7d, 1h:30d` in a new manager file,
+`/etc/private-ai/manager.ini` and `%ProgramData%\private-ai\config\manager.ini`, beside `bff.ini`,
+written by the administrator by hand (no web edit in this step), read at the manager's start; no file
+or no key means the defaults. Validation, in `pai-core` so a later editor shares it: 1 to 8 tiers;
+steps whole seconds, ascending, each a whole multiple of the previous one; retentions ascending,
+each a whole multiple of its step; 2 to 10 000 buckets per tier. A value that fails is refused with
+its key in the manager's log, and the manager runs with the defaults: monitoring settings are no
+security setting, and a typo must not stop instance management. A tier whose step or count changed
+starts empty (its stored rows dropped, logged); unchanged tiers keep their data.
+
+The store: SQLite, one table per tier keyed by slot, each row the bucket's start time and its values
+for every series, overwritten in place, so the file does not grow; series are added by name as
+devices appear. Writes are batched: one transaction a minute with the buckets that closed (at most
+the last minute of data is lost in a crash), and one at a clean stop. Paths:
 `/var/lib/private-ai-manager/metrics.db` (a new `StateDirectory=private-ai-manager`, mode 0700, not
 `/var/lib/private-ai`, which is the instance user's home) and `%ProgramData%\private-ai\metrics\`
-(inherits the root's protected DACL: the playbook's note on `MachineDataRoot`). The schema is the
-coder's; a done-when bounds its size.
+(inherits the root's protected DACL: the playbook's note on `MachineDataRoot`). An alternative to
+SQLite is a fixed-size file of our own written at offsets: no dependency, but torn writes, checksums
+and the schema change on a tier change become ours; SQLite is recommended (preference) for its
+atomic commit.
+
+**Resources of (a): estimates, none measured yet.** For the user's node (two amdgpu cards, no NVIDIA):
+about 25 series (per GPU busy, VRAM, GTT, memory activity; CPU, I/O wait; RAM, cache, swap; disk read,
+write, busy, wait).
+
+| What | Estimate | Basis |
+| --- | --- | --- |
+| CPU per 1 s sample, Linux, amdgpu | well under 1 ms, so under 0.1% of one core | about 10 small sysfs files per GPU plus `/proc/stat`, `/proc/meminfo`, one `/sys/block/<disk>/stat`, each an open, read, close of a few hundred bytes |
+| NVML, per NVIDIA GPU | over 40 ms of wall time per sample in the PCIe throughput calls (RX and TX, each measuring over 20 ms: the `hwmon.rs` header), the CPU share unknown; the other NVML calls cheap | the thread waits, so the sample's period must be kept by the clock, not by sleeping 1 s after each sample |
+| PDH on Windows | a few ms per collect, unknown | one query for every adapter (`hwmon.rs` header) |
+| Memory | live ring 900 samples x 25 values x 8 B = about 180 KB; tiers cached in memory 5 x about 720 x 25 x 4 values x 4 B = about 1.4 MB; under 2 MB in all | arithmetic |
+| SQLite file | about 1.5 MB, fixed by the tiers (page overhead included), whatever the uptime | the arithmetic above |
+| Disk writes | one commit a minute touching a few pages plus the WAL: of the order of 1 to 3 MiB an hour | estimate; writing every 5 s instead would be several times more, which is why commits are batched |
+| Binary | `rusqlite` bundled adds SQLite's C library to `pai-manager` | not measured |
+
+How to measure (a proposal): an example binary in the new crate, `cargo run -p pai-hwmon --example
+sample-cost -- --samples 300`, that samples the real machine (reading only, no GPU load needed) and
+prints per-sample wall time and CPU time (mean and 99th percentile, CPU from `getrusage` /
+`GetProcessTimes`), split by source (sysfs and `/proc`, NVML, PDH), and its resident memory. It reads
+real `/sys`, so it is not a test (tests never touch real systems: `AGENTS.md`); the user runs it, or an
+agent with the user's go-ahead. The store's writes are measured in slice 3's test on a temp dir: a
+simulated day of samples, then the file and WAL sizes and the bytes the process wrote
+(`/proc/self/io` `write_bytes`) reported. **Slice 1 must report** the CPU time per sample (mean and
+p99) on the user's node and on one NVIDIA machine if there is one, and the resident memory; slice 3
+the file size and the bytes written per simulated hour. A number above the estimate by more than ten
+times reopens the design.
+
+**A dedicated monitoring crate** (the user asked whether to make one). Yes: `pai-hwmon`
+(`crates/hwmon`), a library with the readings (numbers with units, per device, the Linux and Windows
+sources, NVML), the live ring and the tier fold; no text, no formatting, no SQLite. The manager links
+it with the store; `pai-config`'s HW window links it through `pai-app`, which keeps the formatting,
+the peaks of the rate bars and the device checkboxes (`settings.ini` `HwMonitorHidden`). Why a crate
+and not a `pai-core` module: `pai-core` is linked by `pai-bff` and `pai`, which would then compile the
+samplers and their `windows-sys` features for nothing; why not leave it in `pai-app`: the manager
+cannot link `pai-app`. What has to move with it: the readings use only a device's id (PCI address or
+UUID); the GPU facts (`devices::PhysicalGpu`, `publish_gpus`, `sdk.rs`'s `--device` ids) stay in
+`pai-app` unless slice 1 finds a reading that needs them. No reason against found beyond one more
+crate in the workspace.
 
 #### Slices
 
 Test first, Linux first, the Windows halves type-checked; each a useful piece.
 
-1. **Readings move.** A crate the manager and `pai-app` both link (preference: a new `pai-hwmon`,
-   so `pai-bff` and `pai` do not compile the samplers; `pai-core` is the other choice) returns typed
-   readings per device; `pai-app` formats them for the GUI as today. Done when: the GUI's hwmon tests
-   pass unchanged, and the readings come from a fake sysfs root (`/proc`, `/sys` rooted in a temp dir)
-   with values and units pinned.
+1. **Readings move.** `pai-hwmon` returns typed readings per device; `pai-app` formats them for the
+   GUI as today. Done when: the GUI's hwmon tests pass unchanged, the readings come from a fake sysfs
+   root (`/proc`, `/sys` rooted in a temp dir) with values and units pinned, and the `sample-cost`
+   example's numbers above are reported.
 2. **Live stream.** The manager's sampler and ring, `Metrics`/`MetricsAs`; the bff's poller and
    `GET /api/node/metrics/stream`; then the designer's brief and the live view. Done when: a fake
    source's samples arrive in order with their sequence; a reconnect with `Last-Event-ID` resumes
    without a duplicate and a gap is flagged; no session is 401 with the manager not asked; a refused
    principal ends the stream and the session; one poller serves two streams; a panicking source
    leaves the manager answering.
-3. **History.** The fold, the store, pruning, `MetricsHistory`/`As`, `GET /api/node/metrics/history`,
-   the chart. Done when: a simulated month of samples folds to the expected rows and averages and
-   maxima, rows older than retention go, a range picks the right tier with points capped, a store that
-   cannot be written leaves the live stream running, the file stays under the stated bound.
+3. **History.** The tiers, `manager.ini` `[Metrics] Tiers` and its validation, the store,
+   `MetricsHistory`/`As`, `GET /api/node/metrics/history`, the chart. Done when: simulated samples fold
+   to the expected min, average, max and count in every tier, with gaps as count 0; slots wrap with no
+   growth of the file; a range picks the documented tier (1 h tier 1, 2 h tier 2, 30 days tier 5);
+   each validation rule refuses its case and the defaults apply; a changed tier starts empty and the
+   others keep their rows; a store that cannot be written leaves the live stream running; the file
+   size and the bytes written per simulated hour are reported.
 4. **Log consultation.** `ReadLog`/`As`, `GET /api/instances/{id}/log`, the log view. Done when: an
    unknown instance is refused with no process spawned; the argument vector is exactly the one above
    (a fake runner); the cursor pages forward; caps hold; a non-`pai` principal is refused; the Windows
@@ -2359,16 +2437,16 @@ collector's journald receiver is the weakest piece. Not a decision for this step
 
 #### Decisions for the user
 
-1. **Approach.** (a) the manager's own sampler and store, export later (recommended); (b) the
+Open:
+
+1. **Approach.** (a) the manager's own sampler (`pai-hwmon`) and tiered store, export later
+   (recommended; its resources are estimated above and measured in slices 1 and 3); (b) the
    OpenTelemetry Collector and a TSDB on each node; (c) Prometheus exporters and a TSDB; (a) now plus
    an OTLP export in the same step.
-2. **History retention.** 1-minute average and maximum for 30 days (recommended); 7 days; 90 days;
-   30 days plus a 10-second tier for the last 24 hours.
-3. **Who reads instance logs from the web.** Every `pai` member (recommended: they already administer
-   the instances); on Linux only `pai` members who are also in `systemd-journal` or `adm`, as the OS
-   grants today.
-4. **The disk card.** The disks of every instance's models directory (recommended); the engine's
-   default models folder only.
+
+Answered (user, 2026-11-21): history is RRD-style tiers with the resolution following the range
+(5 s over 1 h, 20 s over 4 h, about 720 points), configurable (the tiers above); every `pai` member
+reads instance logs; the disk card follows the engine's default models folder only.
 
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
