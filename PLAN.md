@@ -1001,6 +1001,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     has mixed line endings (the manager reads both); `"default"` as the protected id is written in both
     `service.rs` and `crates/bff/src/instances.rs`; `crates/bff/README.md` says the association route's
     `client-address-in-use` carries the port, the code passes the other instance's id.
+    **React's own features for the UX** (user, 2026-11-21: "abbiamo React come framework, utilizziamo le
+    feature che offre per migliorare la UX"): the web UI (React 19.3.1) uses useOptimistic for instant
+    feedback on writes with rollback on refusal, useTransition/useActionState for pending saves,
+    useDeferredValue for filtering as you type, createPortal for overlays; the designer records the
+    patterns in `fe/DESIGN.md` and every brief from C1 on applies them; older pages adopt them when a
+    slice touches them.
     **Tags as chips** (user, 2026-11-21): the instance tags field becomes a row of chips: a round "+"
     that, clicked, opens an oval input for one label; confirmed, it becomes a chip and a new "+"
     follows. While typing, the labels already used (on any instance or server profile) are suggested.
