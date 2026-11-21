@@ -1035,7 +1035,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
     designer's audit of what is basic today and a phased brief, built in slices after C1; after U17b it
-    waits for C2, slice 17, then R4 and R5 (user, 2026-11-21)
+    waits for C2, 2g/2j, slice 17, then R4 and R5 (user, 2026-11-21)
     (fe brief 17: U17a skeletons and U17c sorting built; left U17b, U17h, U17e, U17d, U17f, U17g in that order).
     **One models folder for every engine** (user, 2026-11-21: "usa una folder unica per i modelli tra i
     differenti motori"; asked whether a server profile may still name another: "unica e basta"): one
@@ -1069,8 +1069,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     Long tags (user, 2026-11-21): shortened with an ellipsis on one line; a smaller font if needed;
     wrapping only when nothing else fits. Hovering a shortened tag (and focusing it from the keyboard)
     opens a temporary larger pill with the whole text. C1 (chips, "+", x, the long-tag rule, the hover
-    pill) is built; left: C2, the suggestions (brief 15), next after U17b and before slice 17 (user,
-    2026-11-21). Test flakes seen at C1, to fix test-side when
+    pill) is built; left: C2, the suggestions (brief 15), next after U17b, then 2g/2j, then slice 17
+    (user, 2026-11-21). Test flakes seen at C1, to fix test-side when
     a slice touches them: `ModelProfilePage.test.tsx` 2d.63 (title asserted before the effect writes
     it), `NodeNav.test.tsx` ~211 (a read count), `SignInOnly.test.tsx` S1a.10.
     **Resources belong to the server profile, placement follows** (user, 2026-11-21): a bare model profile
@@ -1108,6 +1108,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     (GD1, GD2). User decisions (2026-11-20): a number field per GPU with its share shown, Move up / Move
     down for the order; per-GPU layer sliders like the GUI's come with 2g (the model's layer count);
     Draft device and Vision GPU list the probed GPUs in a small later follow-up.
+    Order (user, 2026-11-21): 2g (per-GPU layer sliders, the model's layer count read from the GGUF
+    header), the Draft device and Vision GPU lists, and 2j (tensor placement, `override-tensor`) come
+    right after C2 and before slice 17; the architect's read of the layer count first, then the
+    designer's brief.
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.
