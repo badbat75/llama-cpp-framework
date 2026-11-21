@@ -547,6 +547,9 @@ Also (user, 2026-11-21): no offline root (a compromised director is already tota
 joined to a director accepts no communication that is not authenticated with the director's
 certificates it holds in its cache (no fallback, no plain or unknown peer); renewal is automatic, well
 before expiry.
+Answers (user, 2026-11-21): the CA key in a 0600 file on the director; an expired node joins again (no
+grace); ECDSA P-256; the CA lasts 5 years, rotated at 4. Designed: ARCHITECTURE.md Part 2 "Identity and
+joining" (renewal at day 20 of 30, slices 1 to 5, 3b, 10, 11).
 Decided (user, 2026-11-21, ARCHITECTURE.md "The model store", slice 10): nodes pull from the
 super-manager over the step's mTLS channel; the store is filled from Hugging Face (checksum checked)
 and by upload; one size cap on the store.
