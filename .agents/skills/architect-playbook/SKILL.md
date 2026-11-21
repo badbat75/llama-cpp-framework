@@ -179,7 +179,8 @@ description: What the architect has learned about this project's components, int
   `--device` subset (`common/arg.cpp` 229-259, `llama-model-loader.cpp` 1330-1345), so `-ot`,
   `device-draft`, `mmproj-device` can escape a server profile's `Devices`. `--n-cpu-moe N` loops N
   times (`common.h` 1291). `Shape` has no `block_count`/expert KVs; `Header.tensors` + `tensor_bytes`
-  list tensors without ggml.
+  list tensors without ggml. The user chose a hard bound (2026-11-21): `model-profile-device-outside`
+  at R3's judging points, so any new device-naming model key must join `devices_outside`.
 - History tiers (13d) must have each step a whole multiple of the previous one, or the fold is not
   exact: 720 points over 7 days would be 14 min, which 1 h does not divide (15 min used).
 - HF and models-folder facts (checked 2026-11-21): `hf.rs` curl runs with `-L` and takes the endpoint

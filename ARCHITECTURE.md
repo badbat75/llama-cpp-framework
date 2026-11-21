@@ -2669,7 +2669,13 @@ RAM and CPU counts are read by root and given only to callers the gate admits.
 4. **RAM**: shown in the inventory, no budget yet; or a budget the check reads (allowing a CPU share and
    relaxing the strict full-GPU rule); or a limit the OS enforces (`MemoryMax=`, a job object).
 
-### Layers, MoE and tensor placement on the web model profile page (step 10, 2g and 2j): proposed (2026-11-21)
+### Layers, MoE and tensor placement on the web model profile page (step 10, 2g and 2j): accepted (user, 2026-11-21)
+
+**Decided by the user (2026-11-21)**, see (5): 1. the sliders read the saved `model`; 2. an `hf-repo` not
+yet downloaded gives no layer facts now (the remote header read waits for M1/M2); 3. **not** the
+recommendation: the manager **refuses** a model profile whose `override-tensor`, `device-draft` or
+`mmproj-device` names a GPU outside its instance's server profile `Devices` ((3) "The device bound");
+4. `moe-cache-mib` later, with its floor.
 
 The requirement (`PLAN.md`, order of 2026-11-21): after C2 and before slice 17, the web model profile page
 gets the GUI's per-GPU layer sliders (2g, which need the model's layer count), the Draft device and
@@ -2823,9 +2829,23 @@ bounded by the bff's existing per-session handling; nothing new.
   in the instance, never the manager.
 - **The tensor list** for the picker and the coverage lines is `info.tensors` of (1), read by
   `pai-core` (`tensor_bytes`), not ggml.
-- **Devices outside the server profile** (fact 4): the page lists the probed GPUs and `CPU`, and flags a
-  GPU outside the `Devices` of the server profiles the model profile is assigned to; no refusal now
-  (decision 3).
+- **The device bound** (fact 4, decision 3). Refusal `model-profile-device-outside`
+  `[profile, instance, key, device]` (`ManagerError::Invalid`, a keyed `checks::Refusal`, both strings
+  files). The devices a model profile names: each entry of `device-draft` and `mmproj-device` (the
+  section's value, else `[*]`'s, as llama.cpp cascades), and the device of each `override-tensor` rule;
+  `CPU` and `none` name no GPU. Compared case-insensitively with the entries of the instance's server
+  profile `Devices` (`ggml_backend_dev_by_name` matches so; an `-ot` device in the wrong case is
+  `override-bad-device`'s or the load's). `Devices` unset: every GPU, nothing refused; `Devices = none`:
+  any GPU named is outside. Not judged against the probe (a vanished card is the launch's, G1). The
+  `device` key itself is not judged: the router's `--device` beats it (fact 1 of "Resources belong to
+  the server profile"). Judged where R3's memory check is, on the same render rule (`pai_core::assign`,
+  every instance where the profile is in effect, the first offending instance in id order named):
+  a model profile write (`check_contents` and `set_model_profile`, rendering from the new record text),
+  an assignment, and the two shrinking points, `SetServerProfile` and a save of an in-use server profile
+  that changes `Devices`, where, as in R3, only a profile that passes the old set and fails the new one
+  is refused (never re-judge what was already outside). One function in `pai-core` (`checks.rs`,
+  `devices_outside(section, devices) -> Option<(key, device)>`), called from the manager's existing
+  R3 points; the bff relays the 422 as every refusal. The page still flags such a GPU before the save.
 
 #### (4) Slices (each test first; Linux, the Windows code type-checked)
 
@@ -2843,6 +2863,15 @@ bounded by the bff's existing per-session handling; nothing new.
 3. **L3 `n-cpu-moe` on the web** (`pai-core`, `pai-bff`): the key move and its range. Done when: the
    `pai-app` pin test of the two lists is green; a body with `n-cpu-moe = -1` or `4097` is 422 with the
    range key naming `n-cpu-moe`, nothing written; `24` saves.
+3b. **L4 the device bound for `device-draft` and `mmproj-device`** (`pai-core`, `pai-manager`):
+   `devices_outside` and its calls at R3's points. Done when, on an instance whose server profile has
+   `Devices = ROCm0`: a model profile save with `device-draft = ROCm1` is 422
+   `model-profile-device-outside` `[p, inst, device-draft, ROCm1]`, nothing written; `rocm0`, `none`
+   (`mmproj-device`) and an unassigned profile save; the same refusal at an assignment, at a
+   `SetServerProfile` to a `Devices = ROCm0` profile and at a save narrowing `ROCm0,ROCm1` to `ROCm0`
+   when the profile names `ROCm1`; a profile already outside before the narrowing is not re-judged;
+   `Devices` unset refuses nothing; `Devices = none` refuses any GPU; a `[*]` `device-draft` counts; the
+   `set_model_profile` path judges the new text (an e2e through it, not only `write_file`).
 4. **2g web UI** (designer's brief first): the per-GPU sliders, `n-gpu-layers` and `n-cpu-moe` sliders,
    the Draft device and Vision GPU lists. Done when: the designer's review; the fe's block arithmetic
    passes the copied `gpu_split.rs` vectors.
@@ -2850,16 +2879,22 @@ bounded by the bff's existing per-session handling; nothing new.
    the two rules with the exemption. Done when: a 3-shard fixture lists every tensor in file order; a
    header of 20 001 tensors gives 20 000 and `tensorsTruncated`; `a=CPU, b=ROCm0` is 422
    `override-tensor-space` `[2]`; `x=cpu` is `override-bad-device` `[1, cpu]`; the same values already on
-   disk in the section do not block a save of another key; `x(=CPU` is not refused.
+   disk in the section do not block a save of another key; `x(=CPU` is not refused; `devices_outside`
+   reads `-ot` devices: on `Devices = ROCm0`, `blk\.0\.=ROCm1` is `model-profile-device-outside`
+   `[p, inst, override-tensor, ROCm1]` at the four points of L4, `blk\.0\.=CPU` saves.
 6. **2j web UI** (designer's brief first). Done when: the designer's review.
 
 Security: no new boundary. The read is the memory check's own (root opening a path a `pai` member
 wrote, regular files only, header bounded), now answered to a `pai` member through the `As` gate; the
-reply carries counts, names and sizes of a GGUF, never other bytes. The new keys are written under
+reply carries counts, names and sizes of a GGUF, never other bytes. The device bound makes the server
+profile's `Devices` a hard limit on every GPU a model profile names, so a `pai` member cannot grow an
+instance's GPU set from a model profile; it fails closed (refused before writing). The new keys are written under
 `configure` and judged by the manager as every model profile key; their failures fall on the
 instance's model load (facts 1, 3, 4), never on the manager.
 
-#### (5) Decisions for the user (recommendation first)
+#### (5) Decisions (user, 2026-11-21): 1, 2 and 4 the recommendation, 3 the second option
+
+The questions as they were asked:
 
 1. **Which `model` the sliders read**: the saved one (the page re-reads after a save that changes
    `model`); or the unsaved form value, a path the manager reads only under the models folder.

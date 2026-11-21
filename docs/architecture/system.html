@@ -197,6 +197,7 @@ signed-in user; the manager answers it only to the bff's account and only for a 
 <tr><td>Writes</td><td><code>WriteFile</code>, <code>WriteFileIf</code>, <code>SetBootEnabled</code>, <code>SetModelProfile</code>, <code>SetServerProfile</code>, <code>SetInstanceTags</code>, <code>CreateInstance</code>, <code>RemoveInstance</code>, <code>CreateServerProfile</code>, <code>DeleteServerProfile</code></td><td><code>configure</code>: a <code>pai</code> member (Linux: polkit, own password)</td></tr>
 <tr><td>bff only</td><td><code>Authenticate</code> and every <code>&lt;Method&gt;As</code></td><td>the bff's account (uid on Linux, service SID on Windows)</td></tr>
 <tr><td class="planned">Accepted, not built</td><td><code>ModelFiles</code> and <code>ModelFilesAs</code>: the GGUF files of the node's one models folder (<code>paths::models_dir()</code>), by absolute path, bounded walk</td><td><code>configure</code>; the <code>As</code> form for a current <code>pai</code> member</td></tr>
+<tr><td class="planned">Accepted, not built</td><td><code>ModelInfo</code> and <code>ModelInfoAs</code>: a model profile's saved <code>model</code> header facts (block count, MoE, expert counts; 2j: the tensor list), or a <code>{key, args}</code> reason</td><td>the gate of reading <code>models.ini</code>; the <code>As</code> form for a current <code>pai</code> member</td></tr>
 <tr><td class="planned">Planned (13d)</td><td><code>Metrics</code>, <code>MetricsHistory</code>, <code>ReadLog</code> and their <code>As</code> forms</td><td>proposed: <code>control</code> for metrics, <code>pai</code> for logs</td></tr>
 </table>
 
@@ -212,6 +213,7 @@ every other route is 401 <code>session-required</code> without one. Errors are <
 <tr><td>Model profiles</td><td><code>GET /api/profiles/model</code>, <code>GET|PUT /api/profiles/model/{id}</code>, <code>PUT .../{id}/enabled</code></td></tr>
 <tr><td>Associations</td><td><code>PUT /api/instances/{id}/profiles/server</code>, <code>GET|PUT /api/instances/{id}/profiles/model</code>, <code>PUT .../model/{profile}</code></td></tr>
 <tr><td class="planned">Accepted, not built</td><td><code>GET /api/hf/files?repo=</code> (the bff calls huggingface.co itself, public repos only), <code>GET /api/node/model-files</code> (through <code>ModelFilesAs</code>); step 14: <code>GET /api/store/files</code>, the same shape with <code>"source":"store"</code></td></tr>
+<tr><td class="planned">Accepted, not built</td><td><code>GET /api/profiles/model/{id}/model-info</code> (through <code>ModelInfoAs</code>)</td></tr>
 <tr><td class="planned">Planned</td><td>13d: <code>/api/node/metrics/stream</code>, <code>/api/node/metrics/history</code>, <code>/api/instances/{id}/log</code>; step 14: the same routes under <code>/api/nodes/{node}/</code>; item 14: the OpenAI-compatible router</td></tr>
 </table>
 
