@@ -510,7 +510,7 @@ ngram and MoE keys are pruned); GUI and CLI defaults of the benchmark differ; de
 - Done when: each check above is enforced below the GUI, with a test through `pai-app` (and the
   manager where it applies), and the docs say what is checked where.
 
-### 14. A super-manager governing several managers
+### 14. The director (super-manager) governing several managers
 
 Covers: R13. Asked by the user on 2026-11-15: a component above the managers, on a different server,
 that governs several of them; a bff connected to it is offered node management as well.
@@ -536,6 +536,13 @@ may download, over which channel and identity, integrity checks, storage and quo
 super-manager, resumable transfers, how it relates to a node's own Hugging Face downloads), then a
 slice after 9; the done-when gains: a node downloads a model from the super-manager into its models
 folder and an instance serves it.
+Decided (user, 2026-11-21): **the super-manager is named the director** (`pai-director`); **its links
+with the nodes are secured by a private CA in the director**: at the join (one-time code) a node sends a
+CSR and gets a short-lived certificate (about 30 days) renewed by itself over the mutual TLS channel;
+the director's own certificate comes from the same CA; revocation is a refused renewal plus a deny list.
+This replaces the pinned fingerprints of the 2026-11-15 design. mTLS 1.3 encrypts and authenticates
+every link; signatures only where proof is needed afterwards: the director's commands recorded in a
+node's log and the model store's manifest. The architect revises Part 2 and its slices 2 and 3.
 Decided (user, 2026-11-21, ARCHITECTURE.md "The model store", slice 10): nodes pull from the
 super-manager over the step's mTLS channel; the store is filled from Hugging Face (checksum checked)
 and by upload; one size cap on the store.
