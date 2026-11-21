@@ -66,13 +66,13 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/version` | anyone | exists | `{"version"}` |
 | `GET /api/node` | signed in | 13, being built (bff slice 13) | `{"name", "api", "version", "engines"}` |
 | `GET /api/node/devices` | signed in | GD (bff slice G2, designed) | `{"probedAt", "devices"}` |
-| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13 | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot"}]` |
+| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13; `removable` 16, served (e262708) | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, served | 204 |
 | `GET /api/instances/{id}/server` | administrator | 1a, served | the server document below |
 | `PUT /api/instances/{id}/server` | administrator (`configure`) | 1b, served (8) | `{"revision", "running"}` |
-| `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, served (9a) | 204 |
+| `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, served (9a); 409 `instance-no-model-profiles` 16, served (e262708) | 204 |
 | `GET /api/instances/{id}/boot` | anyone | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/tags` | administrator (`configure`) | T1, being built (bff slice 12) | 204 |
@@ -85,6 +85,8 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/instances/{id}/profiles/model` | administrator | 15, served (2d9a4c8) | `{"all", "profiles": [rows]}` |
 | `PUT /api/instances/{id}/profiles/model/{profile}` | administrator (`configure`) | 15, served (2d9a4c8) | `{"effective", "running"}` |
 | `PUT /api/instances/{id}/profiles/model` | administrator (`configure`) | 15, served (2d9a4c8) | `{"running"}` |
+| `POST /api/instances` | administrator (`configure`) | 16, served (e262708) | 201 `{"id"}` |
+| `DELETE /api/instances/{id}` | administrator (`configure`) | 16, served (e262708) | 204 |
 
 The four model profile routes were served at `/api/presets...` until 5d54590 (step 4b, below), with
 the keys `no-preset-named`, `preset-changed-elsewhere`, `presets-malformed`, `invalid-preset-id`,
@@ -117,7 +119,17 @@ tile). `GET /api/instances/{id}/boot` stays (the instance page, and after a `PUT
 **15 (bff slice 15, served at 2d9a4c8).** Each item gains **`serverProfile`**: the server profile name
 the record of `instances.ini` carries, as the manager spells it, `null` when the instance's section
 names none. It comes from the same `Instances` call as the port and the tags, so a row the manager
+**15 (bff slice 15, served at 2d9a4c8).** Each item gains **`serverProfile`**: the server profile name
+the record of `instances.ini` carries, as the manager spells it, `null` when the instance's section
+names none. It comes from the same `Instances` call as the port and the tags, so a row the manager
 does not answer is listed with `null` and never fails the list.
+
+**16 (bff slice 16, served at e262708).** Each item gains **`removable`**: `true` for every instance,
+`false` for `default`, the id the removal refuses. It is the bff's own rule on the id (`removable` in
+`crates/bff/src/instances.rs`), not a manager read, so every row carries a boolean, whatever its
+state. The fe offers Remove only where it is true: the removal refuses a running instance and `default`
+([below](#as-designed-after-4b), "Instances"; `crates/bff/README.md` "Creating and removing an
+instance").
 
 ### `GET /api/node` (13, being built)
 
@@ -286,6 +298,12 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   404 `client-no-instance`; 503 `client-unavailable`; 502 `client-service-failed` with
   `args: []` when the service manager refused or the unit failed (its message stays in the bff's
   log); 502 `client-other` for anything else.
+- **A start or a restart of an instance that serves no model profile** is refused 409
+  `instance-no-model-profiles` `[id]`, no `field`, the session living on (served since e262708, bff
+  slice 16: `crates/bff/README.md` "The instances from the manager"). The refusal comes before any
+  stop, so a refused restart stops nothing, and `/stop` is never refused there. The fe's create leaves
+  the new instance with no model profile, so its first Start answers this: the fe sends the user to the
+  instance's model profiles first (05j).
 - **A long stop** (bff slice 9b, done): with `SaveStateOnShutdown` on, the instance's own stop saves
   the slot snapshots first, up to 300 s (`TimeoutStopSec=300`, `xtask/src/linux/system_files.rs`;
   `RESTART_STOP_WAIT`, `crates/manager/src/manager/windows.rs`). `/stop` and `/restart` still
@@ -572,7 +590,9 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
 `crates/bff/README.md` "The server profile pool"), and so are the four routes of "An instance's
 associations" (bff slice 15, 2d9a4c8, `crates/bff/README.md` "The association routes"): that block
 below is the design, the README is what the bff answers today, and the two differ in the details noted
-there. Everything else is not built. It records the routes as designed in `ARCHITECTURE.md`, "Nodes
+there. So are the two instance routes below, the `removable` of the list and the start's 409
+`instance-no-model-profiles` (bff slice 16, e262708, `crates/bff/README.md` "Creating and removing an
+instance"). Everything else is not built. It records the routes as designed in `ARCHITECTURE.md`, "Nodes
 and instances", block "Revision: profiles" (commit f3a519c), which wins over (a) to (j) of the same
 record, where "preset" reads as "model profile". The record is the authority; this section is the
 designer's reading of it against the fe on 2026-11-17, and replaces the earlier version of this section
@@ -614,8 +634,8 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
   or starting with `/api/`.
 - **`GET /api/instances`**, anyone: `[{"id", "engine", "state", "serverProfile", "port", "tags",
   "removable"}]`, sorted by id; `port` and `tags` are the server profile's (port 0 and no tags when its
-  file is missing); `removable` false for `default`; one failed status read gives that item `"state":
-  "unknown"`; a never-started instance is `inactive`.
+  file is missing); `removable` false for `default`, served since e262708 (the built read, above); one
+  failed status read gives that item `"state": "unknown"`; a never-started instance is `inactive`.
 - **Model profile pool**, administrator: `GET /api/profiles/model` rows `{"id", "engine",
   "engineAvailable", "enabled", "model", "assignments"}`, `assignments` = `[{"instance", "value",
   "viaAll", "effective"}]` sorted by instance, every instance with an explicit key or covered by `*`;
@@ -684,15 +704,34 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
   - Meaning: `inherit` follows the profile's global switch; `on` and `off` override it (`on` serves it
     with the switch off). The fe offers three per row: with `all` `inherit`: inherit, on, off; with
     `none`: not assigned, inherit, on. No page calls these routes yet.
-- **Instances**, administrator: `POST /api/instances` `{"engine", "id", "serverProfile"}`: 201. 400
-  `instance-malformed`; 422 `instance-bad-id` (`id`), `unknown-engine` (`engine`),
-  `client-address-in-use`; 404 `client-no-server-profile` (`field` `serverProfile`); 409
-  `client-instance-exists`, `client-server-profile-in-use`. The new instance has no model profile,
-  boot start off, starts nothing. `DELETE /api/instances/{id}`: 404 `client-no-instance`, 409
-  `client-instance-running`, `client-instance-protected` (`default`); the server profile stays in the
-  pool; 504 `client-timeout` when the outcome is unknown.
-- **Start and restart** answer 409 `client-no-model-profiles` `[instance]` (before any stop) when the
-  instance serves no model profile.
+- **Instances**, administrator (`configure`), **served since e262708** (bff slice 16,
+  `crates/bff/src/instances.rs`; what the bff answers is `crates/bff/README.md` "Creating and removing
+  an instance", the statuses pinned by `crates/bff/tests/instances.rs`). They write the manager's
+  records through `CreateInstance` / `RemoveInstance`
+  (`crates/config/README.md` "Through the manager (Linux, Windows)"), as the signed-in user, under the
+  writes' 15 s.
+  - `POST /api/instances` `{"engine", "id", "serverProfile"}`: 201 `{"id"}` with the id the body sent.
+    The new instance has no model profile, start at boot off, and nothing is started, so its first
+    Start is refused until a model profile is assigned. 400 `instance-malformed` (the body is not
+    those three strings, no manager connected to), 413 over the bff's 64 KiB; 422 `instance-bad-id`
+    (`args` the id, `field` `id`), `unknown-engine` (`args` the engine, `field` `engine`),
+    `client-address-in-use` (`args` the other instance) and `client-unresolvable-host` (`args` the
+    host), both `field` `serverProfile`; 404 `client-no-server-profile` (`args` the name, **no
+    `field`**: the manager's refusal is of the profile, not of a control the form can mark); 409
+    `instance-exists` (`args` the id, no `field`), `client-server-profile-in-use` (`args` the profile
+    and the instance that runs it). The manager's other checks keep their key as a 422 with no `field`.
+  - `DELETE /api/instances/{id}`: 204. 404 `client-no-instance` (no `args`, an id the record does not
+    name and an id that is no name at all); 409 `instance-protected` (`args` the id, `default`) and
+    `instance-running` (`args` the id, an instance that is up: stop it first, the fe offers Remove only
+    for a stopped one); the server profile it ran stays in the pool.
+  - Both: 401, 403 `session-not-administrator` (the session ended), 503 `client-unavailable` (no
+    manager, or one that outlives the 15 s, the outcome unknown: a retried create is then 409
+    `instance-exists`), 502 `client-service-failed` (the service manager refused) and 502
+    `client-other`. **Never 504**, as on the association routes.
+- **Start and restart** answer 409 `instance-no-model-profiles` `[id]`, no `field`, the session living
+  on, (before any stop, so a refused restart stops nothing) when the instance serves no model profile:
+  **served since e262708** (`crates/bff/src/control.rs`, `crates/bff/README.md` "The instances from the
+  manager"). `Stop` is never refused.
 - **The resource checks**, only on what a write puts into effect (an assignment or override on, the
   global switch on, a model profile's save, a server profile assigned or saved while in use); every
   refusal writes nothing and names the profile and the instance: `model-profile-over-memory` `[profile,
@@ -702,9 +741,9 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
   built texts keep working). `preset-engine-mismatch` is dropped: another engine's profile is simply
   not found.
 - Every write: 401, 403 `session-not-administrator` (the session ended), 413, the guard's 403s, 503
-  before asking, 504 `client-timeout` once asked (15 s). The four association routes (served) keep
-  every part of that except the 504: a manager that outlives their limit, before or after a write, is
-  503 `client-unavailable`.
+  before asking, 504 `client-timeout` once asked (15 s). The four association routes (served) and the
+  two instance routes (served since e262708) keep every part of that except the 504: a manager that
+  outlives their limit, before or after a write, is 503 `client-unavailable`.
 
 ### The web UI's plan (designer, 2026-11-17; a proposal until the user answers)
 

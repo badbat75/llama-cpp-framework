@@ -10,8 +10,9 @@ list, the model profile on/off switch and one model profile, read and saved, the
 pool: its list, a new profile, one profile read and saved, and its delete
 ([below](#the-server-profile-pool)), and an instance's associations: its server profile switched, and
 its model profiles listed and assigned, one at a time or as the whole pool
-([below](#the-association-routes)); the manager checks its sign-in: the password and the group `pai`
-(`PLAN.md` step 10).
+([below](#the-association-routes)), and an instance created and its record removed
+([below](#creating-and-removing-an-instance)); the manager checks its sign-in: the password and the
+group `pai` (`PLAN.md` step 10).
 Only the web UI's page at `/`, its files under `/assets/` and the three session routes answer without
 a session: any other API route is 401 `session-required`, asking the manager nothing (user,
 2026-11-19: a visitor who has not signed in sees only the sign-in page). The web UI is for
@@ -120,7 +121,9 @@ runtime (axum).
 | Route | Answer |
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>"}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
-| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "serverProfile": "<profile>|null", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the server profiles, the ports, the tags and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "serverProfile": "<profile>|null", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>, "removable": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the server profiles, the ports, the tags and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, each a string: 201 `{"id"}` with the id the body sent, once the manager wrote the instance, for a signed-in user, as that user, under the write's 15 s. A body that is not those three strings is 400 `instance-malformed`, the manager not connected to; every rule of the instance itself is the manager's and keeps its key ([below](#creating-and-removing-an-instance)) |
+| `DELETE /api/instances/{id}` | 204 with no body once the manager took the instance away, for a signed-in user, as that user, under the write's 15 s: 409 `instance-protected` `[id]` for `default` and `instance-running` `[id]` for one that is up, 404 `client-no-instance` for an id the record does not name ([below](#creating-and-removing-an-instance)) |
 | `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}]}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. Like `GET /api/version`, the read asks the manager nothing and leaves the session's idle deadline where it was ([below](#the-node)) |
 | `GET /api/node/devices` | `{"probedAt": "<UTC text>|null", "devices": [{"id", "name", "backend", "totalMib", "freeMib"}]}`: the node's compute devices, asked of the manager as the signed-in user, on a bound long enough for the engine probe it runs (35 s); 401 `session-required` with no session, the manager not asked ([below](#the-node)) |
 | `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
@@ -128,7 +131,7 @@ runtime (axum).
 | `DELETE /api/session` | Signs out, for anyone: 204, the cookie cleared |
 | `GET /api/instances/{id}/server` | The instance's `server@<server_profile>.ini`, the server profile its record names, with its defaults and limits, for a signed-in user ([below](#the-server-file-of-an-instance)) |
 | `PUT /api/instances/{id}/server` | The form's save of that file, for a signed-in user ([below](#saving-the-server-file)) |
-| `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else (`crates/bff/src/control.rs`) |
+| `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else, and 409 `{"key", "args"}`, no `field`, for a refusal of the state the job is asked over: a start or a restart of an instance with no model profile is `instance-no-model-profiles` `[id]` and the session lives on (`crates/bff/src/control.rs`) |
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The read reads the session as a gate and never moves its idle deadline, so the page can poll it, and connects as the bff's own account: the manager's refusal of that connect is of the bff's account, so it ends no session. The failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
 | `PUT /api/instances/{id}/tags` | `{"tags": [<text>, ...]}` in, 204 with no body once the manager wrote the instance's own list, for a signed-in user: 400 `tags-malformed` for a body that is not that list, 422 `server-bad-tags` (`field: "tags"`) for a list the manager's rule refuses ([below](#the-tags-of-an-instance)) |
@@ -186,14 +189,15 @@ the four calls the manager answers without authorization. What the bff calls bey
 the session's user, what a signed-in route makes ([below](#the-server-file-of-an-instance)), the tags
 write ([below](#the-tags-of-an-instance)), the pool's create, delete, document and save
 ([below](#the-server-profile-pool)), the three association writes with the reads of `assignments.ini`
-and of the two model profile files ([below](#the-association-routes)), and the model profile list,
+and of the two model profile files ([below](#the-association-routes)), the instance's create and
+removal ([below](#creating-and-removing-an-instance)), and the model profile list,
 switch and save on one connect as the user ([below](#the-model-profile-routes))
 (`crates/bff/src/lib.rs`). The association routes ask `Instances` and `Status` as well, on a connect
 of the bff's own account ([below](#the-association-routes)).
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
+| 200 | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
 | 401 | `{"key": "session-required", "args": []}` | The request's cookie names no live session: `connect` is never called, no `Set-Cookie` goes out |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach (none running, macOS), or no full answer within 5 s |
 | 502 | `{"key": "client-not-authorized", "args": []}` | The manager refused a call |
@@ -217,11 +221,17 @@ of the bff's own account ([below](#the-association-routes)).
   and fails nothing: the list is answered in full, and the page shows no start-at-boot row for that
   tile. `GET /api/instances/{id}/boot` stays: the instance page reads it, and reads it again after a
   write.
+- **`removable` is the page's offer to remove the instance**: false only for `default`, the id the
+  engine's install writes and the removal refuses (`instances::removable` in
+  `crates/bff/src/instances.rs`, whose `PROTECTED_INSTANCE` is the id the manager protects in
+  `service.rs`), whatever its state: whether it runs is `state`, and the removal refuses a running one
+  anyway ([below](#creating-and-removing-an-instance)).
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
   `lib.rs`) that covers the connect. The routes that write a file, the server save, the model profile
-  switch and save, the pool's create, save and delete, and the three association writes, run under the
-  longer `WRITE_TIMEOUT` ([below](#saving-the-server-file), [below](#the-association-routes)).
+  switch and save, the pool's create, save and delete, the instance's create and removal, and the three
+  association writes, run under the longer `WRITE_TIMEOUT`
+  ([below](#saving-the-server-file), [below](#the-association-routes)).
 - **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `client-unavailable`, so a test never
   reaches the real manager.
 - **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
@@ -966,8 +976,46 @@ answer on one rule:
 | 503 | `client-unavailable` | no manager, or one that outlives the route's limit, the reads' 5 s and the writes' 15 s |
 
 The four routes, their principals and every status key are `tests/instance_profiles.rs` (49 tests),
-green with the whole bff (583) at 2d9a4c8 (its report, not a rerun here). **Nothing
+green at 2d9a4c8 (the tester's report, not a rerun here). **Nothing
 here has been called against a real manager.**
+
+## Creating and removing an instance
+
+The two writes that make an instance and take its record away, each on one connect as the signed-in
+user, under the write's 15 s ([above](#the-instances-from-the-manager)). The manager is the only
+writer of the records, and it is the one that does the work: a create appends the section of
+`instances.ini`, writes the render `models@<id>.ini` off the pool, and drops the leftovers of a
+same-named instance removed before the manager existed; a removal stops asking the service manager
+about the instance, and removes its `assignments.ini` section, its render and its record section,
+leaving the server profile it named in the pool. (`CreateInstance` / `RemoveInstance`, their checks
+and their order: `crates/config/README.md` "Through the manager (Linux, Windows)".)
+
+| Route | Answers |
+| --- | --- |
+| `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, three strings. 201 `{"id"}` with the id the body sent and `args: []`: the instance has no model profile, its start at boot is off, and nothing is started. 400 `instance-malformed` with no args, when the body is not JSON, not an object, missing one of the three keys, or one of them is not text; the manager is not connected to. A body over 64 KiB is the extractor's 413 `payload-too-large`, before the session is read ([above](#saving-the-server-file)). 422 `unknown-engine` `[engine]` with `field` `engine`, 422 `instance-bad-id` `[id]` with `field` `id` (the instance-id rule: 1 to 32 of `a-z`, `0-9` and `-`, starting with a letter or a digit), 422 `client-address-in-use` `[the other instance]` with `field` `serverProfile` when the address of the profile asked for is the address of another instance's server profile, 422 `client-unresolvable-host` `[host]` with `field` `serverProfile` when its host is a name this machine cannot look up. 404 `client-no-server-profile` `[name]` for a profile whose `server@<name>.ini` is not there, 409 `client-server-profile-in-use` `[profile, instance]` for a profile a running instance has, 409 `instance-exists` `[id]` for an id the record already has a section for. Any other check the manager ran keeps its own key and values, as a 422 with no `field`. 503 `client-unavailable` with no manager, including one that outlives the 15 s. 502 `client-service-failed` with no args when the service manager refused, 502 `client-other` with no args for anything else the manager failed as. |
+| `DELETE /api/instances/{id}` | 204 with no body. 409 `instance-protected` `[id]` for `default`, 409 `instance-running` `[id]` for an instance that is up, 404 `client-no-instance` with no args for an id the record does not name and for an id that is not a name at all (the manager's `InvalidId`), 503 `client-unavailable`, and the two 502s as above. A removal is refused while the instance runs, so the caller stops it first; the fe does not ask, its Remove is offered for a stopped one. |
+
+- **The checks are the manager's and the bff keeps the key.** `instance-bad-id`, `instance-exists`,
+  `instance-protected`, `instance-running` and `unknown-engine` are keys of
+  `crates/core/strings/cli.toml`, and the manager's refusal names in `args` the value it refused. A
+  refusal of the `serverProfile` value is 422 with a `field`, so the fe marks the field of the create
+  form; a refusal about the instance (an id already in the record, a profile a running instance holds)
+  is 409 with no `field`, because it is not about a value of the form.
+- **Both write as the signed-in user, and a refusal of the user ends the session**, exactly as the
+  server save ([above](#saving-the-server-file)): the session is the proof, the principal rides the
+  call, and the same 403 `session-not-administrator` is answered for an account the manager no longer
+  accepts, ending the session.
+- **A write that goes past the 15 s is 503 `client-unavailable` with no args, never 504, and the
+  outcome is unknown**: the bff cannot know whether the manager wrote. A retried create of an instance
+  the first one did write is 409 `instance-exists`, which is how the ambiguity shows, and the read of
+  the list is the truth.
+- **The reply's id is the id the body sent**, read before the manager is asked: a create answers no
+  document, and the page re-reads the list.
+- **`crates/bff/tests/instances.rs` is 49 tests** over these two routes and the `removable` of the
+  list: the shape of the replies, the exact `args` of each key, the 422 with a `field` and the 409
+  without one, the 503 of a manager that stops answering mid-write, and the 403 that ends the session.
+  A refusal test asserts the `args` and, where the key has one, the `field`: that is all the fe has to
+  show. **Nothing here has been called against a real manager.**
 
 ## The web UI (`fe/`)
 
