@@ -18,9 +18,12 @@ test names cite them so (`18 AN.4`). Two sub-slices, each under 12 criteria (des
   GPUs appear only in the model profile page's GPU card (`GET /api/node/devices`, brief 14), which is
   the engine's probe (names and memory) and stays as it is. `pai-config` and `pai` show none of this:
   the web is first, nothing to copy.
-- **`GET /api/version`** (AN4): `{"version": "2.99.1", "os": {"name": "Ubuntu", "version": "26.04",
-  "kernel": "7.0.0-43-generic"}}`; any of the three `os` fields a string or `null`. The machine the web
-  service runs on (the director's in step 14). No manager, 401 or 200.
+- **`GET /api/version`** (AN4, amended by the architect after section 9): `{"version": "2.99.1",
+  "name": "gpu-box", "os": {"name": "Ubuntu", "version": "26.04", "kernel": "7.0.0-43-generic"}}`;
+  `name` the host name read by the bff itself (never empty, as `/api/node`'s), any of the three `os`
+  fields a string or `null`. The machine the web service runs on (the director's in step 14). No
+  manager, 401 or 200. **The shell now takes the host name from this read** (AN.15), so the nav label
+  no longer waits for the manager; `/api/node` is the Node info page's read only.
 - **`GET /api/node`** (AN4): today's `{"name", "api", "version", "engines"}` plus
   `"os": {"name", "version", "kernel"}`, `"vulkan": "ok" | "none" | "failed"` and `"gpus": [{"pci":
   "0000:03:00.0", "vendor": "1002", "name": "AMD Radeon AI PRO R9700", "driver": "amdgpu", "version":
@@ -134,8 +137,9 @@ No key is removed.
 **18 AN.1 Keys.** `en_US.json` has the 27 keys of section 2 with that English and changes no other.
 
 **18 AN.2 About reads the version.** At `#/about` the page sends one `GET /api/version` of its own
-per arrival (leaving and coming back sends another) and no `GET /api/node` (the shell's one read per
-session, 13 N.3, is unchanged). Title, `h1` and focus as 13 N.7. Pending: `about-loading` as the
+per arrival (leaving and coming back sends another) and no `GET /api/node`. The shell's one read per
+session is now a `GET /api/version` (AN.15), not the page's: the page sends its own beside it.
+About does not show `name`. Title, `h1` and focus as 13 N.7. Pending: `about-loading` as the
 visually hidden `role="status"`, and after 300 ms a skeleton of **two** `.skeleton` lines (17a.4 now
 two, not four).
 
@@ -168,8 +172,8 @@ non-empty string; `null` when not an object), `vulkan` (`'ok' | 'none' | 'failed
 `null`), `gpus` (`null` unless an array; items not objects are left out; each field `null` unless a
 non-empty string; `vulkan` an object of `driver`, `info` or `null`), `nodeInfoKey` (the `nodeInfo`
 key string or `null`). A reply with only today's four fields still gives the node, with
-`os`, `vulkan`, `gpus` `null`: the shell's label (13 N.4) and the Overview's `h2` (13 N.5) keep
-working on such a reply.
+`os`, `vulkan`, `gpus` `null` (the node page then shows AN.13's `node-info-failed`). The shell no
+longer calls `readNode` (AN.15).
 
 **18 AN.8 The node page's top and engines.** At `#/node`, one `GET /api/node` per arrival. With the
 reply of section 0: one `dl.assets` with rows in order `node-host` / `gpu-box`, `system-os` /
@@ -216,7 +220,17 @@ driver row's spans are inline inside it, so `anywhere` applies to them). 32 rows
 The stylesheet gains no rule: `.assets + h3` already spaces each GPU heading; `h2` after a list takes
 its default margin (to check in the UX shots; a rule only if it reads as a row, as in brief 13).
 
-That is 9 criteria in AN5a (AN.1 to AN.9) and 5 in AN5b (AN.10 to AN.14).
+**18 AN.15 The shell reads the host from `/api/version`** (AN5a; added after section 9, numbered
+last to keep the others stable). With a session, the shell's one read per session (13 N.3: at start,
+after a sign-in on the sign-in page, again after a sign-out and sign-in, none for a sign-in in a
+page's dialog as the same user, none on a page change) is a `GET /api/version`, and the shell sends
+no `GET /api/node` at all. Its `name`, when a non-empty string with something besides spaces, is the
+nav group label and the Overview's `h2` (13 N.4, N.5); before the answer, on 401 (signing nobody
+out), any other status, a network failure, or a `name` missing, empty or not a string, both keep
+"Instances". The Overview's version line keeps its own read and is unchanged. Only the Node info
+page sends `GET /api/node`.
+
+That is 10 criteria in AN5a (AN.1 to AN.9 and AN.15) and 5 in AN5b (AN.10 to AN.14).
 
 ## 5. Accessibility (WCAG 2.2 AA)
 
@@ -250,13 +264,19 @@ That is 9 criteria in AN5a (AN.1 to AN.9) and 5 in AN5b (AN.10 to AN.14).
   label); `NodeNav.test.tsx` 497 (13 N.6: the last `ul` now holds Node info then About, About still
   last), 565 and 598 (13 N.11 tab and menu order); `HearthIcons.test.tsx` 283 (H8a.2 gains the `cpu`
   icon on Node info).
-- `NodeNav.test.tsx` 162 (13 N.3) also walks `#/node`: the shell still sends no further read.
-- `test/bff.ts`: `NODE` gains the `os`, `vulkan` and three `gpus` of section 7; `version` default gains `os`.
+- `NodeNav.test.tsx` 162 to 400 (13 N.3) and every test that counts the shell's `GET /api/node`:
+  the shell's one read per session is now `GET /api/version` (AN.15), and walking through `#/node`
+  sends no further shell read. 13 N.4 and N.5 tests take the name from the `version` answer.
+- `test/bff.ts`: `NODE` gains the `os`, `vulkan` and three `gpus` of section 7; the `version` default
+  becomes `{"version": "2.99.0", "name": "gpu-box", "os": {...}}`. Careful: a default `name` would
+  turn every test that finds the list named "Instances" (13 N.4's fallback) red; suggestion, the
+  tester's call: leave `name` out of the default and add it only where a test asks for the host.
+- `Version.test.tsx` and the Overview's version line: unchanged (the extra fields are ignored).
 - `HearthTokens.test.ts` and brief 10 R1.8's class list: unchanged (no class, no size).
 
 ## 7. The UX check (`fe/ux/stub.py`, `fe/ux/check.js`)
 
-- `stub.py`: `/api/version` answers `{"version": "3.0.0", "os": {"name": "Ubuntu", "version":
+- `stub.py`: `/api/version` answers `{"version": "3.0.0", "name": "gpu-box", "os": {"name": "Ubuntu", "version":
   "26.04", "kernel": "7.0.0-43-generic"}}`. `NODE` gains that `os`, `"vulkan": "ok"` and three GPUs:
   `0000:03:00.0` `1002` "AMD Radeon AI PRO R9700" `amdgpu` `7.1.9.31600000` `{radv, Mesa 25.2.0}`;
   `0000:0a:00.0` `10de` "NVIDIA GeForce RTX 5090" `nvidia` `580.95.05` `{NVIDIA, 580.95.05}`;
@@ -274,11 +294,10 @@ That is 9 criteria in AN5a (AN.1 to AN.9) and 5 in AN5b (AN.10 to AN.14).
 - Hub mode: `#/nodes/<node>`, Node info inside each node's nav group, About for the director.
 - Copy versions (U17f, decision 8), the devices probe (VRAM, `GET /api/node/devices`), live
   monitoring (the later Hardware page), and polling the node page.
-- Any change to the shell's read beyond AN.7, the Overview, the instance and profile pages.
+- Any change to the shell's read beyond AN.15, the Overview, the instance and profile pages.
 
-## 9. Note for the coordinator (not a user question)
+## 9. Note for the coordinator (settled)
 
-The shell's once-per-session `GET /api/node` (the host name in the nav) now asks the manager and may
-take up to 10 s cold; the label shows "Instances" meanwhile (13 N.3's fallback, nothing breaks). If
-that wait is unwelcome, the architect could give the name on a read that skips the manager; this
-brief does not depend on it.
+The shell's once-per-session `GET /api/node` would have asked the manager and waited up to 10 s
+cold. Settled by the architect (2026-11-22): `GET /api/version` carries `name`, and the shell reads
+it there (AN.15).
