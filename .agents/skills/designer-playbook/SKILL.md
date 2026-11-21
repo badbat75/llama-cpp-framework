@@ -82,3 +82,8 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - In a wrapping flex row, a field's visible label and its input must be one flex item (a wrapper
   span), or the label can end one line and the input start the next (brief 14 at 1280 px: "Weight"
   beside the memory figures, its box on the line below). `build/ux-review/gd1.js states` shoots it.
+- A closed native `select` fires `change` on each arrow key (Chromium, Firefox): a select whose
+  change would write (a server profile switch) needs an explicit button (brief 16 decision 6).
+- Destructive actions use Confirm in place, not a dialog (coordinator, 2026-11-21); creates use the
+  Create form in place; a write that needs a restart shows the Restart offer (`fe/DESIGN.md` 5.2).
+  `pai-config` and `pai` have no server profile pool, instance create or assignment: the web is first.

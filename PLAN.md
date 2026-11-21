@@ -999,7 +999,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     Creating and removing instances is done in the manager and the bff (slice 16, 2026-11-21; the web UI
     is slice 17). Left from its review: on a CRLF `instances.ini` the appended section is LF, so the file
     has mixed line endings (the manager reads both); `"default"` as the protected id is written in both
-    `service.rs` and `crates/bff/src/instances.rs`.
+    `service.rs` and `crates/bff/src/instances.rs`; `crates/bff/README.md` says the association route's
+    `client-address-in-use` carries the port, the code passes the other instance's id.
     **Tags as chips** (user, 2026-11-21): the instance tags field becomes a row of chips: a round "+"
     that, clicked, opens an oval input for one label; confirmed, it becomes a chip and a new "+"
     follows. While typing, the labels already used (on any instance or server profile) are suggested.

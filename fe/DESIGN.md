@@ -35,8 +35,9 @@ only an administrator can be (section 3). Since slice S1a (`fe/briefs/09-signin-
 
 | Nav entry | Route | What it holds | `pai-config` equivalent | Who | Slice |
 |---|---|---|---|---|---|
-| Overview | `#/` | Framework version; the instances as tiles under the host name (id as a link, state badge, engine when two or more; Port, Tags, Start at boot) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`); T1 (`fe/briefs/12-instance-tags.md`); 13 (`fe/briefs/13-node-about.md`) |
-| Instances > *instance* | `#/instances/<id>` | Header: name, engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Below, the instance's pages as tabs once there are two: **Server** (server file), **Logs** | Server tab, run controls, Settings' "start at boot", View logs | administrator | 1a (read), 1b (save), 1c (run controls); T1 (port, tags); Logs later |
+| Overview | `#/` | Framework version; the instances as tiles under the host name (id as a link, state badge, engine when two or more; Port, Tags, Start at boot); New instance (create form in place, 17c) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`); T1 (`fe/briefs/12-instance-tags.md`); 13 (`fe/briefs/13-node-about.md`) |
+| Instances > *instance* | `#/instances/<id>` | Header: name, engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Then **Server profile** (the one it runs, a link, and the switch), **Model profiles** (one "Served here" switch per profile of the pool), **Remove instance** (not for `default`, only when stopped). The Server form is no longer here (slice 17a). **Logs** later | Server tab's target, run controls, Settings' "start at boot", View logs | administrator | 1a, 1b, 1c; T1 (port, tags); 17a to 17e (`fe/briefs/16-server-profiles-and-instances.md`); Logs later |
+| Profiles > Server profiles | `#/profiles/server`, `#/profiles/server/<id>` | The pool: id, port, tags, used by; New server profile (create form in place). A profile's page: Used by, Delete while unused, the whole Server form and save | Server tab (of `default` only) | administrator | 17a, 17b (`fe/briefs/16-server-profiles-and-instances.md`) |
 | Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its engine the first row of the Assets card (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); GD1, GD2 (GPU distribution: `fe/briefs/14-gpu-distribution.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | About (last entry) | `#/about` | Per host: the framework's version, each installed engine and its GPU backend packages with their versions (`GET /api/node`) | (none; the window title's version) | administrator | 13 (`fe/briefs/13-node-about.md`) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
@@ -113,8 +114,8 @@ Decided with the user on 2026-11-14.
   (step 14) repeats the group per node, each label then a disclosure button; with one host there is
   no disclosure (principle 4; `fe/briefs/13-node-about.md` decisions 1 to 3). Signed in, after it (or right after Overview when the
   instances read is loading, failed or empty), the "Profiles" group: a `p.nav-label` and a `ul`
-  labelled by it, today with the one link "Model profiles"; "Server profiles" joins it when its page
-  exists (05c). Last, in a `ul` of its own, **About** (`info` icon; brief 13). Each group label is text, not a link. Signed out, or while the session is read, there
+  labelled by it, with "Server profiles" (`server` icon) then "Model profiles" (slice 17a; an
+  instance has one server profile and many model profiles). Last, in a `ul` of its own, **About** (`info` icon; brief 13). Each group label is text, not a link. Signed out, or while the session is read, there
   is no nav and no Menu button, and `main` spans the whole `.layout` row from 960 px up
   (`.layout > main:only-child`; `fe/briefs/09-signin-only.md` S1a.4, S1a.12).
 - The current page's nav link has `aria-current="page"`. On a page below a nav entry that has no
@@ -630,8 +631,8 @@ Each is one React component, reused by every page.
   pointer users can leave it too
   ([APG modal dialog](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)).
 - **Buttons**: pills, at least 40 px high; primary (filled `--accent`) for the one main action of a
-  view; secondary (outlined `--control`, `--border-w`) otherwise; no hover look (brief 06 section 0); danger is not a style of its own **(preference)**: destructive actions ask in a
-  dialog instead.
+  view; secondary (outlined `--control`, `--border-w`) otherwise; no hover look (brief 06 section 0); danger is not a style of its own **(preference)**: destructive actions ask
+  first with a Confirm in place (below), never a browser dialog (coordinator, 2026-11-21; brief 16).
   - **Inactive**: a button that can turn inactive while it has focus (the save bar's, the run
     controls) uses `aria-disabled="true"`, never `disabled`: it stays in the tab sequence, a click,
     Enter or Space does nothing (the handler checks; the attribute blocks nothing by itself), and it
@@ -655,6 +656,25 @@ Each is one React component, reused by every page.
   same pattern for a form ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)). For a control
   repeated in every row of a table, one region for the table, just above it, whose messages name the
   row; one write at a time, every row's control `aria-disabled` while it runs.
+
+- **Create form in place** (New server profile, New instance: brief 16): a secondary button with the
+  `plus` icon and `aria-expanded`
+  ([APG Disclosure](https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/)) reveals right after it a
+  `form` named by its heading: the fields, Create (primary) and Cancel, a status line and the alert
+  place. Opening moves the focus to the first field; Cancel or the opener closes it, clears it and puts
+  the focus on the opener. A create that succeeds goes to the new thing's page. No unsaved-changes
+  question for it **(preference)**.
+- **Confirm in place** (a destructive action: delete, remove): the action's button reveals right after
+  it a `div role="group"` named (`aria-labelledby`) by its question paragraph, which says what is lost,
+  then the action's verb button and Cancel, a status line and the alert place. The focus moves to
+  Cancel; Cancel or Escape closes it and puts the focus on the opener. Done, the page's content after
+  the `h1` is replaced by one paragraph (`tabindex="-1"`, focused) saying it was done and a link to
+  the list; no message travels to another page **(preference: no modal for a two-button question; it
+  reflows at 320 px)**.
+- **Restart offer** (a write that a running instance only applies at its next start: brief 16 17d):
+  right after the status line that names the instances, one secondary button "Restart `<id>`"
+  (`rotate-cw`) per instance, then its own status line and alert (Action feedback). It appears without
+  moving the focus, is gone at the next edit or write it belongs to, and restarts nothing by itself.
 
 ## 6. States every page defines
 

@@ -70,8 +70,8 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, served | 204 |
-| `GET /api/instances/{id}/server` | administrator | 1a, served | the server document below |
-| `PUT /api/instances/{id}/server` | administrator (`configure`) | 1b, served (8) | `{"revision", "running"}` |
+| `GET /api/instances/{id}/server` | administrator | 1a, served; **removed in slice 17** (the fe reads `/api/profiles/server/{id}` from 17a) | the server document below |
+| `PUT /api/instances/{id}/server` | administrator (`configure`) | 1b, served (8); **removed in slice 17** | `{"revision", "running"}` |
 | `POST /api/instances/{id}/start`, `/stop`, `/restart` | administrator | 1c, served (9a); 409 `instance-no-model-profiles` 16, served (e262708) | 204 |
 | `GET /api/instances/{id}/boot` | anyone | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
@@ -746,6 +746,14 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
   outlives their limit, before or after a write, is 503 `client-unavailable`.
 
 ### The web UI's plan (designer, 2026-11-17; a proposal until the user answers)
+
+**Superseded by [16-server-profiles-and-instances.md](16-server-profiles-and-instances.md)
+(2026-11-21)**, which builds it with two changes: a model profile on an instance is one "Served
+here" switch, not a three-word select (its decision 7), and the server profile select switches only
+on a button (its decision 6). On `client-address-in-use`: `crates/bff/README.md` says the association
+route's `args` is the port, but `instance_profiles.rs` passes the manager's message, as the create and
+the save do (the other instance's id); the fe fills `api-client-address-in-use` with `args[0]` either
+way (to confirm on the bff side).
 
 It replaces three earlier decisions: the instance's Server and Presets tabs (now: the server form is a
 server profile's page, the instance page makes the associations), the node-level Models entry (now:
