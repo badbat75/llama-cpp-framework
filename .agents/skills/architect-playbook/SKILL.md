@@ -31,8 +31,11 @@ description: What the architect has learned about this project's components, int
   one framework MSI. `Version` matters only across machines.
 - Sources already checked for cross-machine designs (2026-11-15): D-Bus non-local TCP is deprecated
   and unprotected (D-Bus spec, "TCP Sockets"); OpenSSH server is in the box only on Windows Server
-  2025 (Microsoft Learn, OpenSSH first use); kubeadm's SPKI-hash pinning is the precedent for join
-  codes; rustls' `ClientCertVerifier` is the hook for pinning a client.
+  2025 (Microsoft Learn, OpenSSH first use); kubeadm's SPKI-hash check is the precedent for join
+  codes. Since 2026-11-21 the super-manager is **the director** (`pai-director`) and nodes use its
+  private CA, not pinning (ARCHITECTURE.md Part 2): rustls 0.23 `WebPkiClientVerifier` takes CRLs
+  (`with_crls`), `export_keying_material` binds a MAC to one connection, rcgen 0.14 parses CSRs
+  (`from_der`, feature `x509-parser`) and signs with `signed_by`; rcgen's CRL writer is unverified.
 - A file the Windows manager creates under `%ProgramData%\private-ai` inherits the MSI's protected DACL
   on that root (SYSTEM, Administrators full, Users read: `MachineDataRoot` in
   `installer/private-ai-framework.wxs`), so users cannot pre-create a subfolder to redirect a

@@ -274,18 +274,18 @@ models folders for the bff (<code>ModelFilesAs</code>), which the bff's account 
 <tr><td>macOS: split <code>.pkg</code></td><td>no manager, no bff: <code>pai-config</code> runs llama-server itself</td></tr>
 </table>
 
-<h2>The super-manager <span class="planned">(planned, PLAN step 14)</span></h2>
+<h2>The director (formerly the super-manager) <span class="planned">(planned, PLAN step 14)</span></h2>
 <figure>
-<svg viewBox="0 0 900 260" role="img" aria-label="Super-manager deployment, planned">
+<svg viewBox="0 0 900 260" role="img" aria-label="Director deployment, planned">
   <rect class="plan" x="10" y="20" width="360" height="220" rx="8"/>
   <text x="24" y="42" class="t-title t-planned">Hub server (Linux first)</text>
   <rect class="svc" x="30" y="60" width="150" height="60" rx="5"/>
   <text x="42" y="80" class="t-title">pai-bff, hub mode</text>
-  <text x="42" y="98" class="t-small">[Bff] SuperManager = true</text>
+  <text x="42" y="98" class="t-small">[Bff] Director = true</text>
   <rect class="plan" x="200" y="60" width="150" height="110" rx="5"/>
-  <text x="212" y="80" class="t-title t-planned">pai-supermanager</text>
-  <text x="212" y="98" class="t-small">user private-ai-super</text>
-  <text x="212" y="114" class="t-small">node registry, its key</text>
+  <text x="212" y="80" class="t-title t-planned">pai-director</text>
+  <text x="212" y="98" class="t-small">user private-ai-director</text>
+  <text x="212" y="114" class="t-small">registry, private CA</text>
   <text x="212" y="130" class="t-small">no engine, no checks</text>
   <text x="212" y="148" class="t-small t-planned">model store, sha256</text>
   <text x="212" y="162" class="t-small t-planned">manifest, one cap</text>
@@ -301,7 +301,7 @@ models folders for the bff (<code>ModelFilesAs</code>), which the bff's account 
 
   <line class="edge-plan" x1="350" y1="100" x2="548" y2="70"/>
   <line class="edge-plan" x1="350" y1="110" x2="548" y2="190"/>
-  <text x="380" y="120" class="t-small t-planned">TLS 1.3, mutual, pinned SPKI</text>
+  <text x="380" y="120" class="t-small t-planned">TLS 1.3, mutual, director&#39;s CA</text>
   <text x="380" y="136" class="t-small t-planned">ALPN pai-manager/1, port 8592</text>
   <text x="380" y="152" class="t-small t-planned">the manager protocol unchanged</text>
   <line class="trust" x1="460" y1="20" x2="460" y2="240"/>
@@ -310,7 +310,7 @@ models folders for the bff (<code>ModelFilesAs</code>), which the bff's account 
   <rect class="node" x="550" y="30" width="330" height="90" rx="6"/>
   <text x="562" y="52" class="t-title">Node A (Linux or Windows)</text>
   <text x="562" y="72">pai-manager, listener off until joined</text>
-  <text x="562" y="90" class="t-small">joined by a one-time code (fingerprint + secret, 15 min)</text>
+  <text x="562" y="90" class="t-small">one-time code, CSR: 30-day cert, auto-renewed</text>
   <text x="562" y="108" class="t-small">only -core and the engine needed</text>
   <rect class="node" x="550" y="150" width="330" height="80" rx="6"/>
   <text x="562" y="172" class="t-title">Node B</text>
@@ -331,9 +331,9 @@ models folder.</figcaption>
 <tr><td>Manager, Linux</td><td>D-Bus system bus, <code>org.privateai.Manager1</code></td><td>any local process may send; polkit and the manager decide per call</td></tr>
 <tr><td>Manager, Windows</td><td><code>\\.\pipe\private-ai-manager</code></td><td>SYSTEM, Administrators, interactive users, the bff's service SID; no remote client</td></tr>
 <tr><td>llama-server</td><td>each instance's <code>Port</code> (default profile 9931)</td><td>its server profile's address and API key</td></tr>
-<tr><td class="planned">Node listener (step 14)</td><td>8592, off by default</td><td>the pinned super-manager only</td></tr>
+<tr><td class="planned">Node listener (step 14)</td><td>8592, off by default</td><td>the director only (its CA, its name; no fallback)</td></tr>
 <tr><td class="planned">Outbound to huggingface.co (accepted)</td><td>443, HTTPS, from the bff only</td><td>a signed-in <code>pai</code> member's request, a repo id only</td></tr>
-<tr><td class="planned">Model store (step 14, accepted)</td><td>8593 on the super-manager (a proposal)</td><td>joined nodes, pinned SPKI</td></tr>
+<tr><td class="planned">Model store (step 14, accepted)</td><td>8593 on the director (a proposal)</td><td>joined nodes (CA certificate, not denied)</td></tr>
 <tr><td class="planned">Router (step 10 item 14)</td><td>one OpenAI-compatible endpoint in the bff</td><td>authenticated clients</td></tr>
 </table>
 

@@ -9,7 +9,7 @@ Drawn views of this page: [docs/architecture/infrastructure.html](docs/architect
 (deployment) and [docs/architecture/system.html](docs/architecture/system.html) (components and flows).
 
 Part 1 is the baseline, what exists on 2026-11-15. Part 2 is the design of `PLAN.md` step 14 (R13, a
-super-manager), proposed and waiting for the user's acceptance.
+director), proposed and waiting for the user's acceptance.
 
 ## Part 1: the baseline
 
@@ -126,7 +126,7 @@ calling the manager for the session's user, so `GET /api/instances/{id}/server` 
 Designed 2026-11-15, **built** 2026-11-16 (adab61c the core, 1d2e12c the pipe, b2f3777 D-Bus, c03d911
 and 4216745 the log, then the bff's connect), reviewed against this text by the architect; the
 Windows side is type-checked only. One design serves both: the bff names the signed-in user on each
-guarded call, and the super-manager will later name its user the same way (Part 2, slice 4).
+guarded call, and the director will later name its user the same way (Part 2, slice 4).
 
 **The model.** The manager's core stops taking a bare `Caller` for a guarded call and takes a
 `Requester { caller: Caller, principal: Option<Principal> }` (`service.rs`), `Principal(String)` a user
@@ -207,7 +207,7 @@ Part 2 rides in ALPN). The client side is an inherent method on `DbusClient` and
 `ManagerClient`: `version() -> Result<Option<ManagerVersion>, ClientError>`, `None` for a manager
 older than the method (D-Bus `org.freedesktop.DBus.Error.UnknownMethod`; pipe `BadRequest`, after which
 the server has closed the stream and that client is spent: open a new one). Nothing calls it in
-production until the super-manager; the bff does not (same-version packages).
+production until the director; the bff does not (same-version packages).
 
 **The log of who acted.** Every guarded call, done or refused, writes one record through a seam
 (`Manager::with_log`, an `ActionLog` trait, a fake in tests): `action`, `target` (id or file name),
@@ -468,7 +468,7 @@ was in `pai-app` (`server_cfg::check`), which the bff does not link; slice 2 mov
 **The key oracle, as it stands.** Every reader of the revision is a signed-in `pai` member whose read is
 never withheld, so the same response already carries the key in `values`: today the hash leaks nothing
 the reader lacks. It still must go: an unkeyed function of the key is an oracle for any later reader of
-the revision without the key (a log, a super-manager view, a future non-administrator), and FNV makes
+the revision without the key (a log, a director view, a future non-administrator), and FNV makes
 no claim to resist an adversary ([draft-eastlake-fnv](https://datatracker.ietf.org/doc/html/draft-eastlake-fnv),
 section 6: "No assertion of suitability for cryptographic applications"; its section 2.2 adds that a
 secret offset basis is learnt by anyone who sees an output for a known input, so a secret prefix does
@@ -1206,7 +1206,7 @@ unchanged, llama-server reads the per-user `presets.ini`. Windows: the same file
 **(h) The router and other nodes.** The router sends a request for model `m` to a running instance of
 the node whose render serves `[m]`. Other nodes: an assignment always names a preset of its own node's
 pool and is checked by that node's manager, where the GPUs and files are; assigning a preset to an
-instance on another machine is, with the super-manager, writing the preset into that node's pool (an
+instance on another machine is, with the director, writing the preset into that node's pool (an
 ordinary preset write there) and assigning it there. Keeping one preset equal across pools is step 14's
 to design; nothing here assumes one node.
 
@@ -1473,7 +1473,7 @@ last), `client-address-in-use`, `client-instance-*`, `instance-*`, `unknown-engi
 - (a) The port stays in the server profile. A server profile is meant to be shared by instances on
   DIFFERENT nodes (the same port on different machines); on one node it serves one instance
   (`client-server-profile-in-use` and the single `instance` field stand). Sharing one profile across
-  nodes is the super-manager's concern (Part 2), not built now.
+  nodes is the director's concern (Part 2), not built now.
 - (b) Tags are on the server profile AND on the instance (`Tags` beside `ServerProfile` in its
   `instances.ini` section, the rule of (c), its key `server-bad-tags`); an instance shows the union,
   the profile's tags first, then its own, duplicates dropped (`SetInstanceTags`,
@@ -2217,7 +2217,7 @@ repos/<repo>` and its latest release); sizes are the release archives' downloads
   the sampler restarted, readings missing until then). If that is judged too much, the sampler can
   later run as a child under the instance account (`private-ai`, groups `render video`) streaming
   lines to the manager; not proposed now (preference: simplest first, the sources need no root).
-- Step 14: the super-manager calls the same `MetricsAs`, `MetricsHistoryAs`, `ReadLogAs` on each node
+- Step 14: the director calls the same `MetricsAs`, `MetricsHistoryAs`, `ReadLogAs` on each node
   over the mTLS link (Part 2), the hub's bff under `/api/nodes/{node}/...`. History and logs stay on
   the node and are read on demand: the "log router" is the manager protocol itself. A central store,
   when wanted, is a later export (below), not a redesign.
@@ -2405,7 +2405,7 @@ Test first, Linux first, the Windows halves type-checked; each a useful piece.
    (a fake runner); the cursor pages forward; caps hold; a non-`pai` principal is refused; the Windows
    reader pages across `.previous.log` and the current file.
 5. Later, not now: an export (OTLP through b1, or a Prometheus endpoint) when a central store is
-   wanted; the super-manager's node-prefixed routes come with Part 2's slice 7.
+   wanted; the director's node-prefixed routes come with Part 2's slice 7.
 
 **Open after this design:** the sampler as an unprivileged child (only if the review of slice 2 asks);
 the manager's own action log in the log view; live log follow (polling the cursor is enough first);
@@ -2421,12 +2421,12 @@ this step; this is the direction, judged now, built later (with or after Part 2)
 | Common format | OTLP logs | VictoriaLogs ingests OpenTelemetry, Loki JSON, Elasticsearch bulk, journald export format and others ([data ingestion](https://docs.victoriametrics.com/victorialogs/data-ingestion/)) |
 | Node agent, recommended | **Fluent Bit** v5.2.0, C, Apache-2.0 (GitHub record); Linux, macOS, Windows ([supported platforms](https://docs.fluentbit.io/manual/installation/supported-platforms)); `systemd` input reading the journal through libsystemd with a `_SYSTEMD_UNIT` filter and a cursor kept in its `DB` ([systemd input](https://docs.fluentbit.io/manual/pipeline/inputs/systemd)), `tail` for the Windows log files; OTLP out over HTTP (protobuf) or gRPC with `tls.crt_file`/`tls.key_file`/`tls.ca_file` ([OpenTelemetry output](https://docs.fluentbit.io/manual/pipeline/outputs/opentelemetry)) | as cited |
 | Node agent, alternative | The OpenTelemetry Collector: one agent for metrics and logs only if metrics went OTel (option b), but its `journald` receiver is alpha, Linux only and shells out to `journalctl` (above), and contrib is 97 to 109 MiB | as cited |
-| Central store | **VictoriaLogs** v1.54.0 single node, Apache-2.0 (GitHub record), 12 MiB `linux-amd64` archive, on the super-manager's node; 7 days retention by default (`-retentionPeriod`), an optional disk cap; TLS and basic auth in the open binaries, **mTLS only in Enterprise** ([security](https://docs.victoriametrics.com/victorialogs/security-and-lb/), [flags](https://docs.victoriametrics.com/victorialogs/)) | as cited |
+| Central store | **VictoriaLogs** v1.54.0 single node, Apache-2.0 (GitHub record), 12 MiB `linux-amd64` archive, on the director's node; 7 days retention by default (`-retentionPeriod`), an optional disk cap; TLS and basic auth in the open binaries, **mTLS only in Enterprise** ([security](https://docs.victoriametrics.com/victorialogs/security-and-lb/), [flags](https://docs.victoriametrics.com/victorialogs/)) | as cited |
 | Not chosen | Promtail: end of life on 2026-03-02, development moved to Grafana Alloy ([Promtail](https://grafana.com/docs/loki/latest/send-data/promtail/)). Loki: **AGPL-3.0** (GitHub record of `grafana/loki`, so the user's belief is confirmed), with Alloy (Apache-2.0) only if Grafana dashboards are wanted. Vector (MPL-2.0): valid, no gain over Fluent Bit here | as cited |
 
 The trust boundary is the part to design then, not the tools: open VictoriaLogs cannot check a
-client certificate, so it listens on the super-manager's loopback only and the nodes reach it through
-an ingest endpoint of the super-manager that checks each node's pinned key (Part 2's identity, no
+client certificate, so it listens on the director's loopback only and the nodes reach it through
+an ingest endpoint of the director that checks each node's pinned key (Part 2's identity, no
 second fabric); the agent on each node is one more account reading the journal (Fluent Bit's user in
 `systemd-journal`, read only, the same rule journalctl(1) states). Logs then leave the node
 continuously, a change from "read on demand" the user approves when that step comes; the on-demand
@@ -2536,7 +2536,7 @@ runtimes (the `versions/` files, slice 13). The backends the engine can load are
   step from bus id to the current name at every launch (the instance's `run-instance` cannot ask the
   manager's probe on Linux: it execs llama-server). **Recommended: (i) now**, shown with the card's
   name and size, (ii) when a moved ordinal is seen on a real node; fact 2 makes (i) fail closed.
-- **Step 14.** The super-manager reads each node's inventory through the same method over its transport
+- **Step 14.** The director reads each node's inventory through the same method over its transport
   and caches it per node; a server profile names devices of its own node only (profiles are per node and
   per engine), so nothing crosses nodes.
 
@@ -2673,7 +2673,7 @@ RAM and CPU counts are read by root and given only to callers the gate admits.
 
 The requirement (user, 2026-11-21): on the web model profile page, `hf-repo` offers the GGUF files
 (quants) of the Hugging Face repo instead of free text, and `model` offers the GGUF files already in
-the models folder. A second source, the super-manager's model store (Part 2, "The model store"), must
+the models folder. A second source, the director's model store (Part 2, "The model store"), must
 fit beside Hugging Face later without a redesign.
 
 **What exists.** `pai-app` `hf.rs` (module header) does the HF side for the GUI and `pai`: `parse_spec`
@@ -2940,69 +2940,73 @@ lists a node's folder through the manager, so one path serves both).
 home opened to 0751 as above (the architect had recommended `/var/lib/private-ai-models`). 2. The
 instances and the members of `pai` write. 3. macOS keeps the per-user `~/.llama.cpp`.
 
-## Part 2: the super-manager (`PLAN.md` step 14, R13)
+## Part 2: the director (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
 installato su un server differente che può governare differenti manager. Se il bff si connette a questo
 gli viene offerta anche la gestione dei nodi." Status: **accepted** by the user on 2026-11-15, who
-answered the four questions at the end with the recommended option each.
+answered the four questions at the end with the recommended option each. Renamed **the director**
+(`pai-director`), formerly the super-manager (user, 2026-11-21); the links were revised the same day to a
+private CA ("Identity and joining").
 
 ### Decision summary
 
-1. **A separate service, `pai-supermanager`**, on its own server, unprivileged, holding the node
+1. **A separate service, `pai-director`**, on its own server, unprivileged, holding the node
    registry and the one key the nodes trust. It runs no engine and checks no content: each node's
    manager stays the authority over its machine.
-2. **Nodes are managers.** The super-manager speaks to each node's `pai-manager` with **the existing
-   manager protocol over TLS 1.3 with mutual authentication**, each side pinning the other's
-   self-signed certificate. No new protocol, no CA, no D-Bus off the machine.
+2. **Nodes are managers.** The director speaks to each node's `pai-manager` with **the existing
+   manager protocol over TLS 1.3 with mutual authentication**, every certificate issued by **a
+   private CA the director holds** (30-day leaves, renewed by the nodes; revoked by refused renewal and
+   a deny list). No new protocol, no public CA, no D-Bus off the machine.
 3. **A node joins by a one-time code** its own administrator creates, carrying the node's key
-   fingerprint and a secret: both sides authenticated from the first byte.
-4. **Rights are delegated, not mapped**: joining a node grants the super-manager `control` and
-   `configure` on it; the super-manager admits only its local bff, which vouches for a signed-in `pai`
-   member of the super-manager's machine. Each forwarded call names that person for the node's log.
+   fingerprint and a secret; the node sends a CSR bound to the code and receives its certificate and
+   the CA.
+4. **Rights are delegated, not mapped**: joining a node grants the director `control` and
+   `configure` on it; the director admits only its local bff, which vouches for a signed-in `pai`
+   member of the director's machine. Each forwarded call names that person for the node's log.
    Per-node rights and a central identity wait.
-5. **The bff gains a hub mode** (`bff.ini`), where it talks to the super-manager instead of the local
+5. **The bff gains a hub mode** (`bff.ini`), where it talks to the director instead of the local
    manager and the API grows a node prefix; the local mode stays as it is.
-6. **Nodes never depend on the super-manager**: their instances, boot settings and local clients work
+6. **Nodes never depend on the director**: their instances, boot settings and local clients work
    with it down or gone.
 
 ### Role and boundaries
 
-| | Manager (on each node) | Super-manager | bff |
+| | Manager (on each node) | Director | bff |
 | --- | --- | --- | --- |
-| Owns | The instances, their files, the checks, local authorization | The node registry (name, address, pinned fingerprint), its own key, the join, fan-out with per-node timeouts | Web sessions, the HTTP API, the web UI |
-| Never | Knows the super-manager's users; accepts a password from off the machine | Caches a node's files as truth; runs checks; starts engines; sees passwords | Holds the node key; reaches a node directly |
-| Talks to | systemd / SCM; local callers; the enrolled super-manager over TLS | Nodes over TLS; its local bff over a local socket | The local manager (local mode) or the super-manager (hub mode) |
+| Owns | The instances, their files, the checks, local authorization | The node registry (name, address, certificate serial and expiry), the CA and its keys, the deny list, the join and renewals, fan-out with per-node timeouts | Web sessions, the HTTP API, the web UI |
+| Never | Knows the director's users; accepts a password from off the machine | Caches a node's files as truth; runs checks; starts engines; sees passwords | Holds the node key; reaches a node directly |
+| Talks to | systemd / SCM; local callers; the enrolled director over TLS | Nodes over TLS; its local bff over a local socket | The local manager (local mode) or the director (hub mode) |
 
-The super-manager is separate from the bff (rather than a "hub mode" holding the registry inside the
+The director is separate from the bff (rather than a "hub mode" holding the registry inside the
 bff) for one security reason and one operational one: the browser-facing process never holds the key
 every node trusts, so a compromised bff can act only while it is compromised and only as a signed-in
-session could, and cannot carry the key away; and the super-manager can be restarted, upgraded or
+session could, and cannot carry the key away; and the director can be restarted, upgraded or
 backed up without the web service. Cost: a third local service and a small local interface.
 
 ### Transport between machines
 
 | Option | Cost | Risk | Verdict |
 | --- | --- | --- | --- |
-| **A. The manager protocol (u32 + JSON frames) over TLS 1.3, mutual, pinned** | rustls in the manager and the super-manager; a key pair per side (rcgen, [docs.rs/rcgen](https://docs.rs/rcgen/latest/rcgen/)); `PipeClient` reused as is over rustls' `StreamOwned`, which is `Read + Write` ([docs.rs](https://docs.rs/rustls/latest/rustls/struct.StreamOwned.html)); `manager::pipe`'s dispatch reused on the node | A network listener in the manager (below); pinning code is ours | **Recommended** |
+| **A. The manager protocol (u32 + JSON frames) over TLS 1.3, mutual, certificates from the director's CA** | rustls in the manager and the director; keys, CSRs and issuing with rcgen ( [docs.rs/rcgen](https://docs.rs/rcgen/latest/rcgen/)); `PipeClient` reused as is over rustls' `StreamOwned`, which is `Read + Write` ([docs.rs](https://docs.rs/rustls/latest/rustls/struct.StreamOwned.html)); `manager::pipe`'s dispatch reused on the node | A network listener in the manager (below); the join and renewal code is ours | **Recommended** |
 | B. HTTPS + JSON (axum with TLS, mutual) | An HTTP mapping of every method, a second error shape | Same listener question, more code | No gain over A for a machine-to-machine call |
 | C. gRPC (tonic, protobuf) | A schema, a code generator, a second protocol beside the pipe's | gRPC supports client certificates ([grpc.io auth guide](https://grpc.io/docs/guides/auth/)) | Worth it only for streaming (live logs to the web); later, if then |
 | D. SSH with a forced command relaying frames to the local manager | No listener of ours; keys in `authorized_keys` with `restrict,command=` ([sshd(8)](https://man.openbsd.org/sshd#AUTHORIZED_KEYS_FILE_FORMAT)) | sshd required on every node: in the box only on Windows Server 2025, an optional feature on Windows 10/11 and Server 2019/2022 ([Microsoft Learn](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse)); enrolling writes another account's `authorized_keys`; the relay account becomes a new trusted caller | A good fallback if a network listener in the manager is refused |
 | E. D-Bus over TCP | None | The specification: no integrity or confidentiality, non-local TCP deprecated ([D-Bus spec](https://dbus.freedesktop.org/doc/dbus-specification.html), "TCP Sockets", revision 0.33) | Rejected |
 
-**Who listens.** The super-manager dials the nodes; each node listens. Option A puts the listener in
+**Who listens.** The director dials the nodes; each node listens. Option A puts the listener in
 the manager (root, LocalSystem), the smallest design, since the manager already serves the protocol
 and a node then needs only `-core` and the engine (a headless GPU box needs no bff). The alternatives
 are a relay in the node's bff (which is sandboxed and unprivileged, but must then be installed on every
-node and be trusted to grant `configure` on the super-manager's behalf, the same power with more code)
+node and be trusted to grant `configure` on the director's behalf, the same power with more code)
 or a new node agent (another account, unit, package and trusted caller). The risk is bounded so:
 
 - **Off by default.** No port is open until a node's administrator enables it (`pai node enable`,
   `configure`); `pai node leave` closes it and forgets the peer.
 - **Nothing is parsed before the handshake proves the peer.** rustls' client-certificate hook
   (`ClientCertVerifier`, [docs.rs](https://docs.rs/rustls/latest/rustls/server/danger/trait.ClientCertVerifier.html))
-  accepts only the pinned SPKI hash, the handshake signature still verified; a wrong peer is closed by
-  TLS. The only exception is the join window (below): at most 15 minutes, the `Join` method alone,
+  accepts only a certificate chaining to the node's CA bundle with the name `director.pai.invalid` and
+  the `clientAuth` EKU, valid now; a wrong peer is closed by TLS. The only exception is the join window (below): at most 15 minutes, the `Join` method alone,
   attempts limited.
 - **TLS 1.3 only, ALPN `pai-manager/1`**: a client offering no matching protocol gets the fatal
   `no_application_protocol` alert ([RFC 7301](https://www.rfc-editor.org/rfc/rfc7301)), which also
@@ -3012,65 +3016,166 @@ or a new node agent (another account, unit, package and trusted caller). The ris
 - Port: a proposal, 8592 (the bff is 8590), set in the node's config, opened in the firewall by the
   administrator (the packages open nothing).
 
-### Identity and joining
+### Identity and joining: a private CA held by the director (user, 2026-11-21)
 
-Each side has one long-lived key pair and a self-signed certificate, generated on first need; the
-identity is the SHA-256 of the certificate's SubjectPublicKeyInfo, as kubeadm pins its CA
-([kubeadm join](https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-join/),
-`--discovery-token-ca-cert-hash`). Certificates are pinned, so their expiry and the clocks do not
-matter. The node's key lives beside its config, readable by the manager only (`/etc/private-ai/node/`
-mode 0600 root; `%ProgramData%\private-ai\node\` SYSTEM and Administrators); the super-manager's in its
-own state directory.
+Revised 2026-11-21 (user, `PLAN.md` step 14): links between the nodes and the director are secured by
+**a private CA the director holds**; this replaces the pinned self-signed fingerprints of 2026-11-15.
+TLS 1.3 with mutual authentication gives confidentiality and integrity on the wire; **signatures** are
+added only where proof is needed afterwards: the director's commands as recorded in a node's log, and
+the model store's manifest.
 
-The join, the kubeadm pattern turned around because the super-manager dials:
+**Crates** (all already the plan's, versions as read 2026-11-21): `rustls` 0.23 for TLS 1.3, ALPN, and
+the verifiers (`WebPkiClientVerifier::builder(roots)`, which takes CRLs with `.with_crls`:
+[docs.rs](https://docs.rs/rustls/latest/rustls/server/struct.WebPkiClientVerifier.html)), and
+`export_keying_material` (RFC 5705 exporter, after the handshake:
+[docs.rs](https://docs.rs/rustls/latest/rustls/struct.ConnectionCommon.html)); `rustls-webpki` under
+it for chains, names and validity; `rcgen` 0.14 for keys, CSRs (`CertificateParams::serialize_request`)
+and issuing (`CertificateSigningRequestParams::from_der`, feature `x509-parser`, then `signed_by` an
+`Issuer`: [docs.rs](https://docs.rs/rcgen/latest/rcgen/struct.CertificateSigningRequestParams.html),
+[CertificateParams](https://docs.rs/rcgen/latest/rcgen/struct.CertificateParams.html)). The CRL writer
+is to be confirmed in rcgen at slice 5 (unverified); a serial set checked in a verifier wrapper is the
+fallback.
 
-1. On the node, a `pai` member runs `pai node enable` (needs `configure`). The manager creates its key
-   if missing, opens the listener in join mode and prints a **join code**: the node's fingerprint
-   (128 bits are enough to pin) and a random 128-bit secret, valid 15 minutes, single use.
-2. In the super-manager's web UI (or its CLI, later), an administrator adds the node: a name, the
-   address, the code.
-3. The super-manager connects with its own certificate and checks the node's against the code's
-   fingerprint before sending anything: no trust on first use. It sends `Join{secret}`.
-4. The node compares the secret in constant time, pins the presented client certificate as its
-   super-manager, ends join mode. From then on only that certificate gets past the handshake.
+**Names, not addresses.** Every certificate names a role under the reserved TLD `.invalid` (RFC 6761,
+section 6.4), and the TLS client asks for that name whatever address it dials (rustls takes the
+`ServerName` apart from the socket): `director.pai.invalid` for the director, `<node>.node.pai.invalid`
+for a node, `<node>` being the registry name (letters, digits, `-`, at most 63). An address can change
+with no new certificate; no public name or public CA is involved.
 
-A node has at most one super-manager (one pin): simpler rights, and a second governor would be a
-question for the user, not a default. **Removal** is forgetting the pin on either side. **A node
-reinstalled** has a new key: the super-manager refuses it as "identity changed" (like SSH's changed
-host key) until it is joined again. **A super-manager key lost or stolen**: every node is joined again
-(`pai node leave` then a new code); a CA with revocation is the answer only once fleets are large.
+**Certificate profile** (preference, recommended: ECDSA P-256, the most widely supported key type in
+rustls' and rcgen's providers):
+
+| Certificate | Key | SAN | Key usage / EKU | Lifetime |
+| --- | --- | --- | --- | --- |
+| CA | P-256, on the director only | none (subject `pai director CA <id>`) | `keyCertSign`, `cRLSign`; `is_ca`, path length 0 | 5 years, rotated at 4 |
+| Director | P-256 | `director.pai.invalid` | `digitalSignature`; `serverAuth` (store and renewal listener) and `clientAuth` (dialing nodes) | 30 days, renewed locally at day 20 |
+| Director signer | P-256, a key of its own (no TLS key signs records) | `signer.director.pai.invalid` | `digitalSignature`; one private EKU under the UUID arc `2.25.<uuid>` (ITU-T X.667), so no TLS verifier accepts it | 30 days, renewed locally |
+| Node | P-256, generated on the node, never leaves it | `<node>.node.pai.invalid` | `digitalSignature`; `serverAuth` (its listener) and `clientAuth` (renewal, store) | 30 days, renewed by the node at day 20 |
+
+Every leaf is issued with `notBefore` one hour in the past (preference: absorbs small clock skew) and
+the authority key identifier. A node trusts **only** the CA certificates of its trust bundle, and from
+them only the name `director.pai.invalid` (as server, at the director's listener) or the same name as
+client (at its own listener); the director trusts only its CA and, per node, the registry's name.
+
+**No offline root** (user, 2026-11-21: "if the director is compromised there are no other problems left
+anyway"): one CA, its key on the director only; no intermediate, no root kept elsewhere.
+
+**Where the CA key lives.** `/var/lib/private-ai-director/ca/` (mode 0700, the director's user
+`private-ai-director`). Two options (question 1): **(a)** the key file encrypted at rest as a systemd
+credential and handed to the service with `LoadCredentialEncrypted=` (systemd.exec(5); `systemd-creds`
+binds it to the host key and to the TPM2 when present, systemd-creds(1)), so a copied disk or backup
+alone does not yield the key; the cost is that a TPM2-bound key cannot be restored on other hardware,
+so the director also writes, once at creation and on request, a passphrase-encrypted export for an
+offline backup; **(b)** a plain 0600 file, simplest, and anyone who reads the disk or a backup holds
+the fleet. Either way the process is unprivileged and hardened like the bff, the key is loaded only by
+the director, and a hardware key (PKCS#11) can come later.
+
+**The join** (the director still dials, the code still comes from the node):
+
+1. On the node, a `pai` member runs `pai node enable` (`configure`). The manager generates the node's
+   P-256 key (`/etc/private-ai/node/`, 0600 root; Windows `%ProgramData%\private-ai\node\`, SYSTEM and
+   Administrators), opens the listener in join mode with a **temporary self-signed certificate of that
+   key**, and prints the **join code**: the key's SPKI SHA-256 (truncated to 128 bits) and a random
+   128-bit secret, valid 15 minutes, single use.
+2. In the director's web UI an administrator adds the node: its name, its address, the code.
+3. The director connects, checks the node's temporary certificate against the code's SPKI hash before
+   sending anything, and sends `Join{ca_bundle, director_name, mac}` with
+   `mac = HMAC-SHA256(secret, ca_bundle || exporter)`, `exporter` being 32 bytes of
+   `export_keying_material` with the label `pai-join`: the node learns the CA from the one party that
+   knows the secret, on this very connection (a relay has another exporter value).
+4. The node checks the MAC in constant time, then answers `Csr{csr, mac2}`, the CSR of **the same
+   key** for `<name>.node.pai.invalid`, `mac2 = HMAC-SHA256(secret, csr || exporter)`.
+5. The director checks `mac2`, that the CSR's public key is the one the code named, and that the CSR's
+   name is the one being added, ignores every other requested extension (the profile above is the
+   director's), signs, and sends `Certificate{chain}`. The node installs it with the CA bundle, leaves
+   join mode, and from then on its listener verifies clients against the CA only.
+
+**A joined node trusts only its cache, and fails closed** (user, 2026-11-21). Once joined, the node's
+manager accepts on its network listener no connection whose client certificate does not chain to the
+CA bundle in its local cache (`/etc/private-ai/node/`, beside its key) with the director's name, and
+runs no forwarded command whose signature does not verify against that same cache. There is no
+fallback: no plain listener, no trust on first use after the join, no other CA, no system store, and
+the join window does not reopen by itself (only `pai node enable` by a local `pai` member, which starts
+a new join). A missing or unreadable cache keeps the listener closed. Local clients (D-Bus, the named
+pipe, the local bff) are unaffected: they keep today's OS identity, polkit and `pai` rules.
+
+**Renewal, automatic and early.** At two thirds of its lifetime (day 20 of 30) the node's manager
+generates a new key and CSR and calls `Renew` on the director's listener (port 8593, the store's; ALPN
+`pai-director/1`), authenticated by its current certificate. A failure is retried with exponential
+backoff from 5 minutes to at most 1 hour, with jitter, until it succeeds or the certificate expires;
+the new certificate replaces the old one atomically (written, then renamed) and the old key is
+deleted. What the node says as expiry nears: every failed attempt is a warning in its log
+(`node-cert-renewal-failed`, with the reason); from 7 days before `notAfter` a daily
+`node-cert-expiring` warning; `pai node show` and the node's `GET /api/node` report the certificate's
+expiry and the last renewal attempt, and the director's hub shows `certExpires` per node, so an
+administrator sees the problem a week ahead. The director refuses a node
+on the deny list, a removed node, a CSR whose name is not the caller's, and an expired certificate.
+Each reply carries the director's clock; a node whose clock differs by more than 5 minutes logs
+`node-clock-skew` (operational requirement: NTP on every machine, since `rustls-webpki` judges validity
+by the local clock).
+
+**When a node's certificate expires** (the director unreachable for more than 30 days): the node runs
+on (its instances, boot settings and local clients never depend on the director); the director's
+handshakes to it fail and it reads `expired` in the hub; it cannot renew with an expired certificate.
+It comes back by a new join (`pai node enable` prints a new code; the instances and files are kept).
+A grace period for renewal after expiry is question 2.
+
+**Revocation: refused renewal plus a deny list.** Removing a node puts its name and current serial on
+the director's deny list, published as a CRL the CA signs and checked at **every** handshake the
+director takes part in (as server: `WebPkiClientVerifier` `.with_crls`; as client: the same list
+checked on the node's certificate), and refuses its renewals; an entry is pruned once the denied
+certificate's `notAfter` has passed. Nodes keep no deny list: they trust one director name under one
+CA, and a compromised director is a compromised CA (rotation below).
+
+**Signed records.** Every command the director forwards carries `{node, principal, method, args
+SHA-256, time, nonce}` signed by the signer key, with the signer's certificate; the node checks the
+chain to its CA, the private EKU and the name, refuses a time outside 5 minutes of its clock or a nonce
+seen in the last 10 minutes, and stores the signature with the log entry, so the log proves later
+which director asked what for whom. The store's manifest is signed the same way.
+
+**CA rotation.** Planned: the director creates the new CA and pushes the bundle {old, new} to every node
+(`SetTrustBundle`, a signed command); once every reachable node has it, the director's own leaf and new
+issuances move to the new CA; after 30 days every live node certificate is from the new CA and the
+bundle {new} is pushed. A node that was unreachable meanwhile renews under the new CA if it still holds
+the bundle, else joins again. A **compromised** CA key: every node joins again (`pai node leave`, a new
+code), since the attacker could push bundles too.
+
+A node has at most one director (one CA bundle, one director name): simpler rights, and a second
+governor would be a question for the user. **Removal**: the deny list on the director, `pai node
+leave` on the node (forgets the bundle and the certificate, closes the port). **A node reinstalled**
+has a new key and no certificate: it joins again.
 
 ### Who may act on which node
 
 | Option | Cost | Verdict |
 | --- | --- | --- |
-| **Delegation**: joining grants the super-manager `control` and `configure` on the node; the super-manager decides who among its users may act | Small: one new caller kind in the node's Authority | **Recommended now** |
-| Per-node rights in the super-manager (user or group to node list) | A rights model and its UI | Later, on top of delegation, without touching nodes |
-| The same accounts on every machine (a directory: LDAP, AD), the node checking the named user's local `pai` membership | Needs a shared directory; the node trusts the super-manager's word about who it is anyway | Only if the user's machines share one |
+| **Delegation**: joining grants the director `control` and `configure` on the node; the director decides who among its users may act | Small: one new caller kind in the node's Authority | **Recommended now** |
+| Per-node rights in the director (user or group to node list) | A rights model and its UI | Later, on top of delegation, without touching nodes |
+| The same accounts on every machine (a directory: LDAP, AD), the node checking the named user's local `pai` membership | Needs a shared directory; the node trusts the director's word about who it is anyway | Only if the user's machines share one |
 | A central identity provider (OIDC tokens verified by each node) | Token issuance, keys, expiry, an IdP to run | Later, if users come from outside |
 
-How a web session maps to a node: the user signs in on the super-manager machine's bff, checked by
+How a web session maps to a node: the user signs in on the director machine's bff, checked by
 **that machine's** manager (`Authenticate`, so that machine has `-core`); only a `pai` member gets a
-session. The bff sends each call to the super-manager with the session's principal
-(`alice@<super-manager name>`); the super-manager admits only its bff (by peer credentials: `SO_PEERCRED`
+session. The bff sends each call to the director with the session's principal
+(`alice@<director name>`); the director admits only its bff (by peer credentials: `SO_PEERCRED`
 on a Unix socket, [unix(7)](https://man7.org/linux/man-pages/man7/unix.7.html)) and forwards the call to
 the node with the same principal as a field. The node's manager authorizes the enrolled peer and logs
 the principal with every change. No password leaves the machine it was typed for.
 
 What each side can do if compromised: the bff, act as any administrator while compromised (as today on
-one machine); the super-manager, act on every joined node as an administrator until each node forgets
+one machine); the director, act on every joined node as an administrator until each node forgets
 it; the network, nothing (mutual TLS); a node, nothing on the other nodes (it holds no credential to
-them) and it cannot impersonate the super-manager to other nodes.
+them) and it cannot impersonate the director to other nodes.
 
 ### The bff and the web UI
 
-- `bff.ini` `[Bff] SuperManager = true` (default false) selects hub mode; explicit, so a super-manager
+- `bff.ini` `[Bff] Director = true` (default false) selects hub mode; explicit, so a director
   that is down shows as down instead of the UI quietly dropping back to the local machine.
 - `GET /api/version` gains `"nodes": true|false`, so the web UI knows the mode without a probe.
-- Hub mode adds `GET /api/nodes` (`[{name, address, state: reachable|unreachable|identity-changed|incompatible, version}]`),
+- Hub mode adds `GET /api/nodes` (`[{name, address, state: reachable|unreachable|untrusted|expired|removed|incompatible, version, certExpires}]`),
   `POST /api/nodes` (name, address, code) and `DELETE /api/nodes/{node}`, and serves every
   instance and preset route under `/api/nodes/{node}/...`, same bodies and errors, plus the keys
-  `supermanager-unavailable` and `node-unavailable`. Local mode keeps today's routes; the web UI picks
+  `director-unavailable` and `node-unavailable`. Local mode keeps today's routes; the web UI picks
   its base path from `nodes`. Everything is per node (instances, presets, models), so the node is only a
   prefix.
 - The web UI: a Nodes list on the Overview and node-scoped pages; the designer's brief first, as for
@@ -3083,17 +3188,18 @@ them) and it cannot impersonate the super-manager to other nodes.
 
 | Failure | What happens |
 | --- | --- |
-| A node down or unreachable | The super-manager's per-node timeout (shorter than the bff's) answers `node-unavailable` for it; the others answer as usual (fan-out in parallel) |
+| A node down or unreachable | The director's per-node timeout (shorter than the bff's) answers `node-unavailable` for it; the others answer as usual (fan-out in parallel) |
 | A write whose reply is lost | The node's write is atomic (rename); the UI says the outcome is unknown and reloads; the revision check (409) makes a retry safe |
-| The super-manager down | Nodes run on: systemd and the SCM own the instances and the boot settings, local `pai-config`, `pai` and a local bff work; the hub's web UI shows `supermanager-unavailable` |
-| The super-manager gone for good | Each node's administrator runs `pai node leave`; nothing else on the node changes |
-| A node's key changed | Refused as `identity-changed` until joined again |
+| The director down | Nodes run on: systemd and the SCM own the instances and the boot settings, local `pai-config`, `pai` and a local bff work; the hub's web UI shows `director-unavailable` |
+| The director gone for good | Each node's administrator runs `pai node leave`; nothing else on the node changes |
+| A node reinstalled, or its certificate expired or denied | Read as `untrusted`, `expired` or `removed`; it joins again |
+| The director's CA key lost | Every node joins again; with question 1 (a), the offline export restores it |
 | Version skew | Below |
 
 ### Packaging, upgrades and version skew
 
-- **A separate package**: `private-ai-framework-supermanager` (Linux) with `pai-supermanager` in
-  `/usr/libexec/private-ai`, its unit, its sysusers entry (`private-ai-super`), its socket in its
+- **A separate package**: `private-ai-framework-director` (Linux) with `pai-director` in
+  `/usr/libexec/private-ai`, its unit, its sysusers entry (`private-ai-director`), its socket in its
   runtime directory, group-readable by `private-ai-bff` only; requires `-core` (the sign-in) and
   usually sits beside `-bff`. Its own machine is a node only if joined like any other, over
   `127.0.0.1`, one code path. Windows: later (a feature of the framework's MSI, off by default, or not
@@ -3101,30 +3207,31 @@ them) and it cannot impersonate the super-manager to other nodes.
 - **Nodes need nothing new**: the listener is part of `pai-manager` in `-core`, off until enabled.
 - **Skew**: the ALPN name carries the protocol's major version (`pai-manager/1`); within a major,
   changes are additive (new methods, new optional fields), and a new `Version` method (no authorization)
-  returns the node's framework version and protocol minor, so the super-manager shows it and avoids
+  returns the node's framework version and protocol minor, so the director shows it and avoids
   methods an older node lacks (today an unknown method ends the connection with `BadRequest`,
-  `manager::pipe`). The super-manager supports the current and the previous major; upgrade it first.
+  `manager::pipe`). The director supports the current and the previous major; upgrade it first.
   The join state lives in the node's config directory and survives package upgrades.
 
 ### The model store (R13, user 2026-11-21): accepted (user, 2026-11-21), the nodes pull
 
-The user's words (2026-11-21, translated): "The super-manager will host the models for all the nodes
+The user's words (2026-11-21, translated): "The director will host the models for all the nodes
 and offer an endpoint to the hosts to download them locally."
 
-- **What it is.** A folder of GGUF files the super-manager keeps, each with a manifest entry
+- **What it is.** A folder of GGUF files the director keeps, each with a manifest entry
   `{name, size, sha256, origin}` (`origin`: the HF repo, commit and path it was taken from, or
   "uploaded"). For a file taken from Hugging Face the sha256 is checked at ingestion against the tree's
   `lfs.oid`, which `hf.rs` already reads; the manifest is the store's truth.
-- **Who may download.** Only a joined node: the one whose SPKI hash the registry pinned at the join.
-  A node fetches only when told to by a `configure` call the super-manager forwards for a signed-in
+- **Who may download.** Only a joined node: a valid certificate from the director's CA, its name in
+  the registry and not on the deny list.
+  A node fetches only when told to by a `configure` call the director forwards for a signed-in
   administrator (`StoreFetch{name}`, its principal logged by the node like every change), or by its own
   `pai` member; nobody else, and never anonymously.
 - **Channel and identity.**
 
   | Option | Cost | Risk | Verdict |
   | --- | --- | --- | --- |
-  | **A. The node pulls: HTTPS `GET /store/<name>` on a super-manager listener, TLS 1.3 mutual, each side pinning the other's SPKI from the join** | A listener in the super-manager (unprivileged, its own port, a proposal: 8593); HTTP range requests give resume for free (RFC 9110, "Range Requests") | The super-manager must be reachable from the nodes, the reverse of the answer to question 1 | **Recommended**: it is what the user asked ("an endpoint to download"), and a big transfer is a plain stream, not 1 MiB JSON frames |
-  | B. The super-manager pushes over the node's listener (`StoreWrite{name, offset, bytes}` frames) | No new listener | Base64 in 1 MiB JSON frames (a third larger), a long-held connection on the node's manager, resume by offset hand-made | Fallback if nodes cannot reach the super-manager |
+  | **A. The node pulls: HTTPS `GET /store/<name>` on a director listener, TLS 1.3 mutual, certificates from the director's CA (the listener that also takes renewals)** | A listener in the director (unprivileged, its own port, a proposal: 8593); HTTP range requests give resume for free (RFC 9110, "Range Requests") | The director must be reachable from the nodes, the reverse of the answer to question 1 | **Recommended**: it is what the user asked ("an endpoint to download"), and a big transfer is a plain stream, not 1 MiB JSON frames |
+  | B. The director pushes over the node's listener (`StoreWrite{name, offset, bytes}` frames) | No new listener | Base64 in 1 MiB JSON frames (a third larger), a long-held connection on the node's manager, resume by offset hand-made | Fallback if nodes cannot reach the director |
 
   The node's manager (root, LocalSystem) does the transfer, since only it holds the node key
   (`/etc/private-ai/node/`, 0600 root). It parses only TLS and HTTP headers; the body is hashed and
@@ -3136,8 +3243,8 @@ and offer an endpoint to the hosts to download them locally."
   manifest entry writes outside the staging and target folders.
 - **Resume.** A failed or cancelled transfer keeps its partial; the next fetch sends `Range: bytes=<len>-`
   with `If-Range` on the sha256 as entity tag, so a changed file restarts from zero.
-- **Storage and quotas.** The store lives in the super-manager's state directory
-  (`/var/lib/private-ai-super/store/`), capped by `[Store] MaxBytes` (refused `store-full`); a node
+- **Storage and quotas.** The store lives in the director's state directory
+  (`/var/lib/private-ai-director/store/`), capped by `[Store] MaxBytes` (refused `store-full`); a node
   checks its free space against the entry's size before it starts (`node-disk-full`). No per-node quota
   until a user asks for one.
 - **Beside a node's own HF downloads.** Both stay: a profile with `hf-repo` still makes llama-server
@@ -3155,37 +3262,56 @@ type-checked like the rest of the Windows code.
 0. **Before step 10 slice 6b part 3 hardens** (no new behaviour): the acting principal is a field of
    the request beside the transport caller, not folded into `Caller` (below). Done when: a test pins
    that a call from the bff carrying a principal reaches the Authority as (caller, principal, action).
-1. **Node identity.** `pai node show|enable` creates the key and prints the fingerprint. Done when:
-   the fingerprint is stable across restarts, the key file is 0600 root, a non-`configure` caller is
-   refused.
-2. **The listener.** TLS 1.3, ALPN, pinned client certificate, `manager::pipe` dispatch with a new
-   caller kind. Done when, over loopback with test keys: a pinned client lists instances; an unpinned
-   one is closed before any frame; a wrong ALPN gets the alert; the bound on connections holds.
-3. **The join.** Code, window, `Join`, pin, `leave`. Done when: a right code pins once; a wrong,
-   expired or reused code is refused and counted; after the window no unpinned peer gets past the
-   handshake; `leave` closes the port.
-4. **Delegated rights and the log.** Done when: the pinned peer may `configure` (including the API
-   key in reads), and each change it makes is logged with its principal.
-5. **The super-manager.** Crate and binary, its key, the registry, `add` against an in-process node.
-   Done when: add with a code pins both sides; a changed node key reads `identity-changed`; a
-   stopped node reads `unreachable` within the timeout while another answers.
+1. **Node identity.** `pai node show|enable` creates the P-256 key and the temporary certificate and
+   prints the code. Done when: the key file is 0600 root (SYSTEM and Administrators on Windows), the
+   code's hash is the key's SPKI, a non-`configure` caller is refused.
+2. **The listener.** TLS 1.3, ALPN, client certificates verified against the node's CA bundle with the
+   name `director.pai.invalid` and `clientAuth`, `manager::pipe` dispatch with a new caller kind. Done
+   when, over loopback with a test CA: a director certificate from it lists instances; a certificate
+   from another CA, an expired one, one with another name or without `clientAuth` is closed before any
+   frame; a wrong ALPN gets the alert; the bound on connections holds; with the cache missing or
+   unreadable the listener stays closed, and local clients still work.
+3. **The join.** Code, window, `Join` with its MAC over the exporter, the CSR bound to the code's key,
+   issuing, install, `leave`. Done when: a right code leaves the node trusting the test CA and holding a
+   30-day certificate for `<name>.node.pai.invalid` with `serverAuth` and `clientAuth`; a wrong, expired
+   or reused code is refused and counted; a CSR of another key, or for another name, is refused; a MAC
+   computed on another connection (a relay) is refused; requested extensions outside the profile are
+   not issued; after the window only CA-issued clients pass; `leave` closes the port and forgets the
+   bundle.
+3b. **Renewal and the deny list.** `Renew` on the director's listener, the CRL at every handshake. Done
+   when: a renewal at day 20 gives a new key and certificate; a removed node's renewal and handshake
+   are refused; an expired certificate cannot renew; a skew over 5 minutes is logged; a denied entry is
+   pruned after its `notAfter`; with the director down, retries back off from 5 minutes to 1 hour,
+   each failure logged, and `node-cert-expiring` appears from 7 days before expiry.
+4. **Delegated rights and the signed log.** Done when: the CA-authenticated director may `configure`
+   (including the API key in reads); each change it makes is logged with its principal and the
+   signer's signature; a command unsigned, signed by a certificate without the private EKU, outside
+   the 5-minute window, or with a replayed nonce is refused.
+5. **The director.** Crate and binary, the CA (question 1's storage), its leaves and the signer, the
+   registry, `add` against an in-process node. Done when: the CA key is created with the chosen
+   protection and mode; `add` with a code issues the node's certificate; a node presenting a
+   certificate of another CA reads `untrusted`, an expired one `expired`; a stopped node reads
+   `unreachable` within the timeout while another answers.
 6. **Its local interface.** The protocol with `node` and principal on a Unix socket, the bff's uid
    only. Done when: another uid is refused; calls reach the right node; `ListNodes` fans out.
-7. **The bff's hub mode.** `SuperManager`, `nodes` in `/api/version`, `/api/nodes`, the node-prefixed
-   routes over a node seam. Done when: tests against a fake super-manager pass and every local-mode
+7. **The bff's hub mode.** `Director`, `nodes` in `/api/version`, `/api/nodes`, the node-prefixed
+   routes over a node seam. Done when: tests against a fake director pass and every local-mode
    test still passes unchanged.
 8. **The web UI.** Designer's brief, then nodes on the Overview and node-scoped pages.
 9. **Packaging.** The Linux package; checked by `xtask package` and its contents; installing is the
    user's run, then the end-to-end check on two machines.
 10. **The model store** (after 9). The manifest, ingestion from Hugging Face with the sha256 check, the
    pull listener, `StoreFetch` on the node with staging, hash and rename, range resume, `GET /api/store/files`.
-   Done when, with test keys over loopback: an unpinned node is closed before any byte; a pinned node
-   fetches a file whose sha256 matches and it appears in `GET /api/node/model-files`; a corrupted body
+   Done when, with a test CA over loopback: a node without a valid certificate is closed before any
+   byte; a node with one fetches a file whose sha256 matches and it appears in `GET /api/node/model-files`; a corrupted body
    is refused `store-hash-mismatch` and leaves no file at the target; a cut transfer resumes from its
-   partial; a full store refuses `store-full`.
+   partial; a full store refuses `store-full`; a manifest with a bad signature is refused.
+11. **CA rotation** (after 10). Done when: with the bundle {old, new} pushed, nodes accept the
+   director's leaf from either CA; renewals then come from the new CA; the bundle {new} leaves no node
+   that renewed unable to connect, and a node still on the old CA alone reads `untrusted`.
 
-What can wait: per-node rights, a central identity, nodes that dial out (NAT), a CA, gRPC streaming
-for live logs, the super-manager on Windows, a CLI for the super-manager, the gateway across nodes
+What can wait: per-node rights, a central identity, nodes that dial out (NAT), a hardware CA key, gRPC streaming
+for live logs, the director on Windows, a CLI for the director, the gateway across nodes
 (R11's routing across instances on several machines).
 
 ### What the current code should change before it hardens
@@ -3198,7 +3324,7 @@ for live logs, the super-manager on Windows, a CLI for the super-manager, the ga
   password), so a node's log can tell `alice@hub` from a local `alice`.
 - **The bff's upstream.** Today one `ManagerClient` per request with one 5 s `MANAGER_TIMEOUT`. Put
   the upstream behind a seam that returns a client for a node (one node, "local", in local mode), and
-  budget timeouts per hop (node < super-manager < bff < the web UI's), which slice 9 of step 10
+  budget timeouts per hop (node < director < bff < the web UI's), which slice 9 of step 10
   already needs for long stops.
 - **The revision** (`PLAN.md` step 10 slice 8): key the hash before it crosses a network, as already
   planned.
@@ -3207,22 +3333,29 @@ for live logs, the super-manager on Windows, a CLI for the super-manager, the ga
 
 ### Questions only the user can answer
 
-1. **Reachability.** Can the super-manager always open a connection to each node (same LAN or VPN)?
+1. **Reachability.** Can the director always open a connection to each node (same LAN or VPN)?
    The design assumes yes; nodes that must dial out (behind NAT) need a different, larger transport.
-2. **Rights.** Is "every administrator of the super-manager (member of `pai` on its server) administers
+2. **Rights.** Is "every administrator of the director (member of `pai` on its server) administers
    every joined node, after the node's own administrator approved the join" enough for now, or must
    rights differ per node from the start?
 3. **The listener.** Is a network port opened by the manager itself (off until a node joins, mutual
    TLS before anything is read) acceptable, or must the manager never listen on the network (then SSH,
    option D, or a relay in the node's bff)?
-4. **Platforms.** The super-manager on Linux only at first, with Linux and Windows nodes?
+4. **Platforms.** The director on Linux only at first, with Linux and Windows nodes?
 
 Answers (user, 2026-11-15): 1. yes, the nodes are reachable (same LAN or VPN); 2. enough for now;
 3. the manager's listener is acceptable; 4. Linux only at first, with Linux and Windows nodes.
 
 The model store (2026-11-21), recommendation first: 5. **Direction**: the nodes pull from a listener on
-the super-manager (it must be reachable from them); or the super-manager pushes over the node's
+the director (it must be reachable from them); or the director pushes over the node's
 listener. 6. **Ingestion**: the store takes files from Hugging Face (sha256 checked against the tree)
 and by upload; or Hugging Face only. 7. **Quota**: one cap on the store; or a cap per node as well.
 Answers (user, 2026-11-21): 5. the nodes pull; 6. from Hugging Face (sha256 checked) and by upload;
 7. one cap on the store, no per-node quota.
+
+The private CA (2026-11-21), recommendation first: 8. **The CA key at rest**: an encrypted systemd
+credential (host key, plus TPM2 when present) with a passphrase-encrypted offline export; or a plain
+0600 file. 9. **A node whose certificate expired**: it joins again with a new code; or the director
+renews an expired certificate within a grace period (for example 30 more days) when the node is not
+denied, which weakens revocation by as much. 10. **Key type**: ECDSA P-256; or Ed25519. 11. **CA
+lifetime**: 5 years, rotated at 4; or 10 years.
