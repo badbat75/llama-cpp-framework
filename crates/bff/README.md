@@ -6,9 +6,11 @@ built from `fe/` and the API it calls. Today every API route
 beside the sign-in is for a signed-in user: the framework version, this host's name with the engine and
 runtime versions its packages installed, the node's compute devices ([below](#the-node)), the manager's
 instances with their state, the run verbs, the start-at-boot flag, an instance's tags, an instance's server file read and saved, the model profile
-list, the model profile on/off switch and one model profile, read and saved, and the server profile
+list, the model profile on/off switch and one model profile, read and saved, the server profile
 pool: its list, a new profile, one profile read and saved, and its delete
-([below](#the-server-profile-pool)); the manager checks its sign-in: the password and the group `pai`
+([below](#the-server-profile-pool)), and an instance's associations: its server profile switched, and
+its model profiles listed and assigned, one at a time or as the whole pool
+([below](#the-association-routes)); the manager checks its sign-in: the password and the group `pai`
 (`PLAN.md` step 10).
 Only the web UI's page at `/`, its files under `/assets/` and the three session routes answer without
 a session: any other API route is 401 `session-required`, asking the manager nothing (user,
@@ -118,7 +120,7 @@ runtime (axum).
 | Route | Answer |
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>"}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
-| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the ports, the tags and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "serverProfile": "<profile>|null", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the server profiles, the ports, the tags and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
 | `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}]}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. Like `GET /api/version`, the read asks the manager nothing and leaves the session's idle deadline where it was ([below](#the-node)) |
 | `GET /api/node/devices` | `{"probedAt": "<UTC text>|null", "devices": [{"id", "name", "backend", "totalMib", "freeMib"}]}`: the node's compute devices, asked of the manager as the signed-in user, on a bound long enough for the engine probe it runs (35 s); 401 `session-required` with no session, the manager not asked ([below](#the-node)) |
 | `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
@@ -130,10 +132,14 @@ runtime (axum).
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The read reads the session as a gate and never moves its idle deadline, so the page can poll it, and connects as the bff's own account: the manager's refusal of that connect is of the bff's account, so it ends no session. The failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
 | `PUT /api/instances/{id}/tags` | `{"tags": [<text>, ...]}` in, 204 with no body once the manager wrote the instance's own list, for a signed-in user: 400 `tags-malformed` for a body that is not that list, 422 `server-bad-tags` (`field: "tags"`) for a list the manager's rule refuses ([below](#the-tags-of-an-instance)) |
-| `GET /api/profiles/model` | The model profile rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<model profile id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>"}]` ([below](#the-model-profile-routes)) |
+| `PUT /api/instances/{id}/profiles/server` | `{"serverProfile": "<profile>"}` in, `{"running"}` out, for a signed-in user: the record now names that `server@<profile>.ini` as the file the instance runs, nothing started, stopped or restarted ([below](#the-association-routes)) |
+| `GET /api/instances/{id}/profiles/model` | `{"all", "profiles"}` for a signed-in user: the model profile pool's rows as this instance's section of `assignments.ini` makes them, each with `value`, `viaAll` and `effective` ([below](#the-association-routes)) |
+| `PUT /api/instances/{id}/profiles/model/{profile}` | `{"value": "on"|"off"|"none"|"inherit"}` in, `{"effective", "running"}` out, for a signed-in user: the one key of the instance's section of `assignments.ini`, `effective` read back after the write ([below](#the-association-routes)) |
+| `PUT /api/instances/{id}/profiles/model` | `{"all": "inherit"|"none"}` in, `{"running"}` out, for a signed-in user: the `*` of that section, the whole pool ([below](#the-association-routes)) |
+| `GET /api/profiles/model` | The model profile rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<model profile id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>", "assignments": [{"instance", "value", "viaAll", "effective"}, ...]}]` ([below](#the-model-profile-routes)) |
 | `GET /api/profiles/model/{id}` | One model profile for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-model-profile-page)) |
-| `PUT /api/profiles/model/{id}` | The model profile page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
-| `PUT /api/profiles/model/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running"}` out, for a signed-in user: the model profile switched on or off ([below](#the-model-profile-routes)) |
+| `PUT /api/profiles/model/{id}` | The model profile page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running", "restart"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
+| `PUT /api/profiles/model/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running", "restart"}` out, for a signed-in user: the model profile switched on or off ([below](#the-model-profile-routes)) |
 | `GET /api/profiles/server` | The node's server profiles, the manager's rows in its order, for a signed-in user: `[{"id", "engine", "port", "tags", "instance"}]`, `instance` the id of the instance using the profile, `null` when none does ([below](#the-server-profile-pool)) |
 | `POST /api/profiles/server` | `{"engine", "id", "port"}` in: a new profile of the defaults, 201 `{"id"}`, for a signed-in user ([below](#the-server-profile-pool)) |
 | `GET /api/profiles/server/{id}` | The profile's own `server@<id>.ini` as the instance route's document, gaining `instance` and a `defaults.StateDir` of the instance that runs it, for a signed-in user ([below](#the-server-profile-pool)) |
@@ -178,12 +184,16 @@ each instance, and `GET /api/profiles/server` asks `ServerProfiles` ([below](#th
 the four calls the manager answers without authorization. What the bff calls beyond them is
 `Authenticate`, what sign-in makes ([below](#the-session)), the `As` form of a guarded method naming
 the session's user, what a signed-in route makes ([below](#the-server-file-of-an-instance)), the tags
-write ([below](#the-tags-of-an-instance)) and the pool's create, delete, document and save
-([below](#the-server-profile-pool)) (`crates/bff/src/lib.rs`).
+write ([below](#the-tags-of-an-instance)), the pool's create, delete, document and save
+([below](#the-server-profile-pool)), the three association writes with the reads of `assignments.ini`
+and of the two model profile files ([below](#the-association-routes)), and the model profile list,
+switch and save on one connect as the user ([below](#the-model-profile-routes))
+(`crates/bff/src/lib.rs`). The association routes ask `Instances` and `Status` as well, on a connect
+of the bff's own account ([below](#the-association-routes)).
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `[{"id", "engine", "state", "port", "tags", "instanceTags", "boot"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
+| 200 | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
 | 401 | `{"key": "session-required", "args": []}` | The request's cookie names no live session: `connect` is never called, no `Set-Cookie` goes out |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach (none running, macOS), or no full answer within 5 s |
 | 502 | `{"key": "client-not-authorized", "args": []}` | The manager refused a call |
@@ -193,6 +203,9 @@ write ([below](#the-tags-of-an-instance)) and the pool's create, delete, documen
   `activating`, `deactivating`, `failed`, or an unknown name passed on as is). The engine is
   `llama.cpp`, the only engine today (`ENGINE_LLAMA_CPP` in `lib.rs`). The error body is only the
   strings key with empty args, never the manager's detail.
+- **`serverProfile` is the server profile the instance runs**: the name the record of `instances.ini`
+  carries, as the manager spells it, `null` when its section names none, from the same `Instances`
+  call as the port and the tags.
 - **The port and the tags come from `Instances`**: `port` is the port the instance's server profile
   names, `0` when its section names no profile or the record cannot be read; `tags` is the server
   profile's `Tags` followed by the instance's own, in that order with the repeats removed
@@ -207,8 +220,8 @@ write ([below](#the-tags-of-an-instance)) and the pool's create, delete, documen
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
   `lib.rs`) that covers the connect. The routes that write a file, the server save, the model profile
-  switch and save, and the pool's create, save and delete, run under the longer `WRITE_TIMEOUT`
-  ([below](#saving-the-server-file)).
+  switch and save, the pool's create, save and delete, and the three association writes, run under the
+  longer `WRITE_TIMEOUT` ([below](#saving-the-server-file), [below](#the-association-routes)).
 - **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `client-unavailable`, so a test never
   reaches the real manager.
 - **Reaching it**: on Linux the system bus (`org.privateai.Manager1`), whose policy lets every user
@@ -557,7 +570,10 @@ sign-in and all four ask `private-ai-manager` on **one connect as the signed-in 
 that user's own membership of `pai`, re-checked by the
 manager at the call, that answers: 401 `session-required` with no session (the manager is not
 connected to, nothing is written), 403 `session-not-administrator` and the end of the session when
-the manager refuses that user.
+the manager refuses that user. Since the association routes (2d9a4c8) the list reads the manager's
+record `assignments.ini` on the same connect, for each row's `assignments`, and the switch and the
+save read it once their writes land, for the instances they offer to restart: the record is described
+with [the association routes](#the-association-routes).
 
 What they read and write is the manager's pair of model profile files, `models.ini` and
 `models.ini.disabled` in the engine's config directory (`paths::engine_config_dir`:
@@ -569,13 +585,27 @@ the `{id}` of the URL is a section name, matched in any letter case, never a pat
 ### The list
 
 One read of each file, and one row per section except llama-server's global `[*]`,
-`[{"id", "engine", "engineAvailable", "enabled", "model"}]`:
+`[{"id", "engine", "engineAvailable", "enabled", "model", "assignments"}]`:
 
 - `id` as the file spells it; `engine` the engine whose model profile file holds the section (`llama.cpp`,
   the only engine today) and `engineAvailable` true for every row, there being no engines route to
   check it against.
 - `model` is the section's `model` key as the file holds it, no path resolution and no existence
   check, `""` when the section has no such key: every row carries a string.
+- **`assignments`** is the instances this model profile is given to, as the record of
+  `assignments.ini` speaks of it: one entry per section of the record that the manager lists, the
+  instance as the record spells it, sorted by instance with the letter case aside, each entry
+  `{"instance", "value", "viaAll", "effective"}`: `value` the section's key of its own, or the `*` as
+  that section spells it when it has none, `viaAll` when the `*` speaks for the model profile,
+  `effective` where the render gives it to the instance, the three as
+  [`pai_core::assign::rows`](#the-association-routes) resolves them. A section that says nothing of
+  the model profile, with the `*` and without it, is no entry: a model profile no instance is given
+  carries `[]`, and a section naming an instance the manager does not list says nothing about a
+  machine that no longer has it. The record and the manager's list are asked on the same connect as
+  the two files, so the list carries four calls. A machine with no `assignments.ini` is no failure:
+  every row answers `[]`. A record read that fails, and an instances list answered as a failure,
+  fail the whole list, never answering empty `assignments` lists, which would tell the page that no
+  instance serves anything.
 - The order is the GUI's: the switched-on sections, then the switched-off ones, each group in file
   order; an id in both files is listed once, as on. The web UI does not sort.
 - llama-server's global `[*]` is not a model profile, it is the defaults every model profile starts from, so it is
@@ -589,14 +619,14 @@ One read of each file, and one row per section except llama-server's global `[*]
 | 401 | `session-required` | no session, the manager not asked |
 | 403 | `session-not-administrator` | the manager refused the call for that user; the session ends |
 | 503 | `client-unavailable` | no manager, or one that outlives the bff's 5 s read deadline |
-| 502 | `client-other` | anything else, never the manager's detail |
+| 502 | `client-other` | anything else, never the manager's detail: among them a record of `assignments.ini` the manager answers as unreadable, and an instances list answered as a failure |
 
 ### The switch
 
 The body is `{"enabled": true|false}`. Both files are read, the section is looked for in each, and
 if it is in neither, or the name is llama-server's global `[*]`, the answer is 404
 `no-model-profile-named` and nothing is written. Otherwise the section moves, unchanged. Every manager call
-of the move, the two reads, the two writes, the read back and the states, runs under one bound, the
+of the move, the two reads, the record, the two writes, the read back and the states, runs under one bound, the
 write's 15 s `WRITE_TIMEOUT` ([above](#saving-the-server-file)), not the reads' 5 s:
 
 - **The file the model profile lands in is written first**, because a model profile in both files reads as
@@ -614,9 +644,19 @@ write's 15 s `WRITE_TIMEOUT` ([above](#saving-the-server-file)), not the reads' 
   runs out on that read back, or on the states asked after it, and a read back that fails, answer the
   switch's 200, `enabled` the value the move produced and `running` true. A finished move is not a
   timeout.
-- `running` is whether any instance is `active` or `activating` (asked in the list's order, stopping
-  at the first that is, and true when a state cannot be read: the safe answer after a move that
-  stands). It is the page's "restart to apply" note: the switch starts, stops and restarts nothing.
+- **`restart` is the instances the page is offered to restart, and `running` is that list not being
+  empty**: the record of `assignments.ini` is read once, and the ids kept are its sections the model
+  profile is effective on, in the pool as it stands before the move or as the move leaves it (an
+  explicit `on`, or an `inherit` following the pool's own state on either side), whose state is
+  `active` or `activating`, sorted. An id the manager does not list is left out before its state is
+  asked, a section naming an instance that is gone being a stale record, not a machine, and no state
+  is asked at all, and no list, for a model profile effective nowhere: a profile no instance is given
+  restarts nothing, and a machine with no record at all says nothing about who serves one, so it
+  names no instance and asks no state. An id already where it was asked for names the instances it is
+  effective on now, with nothing written.
+- A state that cannot be read answers `running` true with `restart: []`, the safe answer after a move
+  that stands: at most it costs a needless restart. It is the page's "restart to apply" note: the
+  switch starts, stops and restarts nothing.
 
 The moved text goes through the manager's content checks, the configurator's own
 (`crates/core/src/checks.rs`, run by `check_contents` in `crates/manager/src/manager/service.rs`):
@@ -635,7 +675,7 @@ written first, so a refusal leaves both files as they were.
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"enabled", "running"}` | the move stands, or there was nothing to do, or the limit ran out on the read back and the states after both writes landed: `enabled` the value the move produced, `running` true |
+| 200 | `{"enabled", "running", "restart"}` | the move stands, or there was nothing to do, or the limit ran out on the read back and the states after both writes landed: `enabled` the value the move produced, `running` true and `restart: []` when the states cannot be read |
 | 400 | `model-profiles-malformed` | a body that is not `{"enabled": <bool>}`, or not JSON, the manager not asked |
 | 401 | `session-required` | no session, the manager not connected to |
 | 403 | `session-not-administrator` | the manager refused the read or the write for that user; the session ends |
@@ -694,8 +734,8 @@ no connect to the manager.
 ### The save
 
 `PUT /api/profiles/model/{id}` (`model_profiles.rs` `save`, 3eb24b2, the design "Saving a preset from the web" in
-`ARCHITECTURE.md`) is the model profile page's save: `{"revision", "values"}` in, `{"revision", "running"}`
-out. `values` is an object of the keys the page touched, a string the text to write and `null` the
+`ARCHITECTURE.md`) is the model profile page's save: `{"revision", "values"}` in, `{"revision", "running",
+"restart"}` out. `values` is an object of the keys the page touched, a string the text to write and `null` the
 key to remove, and the section is rewritten in place: the keys the body does not list, the comments
 and the rest of the file stand. The keys the body may touch are `checks::WEB_MODEL_PROFILE_KEYS`: the
 GPU distribution keys `device`, `split-mode` and `tensor-split` joined them at 66b2bb3 (the design's
@@ -730,13 +770,20 @@ comment-marker check (26f5413, decision c1): a key line a section of either file
 byte, id, key and raw value, so an untouched commented line carried over whole is no refusal. A body
 whose edits leave the text as it is writes nothing and answers 200.
 
-The 200 carries the section's revision as the file now holds it, and `running`: false when the
-section is in the disabled file, which the engine never reads; otherwise whether an instance is up,
-and `true` when that state cannot be read after the write landed, the safe answer, as the switch's.
+The 200 carries the section's revision as the file now holds it, `restart` and `running`:
+the record of `assignments.ini` is read once the write stands, and `restart` is its sections the
+model profile is effective on in the pool as the save leaves it (an explicit `on`, or an `inherit`
+following the profile's own state), whose state is `active` or `activating`, sorted; `running` is
+that list not being empty. A section naming an instance the manager does not list is left out before
+its state is asked, and a model profile served nowhere, a switched-off profile no instance is
+explicitly given among them, asks no state at all. A machine with no record at all says nothing about
+who serves a profile: `restart: []`, `running` false, and no state and no instance list asked. A
+state that cannot be read answers `running` true with `restart: []`,
+the safe answer after a write that stands, as the switch's.
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"revision", "running"}` | the write landed and the manager accepted it, the revision the section as the file now holds it; also a body that asked for the text the file already holds, nothing written; and a limit that ran out after the write landed, `running` true |
+| 200 | `{"revision", "running", "restart"}` | the write landed and the manager accepted it, the revision the section as the file now holds it; also a body that asked for the text the file already holds, nothing written; and a limit that ran out after the write landed, `running` true and `restart: []` |
 | 400 | `model-profiles-malformed` | the body is not a model profile save, the manager not asked |
 | 401 | `session-required` | no session, the manager not asked |
 | 403 | `session-not-administrator` | the manager refused the read or the write for that user; the session ends |
@@ -784,7 +831,13 @@ its own in `src/tests/model_profile_body.rs`: 24 tests, pinning the body's shape
 set, the comment-marker 422 and its `field`, the revision compare and the compare and swap's 409, the
 edits in key order and the untouched commented line, and the 200 that writes nothing; both rerun green
 2026-11-17 on the tree at c919ccd (`cargo test -p pai-bff --test model_profile_save --lib`), the save
-suite at 48 and the whole bff (434) green again at 16e6693 (its report). The listen
+suite at 48 and the whole bff (434) green again at 16e6693 (its report). The pool list's
+`assignments`, and the `restart` of the switch and of the save, are pinned in those same suites: 28,
+52 and 55 tests, beside the body module's 24, green with the whole bff (583 tests, the count of the
+`#[test]` and `#[tokio::test]` attributes of the crate's 21 targets) at 2d9a4c8 (the suite's report,
+not a rerun here): the list's four calls and the record's refusals, and which
+instances a switch or a save names to restart, a record section naming a gone instance among them.
+The listen
 address and the `Host` guard are `tests/listen.rs` (17 tests) and `tests/origin.rs` (40), rerun
 green 2026-11-19 on the tree at 42e5c23, the guard's re-read of the machine's names included
 (`cargo test -p pai-bff --test listen --test origin`); the hand check of a
@@ -798,9 +851,11 @@ landed when the read back, or the states, run out. A read back that fails after 
 the ids `**` and ` * `, have no test (`PLAN.md` 11b). The limits the service runs with, 5 s of read,
 15 s of write and the device read's 35 s, are pinned by `the_write_limit_outlasts_the_read_limit`
 (`src/tests/timeouts.rs`) and `the_devices_deadline_is_the_probe_bound_plus_five_seconds`
-(`tests/node_devices.rs`). The list with its port, tags and boot flag, and the tags write, are
-`tests/instances.rs` (35 tests: 33 of them green 2026-11-20 inside the whole bff suite (455) at
-ff406b8, the two of the boot flag at b5fdf9e); the
+(`tests/node_devices.rs`). The list with its port, tags, server profile and boot flag, and the tags
+write, are
+`tests/instances.rs` (36 tests: 33 of them green 2026-11-20 inside the whole bff suite (455) at
+ff406b8, the two of the boot flag at b5fdf9e, the one of `serverProfile`
+(`the_row_carries_the_server_profile_the_manager_names`) with the whole bff (583) at 2d9a4c8); the
 rule's refusals of a server profile's tags, and their `field`, are pinned in `src/server.rs`'s own
 tests. The server file's name is the record's, for the read and the save, and the 404 that reads
 nothing for an id the record does not name or a section naming no profile, are
@@ -822,6 +877,97 @@ a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 2
 `/api/version` and `/api/instances` (that read of 2026-11-14 predates the `Instances` call, which no
 real manager has answered), [above](#running-it)), and on Windows the code is type-checked
 for the GNU target, never run.
+
+## The association routes
+
+`PUT /api/instances/{id}/profiles/server`, `GET /api/instances/{id}/profiles/model`,
+`PUT /api/instances/{id}/profiles/model/{profile}` and `PUT /api/instances/{id}/profiles/model`
+(`crates/bff/src/instance_profiles.rs`, 2d9a4c8, `PLAN.md` step 10 item 13a, `ARCHITECTURE.md`'s
+slice 15): the server profile one instance runs on, and the model profiles it is given. All four sit
+behind sign-in, and the write with the file reads go on a connect **as the signed-in user**, so it is
+that user's own membership of `pai`, re-checked by the manager at the call, that answers: 401
+`session-required` with no session (no manager connected to, nothing written), 403
+`session-not-administrator` and the end of the session when the manager refuses that user. Each reads
+the session with `Sessions::current`, so each moves the idle deadline, unlike the four polled reads
+([above](#the-session)). No page uses them yet.
+
+What they write is the manager's record `assignments.ini`, in the engine's config directory beside the
+two model profile files: one section per instance, one key per model profile, and the key `*` for the
+whole pool. The words are `on`, `off`, `inherit` (follow the pool's own switch) and `none` (no key:
+the model profile is given to the instance by nothing), and a `*` of `inherit` gives every model
+profile of the pool while `none` takes the key away; an explicit key wins over the `*`, and a word
+the render does not know is an absent key. The bff never renders: the row's fields come from
+[`pai_core::assign::rows`](../core/src/assign.rs), the one rule the manager's render of
+`models@<id>.ini` follows, pinned to it.
+
+The record of the instances (`Instances`) and the states behind `running` are asked on a connect of
+the bff's **own** account, as `GET /api/instances` does: a refusal there is 502
+`client-not-authorized` and the session lives on, the service refusing the service, not the user. The
+three writes and every file read go on the user's connect under the write's 15 s `WRITE_TIMEOUT`
+([above](#saving-the-server-file)), and the read of the pool under the reads' 5 s, so a write that
+takes longer than 5 s is answered at 15 s. These four routes never answer 504: a manager that
+outlives the limit, before a write or after one, is 503 `client-unavailable`. The model profile switch
+and save keep their own 504, the answer of a write whose outcome is unknown
+([above](#the-switch)).
+
+**`PUT /api/instances/{id}/profiles/server`** with `{"serverProfile": <name>}` is the manager's
+`SetServerProfile`: the instance's section of `instances.ini` names the `server@<name>.ini` it reads
+at its next start. The record is read first, on the bff's own connect, so an id it does not name is
+404 with nothing written. Nothing is started, stopped or restarted, and the server profile pool is
+untouched: a name the pool lacks is the manager's 404 `client-no-server-profile`, a profile another
+instance holds its 409 `client-server-profile-in-use`, and a port or a host the write makes unusable
+the 422 `client-address-in-use` or `client-unresolvable-host`, each with `field: "serverProfile"`.
+The answer is `{"running"}`, the instance's state read after the write: true only when the record
+named another profile (a record naming none is a change) and the instance is up, the page's offer to
+restart an instance whose record changed under it. A record that already names that profile answers
+false and asks no state, and a record, or a state, that cannot be read is the safe true.
+
+**`GET /api/instances/{id}/profiles/model`** is the pool seen from one instance: the list's rows in
+the list's own order ([above](#the-model-profile-routes)), each with `value`, `viaAll` and `effective`
+as its instance's section gives it, beside `all`, the section's `*` as the page shows it (`inherit`
+when the section carries the key, `none` when it does not). Four calls on one connect: the instances
+list, then
+`assignments.ini`, `models.ini` and `models.ini.disabled` as the user, so an id the record does not
+name is 404 with no file read. An instance with no section answers `all: "none"` and every row
+`value: "none"` with `viaAll` and `effective` false.
+
+**`PUT /api/instances/{id}/profiles/model/{profile}`** with `{"value": <word>}` writes one key of
+that section and **`PUT /api/instances/{id}/profiles/model`** with `{"all": inherit|none}` writes its
+`*`, the whole pool; the `*` route answers only `{"running"}`. The word is the bff's own check, before
+any call: outside the four (the per-profile route) or the two (the `*` route) it is 422
+`model-profile-bad-value` with the word in `args` and `field` `value` or `all`, and the path's `*`,
+llama-server's global section, is 404 `no-model-profile-named` with the manager asked nothing. Both
+answer on one rule:
+- `running` is the instance's state, asked only when the write changed the model profiles the
+  instance is given: the ids effective on it before and after are compared, and the same set answers
+  false with no state asked, whatever the instance's state.
+- the per-profile route answers `effective` too, that row read back from the record the manager
+  wrote, so the page sees what the word left the model profile on (a record that cannot be read back
+  leaves the text the write would have left, the manager's own rule for the key). No revision is sent
+  and 409 never answers: the last write wins, as on the tags.
+- a record that cannot be read back leaves the write standing with its after side unknown, and
+  `running` true, the safe answer.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `{"running"}`, plus `effective` on the per-profile write | the write landed, or nothing changed; and a record unreadable before the write, or one that cannot be read back after it, `running` true |
+| 400 | `server-profile-malformed`, `assignment-malformed` | the body is not `{"serverProfile": <string>}` on the server route, and not `{"value"}` / `{"all"}` with a string on the model ones, the manager not asked (the JSON body rule of the server save, [above](#saving-the-server-file)) |
+| 401 | `session-required` | no session, no manager connected to, nothing written |
+| 403 | `session-not-administrator` | the manager refused the user's connect, read or write; the session ends |
+| 404 | `client-no-instance` | the record of the instances does not name the id, nothing written, no file read |
+| 404 | `no-model-profile-named` | the path's `*` is not a model profile (`args: ["*"]`, the manager asked nothing), or the manager refused a model profile its pool does not hold (`args` the name) |
+| 404 | `client-no-server-profile` | the server profile the body names is not in the pool, `args` the name |
+| 409 | `client-server-profile-in-use` | another instance holds that server profile, `args` the profile and the instance |
+| 422 | `model-profile-bad-value` | a word the route does not write, `args` the word, `field` `value` or `all`, before any call |
+| 422 | `client-address-in-use`, `client-unresolvable-host` | the server profile the write selects makes the instance's address unusable (`args` the port) or its host unresolvable (`args` the host), `field` `serverProfile` |
+| 422 | `{"key", "args", "field"}` | the manager's check refused the file it was asked to write, nothing written: among them `load-on-startup-over-max`, `field` `serverProfile` on the server route and no `field` on the model ones |
+| 502 | `client-not-authorized` | the manager refused the record of the instances, asked before the write, on the bff's own account; the session lives on, nothing written. A refused state read after a write that stands is `running` true |
+| 502 | `client-other` | anything else, never the manager's detail |
+| 503 | `client-unavailable` | no manager, or one that outlives the route's limit, the reads' 5 s and the writes' 15 s |
+
+The four routes, their principals and every status key are `tests/instance_profiles.rs` (49 tests),
+green with the whole bff (583) at 2d9a4c8 (its report, not a rerun here). **Nothing
+here has been called against a real manager.**
 
 ## The web UI (`fe/`)
 

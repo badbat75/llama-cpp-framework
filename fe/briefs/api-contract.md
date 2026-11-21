@@ -46,13 +46,16 @@ exist yet. Change this file first when a shape changes.
 - **The fe picks its message by the key, never by the status**, apart from 401 (sign in).
 - **503** `client-unavailable` means no manager to reach or no answer in time.
 - **Writes and their time limit** (the server save and the model profile switch since 594e15e, the model
-  profile save since 3eb24b2, which gives its read 5 s and the whole save 15 s): the manager's calls of a
+  profile save since 3eb24b2, which gives its read 5 s and the whole save 15 s, and the four association
+  routes since 2d9a4c8): the manager's calls of a
   write get **15 s** (`lib.rs` `WRITE_TIMEOUT`); reads, the three verbs and the boot write keep
   **5 s** (`MANAGER_TIMEOUT`).
   503 `client-unavailable` only while no write was asked; **504 `client-timeout`** once one was
   sent and its outcome is unknown; a write that **landed** whose following read (the status, the
   switch's read-back) is slow or fails answers **200 with `running: true`**, never 504
   (`server.rs` `WriteState`, `TimedOut`).
+  The four association routes never answer 504: a manager that outlives the limit, before or after a
+  write, is 503 `client-unavailable` (`crates/bff/src/instance_profiles.rs`).
 - **404** `client-no-instance` means the instance id does not exist.
 - The session is an HttpOnly cookie set by the bff; the fe never reads it.
 
@@ -63,7 +66,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/version` | anyone | exists | `{"version"}` |
 | `GET /api/node` | signed in | 13, being built (bff slice 13) | `{"name", "api", "version", "engines"}` |
 | `GET /api/node/devices` | signed in | GD (bff slice G2, designed) | `{"probedAt", "devices"}` |
-| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13 | `[{"id", "engine", "state", "port", "tags", "instanceTags", "boot"}]` |
+| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13 | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, served | 204 |
@@ -74,10 +77,14 @@ exist yet. Change this file first when a shape changes.
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/tags` | administrator (`configure`) | T1, being built (bff slice 12) | 204 |
 | `GET /api/engines` | anyone | model profiles slice, proposed | `[{"id", "name"}]` |
-| `GET /api/profiles/model` | administrator | 2a, 2b, served (257147e) | `[{"id", "engine", "engineAvailable", "enabled", "model"}]` |
-| `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244) | `{"enabled", "running"}` |
+| `GET /api/profiles/model` | administrator | 2a, 2b, served (257147e); `assignments` 15 | `[{"id", "engine", "engineAvailable", "enabled", "model", "assignments"}]` |
+| `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244); `restart` 15 | `{"enabled", "running", "restart"}` |
 | `GET /api/profiles/model/{id}` | administrator | 2d, served (36a892d) | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
-| `PUT /api/profiles/model/{id}` | administrator (`configure`) | 2h, served (3eb24b2) | `{"revision", "running"}` |
+| `PUT /api/profiles/model/{id}` | administrator (`configure`) | 2h, served (3eb24b2); `restart` 15 | `{"revision", "running", "restart"}` |
+| `PUT /api/instances/{id}/profiles/server` | administrator (`configure`) | 15, served (2d9a4c8) | `{"running"}` |
+| `GET /api/instances/{id}/profiles/model` | administrator | 15, served (2d9a4c8) | `{"all", "profiles": [rows]}` |
+| `PUT /api/instances/{id}/profiles/model/{profile}` | administrator (`configure`) | 15, served (2d9a4c8) | `{"effective", "running"}` |
+| `PUT /api/instances/{id}/profiles/model` | administrator (`configure`) | 15, served (2d9a4c8) | `{"running"}` |
 
 The four model profile routes were served at `/api/presets...` until 5d54590 (step 4b, below), with
 the keys `no-preset-named`, `preset-changed-elsewhere`, `presets-malformed`, `invalid-preset-id`,
@@ -106,6 +113,11 @@ missing or mistyped `port` as 0 and a missing or mistyped list as `[]`, never fa
 fails or shortens the list. The fe reads anything but a boolean as `null` (no Start at boot row on the
 tile). `GET /api/instances/{id}/boot` stays (the instance page, and after a `PUT`). Source:
 `ARCHITECTURE.md` "Slice 13's decisions".
+
+**15 (bff slice 15, served at 2d9a4c8).** Each item gains **`serverProfile`**: the server profile name
+the record of `instances.ini` carries, as the manager spells it, `null` when the instance's section
+names none. It comes from the same `Instances` call as the port and the tags, so a row the manager
+does not answer is listed with `null` and never fails the list.
 
 ### `GET /api/node` (13, being built)
 
@@ -302,7 +314,7 @@ model profile's engine is the engine whose model profile file holds it, never a 
 ### `GET /api/profiles/model`
 
 The one model profile list of the Models page ([02-models.md](02-models.md), slice 2a), for any signed-in
-user: `[{"id", "engine", "engineAvailable", "enabled", "model"}]`. Served since 257147e
+user: `[{"id", "engine", "engineAvailable", "enabled", "model", "assignments"}]`. Served since 257147e
 (`crates/bff/src/presets.rs` `list`, `rows`, `row`); checked against the fe's `Models.tsx` on
 2026-11-17 (02-models.md, "Checked against the bff").
 
@@ -325,6 +337,17 @@ user: `[{"id", "engine", "engineAvailable", "enabled", "model"}]`. Served since 
   `values`), a string the bff does not otherwise change (no path resolution, no check that the
   file exists, the server machine's separators kept); `""` when the section has no `model` key or
   it is empty. The fe treats a row without a string `model` as a malformed reply.
+- **`assignments`** (slice 15, 2d9a4c8) is the instances this model profile is given to, as the
+  manager's record `assignments.ini` speaks of it: `[{"instance", "value", "viaAll", "effective"}]`,
+  one entry per section of the record the manager lists, sorted by instance with the letter case
+  aside; `value` the section's key of its own, or the `*` as that section spells it when it has none,
+  `viaAll` when the `*` speaks for this model profile, `effective` where the render gives the model
+  profile to that instance (`pai_core::assign::rows`, the one rule the engine's render follows). A
+  section saying nothing of the model profile is no entry, so a model profile no instance is given
+  carries `[]`, and a model profile no instance is given to answers `[]` in every row. The record and
+  the instances are read on the same connect as the two files (four calls); a machine with no
+  `assignments.ini` is 200 with `[]` in every row, while a record read that fails and an instances
+  list answered as a failure fail the whole list. `crates/bff/README.md` "The model profile routes".
 - Errors, each `{"key", "args": []}`: 401 `session-required`; 403 `session-not-administrator`
   (the session is ended, rules above; `client-not-authorized` is not sent); 503
   `client-unavailable` (no manager, or no answer within 5 s); 502 `client-other`.
@@ -338,11 +361,18 @@ matched case-insensitively. Body `{"enabled": <bool>}`. Served since 3a63244, ti
 since 594e15e (`crates/bff/src/presets.rs` `set_enabled`, `switch`, `switch_failure`, `field_of`,
 `not_found`); checked against the fe's `Models.tsx` on 2026-11-17.
 
-- 200 `{"enabled", "running"}`: `enabled` is read back after the writes (`models.ini` read again);
-  `running` is true when any instance is `active` or `activating` (the fe then says to restart it;
-  the bff restarts nothing). A model profile already where it was asked to go answers 200 and nothing is
-  written. When both writes landed but the read-back or the states failed or outran the limit,
-  the answer is still 200: `enabled` the value asked for, `running` true.
+- 200 `{"enabled", "running", "restart"}`: `enabled` is read back after the writes (`models.ini` read again).
+  Since slice 15 (2d9a4c8) `restart` is the instances the page's "restart to apply" note is about, and
+  `running` is that list not being empty (the fe then says to restart them; the bff restarts nothing):
+  the instances the record of `assignments.ini` gives this model profile to, effective in the pool as
+  the move leaves it, that the manager lists and that are `active` or `activating`, sorted. A section
+  naming an instance the manager no longer lists is a stale record, not a machine: left out, asking no
+  state. No `assignments.ini`, and a model profile no instance is given, answer `running` false and
+  `restart` `[]`, asking no state at all; a state that cannot be read answers `running` true with
+  `restart` `[]`. A model profile already where it was asked to go answers 200 with nothing written,
+  its `restart` the instances it is effective on now. When both writes landed but the read-back or the
+  states failed or outran the limit, the answer is still 200: `enabled` the value asked for,
+  `running` true.
 - Switching on runs the checks the GUI runs: the load-on-startup model profiles counted against the lowest
   `ModelsMax` of the instances, and every model profile check on the moved section.
 - The bff runs one model-profile-file write at a time: a move is two compare-and-swap writes (the
@@ -480,11 +510,16 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   not checked.
 - The write: the manager's compare-and-swap write as the signed-in user, given the text the bff
   read; it is asked only while the answer is still wanted.
-- **200 `{"revision", "running"}`**: `revision` of the section as now written, computed by the same
+- **200 `{"revision", "running", "restart"}`**: `revision` of the section as now written, computed by the same
   function as the `GET`'s over the text written, so the `GET` that follows returns it and the next
-  save meets no 409; `running` true when the section is in `models.ini` and any instance is
-  `active` or `activating`, or when that state cannot be read after the write; **false for a
-  switched-off model profile** (the states are not even asked). The fe says "Saved: restart llama-server
+  save meets no 409. Since slice 15 (2d9a4c8) `restart` is the instances the page's "restart to apply"
+  note is about, and `running` is that list not being empty: the instances the record of
+  `assignments.ini` gives this model profile to, effective in the pool as the save leaves it (a
+  switched-off profile is effective where the record's `*` is `on`), that the manager lists and that
+  are `active` or `activating`, sorted. A machine with no `assignments.ini` names none and asks no
+  state, a record section naming an instance the manager no longer lists is left out, and a state that
+  cannot be read answers `running` true with `restart` `[]`; a save that wrote nothing runs the same
+  rule on the text the file already holds. The fe says "Saved: restart llama-server
   to apply." for true, "Saved." for false. The bff restarts and reloads nothing. Deliberate
   difference: the configurator's model profile save says only "Saved model profile [id]"
   (`preset-saved` in `crates/core/strings/en_US.toml`).
@@ -533,8 +568,11 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
 
 ## Planned: profiles, nodes and instances (PLAN step 10 items 13 and 13a), not built
 
-**Nothing in this section is served** (step 4b's model profile part is built and has moved into the
-sections above). It records the routes as designed in `ARCHITECTURE.md`, "Nodes
+**What of this section is served is stated where it is.** The server profile pool is (b535304,
+`crates/bff/README.md` "The server profile pool"), and so are the four routes of "An instance's
+associations" (bff slice 15, 2d9a4c8, `crates/bff/README.md` "The association routes"): that block
+below is the design, the README is what the bff answers today, and the two differ in the details noted
+there. Everything else is not built. It records the routes as designed in `ARCHITECTURE.md`, "Nodes
 and instances", block "Revision: profiles" (commit f3a519c), which wins over (a) to (j) of the same
 record, where "preset" reads as "model profile". The record is the authority; this section is the
 designer's reading of it against the fe on 2026-11-17, and replaces the earlier version of this section
@@ -582,8 +620,8 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
   "engineAvailable", "enabled", "model", "assignments"}`, `assignments` = `[{"instance", "value",
   "viaAll", "effective"}]` sorted by instance, every instance with an explicit key or covered by `*`;
   `GET`/`PUT /api/profiles/model/{id}` and `PUT .../enabled` as built (sections above), their 200 gaining
-  `"restart": [<instance id>]` (where the profile is in effect before or after the write and that run;
-  `running` true when it is non-empty or a state could not be read, then `restart` is `[]`).
+  `"restart": [<instance id>]` (the instances where the profile is in effect as the write left it, and
+  running; `running` true when it is non-empty or a state could not be read, then `restart` is `[]`).
 - **Server profile pool**, administrator:
   - `GET /api/profiles/server`: `[{"id", "engine", "port", "tags", "instance"}]`, `instance` the id
     using it or `null`, sorted by id. Errors 401, 403, 503.
@@ -599,24 +637,53 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
     409 `client-server-profile-exists` `[id]`.
   - `DELETE /api/profiles/server/{id}`: 204; 404 `client-no-server-profile`, 409
     `client-server-profile-in-use` `[id, instance]`.
-- **An instance's associations**, administrator:
-  - `PUT /api/instances/{id}/profiles/server` `{"id": <profile>}`: 200 `{"running"}` (true when the
-    instance runs: restart to apply). 404 `client-no-instance`, 404 `client-no-server-profile`, 409
-    `client-server-profile-in-use` `[profile, instance]`, 422 `client-address-in-use` (`field` `id`),
-    422 `load-on-startup-over-max`.
-  - `GET /api/instances/{id}/profiles/model`: `{"all": "inherit" | "none", "profiles": [rows]}`, rows
-    the pool row's fields plus `value` (the explicit key only: `none` when only `*` covers it),
-    `viaAll`, `effective` (served by this instance after its next start), in the pool's order. Errors
-    as the pool list plus 404 `client-no-instance`. Moves the idle deadline.
+- **An instance's associations**, administrator (`configure`), **served since 2d9a4c8** (bff slice 15,
+  `crates/bff/src/instance_profiles.rs`; what the bff answers today is `crates/bff/README.md` "The
+  association routes", the statuses are pinned by `crates/bff/tests/instance_profiles.rs`). They write
+  the manager's record `assignments.ini`: one section per instance, one key per model profile, `*` for
+  the whole pool. The words are `on`, `off`, `inherit` (follow the pool's own switch) and `none` (no
+  key). The server write's body is **`{"serverProfile": <name>}`**, not the `id` of this design, and
+  the refusals that name it carry `field: "serverProfile"`, not `id`.
+  - `PUT /api/instances/{id}/profiles/server` `{"serverProfile": <name>}`: 200 `{"running"}`, true
+    only when the record of `instances.ini` named another profile (a record naming none is a change)
+    and the instance is up; a record that already names it answers false and asks no state, a record
+    or a state that cannot be read answers the safe true. Nothing is started, stopped or restarted.
+    400 `server-profile-malformed`; 404 `client-no-instance` (the record of the instances is read
+    first, on the bff's own account, nothing written); 404 `client-no-server-profile` `[profile]`; 409
+    `client-server-profile-in-use` `[profile, instance]`; 422 `client-address-in-use` (`args` the
+    port) and `client-unresolvable-host` (`args` the host), both `field` `serverProfile`; 422
+    `load-on-startup-over-max` and the other checks, `field` `serverProfile`.
+  - `GET /api/instances/{id}/profiles/model`: 200 `{"all": "inherit" | "none", "profiles": [rows]}`,
+    `all` the section's `*` as the page shows it (`inherit` when the section carries the key, `none`
+    when it does not), rows the pool row's fields **without `assignments`** plus `value` (the explicit
+    key only: `none` when only `*` covers it), `viaAll`, `effective` (served by this instance after
+    its next start), in the pool's order. Four calls on one connect as the user, under the reads' 5 s:
+    the instances list (the bff's own account, first), `assignments.ini`, `models.ini`,
+    `models.ini.disabled`. An instance with no section answers `all: "none"` and every row
+    `value: "none"` with `viaAll` and `effective` false. 404 `client-no-instance` with no file read;
+    the pool list's errors otherwise. Moves the idle deadline.
   - `PUT /api/instances/{id}/profiles/model/{profile}` `{"value": "none" | "inherit" | "on" | "off"}`:
-    200 `{"effective", "running"}` (`running` only when this instance runs and its render changed). No
-    revision, never 409: the last write wins. 404 `no-model-profile-named`, 404 `client-no-instance`,
-    the resource refusals 422.
+    200 `{"effective", "running"}`: `effective` is the row of the record as the write left it;
+    `running` is the instance's state, asked only when the write changed the set of model profiles the
+    instance is given, so a key landing where the profile already stood answers false with no state
+    asked, and a record that cannot be read back answers the safe true. No revision, never 409: the
+    last write wins. 400 `assignment-malformed` and 422 `model-profile-bad-value` (`args` the word,
+    `field` `value`) before any call; 404 `no-model-profile-named` (`args` the name, and `args: ["*"]`
+    for the path's `*`, llama-server's global section, the manager asked nothing), 404
+    `client-no-instance`, the resource refusals 422 (no `field`).
   - `PUT /api/instances/{id}/profiles/model` `{"all": "inherit" | "none"}` (sets `*`): 200
-    `{"running"}`; 404 `client-no-instance`.
+    `{"running"}`, the same `running` rule; 400 `assignment-malformed`, 422 `model-profile-bad-value`
+    (`field` `all`), 404 `client-no-instance`.
+  - Every one of the four: 401 `session-required`; 403 `session-not-administrator` (the session ended,
+    the manager refusing the user's connect, file read, write or record read); 502
+    `client-not-authorized` (the record of the instances refused on the bff's own account, the session
+    lives on, nothing written), 502 `client-other`; 503 `client-unavailable` (no manager, the reads'
+    5 s, the writes' 15 s), **never 504**: a write that outlives the limit is 503 here, the rule at the
+    top, "Writes and their time limit". A state read after a write that stands, on the bff's own
+    account, never ends the session: refused, timed out or failed, it answers `running` true.
   - Meaning: `inherit` follows the profile's global switch; `on` and `off` override it (`on` serves it
     with the switch off). The fe offers three per row: with `all` `inherit`: inherit, on, off; with
-    `none`: not assigned, inherit, on.
+    `none`: not assigned, inherit, on. No page calls these routes yet.
 - **Instances**, administrator: `POST /api/instances` `{"engine", "id", "serverProfile"}`: 201. 400
   `instance-malformed`; 422 `instance-bad-id` (`id`), `unknown-engine` (`engine`),
   `client-address-in-use`; 404 `client-no-server-profile` (`field` `serverProfile`); 409
@@ -635,7 +702,9 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
   built texts keep working). `preset-engine-mismatch` is dropped: another engine's profile is simply
   not found.
 - Every write: 401, 403 `session-not-administrator` (the session ended), 413, the guard's 403s, 503
-  before asking, 504 `client-timeout` once asked (15 s).
+  before asking, 504 `client-timeout` once asked (15 s). The four association routes (served) keep
+  every part of that except the 504: a manager that outlives their limit, before or after a write, is
+  503 `client-unavailable`.
 
 ### The web UI's plan (designer, 2026-11-17; a proposal until the user answers)
 
@@ -677,9 +746,9 @@ Open now:
    so every new profile reads `server_cfg::DEFAULT_PORT` (9931); a second one assigned while another is
    in use is refused `client-address-in-use`. Proposed: `POST /api/profiles/server` takes an optional
    `"port"` (checked as a save's), or the user creates, then edits the port before assigning: which?
-3. **The body of `PUT /api/instances/{id}/profiles/server`.** `{"id": <profile>}` beside an `{id}` in
-   the path, while `GET /api/instances` and `POST /api/instances` say `serverProfile`. Proposed:
-   `{"serverProfile": <profile>}` and the 422 `field` `serverProfile`.
+3. Closed at 2d9a4c8, as proposed: the body of `PUT /api/instances/{id}/profiles/server` is
+   `{"serverProfile": <profile>}` (400 `server-profile-malformed` for anything else) and the refusals
+   that name it, the 422s of the address and of the checks, carry `field` `serverProfile`.
 4. **Step 4b's server route.** Confirm: `/api/profiles/server/{id}` keys on today's `server@<id>.ini`
    (so `default`), `running` as today, and a missing file answers 404 `client-no-server-profile` `[id]`
    where it answered `client-no-instance` (the fe shows today's "no instance" text until the server
@@ -687,12 +756,12 @@ Open now:
 5. **The strings of the renamed keys.** The fe copies the GUI's `en_US.toml` texts for its `api-*`
    keys; the fe's rename proposes "preset" -> "model profile" in them
    ([05-profiles-rename.md](05-profiles-rename.md), section 2). Confirm the toml uses the same words.
-6. **`load-on-startup-over-max` on `PUT .../profiles/server`**: its `field` (none, or `serverProfile`),
-   so the fe can place it under the select.
+6. Closed at 2d9a4c8: on `PUT /api/instances/{id}/profiles/server` every 422 carries `field`
+   `serverProfile` (the address refusals and the manager's checks), the 404 and 409 carry none.
 7. **Deleting the profile `default`.** Allowed once no instance uses it? The GUI and `pai` act on the
    profile `instances.ini` names for `default`, so nothing else needs the name. Confirm no protection.
 8. **The run verbs and boot**: unchanged at `/api/instances/{id}/...` (not listed in (f')). Confirm.
 9. **`GET /api/profiles/server` errors and session**: 502 `client-other` too, and it moves the idle
    deadline like the model profile list? The fe filters by the instance's `engine` itself.
-10. **`PUT /api/instances/{id}/profiles/model` body**: (j) 1 said `{"value"}`, (f') says `{"all"}`;
-    the fe builds `{"all"}`. Confirm.
+10. Closed at 2d9a4c8: the body of `PUT /api/instances/{id}/profiles/model` is `{"all": "inherit" |
+    "none"}` (422 `model-profile-bad-value`, `field` `all`, for any other word), as the fe builds it.

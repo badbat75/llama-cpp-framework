@@ -410,6 +410,22 @@ Lessons only: the rules are in `AGENTS.md`.
   a file, the server save and the model profile switch" (grep `routes that write a file`; at b535304 it
   became six, the pool's list keeping the 5 s) and "the three calls the manager answers without
   authorization" (grep `without authorization`; `ServerProfiles` made it four).
+- The association routes (2d9a4c8) are one shape in three files: `crates/bff/README.md` (the intro's
+  served list, the route table's four new rows, the instances row's `serverProfile`, the pool's
+  `assignments`, the switch's and save's `restart`, and a `## The association routes` of their own),
+  `AGENTS.md` (the overview's served list, and BOTH machine-tree bullets' "which clients read and never
+  write" of `assignments.ini` and `instances.ini`, which the web UI now writes through the manager), and
+  `fe/briefs/api-contract.md` (its route table, the served block, and its numbered "Open now" list).
+  Grep the route name and `assignments.ini` in all three. In the contract a closed open point KEEPS its
+  number and starts "Closed at <sha>:", because a line above cites it as "open point 4 below".
+- What those four write is the manager's record, and their calls run on TWO principals: the file write as
+  the signed-in user (its refusal is 403 `session-not-administrator` and ends the session), the instances
+  list and the state read on the bff's own account (their refusal is 502 `client-not-authorized`, the
+  session lives on; a state read that fails after a write that stands answers `running` true). Say both,
+  once. They are also the only writes that never answer 504: the answer needs the state read, so a write
+  that outlives the 15 s is 503 `client-unavailable` (the model profile switch and save keep their 504).
+- `AGENTS.md`'s own em-dash rule quotes the glyph it bans, so `grep -c $'\u2014' AGENTS.md` is 1 on a
+  clean file: check the glyph in `git diff`, not in the whole file.
 - The working tree can be ahead of HEAD in `fe/` (the coder's slice in progress): check
   `git show HEAD:fe/src/<file>` before saying what a page shows, and route the fact through the
   strings key (`model-profile-load-failed`). The model profile page's route is `#/profiles/model/<id>` (`fe/src/route.ts`),
@@ -420,7 +436,11 @@ Lessons only: the rules are in `AGENTS.md`.
   suites you mean. When no shell is available, count the test functions in the suite file
   (`^async fn` and `^#[test]`) to check a README's test count, and keep the green run's date cited to
   the commit whose report it is. The exact count of one file is `grep -c '#\[test\]\|#\[tokio::test\]'`
-  (the coarse pattern over-counts, helper fns and doc text): a README's per-suite count is the count of
+  (the coarse pattern over-counts, helper fns and doc text, and MISSES
+  `#[tokio::test(flavor = ...)]`, so a whole-crate total wants
+  `grep -cE '#\[(tokio::)?test(\(|\])'` over the crate's files, and is a count of attributes, not a
+  run, so say which it is (the bff: 583 across its 21 targets at 2d9a4c8, 19 integration files plus the
+  lib and the bin)): a README's per-suite count is the count of
   the tree it cites, so recount a suite only when a commit changed it (`git show <sha>:<suite> | grep -c`
   settles the old number) and leave an untouched suite at its dated count. To date one test of a suite
   to the commit that added it, for "the two of X at <sha>", use
