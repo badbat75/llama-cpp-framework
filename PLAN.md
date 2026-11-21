@@ -1016,6 +1016,15 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     `models@<id>.ini`, where the memory estimate runs, the node inventory (G2's probe, the versions files,
     pai-hwmon), and what changes in the GD card and brief 16. Before slice 17's sub-slices that touch the
     server profile form (17a).
+    Decided (user, 2026-11-21, ARCHITECTURE.md "Resources belong to the server profile"): a server profile
+    key `[Server] Devices` (the probe's GPU names in order, or `none`; absent = every GPU) passed to the
+    router as `--device`; model profiles keep `split-mode`, the `tensor-split` weights (in the server
+    profile's GPU order) and optional fixed `n-gpu-layers`/`n-cpu-moe`, llama.cpp's `--fit` places the
+    rest; GPUs are named as the probe prints them; the memory check counts only the instance's server
+    profile's GPUs (this replaces the 2026-11-17 decision that it counts every GPU of the node); host RAM
+    and CPU threads are shown in the node inventory with no budget. Slices: R1 inventory (RAM, CPU in
+    `Devices()`), R2 the `Devices` key, R3 the per-pair memory check, R4 `device` off the web model profile
+    page, R5 the web UI (a GPUs card on the server profile page, designer's brief first, after 17a).
     **GPU distribution on the model profile page** (user, 2026-11-20: "Non vedo gli slider per la
     spartizione dei layer"): the web UI edits `device`, `split-mode` and `tensor-split` as the GUI's GPU
     table does (fe slice 2f of brief 02, never scheduled until now). Built beside slice 14: first the
