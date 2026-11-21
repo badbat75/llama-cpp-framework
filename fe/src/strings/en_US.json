@@ -46,6 +46,7 @@
   "instance-tag-confirm": "Add",
   "instance-tag-cancel": "Cancel",
   "instance-tag-remove": "Remove tag {0}",
+  "instance-tag-suggestions": "Used tags",
   "instance-tag-shown": "{0} is already a tag of this instance.",
   "instance-tag-added": "Tag {0} added.",
   "instance-tag-removed": "Tag {0} removed.",

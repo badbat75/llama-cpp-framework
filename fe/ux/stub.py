@@ -78,6 +78,30 @@ OWN_TAGS = {
     "long": (LONG_OWN + LONG_PROFILE, LONG_OWN),
 }
 
+# GET /api/profiles/server (brief 15 section 6, slice C2): the pool the new-tag
+# pill of the instance page reads once at each opening, for the suggestions
+# under the box. One row, carrying the instance's own tags and labels it does
+# not carry, so the pill has suggestions to show at 320 px and at 200 % text.
+SERVER_PROFILES = [
+    {
+        "id": "default",
+        "engine": "llama.cpp",
+        "port": 8080,
+        "tags": [
+            "edge",
+            "v2",
+            "gpu",
+            "prod",
+            "coding",
+            "fast",
+            "arm",
+            "zz-top",
+            "t0",
+        ],
+        "instance": "default",
+    },
+]
+
 # GET /api/profiles/model: rows with every engine shape the list shows.
 MODEL_PROFILES = [
     {"id": "Qwen3.6-35B-A3B-UD-Q4_K_XL", "engine": "llama.cpp", "engineAvailable": True, "enabled": True, "model": ""},
@@ -240,6 +264,8 @@ class Handler(SimpleHTTPRequestHandler):
             if STATE["key"] == "withheld":
                 doc["withheld"] = ["OpencodeApiKey"]
             return self.json(200, doc)
+        if p == "/api/profiles/server":
+            return self.json(200, SERVER_PROFILES)
         if p == "/api/profiles/model":
             return self.json(200, MODEL_PROFILES)
         if p.startswith("/api/profiles/model/") and p.count("/") == 4:

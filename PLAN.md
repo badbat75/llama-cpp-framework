@@ -1075,7 +1075,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     Long tags (user, 2026-11-21): shortened with an ellipsis on one line; a smaller font if needed;
     wrapping only when nothing else fits. Hovering a shortened tag (and focusing it from the keyboard)
     opens a temporary larger pill with the whole text. C1 (chips, "+", x, the long-tag rule, the hover
-    pill) is built; left: C2, the suggestions (brief 15), next after U17b, then 2g/2j, then slice 17
+    pill) and C2 (the suggestions) are built, brief 15 done
     (user, 2026-11-21). Test flakes seen at C1, to fix test-side when
     a slice touches them: `ModelProfilePage.test.tsx` 2d.63 (title asserted before the effect writes
     it), `NodeNav.test.tsx` ~211 (a read count), `SignInOnly.test.tsx` S1a.10.

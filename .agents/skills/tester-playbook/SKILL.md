@@ -292,6 +292,16 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   no routing file touched): run it solo three times and read the full-suite map. Three green solos plus a
   green in the full run is a flake, and the report says so with the runs; editing production code to
   chase it is out of the tester's scope.
+- A `hidden` element is out of the accessibility tree for BOTH halves of a pin: `getByRole(r, {name})`
+  throws on it and with `hidden: true` its accessible name is `""`, so "named by X, and hidden" is two
+  queries: the hidden state via `querySelector('[role=r]')` + the hidden assert, the name via role-and-name
+  when the same element is shown. Identity between the two is `.toBe`.
+- A filter-as-you-type combobox: the arrow walk runs over the SHOWN options (the brief's wrapping case
+  pins that), so "make option X active" cannot type text that filters X out. Pick text that KEEPS the
+  target shown and is not the target itself, which also pins "the active option, not the box text".
+- Recompute every expected list in a brief from ITS OWN fixture sections and the stated rule: a brief's
+  worked example can drop a source the rule unions (15 C2.7 omitted the instances' `fast`, which its own
+  section 5 and C2.6 carry). The rule wins over the example; report the brief's arithmetic gap.
 - React 19 builds `onMouseEnter`/`onMouseLeave` from pointerover/pointerout and mouseover/mouseout
   (react-dom registers `onPointerEnter` on `["pointerout", "pointerover"]`), so
   `fireEvent.mouseEnter(el)`, a non-bubbling `mouseenter`, reaches NO React handler: fire pointerOver +
@@ -369,6 +379,21 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   keep its assertion and report the red naming the production line: weakening a brief-pinned assert to
   green the suite hides the defect. Say in the report what a production fix there costs the suite (the
   shared helper locator, e.g. a `findByText(sentence)` in every file's `ready()`).
+
+- A combobox active option held as an INDEX into the label list has two reds when the list moves: the
+  box's `aria-activedescendant` names the id that now carries ANOTHER label, and `aria-selected="true"`
+  sits on a hidden option. Pin both plus the write, and make the red MESSAGE interpolate the label
+  (`named?.textContent`): it names `zz-top`, not an id.
+- The instance page's tag suggestions read `list={answer}` (the read AT OPENING, never rewritten by a
+  poll) and leave out `instance.tags` (which IS polled): so a poll changes the suggestion list ONLY by
+  changing what this instance shows (a tag it gains leaves the list, one it loses joins); another
+  instance's tags never move it. Drive such a poll with `bff.setInstances([{...TAG_ITEM, tags: [...]}])`.
+- Under the page's fake clock, RTL `waitFor` never advances (its own interval is faked): a write's
+  `waitFor` burns the whole 5 s test timeout. Use the file's `flush()` and a synchronous assert, as
+  `InstanceTagChips.test.tsx`'s clock tests do.
+- A new fake-clock test in a file whose `afterEach` flushes with a real `setTimeout`: make the shared
+  `flushTasks` branch on `vi.isFakeTimers()` and put `vi.useRealTimers()` first in `afterEach`, else the
+  next test's flush hangs.
 
 ## Stubs, signatures and call sites
 
@@ -1880,3 +1905,30 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
   races the effect), `2d.63` (ModelProfilePage) and `13 N.3` (NodeNav) 0 in 3, and all three are
   green in a full green suite (2609 tests). One green solo after one red solo is a flake: report the
   runs, do not touch production code for it.
+
+## A control that gains a role breaks the older suite that looked it up by the old one (brief 15 C2, 2026-11-21)
+
+- A brief that gives an existing control a new role (C2.2: the "New tag" input becomes
+  `role="combobox"`) silently breaks every OLDER test that found it by its implicit role: an element
+  with `role="combobox"` is not found by `getByRole('textbox')`. Section 6 of the brief listed the
+  files that change and did NOT name the C1 suite, so grep the pattern
+  (`grep -rn "getByRole('textbox'" fe/src`) before shipping a role change, not from the reds.
+  `newBox` of `InstanceTagChips.test.tsx` moved to the combobox, 20 of its tests went red on that one
+  message; the "the box is gone" checks became `field.querySelector('input')`, which stays strong for
+  a box of any role.
+- `Reflow.test.ts` 10 R1.8 IS the CSS guard for a new class: the brief lists the class in its section
+  3, add it to the frozen `CLASSES` string, and the red names the missing rule in `index.css`. A
+  second CSS pin, tolerant of the selector shape the coder picks, is a scan of
+  `CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)` filtered by `sel.includes('.tag-options')`: it can say a
+  rule exists and declares no `position: absolute`, it cannot pin a property of an unnamed selector.
+- The shared fake `fe/src/test/bff.ts` needs a three-part change for a new read: a type whose optional
+  members carry every field of the contract row (a row literal with `engine` typed as `{id, tags}` is
+  a typecheck red), a `BffOptions` entry answered by array or `Answer`, and one `if (route === ...)`
+  before the unknown-route reject. A test that answers an array changes nothing for the suites that
+  never read the route: no route, no call.
+- jsdom has no layout, so "the list sits under the row, in flow, nothing shifts" pins as: the listbox
+  is inside the field, `before(box, list)` in DOM order, a `ul`, and `isHidden` while collapsed
+  (`closest('[hidden]')`). The 8-option cap and the filter are pure JS and pin exactly.
+- One criterion per test even when it lists modes: C2.6 loops 401, 503, a non-JSON body, a rejected
+  fetch and a never-settling promise inside one test, each answered by a fresh `openPage` and closed
+  with `cleanup()`, so one criterion is one red line in the report.

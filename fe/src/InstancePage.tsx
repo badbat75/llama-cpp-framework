@@ -8,6 +8,7 @@ import {
   useId,
   useRef,
   useState,
+  type KeyboardEvent,
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
@@ -24,6 +25,8 @@ import {
 import { Icon, type IconName } from './Icon.tsx'
 import {
   errorText,
+  readInstanceTagSuggestions,
+  readServerProfiles,
   writeTags,
   type Answer,
   type Instance,
@@ -43,6 +46,13 @@ import { t } from './strings.ts'
 type Action = 'start' | 'stop' | 'restart'
 
 const ACTIONS: Action[] = ['start', 'stop', 'restart']
+
+/** The most labels the new-tag pill's list shows at once (15 decision 10). */
+const MAX_SUGGESTIONS = 8
+
+/** The suggestions' order: by label, by code point (15 decision 10). */
+const compareSuggestions = (a: string, b: string) =>
+  a < b ? -1 : a > b ? 1 : 0
 
 /** The idle poll's wait after an answer, the action poll's, and the limit of
  * each action: a Start, and a Stop or Restart under the service, which can
@@ -483,6 +493,7 @@ export default function InstancePage({
               key={`tags-${signIns.rereads}`}
               id={id}
               fieldId={`${uid}-tags`}
+              list={answer}
               instance={instance}
               renewals={signIns.rereads + signIns.kept}
               onSignIn={() => setAsking('tags')}
@@ -741,6 +752,7 @@ function Boot({
 function TagsField({
   id,
   fieldId,
+  list,
   instance,
   renewals,
   onSignIn,
@@ -749,6 +761,8 @@ function TagsField({
 }: {
   id: string
   fieldId: string
+  /** The page's latest read of the instances list: every instance's tags. */
+  list: Answer | undefined
   /** The instance as the page last read it: its own tags, and the union. */
   instance: Instance
   /** Raised by every sign-in that kept the page: a session alert goes. */
@@ -793,6 +807,47 @@ function TagsField({
   // The tags the profile brings: the ones this read carries that the field
   // does not show as chips (12 T1.5).
   const profile = instance.tags.filter((tag) => !latched.includes(tag))
+  // The suggestions (15 C2, decision 10): the tags the node's server profiles
+  // carry, read once at each opening of the pill, added to what the page's
+  // latest list read carries. A list that failed or has not answered brings
+  // nothing, and says nothing: the suggestion is a help, never an error.
+  const [profiles, setProfiles] = useState<unknown>(null)
+  // The list, and the option the arrows are on: `open` is the pill's, so this
+  // says whether the list shows. `active` is the index in `options` (`null`:
+  // on none, as after typing) kept with the list it was walked onto, so a list
+  // that moved (a poll took a label out) leaves no option active: the index
+  // would name a label nobody walked onto (15 C2.3 review).
+  const [listOpen, setListOpen] = useState(false)
+  const [active, setActive] = useState<{ at: number; of: string } | null>(null)
+
+  // The tags this instance shows, as chips of its own or as the profile's:
+  // the suggestions leave them out (decision 10).
+  const shown = [...new Set([...instance.tags, ...latched])]
+  // Every label to offer, sorted by code point (decision 10).
+  const options = readInstanceTagSuggestions(list ?? [], profiles, shown).sort(
+    compareSuggestions,
+  )
+  // The list as one string: the fact an option was walked onto THIS list.
+  const optionsOf = options.join('\n')
+  // The index of the active option, `null` when none is, and when the list
+  // moved under it (15 C2.3 review: the option the arrows are on belongs to the
+  // list that shows it, so a poll that changed the labels ends it).
+  const activeAt = active === null || active.of !== optionsOf ? null : active.at
+  const typed = draft.trim().toLowerCase()
+  // The options that show, as indices in `options` (15 C2.2): the labels
+  // containing the text, compared lower-cased, so an empty box takes every
+  // one, and at most `MAX_SUGGESTIONS` of them (decision 10: the cap is of the
+  // labels the text takes, so a label the visitor's text matches never hides
+  // behind a label the text threw away). These are the only ones the arrows
+  // walk, so a key never lands on a label the text hides (15 C2.3).
+  const shownAt = options
+    .map((tag, at) => ({ tag, at }))
+    .filter(({ tag }) => tag.toLowerCase().includes(typed))
+    .slice(0, MAX_SUGGESTIONS)
+    .map(({ at }) => at)
+  // The combobox is expanded when its listbox shows, which needs a label to
+  // show (15 C2.2).
+  const expanded = listOpen && shownAt.length > 0
 
   // A label typed in the box is the only thing leaving would lose (15 C1.12):
   // it is the field's unsaved change, said at once to the browser and to the
@@ -814,13 +869,18 @@ function TagsField({
     document.getElementById(`${fieldId}${suffix}`)?.focus()
   }
 
-  /** Opens the pill with an empty box, and the focus in it (15 C1.3). */
+  /** Opens the pill with an empty box, and the focus in it (15 C1.3), the
+   *  suggestions read for this opening (15 C2.1: once per opening, nothing
+   *  else reads them) and its list collapsed. */
   function openPill() {
     if (saving) return
+    readServerProfiles().then(setProfiles)
     flushSync(() => {
       setError(undefined)
       setDraft('')
       setOpen(true)
+      setListOpen(false)
+      setActive(null)
     })
     focusControl('-box')
   }
@@ -831,8 +891,65 @@ function TagsField({
     flushSync(() => {
       setOpen(false)
       setDraft('')
+      setListOpen(false)
+      setActive(null)
     })
     focusControl('-add')
+  }
+
+  /** Moves the active option with ArrowDown (`down`) or ArrowUp, from the last
+   *  back to the first and from the first to the last, the list opening when it
+   *  is closed (15 C2.3). Focus stays in the box: it names the active option. */
+  function walkOptions(down: boolean) {
+    const n = shownAt.length
+    if (n === 0) return
+    // Where the active option sits in the shown ones, -1 when on none: the
+    // first with ArrowDown and the last with ArrowUp, the next with the key
+    // again, wrapping at the ends (15 C2.3).
+    const at = activeAt === null ? -1 : shownAt.indexOf(activeAt)
+    setActive({
+      at:
+        at === -1
+          ? shownAt[down ? 0 : n - 1]!
+          : shownAt[(at + (down ? 1 : n - 1)) % n]!,
+      of: optionsOf,
+    })
+    setListOpen(true)
+  }
+
+  /** The box's keys, as the APG combobox with a list popup gives them
+   *  (15 decision 10): the arrows walk the list, Enter adds the active
+   *  suggestion or the text, Escape closes the list and then the pill, Tab
+   *  leaves with the text and adds nothing. */
+  function onOptionKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      // The key moves the active option, and with it the page's caret: kept.
+      e.preventDefault()
+      walkOptions(e.key === 'ArrowDown')
+    } else if (e.key === 'Enter') {
+      void addTag(false)
+    } else if (e.key === 'Escape') {
+      // A list that shows goes first, the box and its text kept (15 C2.5), and
+      // the active option goes with the list it was on: the box naming an
+      // option inside a hidden list is a lie to a screen reader, and the next
+      // Enter would add the label behind that id (15 C2.5 review). A box whose
+      // text matches no label has no list to hide, so Escape ends the pill as
+      // it always did (15 C1.3).
+      if (expanded) {
+        setListOpen(false)
+        setActive(null)
+      } else {
+        closePill()
+      }
+    } else if (e.key === 'Tab') {
+      // Leaving the box: the list goes, nothing is added, and an empty box
+      // closes as its own blur does (15 C1.3, C2.5).
+      flushSync(() => {
+        setListOpen(false)
+        setActive(null)
+      })
+      if (e.currentTarget.value.trim() === '') closePill()
+    }
   }
 
   /** Puts `tags` over the chips at once and sends `write` with it (15 section
@@ -877,16 +994,32 @@ function TagsField({
     }
   }
 
-  /** Sends the list with the label in the box appended: one write, at once
-   * (15 C1.4). A box with nothing to add sends nothing: the pill is over when
-   * the click on Add ends it, and stays when the key only submits the box. */
+  /** Adds a tag: the active suggestion when the arrows are on one, else the
+   *  text in the box, one write at once (15 C1.4, C2.4, decision 10). A box
+   *  with nothing to add sends nothing: the pill is over when the click on Add
+   *  ends it, and stays when the key only submits the box. */
   async function addTag(byButton: boolean) {
     if (saving) return
+    const chosen = activeAt === null ? undefined : options[activeAt]
+    if (chosen !== undefined) {
+      // The active suggestion, whatever the box holds, added exactly as typing
+      // it and pressing Enter: the box shows what goes in, the list is done.
+      setActive(null)
+      setListOpen(false)
+      setDraft(chosen)
+      void sendTag(chosen)
+      return
+    }
     const tag = draft.trim()
     if (tag === '') {
       if (byButton) closePill()
       return
     }
+    await sendTag(tag)
+  }
+
+  /** Appends `tag` to the chips and sends the list (15 C1.4). */
+  async function sendTag(tag: string) {
     const key = tag.toLowerCase()
     if (instance.tags.some((kept) => kept.toLowerCase() === key)) {
       // The only check the field makes (decision 7, 15 C1.4): the tag is one
@@ -1033,6 +1166,15 @@ function TagsField({
               <input
                 id={`${fieldId}-box`}
                 type="text"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-controls={`${fieldId}-options`}
+                aria-expanded={expanded}
+                {...(activeAt === null
+                  ? {}
+                  : {
+                      'aria-activedescendant': `${fieldId}-option-${activeAt}`,
+                    })}
                 spellCheck={false}
                 autoCapitalize="off"
                 autoCorrect="off"
@@ -1048,15 +1190,16 @@ function TagsField({
                 onChange={(e) => {
                   setDraft(e.target.value)
                   setError(undefined)
+                  // Typing filters the list and leaves no option active, the
+                  // APG way (15 C2.2, C2.3).
+                  setListOpen(true)
+                  setActive(null)
                 }}
                 onBlur={(e) => {
                   // A box holding a label stays (15 C1.3, decision 6).
                   if (e.target.value.trim() === '') closePill()
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void addTag(false)
-                  else if (e.key === 'Escape') closePill()
-                }}
+                onKeyDown={onOptionKey}
               />
               <button
                 type="button"
@@ -1088,6 +1231,43 @@ function TagsField({
             </button>
           )}
         </div>
+        {/* The used tags the box points at (15 C2, decision 10, section 3): a
+            listbox in the page's flow, under the chip row, named by its own
+            label, `hidden` while the box is collapsed. Of its options the box's
+            text takes the ones containing it, and the one the arrows are on
+            always shows: a key that moves it lands where the visitor sees it. */}
+        <ul
+          className="tag-options"
+          id={`${fieldId}-options`}
+          role="listbox"
+          aria-label={t('instance-tag-suggestions')}
+          hidden={!expanded}
+        >
+          {options.map((tag, at) => (
+            <li
+              key={tag}
+              id={`${fieldId}-option-${at}`}
+              role="option"
+              aria-selected={at === activeAt}
+              hidden={!shownAt.includes(at)}
+              aria-disabled={saving || undefined}
+              onMouseDown={(e) => {
+                // Chosen as the click ends, so the box's blur does not close
+                // the pill first (15 C2.4).
+                e.preventDefault()
+              }}
+              onClick={() => {
+                if (saving) return
+                setDraft(tag)
+                setActive(null)
+                setListOpen(false)
+                void sendTag(tag)
+              }}
+            >
+              {tag}
+            </li>
+          ))}
+        </ul>
         {profile.length > 0 && (
           <>
             <p className="tags-profile" id={`${fieldId}-profile`}>

@@ -431,3 +431,36 @@ are `arm`, `fast`, `zz-top`. Suggested file: `InstanceTagSuggest.test.tsx`.
     and `.chips-profile .chip > .chip-full` (0,2,0 and 0,3,0), with the same declarations; the
     `.chip > span` rule stays. Tests that change: `InstanceTagChips.test.tsx` ~1587 and ~1611 (the
     rule's selector), `HearthTokens.test.ts` ~754 (`.chip > .chip-full: min-height: 100%`).
+
+## 11. C2 review (designer, 2026-11-22)
+
+Checked in Chromium, Firefox and WebKit (Playwright, `fe/ux/stub.py`, PUTs answered 204 by the
+script; `build/ux-review/c2.js`, `c2long.js`) at 1280 and 320 px, 100 % and 200 % text, light and
+dark. **Not accepted: two layout defects.** Everything else is met in all three engines.
+
+- **Met** (15 C2.1 to C2.5, decision 10): one `GET /api/profiles/server` per opening; the box is a
+  `combobox` with `aria-autocomplete="list"`, `aria-controls`, `aria-expanded` false on opening;
+  typing `a` shows `arm`, `fast`; ArrowDown and ArrowUp move `aria-activedescendant` with
+  `aria-selected="true"` and wrap, focus staying in the box; Enter on the active option and a click
+  on an option add that label (`{"tags":["v2","gpu","fast"]}`, `...,"zz-top"]`), Enter with none
+  active adds the typed text, focus then on `Add tag`; Escape hides the list keeping the text, a
+  second Escape closes the pill; Tab goes to `Add` with nothing added and the list hidden. Options
+  are 42 px high (69 at 200 %, 2.5.8), the active one carries the inset 3 px `--accent` ring in both
+  themes; no sideways scroll with the stub's labels.
+- **D1, not met (section 3 "full width of the field", decision 10 "right under the chip row")**:
+  `.tag-options` (`fe/src/index.css:2383`) is an item of the wrapping flex `.field-control`
+  (`index.css:1358`) with no basis, so it shrinks to its widest label (55 to 127 px) and, at 1280 px,
+  sits to the right of the chip row at the fieldset's top, pushing the row down. Fix: give it
+  `flex-basis: 100%` (as `.field-control .field-error`, `index.css:2149`) and `margin: 0` (the flex
+  row gap already gives `--space-2`).
+- **D2, not met (1.4.10 Reflow, section 3 "a 32-character tag stays inside 320 px")**: a suggestion
+  of 32 characters at 320 px and 200 % text makes the page scroll sideways 267 px in all three
+  engines, with or without D1's fix: the flex item's min-content is the unbroken label. Fix:
+  `min-width: 0` on `.tag-options` and `overflow-wrap: anywhere` on `.tag-options li`; with both
+  (and D1) the list is the fieldset's 288 px and the page has no sideways scroll, checked in all
+  three engines. The tester pins both declarations in `fe/src/Reflow.test.ts` beside 10 R1.8.
+- **Re-review (designer, 2026-11-22): accepted.** With `flex-basis: 100%; margin: 0; min-width: 0`
+  on `.tag-options` and `overflow-wrap: anywhere` on its options (`fe/src/index.css:2388`, `:2400`),
+  in all three engines at 1280 and 320 px, 100 % and 200 %, light and dark: the list spans the
+  fieldset (664 / 288 px) one `--space-2` under the chip row, which no longer moves; a 32-character
+  suggestion leaves no sideways scroll; the C2.1 to C2.5 behaviour and PUT bodies are unchanged.

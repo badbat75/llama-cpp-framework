@@ -107,6 +107,11 @@ Lessons only: the rules are in `AGENTS.md`.
 - React: `flushSync` (from `react-dom`) is the only way a committed state is readable in the next statement, and a
   `startWrite` nested inside `flushSync` does not commit. A `useOptimistic` overlay ENDS a task after the answer
   resolves, so a test that focuses an item the answer restored cannot be written with it.
+- An `aria-activedescendant` index over a DERIVED list must carry the list it was walked onto
+  (`{ at, of: options.join('\n') }`, read as `active.of === key ? active.at : null`): a stateless
+  derivation, no effect, no setter cascade. A plain index survives a poll that moves a label, and
+  then `aria-selected` marks the label nobody walked onto and Enter writes it. So the two rules pair:
+  every key that hides the list (Escape as much as Tab) clears the active option too.
 - `cargo clippy -p <crate> --all-targets -- -D warnings` builds the lib WITHOUT the tests, so a
   `pub(crate)` item of a private module that only `#[cfg(test)]` code calls is dead there. Split it: keep
   the production function, mark the wrapper the tests call `#[cfg(test)]` (a fn simply stops being built,
@@ -1016,7 +1021,12 @@ Lessons only: the rules are in `AGENTS.md`.
   `getAllByRole('term')` needs the disclosure clicked first, and a test the brief's pin list omits
   (`ModelProfileContent.test.tsx` 2d.81) is a red to report, not a production defect.
 - `HearthTokens.test.ts` H1a.12 lists EVERY `min-height`/`min-width` of the sheet as
-  `selector: min-height: value`, so any new one the brief asks for is a red there.
+  `selector: min-height: value`, so any new one the brief asks for is a red there. The list is in
+  WRITTEN order, so the position of the tester's new line says where in the sheet the rule must sit
+  (brief 11 D2: `.tag-options: min-width: 0` last, so the block goes after `.tag-new button`), and a
+  comment line appended to an existing rule's comment plus the sheet's repeated declarations can make
+  `git diff --stat` report the CSS edit as insertions only: verify the block by grepping it, not by the
+  deletion count.
 - A received the test builds with `.map(...).sort()` compared to a literal the test did NOT `.sort()` is
   unsatisfiable by any code: the sorted order of the strings is fixed (`.table-scroll` before `.tile`), so
   no rule order in the sheet gives the pair. `HearthH2b.6` sorts BOTH sides, `Reflow.test.ts` R1.6 sorts
@@ -1284,6 +1294,32 @@ Lessons only: the rules are in `AGENTS.md`.
   `useDirtyReport(dirty, onDirty)` itself; a page-level `useWarnOnLeave(tagsDirty)` beside the Server
   form's own listener arms the browser ask TWICE (a `beforeunload` probe reads one, but the leave guard
   double-asks). The page only ORs the two sections' dirty flags for the app.
+
+## Slice 15 C2 (2026-11-21): the tag suggestions, three tests that cannot pass
+
+- A role query for a `hidden` element is unreachable by name, in BOTH forms: `getByRole('listbox',
+  { name })` throws (the default excludes the ARIA tree-excluded, `hidden` among them,
+  [ByRole `hidden`](https://testing-library.com/docs/queries/byrole)), and with `hidden: true` the same
+  element is listed with Name `""`, so the name form throws too. Probe it in a copy: the identical tree
+  without `hidden` is found by role and name. So a test that asks
+  `getByRole(listbox, { name })` and, a few lines below, `isHidden(list) === true` (the repo helper: an
+  ancestor `[hidden]`) has no production shape: name it, do not un-hide the list to please one line.
+- A listbox whose arrow walk must land on a label its own text filter hides: C2.4 builds "fast active"
+  by typing `zz` (the only match is `zz-top`) and pressing ArrowDown twice, while C2.3 pins
+  "from the last back to the first" as `arm` from a two-shown list (`a` matches `arm`, `fast` of three).
+  One walk rule answers one of them: in a copy, walking the FULL option list turns C2.4 green and C2.3
+  red at `from the last back to the first: expected 'zz-top' to be 'arm'`. The brief's decision 10
+  ("those containing the typed text") and C2.3 stand: report C2.4's construction.
+- A cap test that lists the labels of ONE source while a sibling test of the same file pins the OTHER
+  source's label is the same contradiction in a fixture: C2.7 expects `arm, t0..t6` and drops `fast`,
+  which its own fixture's instance `b` carries and which C2.6 asserts is suggested (`['fast']` alone
+  when the profiles read fails). In the copy, dropping the instances' labels from the suggestion source
+  turns C2.7 green and C2.6 red. The union, sorted, capped, is decision 10.
+- Decision order matters: "sorted; those containing the typed text; at most 8" is filter THEN cap. A cap
+  applied to the sorted list before the filter hides a label the visitor's text matches (text `t7` of
+  ten labels shows nothing). Cap the filtered indices, keep the full sorted list as the option ids.
+- Escape on a list that is not drawn: gate on the EXPANDED flag (a match exists), not on the open flag,
+  else a box whose text matches nothing needs two Escapes to close, against C1.3.
 
 ## Slice U17c (2026-11-21): one live region, two sources
 

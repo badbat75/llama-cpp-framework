@@ -165,7 +165,7 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
   // these that sets it is a break no brief asked for.
   expect(
     sets('overflow-wrap'),
-    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block and R5 adds the expanded pill, the rest are unchanged',
+    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, the rest are unchanged',
   ).toEqual(
     [
       'body = break-word',
@@ -197,6 +197,10 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
       // pill being a span child of the chip (a bare `.chip-full` loses to the
       // cut of `.chip > span` and shows the ellipsis itself).
       '.chip > .chip-full = anywhere',
+      // Brief 15 section 11, the C2 review (D2): a 32-character suggestion at
+      // 320 px and 200 % text scrolls the page sideways, the option line's
+      // unbroken label is the flex item's min-content; the break splits it.
+      '.tag-options li = anywhere',
     ].sort(),
   )
   for (const r of RULES.filter((r) => prop(r.body, 'overflow-wrap') !== ''))
@@ -382,16 +386,18 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // chips-row, chips, chip, chips-profile, tag-add and tag-new (the chip's x is
 // styled as `.chip button`, it has no class of its own), and drops tags-save,
 // the button the chips replaced; its section 10 R5 adds the seventh, chip-full,
-// the pill a cut chip opens. Brief 17, slice U17a (the skeleton while a page's
+// the pill a cut chip opens. Brief 15 slice C2 (the tags the node already uses,
+// suggested under the pill) adds tag-options. Brief 17, slice U17a (the
+// skeleton while a page's
 // first read is pending), adds the eighth and ninth: skeleton (a line of the
 // shape to come) and skeleton-box (the same, a box tall). A class beside these
 // is a look no brief asked for.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5 and brief 17 U17a amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and the two of brief 17 U17a, and the only id a selector names is the mount point #root', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2 and brief 17 U17a amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list and the two of brief 17 U17a, and the only id a selector names is the mount point #root', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -426,4 +432,50 @@ test('12 T1 layout (brief 12 section 3): .tile-facts dd declares overflow-wrap: 
     ],
     'the two of H6b.6 plus the break brief 12 section 3 asks for: no min-width and no flex property, the break is what lowers the item (.tile-id already carries min-width: 0, this is the value cell)',
   )
+})
+
+// ── 15 section 11 (the C2 review): the suggestions box, D1 and D2 ─────────
+
+test('15 C2 review D1: .tag-options declares flex-basis: 100% and margin: 0, so the list takes a full-width row of its own under the chip row', () => {
+  // The list is an item of the wrapping flex .field-control (index.css:1358)
+  // with no basis, so it shrinks to its widest label (55 to 127 px) and at
+  // 1280 px sits to the right of the chip row at the fieldset's top, pushing
+  // the row down: section 3's "full width of the field" and decision 10's
+  // "right under the chip row" are not met. The fix is the declaration
+  // `.field-control .field-error` already carries (index.css:2149): the basis
+  // puts it on its own line, and the margin is 0 because the flex row gap
+  // already gives --space-2.
+  const box = topBy('.tag-options', 'the suggestions list of C2')
+  for (const [name, value] of [
+    ['flex-basis', '100%'],
+    ['margin', '0'],
+  ] as Array<[string, string]>)
+    expect(
+      norm(prop(box.body, name)),
+      `D1 (brief 15 section 11): the list is a wrapping-flex item with no basis, so it shrinks to its widest label and sits beside the chip row: ${name}`,
+    ).toBe(value)
+})
+
+test('15 C2 review D2: .tag-options declares min-width: 0 and .tag-options li declares overflow-wrap: anywhere, so a 32-character suggestion at 320 px and 200 % text breaks inside the page', () => {
+  // A 32-character suggestion at 320 px and 200 % text scrolls the page
+  // sideways 267 px in all three engines, with or without D1's fix (section
+  // 11): a flex item's automatic minimum size is its min-content, and the
+  // unbroken label is that min-content. min-width: 0 lets the item go below
+  // it (CSS Flexbox 1) and the break in the line is what splits the label
+  // (CSS Text 3, overflow-wrap: anywhere): the same pair as the check-list
+  // row of brief 14 and the tile fact above.
+  const box = topBy('.tag-options', 'the suggestions list of C2')
+  expect(
+    norm(prop(box.body, 'min-width')),
+    'D2 (brief 15 section 11): the list is a flex item floored at its min-content by the auto minimum size, so a long label pushes the page sideways: min-width',
+  ).toBe('0')
+  expect(
+    norm(
+      prop(
+        topBy('.tag-options li', 'the suggestion line').body,
+        'overflow-wrap',
+      ),
+    ),
+    'D2 (brief 15 section 11): the label has no break point inside the line, so the line is as wide as the label: overflow-wrap',
+  ).toBe('anywhere')
 })

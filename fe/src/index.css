@@ -2374,6 +2374,39 @@ html:has(.save-bar) {
   color: var(--text);
 }
 
+/* The suggestions of the pill (15 section 3, decision 10): a block list in the
+   page's flow under the chip row, the field's width, so it floats over nothing
+   and covers no focused control at 320 px (2.4.11). Each option is a line of
+   text with the padding of a control's row, at least as high as the + is; the
+   active one carries the focus ring drawn inside its own edge, a shape and not
+   a colour (15 section 7). The list is an item of the wrapping flex
+   `.field-control`, so it takes a row of its own under the chips (the basis,
+   as `.boot-alert` and `.field-control .field-error` do) and its margin is 0:
+   the row gap already separates the lines (15 section 11 D1). `min-width: 0`
+   lets it go below its min-content, and the option line breaks a label with no
+   break point, so a long tag stays inside the page (its D2, 1.4.10). */
+.tag-options {
+  flex-basis: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: var(--border-w) solid var(--control);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tag-options li {
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.tag-options li[aria-selected='true'] {
+  outline: var(--ring-w) solid var(--accent);
+  outline-offset: calc(-1 * var(--ring-w));
+}
+
 .tags-status {
   margin: var(--space-2) 0 0;
 }

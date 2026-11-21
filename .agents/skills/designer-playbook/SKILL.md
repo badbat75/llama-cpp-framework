@@ -112,3 +112,8 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   `timeout 400` killed it with no output. Send it to a file (`> build/ux-review/<slice>/check.txt`),
   read the lines without a leading space (the stub's BrokenPipe tracebacks are noise). `u17c-box.js`
   measures the Model profiles table's scroll box overflow at 320 px, with and without a CSS change.
+- `.field-control` is a wrapping flex row: anything a brief puts "under the row" inside it needs
+  `flex-basis: 100%` and, if it holds user labels, `min-width: 0` plus `overflow-wrap: anywhere`;
+  say so in the brief (C2: the list shrank beside the row and a 32-character option scrolled 267 px).
+  In Playwright, `goto` to the same hash URL does not reload: open a new page per scenario
+  (`build/ux-review/c2.js`, `c2long.js` for a long option).

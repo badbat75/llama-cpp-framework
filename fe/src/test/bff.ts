@@ -287,6 +287,9 @@ export const EN: Record<string, string> = {
   'instance-tags-saving': 'Saving tags…',
   'instance-tag-added': 'Tag {0} added.',
   'instance-tag-removed': 'Tag {0} removed.',
+  // Brief 15 C2 (fe/briefs/15-tag-chips.md, section 2): the name of the list the
+  // "New tag" box points at with aria-controls.
+  'instance-tag-suggestions': 'Used tags',
   // Slice 1c (section 5.7, 4.8): a save that timed out.
   'save-timeout':
     'Not confirmed: the service did not answer in time, so the settings may or may not have been saved. Your changes are kept; save again to be sure.',
@@ -907,6 +910,22 @@ export const MODEL_PROFILES: ModelProfile[] = [
 ]
 
 /**
+ * One server profile as GET /api/profiles/server lists it
+ * (fe/briefs/api-contract.md, the proposed section). Only `id` and `tags` are
+ * named: the tags are all the tag suggestion reads (brief 15 C2).
+ */
+export type ServerProfile = {
+  id: string
+  tags: string[]
+  engine?: string
+  port?: number
+  instance?: string | null
+}
+
+/** The default server profile list: the `default` profile, with no tags. */
+export const SERVER_PROFILES: ServerProfile[] = [{ id: 'default', tags: [] }]
+
+/**
  * One model profile as GET /api/profiles/model/{id} reads it (fe/briefs/api-contract.md,
  * the proposed section, the shape of criterion 81). `values` adds to or
  * replaces the keys of the section; `extra` adds, replaces, and with
@@ -1017,6 +1036,12 @@ export type BffOptions = {
   instances?: Instance[] | Answer
   /** GET /api/profiles/model: the model profiles, or the reply. Default MODEL_PROFILES. */
   modelProfiles?: ModelProfile[] | Answer
+  /**
+   * GET /api/profiles/server (brief 15 C2): the server profiles, or the reply.
+   * Default SERVER_PROFILES, the `default` profile with no tags, so a test that
+   * says nothing suggests nothing.
+   */
+  serverProfiles?: ServerProfile[] | Answer
   /**
    * GET /api/profiles/model/{id}: the reply per decoded id. Default 200 modelProfileDoc
    * with the `id` of the request (the file spells it as asked).
@@ -1181,6 +1206,11 @@ export function fakeBff(options: BffOptions = {}) {
     }
     if (route === 'GET /api/profiles/model') {
       const p = options.modelProfiles ?? MODEL_PROFILES
+      if (Array.isArray(p)) return Promise.resolve(reply(200, p))
+      return answer(p, init)
+    }
+    if (route === 'GET /api/profiles/server') {
+      const p = options.serverProfiles ?? SERVER_PROFILES
       if (Array.isArray(p)) return Promise.resolve(reply(200, p))
       return answer(p, init)
     }

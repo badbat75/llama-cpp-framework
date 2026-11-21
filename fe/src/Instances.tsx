@@ -1,7 +1,13 @@
 // The manager's instances and the state of each, read from the bff's
 // /api/instances.
 import { useEffect, useState } from 'react'
-import { apiError, call, sessionEnded, sessionRevoked } from './api.ts'
+import {
+  apiError,
+  call,
+  isRecord,
+  sessionEnded,
+  sessionRevoked,
+} from './api.ts'
 import { Chip, ChipList } from './Chip.tsx'
 import { instanceHref } from './route.ts'
 import type { SignedOut } from './session.ts'
@@ -126,6 +132,19 @@ export async function writeTags(
     return refusal === null ? 'failed' : { ...refusal, status: reply.status }
   } catch {
     return 'failed'
+  }
+}
+
+/** Reads the node's server profiles (`GET /api/profiles/server`, the route of
+ * fe/briefs/api-contract.md, the profiles the new-tag pill suggests from,
+ * 15 C2): its body on 2xx, null for anything else, the session's ending
+ * included. The suggestion is a help, so a read that failed says nothing. */
+export async function readServerProfiles(): Promise<unknown> {
+  try {
+    const reply = await call('/api/profiles/server')
+    return reply.ok ? reply.body : null
+  } catch {
+    return null
   }
 }
 
@@ -352,4 +371,42 @@ function Tile({
       )}
     </li>
   )
+}
+
+/**
+ * The tags already used, in the order of the lists they are read from
+ * (brief 15 section 5, slice C2, decision 10): the two tag lists of every
+ * instance of the list read `list` (the union and the instance's own, section
+ * 0: the list answers the union alone when the instance has no tags of its
+ * own, so both are read), then the `tags` of every server profile of the read
+ * `profiles`. The tags `shown` are left out, as this instance already shows
+ * them, and a tag of two rows is kept once. A reply that is not the list it
+ * promises, and a read that failed, answer nothing.
+ */
+export function readInstanceTagSuggestions(
+  list: Answer,
+  profiles: unknown,
+  shown: string[],
+): string[] {
+  const used: string[] = []
+  const add = (tag: unknown) => {
+    if (
+      typeof tag === 'string' &&
+      tag !== '' &&
+      !shown.includes(tag) &&
+      !used.includes(tag)
+    )
+      used.push(tag)
+  }
+  if (Array.isArray(list)) {
+    for (const instance of list)
+      for (const tags of [instance.tags, instance.instanceTags])
+        if (Array.isArray(tags)) tags.forEach(add)
+  }
+  if (Array.isArray(profiles)) {
+    for (const profile of profiles)
+      if (isRecord(profile) && Array.isArray(profile.tags))
+        profile.tags.forEach(add)
+  }
+  return used
 }

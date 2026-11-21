@@ -403,9 +403,10 @@ function removeButton(p: Page, tag: string): HTMLElement {
   })
 }
 
-/** The pill's box, named by its visually hidden label "New tag". */
+/** The pill's box, named by its visually hidden label "New tag". Brief 15 C2
+ *  makes it the combobox of the suggestion list, so it is found by that role. */
 function newBox(p: Page): HTMLInputElement {
-  return within(p.field).getByRole('textbox', {
+  return within(p.field).getByRole('combobox', {
     name: en('instance-tag-new'),
   }) as HTMLInputElement
 }
@@ -767,14 +768,14 @@ test('15 C1.2: tags equal to instanceTags: no From the server profile text and n
   ).toHaveLength(1)
   expect(addButton(empty).textContent, 'its words').toBe(en('instance-tag-add'))
   expect(
-    within(empty.field).queryByRole('textbox'),
-    'no textbox while the pill is closed',
+    empty.field.querySelector('input'),
+    'no box while the pill is closed',
   ).toBeNull()
 })
 
 // ── 15 C1.3: opening and closing the pill ───────────────────────────────
 
-test('15 C1.3: Add tag opens a textbox named New tag, empty and focused, replacing the +, followed by Add (aria-disabled while the box is empty or spaces) and Cancel', async () => {
+test('15 C1.3: Add tag opens a box named New tag, empty and focused, replacing the +, followed by Add (aria-disabled while the box is empty or spaces) and Cancel', async () => {
   const p = await openPage()
   const box = await openPill(p)
   expect(box.value, 'empty').toBe('')
@@ -813,7 +814,7 @@ test('15 C1.3: Escape, Cancel, and blurring an empty box close the pill with Add
     else blurBox(box, boot)
     await flushTasks()
     expect(
-      within(p.field).queryByRole('textbox'),
+      p.field.querySelector('input'),
       `${close}: the box is gone`,
     ).toBeNull()
     const add = addButton(p)
@@ -975,7 +976,7 @@ test('15 C1.6: on 204 for fast the list holds v2, gpu, fast in that order, the b
   await waitFor(() =>
     expect(tagStatus(p).textContent).toBe(en('instance-tag-added', 'fast')),
   )
-  expect(within(p.field).queryByRole('textbox'), 'the box is gone').toBeNull()
+  expect(p.field.querySelector('input'), 'the box is gone').toBeNull()
   expect(ownChips(p).map(chipText), 'the new chip is last').toEqual([
     'v2',
     'gpu',
