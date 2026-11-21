@@ -92,7 +92,21 @@ pub fn server_args(
         args.push(tb.to_string());
     }
 
-    // NO --device, --tensor-split, --split-mode, --override-tensor, -lm, -fit
+    // --device LIST : the GPUs of this server profile, one argument with the
+    //   commas kept (the router splits the list itself). Omitted when unset,
+    //   which is every GPU of the node, as before the key existed; `none` is
+    //   passed as the value `none` (CPU only). It is the ROUTER's flag on
+    //   purpose: the router overlays its own argv on every model profile
+    //   (`preset.merge(base_preset)`), so this wins over each profile's
+    //   `device`, and the placement (llama.cpp's `--fit`) is derived over
+    //   exactly these devices. An id the node has no GPU for throws
+    //   `invalid device` at the router's start, so the instance fails closed.
+    if let Some(d) = crate::server_cfg::opt_nonblank(cfg.devices.clone()) {
+        args.push("--device".into());
+        args.push(d);
+    }
+
+    // NO --tensor-split, --split-mode, --override-tensor, -lm, -fit
     //   (nor its --fit-ctx / --fit-target), --prefill-assistant, --cache-reuse,
     //   --ctx-checkpoints, --checkpoint-min-step, --kv-unified,
     //   --kv-unified-per-slot, --moe-cache-mib, --repack, --no-host, --spec-draft-n-ubatch
@@ -1056,6 +1070,43 @@ mod tests {
         assert!(pair("--threads-batch", "24"));
     }
 
+    // R2 (ARCHITECTURE.md "Resources belong to the server profile"): the
+    // server profile's `Devices` rides the router's argv as `--device <value>`.
+    // A list is ONE argument, commas kept (the router splits it itself);
+    // `none` is the flag with the value `none` (CPU only); absent is no flag
+    // at all, every GPU as today (the same absence `auto_fields_omit_their_flags`
+    // pins for the default config).
+    #[test]
+    fn devices_rides_the_argv_as_one_device_flag() {
+        for value in ["ROCm0,ROCm1", "none"] {
+            let cfg = ServerConfig {
+                devices: Some(value.into()),
+                ..Default::default()
+            };
+            let a = args_for(&cfg);
+            let at = a
+                .iter()
+                .position(|x| x == "--device")
+                .unwrap_or_else(|| panic!("Devices = {value:?} emits no --device: {a:?}"));
+            assert_eq!(
+                a[at + 1],
+                value,
+                "Devices = {value:?}: one value, one argument"
+            );
+            assert_eq!(
+                a.iter().filter(|x| **x == "--device").count(),
+                1,
+                "Devices = {value:?} emits exactly one --device"
+            );
+        }
+        // Absent: no flag anywhere on the line.
+        let a = args_for(&ServerConfig::default());
+        assert!(
+            !a.contains(&"--device".to_string()),
+            "no Devices: no --device flag: {a:?}"
+        );
+    }
+
     // Step-8 guard of the server-field recipe (top of server_cfg.rs): every
     // ServerConfig field must be consumed by the launch path: mapped to a
     // llama-server flag here, or explicitly waved through with a comment
@@ -1070,6 +1121,8 @@ mod tests {
             threads_batch: Some(12),
             models_max: Some(3),
             models_memory_margin: Some(1024),
+            // R2: the GPUs of the server profile, in order, in ONE value.
+            devices: Some("ROCm0,CUDA1".into()),
             models_dir: Some(r"D:\models".into()),
             // Two rules: the `,` that joins them must reach llama-server as ONE
             // argument (it does its own splitting), not as two.
@@ -1098,6 +1151,8 @@ mod tests {
             threads_batch,
             models_max,
             models_memory_margin,
+            // R2: the server profile's GPUs, mapped to `--device` (asserted below).
+            devices,
             models_dir: _, // launch env only: start() exports it as LLAMA_CACHE
             // launch env only: `env_vars` exports it as ROCBLAS_USE_HIPBLASLT.
             // Also not a llama-server flag: rocBLAS reads it itself, below
@@ -1151,6 +1206,7 @@ mod tests {
             "--models-memory-margin",
             models_memory_margin.unwrap().to_string()
         ));
+        assert!(pair("--device", devices.unwrap()), "Devices on the argv");
         // The UI is off here, so --no-ui is passed.
         assert_eq!(a.contains(&"--no-ui".to_string()), !webui.unwrap());
         // webui-mcp-proxy is a presence flag: Some(false) here ⇒ omitted.

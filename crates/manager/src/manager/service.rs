@@ -5430,6 +5430,55 @@ pub(crate) fn manager_checks_e2e() {
         );
     }
 
+    // ── The GPUs of the server profile: `[Server] Devices` (R2) ───────────
+    {
+        let m = manager(true);
+        // Every write here rewrites default's server profile, and the file's
+        // text is a fixture of the next phase: take what this phase found and
+        // put it back when it ends.
+        let found = read("server@default.ini").expect("default's server profile");
+        // The write reaches the list rule, naming the key.
+        for (value, entry) in [
+            ("ROCm0, ROCm1", " ROCm1"),
+            ("CPU", "CPU"),
+            ("none,ROCm0", "none"),
+        ] {
+            assert_eq!(
+                m.write_file(
+                    &alice,
+                    "server@default.ini",
+                    &format!("[Server]\nPort = 8081\nDevices = {value}\n"),
+                    false
+                ),
+                invalid("device-bad-name", &["Devices", entry]),
+                "`{value}` is refused at the write"
+            );
+        }
+        assert_eq!(
+            read("server@default.ini").as_deref(),
+            Some(default_ini),
+            "a refused Devices kept the old file"
+        );
+        // A name the node has no GPU for is taken, and so is `none` alone: the
+        // rule judges the shape, never the probe's inventory.
+        for value in ["ROCm7", "CUDA0,ROCm1", "none"] {
+            let text = format!("[Server]\nPort = 8081\nDevices = {value}\n");
+            assert_eq!(
+                m.write_file(&alice, "server@default.ini", &text, false),
+                Ok(()),
+                "`{value}` is taken"
+            );
+            assert_eq!(
+                read("server@default.ini").as_deref(),
+                Some(text.as_str()),
+                "the GPUs are in the file the manager wrote"
+            );
+        }
+        // The phase ends with the file as it found it, so the next phase reads
+        // the profile its own fixture pins.
+        std::fs::write(sys.join("server@default.ini"), found).expect("restore");
+    }
+
     // ── load-on-startup against the instances' ModelsMax ─────────────────
     {
         let m = manager(true);

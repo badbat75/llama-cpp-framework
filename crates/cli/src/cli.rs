@@ -2496,6 +2496,11 @@ mod tests {
             threads_batch: Some(16),
             models_max: Some(3),
             models_memory_margin: Some(1024),
+            // The GPUs: as with the tags below, no flag carries them, so
+            // `apply` leaves the list the loaded config had (None here: every
+            // GPU); `server_set_keeps_the_devices_the_file_has` pins a file
+            // that names some.
+            devices: None,
             models_dir: Some("D:\\models".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
@@ -2515,6 +2520,36 @@ mod tests {
         assert_eq!(cfg, expected);
     }
 
+    /// `pai server set` rewrites the WHOLE server profile from the config it
+    /// loaded, so a field no flag carries must survive the save. The GPUs of
+    /// R2, pinned from the file's text, as `load()` reads it, to the text
+    /// `save()` renders.
+    #[test]
+    fn server_set_keeps_the_devices_the_file_has() {
+        let loaded = server_cfg::from_text("[Server]\nPort = 8580\nDevices = ROCm0,ROCm1\n");
+        assert_eq!(
+            loaded.devices.as_deref(),
+            Some("ROCm0,ROCm1"),
+            "the fixture must be a file that names GPUs"
+        );
+        let mut cfg = loaded.clone();
+        ServerSet {
+            port: Some(9000),
+            ..ServerSet::default()
+        }
+        .apply(&mut cfg);
+        assert_eq!(cfg.port, Some(9000), "the flag landed");
+        assert_eq!(
+            cfg.devices, loaded.devices,
+            "server set erased the GPUs the file had"
+        );
+        let text = server_cfg::render(&cfg);
+        assert!(
+            text.contains("Devices = ROCm0,ROCm1"),
+            "the written file has no Devices line:\n{text}"
+        );
+    }
+
     // The Show leg of the 3-spot CLI fan-out: every field set in a rich config
     // must surface in `server show`'s output. Complements the `apply` test
     // above so neither CLI leg can silently drop a new server field.
@@ -2527,6 +2562,9 @@ mod tests {
             threads_batch: Some(16),
             models_max: Some(3),
             models_memory_margin: Some(1024),
+            // The GPUs: `server show` has no row for them, so the fixture
+            // keeps them unset (every GPU) and `needles` names nothing.
+            devices: None,
             models_dir: Some(r"D:\models".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("none".into()),
@@ -2556,6 +2594,7 @@ mod tests {
             threads_batch,
             models_max,
             models_memory_margin,
+            devices: _, // No GPUs row in `server show`, so no needle to bind.
             models_dir,
             rocblas_use_hipblaslt,
             cuda_allreduce,

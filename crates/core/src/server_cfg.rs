@@ -69,6 +69,11 @@ pub struct ServerConfig {
     /// the flag, i.e. llama.cpp's default 0, which disables the accounting and
     /// leaves `models_max` as the only cap.
     pub models_memory_margin: Option<i32>,
+    /// The GPUs of this server profile, as `[Server] Devices`: the probe's
+    /// ids in order comma-separated (`ROCm0,ROCm1`), or `none` for CPU only.
+    /// `None` is every GPU, the state today. R2 (ARCHITECTURE.md "Resources
+    /// belong to the server profile").
+    pub devices: Option<String>,
     pub models_dir: Option<String>,
     /// Which GEMM backend rocBLAS uses under the HIP build (env var
     /// `ROCBLAS_USE_HIPBLASLT`): `Some(false)` exports `0` (force Tensile),
@@ -484,6 +489,7 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         models_memory_margin: keys
             .get("ModelsMemoryMargin")
             .and_then(|v| ini::parse_int(v)),
+        devices: opt_nonblank(keys.get("Devices").cloned()),
         models_dir: opt_nonblank(keys.get("ModelsDir").cloned()),
         // Absent (or unparseable) stays None: "leave the env var alone" is a
         // real third state here, not a stand-in for a framework default.
@@ -593,6 +599,7 @@ pub fn check(cfg: &ServerConfig, cpus: usize) -> Result<(), checks::Refusal> {
         }
     }
     let texts = [
+        ("Devices", &cfg.devices),
         ("ModelsDir", &cfg.models_dir),
         ("StateDir", &cfg.state_dir),
         ("OpencodeBaseUrl", &cfg.opencode_base_url),
@@ -604,6 +611,9 @@ pub fn check(cfg: &ServerConfig, cpus: usize) -> Result<(), checks::Refusal> {
         }
     }
     checks::bind_list(cfg.hostname.as_deref().unwrap_or_default())?;
+    if let Some(v) = &cfg.devices {
+        checks::device_list("Devices", v)?;
+    }
     checks::tags_rule(&cfg.tags)
 }
 
@@ -700,6 +710,12 @@ pub fn render_for_os(cfg: &ServerConfig, leave_dirs_unset: bool, windows: bool) 
         "; ModelsMemoryMargin = 1024  ; MiB kept free per device, unloading LRU models until a new one fits (--models-memory-margin); commented = llama.cpp default 0 (off)",
         |n| n >= 0,
     );
+    // The GPUs of this profile, written only when set: unset is the state
+    // today (every GPU of the node) and needs no line, and a commented example
+    // would name device ids of one particular node.
+    let devices_line = opt_nonblank(cfg.devices.clone())
+        .map(|v| format!("Devices = {v}\n"))
+        .unwrap_or_default();
     // The one bool with a real unset state (see the field's doc): unset means the
     // env var is never exported, which is neither `true` nor `false`.
     let rocblas_hipblaslt_line = bool_line_or_hint(
@@ -805,6 +821,13 @@ LogVerbosity = {log_verbosity}
 {threads_batch_line}
 {models_max_line}
 {models_memory_margin_line}
+; The GPUs of this profile, under the key Devices, in the order llama.cpp
+; numbers them: comma-separated with no space (ROCm0,ROCm1), in the names the
+; node's device list gives, the same names a model profile's device takes, or
+; none for CPU only. It is the router's --device, so it is the GPU set of every
+; model of the instance and wins over a profile's own device, and the auto-fit
+; places a model over exactly these cards. No line: every GPU of the node.
+{devices_line}
 ; SDK tuning: vendor-library environment variables, not llama-server flags;
 ; llama.cpp never sees them, so nothing validates them and each only bites the
 ; backend it belongs to. RocblasUseHipblaslt picks rocBLAS's GEMM backend:
@@ -1252,6 +1275,8 @@ mod tests {
             threads_batch: Some(24),
             models_max: Some(2),
             models_memory_margin: Some(1536),
+            // R2: the GPU list, kept verbatim (no collapse).
+            devices: Some("CUDA0,ROCm1".into()),
             models_dir: Some(r"E:\llm".into()),
             // Non-default (unset is the framework default): the state that
             // matters, and the one a `keep`-style collapse would swallow.
@@ -1413,6 +1438,59 @@ mod tests {
             vec!["gpu".to_string(), "edge".to_string()]
         );
         assert_eq!(read(""), Vec::<String>::new());
+    }
+
+    /// R2 (ARCHITECTURE.md "Resources belong to the server profile"): the
+    /// `[Server] Devices` key, the probe ids in order comma-separated, or
+    /// `none`; absent means every GPU. It round-trips through the file (a save
+    /// that edits another key keeps the line), a blank line loads unset, and an
+    /// unset field writes no line at all.
+    #[test]
+    fn devices_round_trips_and_absent_writes_no_key() {
+        for value in ["ROCm0,ROCm1", "none", "ROCm7"] {
+            let cfg = ServerConfig {
+                devices: Some(value.into()),
+                ..Default::default()
+            };
+            assert_eq!(
+                round_trip(&cfg).devices.as_deref(),
+                Some(value),
+                "Devices = {value:?} reloads as itself"
+            );
+            assert!(
+                render(&cfg).contains(&format!("\nDevices = {value}\n")),
+                "the key is one line: {value:?}"
+            );
+            assert_eq!(check(&cfg, 16), Ok(()), "Devices = {value:?} is taken");
+        }
+        // Absent: no line of its own, not even a hint.
+        for line in render(&ServerConfig::default()).lines() {
+            assert!(
+                !line
+                    .trim_start()
+                    .trim_start_matches(';')
+                    .trim_start()
+                    .starts_with("Devices"),
+                "an unset Devices wrote a line: {line:?}"
+            );
+        }
+        assert_eq!(
+            from_text("[Server]\nDevices = ROCm0,ROCm1\n")
+                .devices
+                .as_deref(),
+            Some("ROCm0,ROCm1"),
+            "the file's list reads into the field"
+        );
+        assert_eq!(
+            from_text("[Server]\nDevices =\n").devices,
+            None,
+            "a blank line is unset, as every optional text"
+        );
+        assert_eq!(
+            from_text("[Server]\n").devices,
+            None,
+            "absent is unset: every GPU, as today"
+        );
     }
 
     /// A hand-edited `load-mode` is canonicalized rather than silently dropped,
@@ -1661,6 +1739,28 @@ mod tests {
             let mut cfg = checked_base();
             set(&mut cfg);
             assert_eq!(check(&cfg, 16), Err(want), "{label}");
+        }
+    }
+
+    /// `Devices` is free text with a list rule that never looks at a comment
+    /// marker, so the marker rule the other free-text server keys obey must run
+    /// on it too: `ROCm0;x` is written and reloads as `ROCm0` (the INI format
+    /// has no escaping), GPUs the user never typed.
+    #[test]
+    fn the_check_refuses_a_comment_marker_in_devices() {
+        for value in ["ROCm0;x", "ROCm0#y"] {
+            let cfg = ServerConfig {
+                devices: Some(value.into()),
+                ..checked_base()
+            };
+            assert_eq!(
+                check(&cfg, 16),
+                Err(crate::checks::Refusal {
+                    key: "comment-markers",
+                    values: vec!["Devices".into()],
+                }),
+                "Devices = {value:?}"
+            );
         }
     }
 

@@ -405,8 +405,16 @@ const MODEL_PROFILE_TEXT_KEYS: [&str; 7] = [
     "fit-target",
 ];
 
-/// The server.ini keys whose value is free text (paths, a URL, a key).
-const SERVER_TEXT_KEYS: [&str; 4] = ["ModelsDir", "StateDir", "OpencodeBaseUrl", "OpencodeApiKey"];
+/// The server.ini keys whose value is free text (paths, a URL, a key, the GPU
+/// list: its own rule judges a shape no marker can ride in, so the marker rule
+/// has to run on the line as written).
+const SERVER_TEXT_KEYS: [&str; 5] = [
+    "ModelsDir",
+    "StateDir",
+    "OpencodeBaseUrl",
+    "OpencodeApiKey",
+    "Devices",
+];
 
 /// `text`, the value of `key`, as a whole number in `range`.
 pub fn whole_number(key: &str, text: &str, range: &RangeInclusive<i32>) -> Result<(), Refusal> {
@@ -541,20 +549,25 @@ pub fn moe_cache_split(moe_cache_mib: Option<i32>, split_mode: &str) -> Result<(
 /// The keys whose value is a list of device ids: one rule for all three.
 pub const DEVICE_LIST_KEYS: [&str; 3] = ["device", "device-draft", "mmproj-device"];
 
-/// One device list (`device`, `device-draft`, `mmproj-device`) as llama.cpp
-/// reads it: `parse_device_list` in `common/arg.cpp` splits the value at `,`,
-/// keeps each entry byte for byte (it trims nothing), and throws on an empty
-/// entry, on an entry naming the CPU device and on `none` beside another name,
-/// so the model never loads. `value` is the value the reader of the file sees
-/// (the preset reader `common/preset.cpp` drops the spaces after `=`, ends the
-/// value at the spaces before a `;`/`#`/newline and cuts it at the first `;` or
-/// `#`, which is [`RawSection::get`]), so an entry keeps the spaces inside the
-/// value and only the `=` of an `override-tensor` rule can ride in one: the
-/// other two markers end the value before the rule sees it, and a body value
-/// carrying one is the bff's 422 `comment-markers`. The names are judged by
-/// their shape only, never against the node's probe: an id the probe does not
-/// answer is a value llama.cpp takes. Refused with `device-bad-name`, naming
-/// the key and the entry.
+/// One device list (a model profile's `device`, `device-draft`,
+/// `mmproj-device`, and the server profile's `Devices`, the key `--device`
+/// takes) as llama.cpp reads it: `parse_device_list` in `common/arg.cpp`
+/// splits the value at `,`, keeps each entry byte for byte (it trims nothing),
+/// and throws on an empty entry, on an entry naming the CPU device and on
+/// `none` beside another name, so the model never loads. `value` is the value
+/// the reader of the file sees (the preset reader `common/preset.cpp` drops
+/// the spaces after `=`, ends the value at the spaces before a
+/// `;`/`#`/newline and cuts it at the first `;` or `#`, which is
+/// [`RawSection::get`]): an entry keeps the spaces inside the value, and
+/// neither marker can ride in one, the value ending at the first. A line
+/// carrying one is refused by [`comment_markers`], never here (this rule reads
+/// `ROCm0;x` as one entry of the right shape): `Devices` is in the free-text
+/// server keys for it, and a body value with a marker is the bff's 422
+/// `comment-markers` for every key. An `=` does ride in an entry, and is
+/// refused here: llama.cpp looks that name up and finds no device. The names
+/// are judged by their shape only, never against the node's probe: an id the
+/// probe does not answer is a value llama.cpp takes. Refused with
+/// `device-bad-name`, naming the key and the entry.
 pub fn device_list(key: &str, value: &str) -> Result<(), Refusal> {
     if value.is_empty() {
         return Ok(());
@@ -976,6 +989,11 @@ pub fn server_file(text: &str, model_profiles: &str) -> Result<(), Refusal> {
         if SERVER_TEXT_KEYS.contains(&key.as_str()) {
             comment_markers(key, raw)?;
         }
+    }
+    // The server profile's GPUs, by the list rule's shape only (never against
+    // the probe: a card can vanish for a while and must not block a save).
+    if let Some(v) = s.get("Devices") {
+        device_list("Devices", &v)?;
     }
     bind_list(&s.get("Hostname").unwrap_or_default())?;
     tags_rule(&tags_list(s.get("Tags").as_deref().unwrap_or_default()))?;
@@ -1542,6 +1560,95 @@ top-p = 0.95\r\n";
                 Ok(()),
                 "Tags = {raw:?}"
             );
+        }
+    }
+
+    /// R2 (ARCHITECTURE.md "Resources belong to the server profile"):
+    /// `[Server] Devices` is judged by the list rule's SHAPE only, never
+    /// against the probe. A space in an entry, a `=`, an empty entry, `CPU`,
+    /// and `none` beside others are refused, naming the key.
+    #[test]
+    fn the_server_file_check_refuses_a_devices_list_the_rule_refuses() {
+        for value in [
+            "ROCm0, ROCm1", // a space inside an entry, as the form sends it
+            "ROCm0 ,ROCm1",
+            "CPU",
+            "none,ROCm0",
+            "ROCm0,ROCm1=2",
+            "ROCm0,,ROCm1",
+            ",",
+        ] {
+            let e = server_file(&server(&format!("Devices = {value}\n")), "")
+                .expect_err(&format!("`{value}` must be refused"));
+            assert_eq!(e.key, "device-bad-name", "`{value}`: {e:?}");
+            assert_eq!(
+                e.values[0], "Devices",
+                "`{value}`: the refusal names the key: {e:?}"
+            );
+        }
+    }
+
+    /// `Devices` is free text, so the key is also judged by the comment-marker
+    /// rule the other free-text server keys obey, on the line as written: the
+    /// INI format has no escaping, so `ROCm0;x` reloads as `ROCm0` (the reader
+    /// cuts the value at the marker, `RawSection::get`), GPUs nobody typed. The
+    /// list rule's shape never sees a marker, so the refusal is `comment-markers`
+    /// naming `Devices`.
+    #[test]
+    fn the_server_file_check_refuses_a_comment_marker_in_devices() {
+        for value in ["ROCm0;x", "ROCm0#y", "ROCm0,ROCm1 ;note"] {
+            assert_eq!(
+                server_file(&server(&format!("Devices = {value}\n")), ""),
+                Err(refusal("comment-markers", &["Devices"])),
+                "Devices = {value:?}"
+            );
+        }
+    }
+
+    /// The same check takes a list of the rule's shape: probe ids in order, a
+    /// name the node has no GPU for (`ROCm7`: the inventory is not consulted),
+    /// and `none` alone (CPU only).
+    #[test]
+    fn the_server_file_check_accepts_a_devices_list_of_the_rules_shape() {
+        for value in ["ROCm0,ROCm1", "CUDA0,ROCm1", "ROCm7", "none"] {
+            assert_eq!(
+                server_file(&server(&format!("Devices = {value}\n")), ""),
+                Ok(()),
+                "Devices = {value:?}"
+            );
+        }
+    }
+
+    /// A server file with no `Devices` key keeps passing: the key is optional
+    /// (every GPU, as today).
+    #[test]
+    fn the_server_file_check_takes_a_file_with_no_devices_key() {
+        assert_eq!(
+            server_file(&server("Port = 8080\nThreads = 8\n"), ""),
+            Ok(()),
+            "no Devices: every GPU, as today"
+        );
+    }
+
+    /// The rule itself, on the `Devices` key: the shape is judged, the
+    /// inventory never. This is the check the bff's save (`server_cfg::check`)
+    /// and the manager's write (`server_file`) must both reach.
+    #[test]
+    fn device_list_judges_the_devices_key_by_its_shape() {
+        for value in ["ROCm0,ROCm1", "ROCm7", "none"] {
+            assert_eq!(
+                device_list("Devices", value),
+                Ok(()),
+                "`{value}` must be taken"
+            );
+        }
+        // An empty value is the key left unset (every GPU), as the rule
+        // already treats it for the model profile's `device`.
+        assert_eq!(device_list("Devices", ""), Ok(()));
+        for value in ["ROCm0, ROCm1", "CPU", "none,ROCm0", "ROCm0,ROCm1=2"] {
+            let e = device_list("Devices", value).expect_err(&format!("`{value}` must be refused"));
+            assert_eq!(e.key, "device-bad-name", "`{value}`: {e:?}");
+            assert_eq!(e.values[0], "Devices", "`{value}` names the key");
         }
     }
 

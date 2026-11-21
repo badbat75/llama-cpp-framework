@@ -1575,6 +1575,118 @@ async fn the_instance_server_route_still_answers_as_before() {
     );
 }
 
+// ── The GPUs of the profile: `[Server] Devices` (R2) ────────────────────
+
+/// The profile route carries the GPUs like the instance route: the document
+/// gives the file's list, a save of `Devices` lands in the file, and a save of
+/// another key keeps it.
+#[tokio::test]
+async fn the_profile_document_carries_and_keeps_the_devices() {
+    let written: Written = Arc::default();
+    let text = "[Server]\nPort = 8123\nDevices = CUDA0,ROCm1\n";
+    let app = app_for(Fixture {
+        files: HashMap::from([("server@big.ini".to_string(), text.to_string())]),
+        written: Some(written.clone()),
+        ..Fixture::pool(&[("big", 8123)])
+    });
+    let (reply, _) = app.document("big").await;
+    assert_eq!(
+        reply.json()["values"]["Devices"],
+        json!("CUDA0,ROCm1"),
+        "{}",
+        reply.body
+    );
+
+    let body = |values: Value| {
+        json!({
+            "revision": revision_of(text, &REVISION_KEY),
+            "values": values
+        })
+    };
+    let (reply, _) = app
+        .save(
+            "big",
+            body(json!({ "Port": 9000, "Tags": [], "Devices": "CUDA0,ROCm1" })),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let contents = written_of(&written);
+    assert_eq!(contents.len(), 1, "{contents:?}");
+    assert!(
+        contents[0].1.contains("Devices = CUDA0,ROCm1"),
+        "the save of Port lost the GPUs: {}",
+        contents[0].1
+    );
+
+    let (reply, _) = app
+        .save(
+            "big",
+            body(json!({ "Port": 9000, "Tags": [], "Devices": "none" })),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let contents = written_of(&written);
+    assert_eq!(contents.len(), 2, "{contents:?}");
+    assert!(
+        contents[1].1.contains("Devices = none"),
+        "`none` (CPU only) is a value the save writes: {}",
+        contents[1].1
+    );
+}
+
+/// The same refusal on this route: 422 `device-bad-name` naming the field
+/// `Devices`, nothing written.
+#[tokio::test]
+async fn a_profile_save_of_devices_the_rule_refuses_names_the_field() {
+    let written: Written = Arc::default();
+    let text = "[Server]\nPort = 8123\n";
+    let app = app_for(Fixture {
+        files: HashMap::from([("server@big.ini".to_string(), text.to_string())]),
+        written: Some(written.clone()),
+        ..Fixture::pool(&[("big", 8123)])
+    });
+    app.save(
+        "big",
+        json!({
+            "revision": revision_of(text, &REVISION_KEY),
+            "values": { "Port": 8123, "Tags": [], "Devices": "ROCm0, ROCm1" }
+        }),
+    )
+    .await
+    .0
+    .assert_refused("device-bad-name", &["Devices", " ROCm1"], "Devices");
+    assert!(written_of(&written).is_empty(), "nothing written");
+}
+
+/// The marker rule on this route too: a `Devices` value with a `;` or a `#` is
+/// 422 `comment-markers`, the field `Devices`, nothing written.
+#[tokio::test]
+async fn a_profile_save_of_devices_with_a_comment_marker_is_422_comment_markers() {
+    for value in ["ROCm0;x", "ROCm0#y"] {
+        let written: Written = Arc::default();
+        let text = "[Server]\nPort = 8123\n";
+        let app = app_for(Fixture {
+            files: HashMap::from([("server@big.ini".to_string(), text.to_string())]),
+            written: Some(written.clone()),
+            ..Fixture::pool(&[("big", 8123)])
+        });
+        app.save(
+            "big",
+            json!({
+                "revision": revision_of(text, &REVISION_KEY),
+                "values": { "Port": 8123, "Tags": [], "Devices": value }
+            }),
+        )
+        .await
+        .0
+        .assert_refused("comment-markers", &["Devices"], "Devices");
+        assert!(
+            written_of(&written).is_empty(),
+            "{value:?}: nothing written"
+        );
+    }
+}
+
 /// The revision the bff answers for `text` under `key`: SipHash-2-4 of the
 /// text under the router's 16 bytes, as `server.rs`'s `revision` computes it.
 fn revision_of(text: &str, key: &[u8; 16]) -> String {

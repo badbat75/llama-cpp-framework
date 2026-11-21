@@ -1033,9 +1033,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     profile's GPU order) and optional fixed `n-gpu-layers`/`n-cpu-moe`, llama.cpp's `--fit` places the
     rest; GPUs are named as the probe prints them; the memory check counts only the instance's server
     profile's GPUs (this replaces the 2026-11-17 decision that it counts every GPU of the node); host RAM
-    and CPU threads are shown in the node inventory with no budget. Slices: R1 inventory (RAM, CPU in
-    `Devices()`), R2 the `Devices` key, R3 the per-pair memory check, R4 `device` off the web model profile
-    page, R5 the web UI (a GPUs card on the server profile page, designer's brief first, after 17a).
+    and CPU threads are shown in the node inventory with no budget. R1 (inventory, a1a3458) and R2
+    (the `Devices` key) are built; left: R3 the per-pair memory check, R4 `device` off the web model profile
+    page, R5 the web UI (a GPUs card on the server profile page, designer's brief first, after 17a; it also
+    gives `pai server show` a Devices row).
     **GPU distribution on the model profile page** (user, 2026-11-20: "Non vedo gli slider per la
     spartizione dei layer"): the web UI edits `device`, `split-mode` and `tensor-split` as the GUI's GPU
     table does (fe slice 2f of brief 02, never scheduled until now). Built beside slice 14: first the

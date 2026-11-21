@@ -280,6 +280,12 @@ const FIELDS: &[Field] = &[
         write: |c, v| c.models_memory_margin = int(v),
     },
     Field {
+        key: "Devices",
+        kind: Kind::Text,
+        read: |c| json!(c.devices),
+        write: |c, v| c.devices = text(v),
+    },
+    Field {
         key: "ModelsDir",
         kind: Kind::Text,
         read: |c| json!(c.models_dir),
@@ -829,6 +835,10 @@ mod tests {
             threads_batch: Some(4),
             models_max: Some(2),
             models_memory_margin: Some(1024),
+            // The GPUs of the profile: the route reads and saves the key, and
+            // the page has no field for it yet. Unset here, as the shipped
+            // profile: every GPU of the node, so the render carries no line.
+            devices: None,
             models_dir: Some("/srv/models".into()),
             rocblas_use_hipblaslt: Some(false),
             cuda_allreduce: Some("nccl".into()),
@@ -1054,6 +1064,15 @@ mod tests {
         let (key, _, field) = refused(body_with("OpencodeApiKey", json!("sk-;secret")));
         assert_eq!(key, "comment-markers");
         assert_eq!(field, "OpencodeApiKey", "the same mapping on the API key");
+        // The GPUs list is free text too: its list rule never sees a marker
+        // (`ROCm0;x` is one entry of the shape rule), and the file would reload
+        // it as `ROCm0`.
+        for value in ["ROCm0;x", "ROCm0#y"] {
+            let (key, args, field) = refused(body_with("Devices", json!(value)));
+            assert_eq!(key, "comment-markers", "Devices = {value:?}");
+            assert_eq!(args, vec!["Devices".to_string()], "Devices = {value:?}");
+            assert_eq!(field, "Devices", "the 422 marks the GPUs control");
+        }
     }
 
     /// The profile's tags obey the manager's rule (`checks::tags_rule`) on the

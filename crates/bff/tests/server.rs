@@ -152,13 +152,14 @@ const KEY_B: [u8; 16] = [
 const SHIPPED: &str = include_str!("../../core/defaults/server@default.ini");
 
 /// Every `[Server]` key `server_cfg::from_text` reads.
-const KEYS: [&str; 20] = [
+const KEYS: [&str; 21] = [
     "Port",
     "Hostname",
     "Threads",
     "ThreadsBatch",
     "ModelsMax",
     "ModelsMemoryMargin",
+    "Devices",
     "ModelsDir",
     "RocblasUseHipblaslt",
     "CudaAllreduce",
@@ -1493,6 +1494,7 @@ Threads = 12
 ThreadsBatch = 16
 ModelsMax = 2
 ModelsMemoryMargin = 1024
+Devices = CUDA0,ROCm1
 ModelsDir = /srv/models
 RocblasUseHipblaslt = false
 CudaAllreduce = NCCL
@@ -1519,6 +1521,7 @@ Unknown = 7
             "ThreadsBatch": 16,
             "ModelsMax": 2,
             "ModelsMemoryMargin": 1024,
+            "Devices": "CUDA0,ROCm1",
             "ModelsDir": "/srv/models",
             "RocblasUseHipblaslt": "off",
             "CudaAllreduce": "nccl",
@@ -1898,6 +1901,25 @@ async fn the_revision_depends_on_the_secret_of_the_router() {
         under_b["revision"],
         json!("8cb593f214fcdeb2"),
         "the secret 10 11 .. 1f"
+    );
+}
+
+// ── The GPUs of the profile: `[Server] Devices` (R2) ────────────────────
+
+/// The document carries `Devices` like every other text key: the file's list
+/// reads as one string, and a file that sets nothing answers `null` (every
+/// GPU, as today).
+#[tokio::test]
+async fn the_document_carries_the_devices_of_the_file() {
+    let doc = app_holding("[Server]\nPort = 8580\nDevices = ROCm0,ROCm1\n")
+        .read_default()
+        .await
+        .document();
+    assert_eq!(doc["values"]["Devices"], json!("ROCm0,ROCm1"), "{doc}");
+    assert_eq!(
+        app_holding(SHIPPED).read_default().await.document()["values"]["Devices"],
+        Value::Null,
+        "the shipped file sets no Devices: every GPU"
     );
 }
 
@@ -2881,6 +2903,125 @@ async fn a_read_that_outlives_the_read_limit_is_still_answered_at_it() {
         started.elapsed() < write_limit,
         "the read was answered at the read's limit, not carried by the write's: {:?}",
         started.elapsed()
+    );
+}
+
+// ── The GPUs of the profile: saving `[Server] Devices` (R2) ─────────────
+
+/// A save of the GPU list lands in the file verbatim, `none` (CPU only)
+/// included, and the next read gives it back as one string.
+#[tokio::test]
+async fn a_save_of_the_devices_lands_in_the_file() {
+    for value in ["ROCm0,ROCm1", "none"] {
+        let app = app_writing(SHIPPED);
+        let cookie = app.sign_in().await;
+        let doc = app.read_default().await.document();
+        let reply = app
+            .put(
+                Some(&cookie),
+                &save_body(&doc, &[("Devices", json!(value))]),
+            )
+            .await;
+        assert_saved(&reply);
+        assert!(
+            app.file_text().contains(&format!("Devices = {value}")),
+            "Devices = {value:?} is not in the file: {}",
+            app.file_text()
+        );
+        let after = app
+            .get("/api/instances/default/server", Some(&cookie))
+            .await
+            .document();
+        assert_eq!(after["values"]["Devices"], json!(value), "{value:?}");
+    }
+}
+
+/// The rule's refusal, named: a list with a space inside an entry is 422
+/// `device-bad-name`, the field `Devices`, and nothing is written.
+#[tokio::test]
+async fn a_save_of_devices_the_rule_refuses_names_the_field_and_writes_nothing() {
+    let app = app_writing(SHIPPED);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.put(
+        Some(&cookie),
+        &save_body(&doc, &[("Devices", json!("ROCm0, ROCm1"))]),
+    )
+    .await
+    .assert_refused("device-bad-name", &["Devices", " ROCm1"], "Devices");
+    assert!(app.writes().is_empty(), "nothing written");
+    assert_eq!(app.file_text(), SHIPPED, "the file is untouched");
+}
+
+/// The marker rule, on the same key: a `;` or `#` saved into `Devices` is the
+/// INI comment marker, so the save is 422 `comment-markers` with the field
+/// `Devices`, and nothing is written: `ROCm0;x` in a file reloads as `ROCm0`,
+/// GPUs nobody typed.
+#[tokio::test]
+async fn a_save_of_devices_with_a_comment_marker_is_422_comment_markers() {
+    for value in ["ROCm0;x", "ROCm0#y"] {
+        let app = app_writing(SHIPPED);
+        let cookie = app.sign_in().await;
+        let doc = app.read_default().await.document();
+        app.put(
+            Some(&cookie),
+            &save_body(&doc, &[("Devices", json!(value))]),
+        )
+        .await
+        .assert_refused("comment-markers", &["Devices"], "Devices");
+        assert!(app.writes().is_empty(), "{value:?}: nothing written");
+        assert_eq!(app.file_text(), SHIPPED, "{value:?}: the file is untouched");
+    }
+}
+
+/// The done-when clause: a save of another key keeps the GPUs. The read's
+/// document carries the value, so the rendered file carries the line.
+#[tokio::test]
+async fn a_save_of_another_key_keeps_the_devices() {
+    let text = "[Server]\nPort = 8580\nDevices = CUDA0,ROCm1\n";
+    let app = app_writing(text);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    assert_saved(
+        &app.put(Some(&cookie), &save_body(&doc, &[("Port", json!(8642))]))
+            .await,
+    );
+    let contents = app.file_text();
+    assert!(
+        contents.contains("Devices = CUDA0,ROCm1"),
+        "the save of Port lost the GPUs: {contents}"
+    );
+    assert_eq!(
+        pai_core::server_cfg::from_text(&contents)
+            .devices
+            .as_deref(),
+        Some("CUDA0,ROCm1"),
+        "the written file still names the GPUs"
+    );
+}
+
+/// Unsetting the GPUs is a save of `null`: no key in the file, every GPU.
+#[tokio::test]
+async fn a_save_of_no_devices_writes_no_key() {
+    let text = "[Server]\nPort = 8580\nDevices = ROCm0\n";
+    let app = app_writing(text);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    assert_saved(
+        &app.put(Some(&cookie), &save_body(&doc, &[("Devices", Value::Null)]))
+            .await,
+    );
+    let contents = app.file_text();
+    assert!(
+        !contents
+            .lines()
+            .any(|l| l.trim_start().starts_with("Devices")),
+        "an unset Devices left a line: {contents}"
+    );
+    assert_eq!(
+        pai_core::server_cfg::from_text(&contents).devices,
+        None,
+        "unset: every GPU"
     );
 }
 

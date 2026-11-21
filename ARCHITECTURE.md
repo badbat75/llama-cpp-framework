@@ -2623,6 +2623,14 @@ pair; a bare model profile shows `needMiB` only.
    `device_list`, the bff's server document carries it. Done when: the argv pins all three cases; a
    save of `ROCm0, ROCm1` is 422 `device-bad-name` naming `Devices`; a save of another key keeps
    `Devices`.
+   *As built (2026-11-21, reviewed):* `ServerConfig::devices`, loaded blank-as-unset and rendered as a
+   `Devices = ` line only when set (`crates/core/src/server_cfg.rs`); `launch::server_args` pushes
+   `--device` and the value as two argv entries only when set, `none` passed as is (`launch.rs` 104-107);
+   the rule is `checks::device_list`, shape only, in the manager's write (`checks::server_file`) and the
+   bff's save (`server_cfg::check`); the bff's document and both save routes carry `Devices`. The GUI's
+   Server tab carries it as a hidden form field and `pai server set` keeps it, so neither save drops it;
+   `pai server show` has no `Devices` row yet. Since the GUI shares `server_args`, a `Devices` in a
+   per-user `server.ini` (macOS) would also reach the configurator's own llama-server.
 3. **R3 the pair check** (`pai-manager`): `available` from `Devices`; the two new judging points. Done
    when: a profile that fits two cards is refused at a switch to a one-card server profile and at a save
    narrowing `Devices`, nothing written; a profile already over is not re-judged; `none` and an

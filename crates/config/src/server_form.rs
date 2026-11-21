@@ -130,6 +130,10 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
             server_cfg::DEFAULT_MODELS_MEMORY_MARGIN,
         ),
         models_memory_margin_default: cfg.models_memory_margin.is_none(),
+        // The GPUs have no widget (the Server tab shows none): the value rides
+        // the form in the file's own spelling, so a Save hands back what the
+        // file had. The line's absence shows as blank.
+        devices: cfg.devices.clone().unwrap_or_default().into(),
         // Same "blank ⇒ default dir" rule as save()/start(), so a hand-edited
         // blank ModelsDir shows the default it will actually resolve to.
         models_dir: cfg.models_dir_or_default().into(),
@@ -269,6 +273,11 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         } else {
             ini::parse_int_in(f.models_memory_margin.as_str(), &ini::INT_NON_NEGATIVE)
         },
+        // The form carries the GPU list, no widget touches it: what the file had
+        // comes back unchanged, so a Server tab save never erases the line.
+        // Blank collapses to None like every optional string (no line: every
+        // GPU of the node).
+        devices: server_cfg::opt_nonblank(Some(f.devices.to_string())),
         // Blank ⇒ None (fall back to the default dir), same rule as hostname.
         models_dir: server_cfg::opt_nonblank(Some(f.models_dir.to_string())),
         // "default" (and anything unrecognised) collapses to None: the natural
@@ -342,6 +351,10 @@ mod tests {
             threads_batch: Some(12),
             models_max: Some(2),
             models_memory_margin: Some(2048),
+            // The GPUs have no widget: the form carries the line's own
+            // spelling, so a set list round-trips as well (pinned by
+            // `a_server_tab_save_keeps_the_file_s_devices`). Unset here.
+            devices: None,
             models_dir: Some(r"E:\models".into()),
             // Non-default (None is the framework default), so the tri-state's
             // round-trip through the form's string spelling isn't vacuous.
@@ -393,6 +406,39 @@ mod tests {
         assert!(
             text.contains("Tags = edge,v2"),
             "the written file has no tags line:\n{text}"
+        );
+    }
+
+    /// The Server tab's Save keeps the file's `Devices` (R2). The tab has no
+    /// field for the GPUs, and the Save writes the WHOLE file from the form, so
+    /// a form that reads the key as unset erases the line. Pinned from the
+    /// file's text, as `load()` hands it to the tab, to the text `save()`
+    /// writes, with another field edited beside it.
+    #[test]
+    fn a_server_tab_save_keeps_the_file_s_devices() {
+        // A ModelsDir is in the fixture so the form is not sent through
+        // `paths::` (see the note in `rocblas_hipblaslt_tri_state_round_trips`).
+        let loaded = server_cfg::from_text(
+            "[Server]\nPort = 8580\nModelsDir = E:\\models\nDevices = ROCm0,ROCm1\n",
+        );
+        assert_eq!(
+            loaded.devices.as_deref(),
+            Some("ROCm0,ROCm1"),
+            "the fixture must be a file that names GPUs"
+        );
+        // The user edits the port; the Save carries that change and nothing else.
+        let mut form = config_to_form(&loaded);
+        form.port = "9999".into();
+        let saved = form_to_config(&form);
+        assert_eq!(saved.port, Some(9999), "the edited port reached the save");
+        assert_eq!(
+            saved.devices, loaded.devices,
+            "the Save drops the GPUs the file had"
+        );
+        let text = server_cfg::render(&saved);
+        assert!(
+            text.contains("Devices = ROCm0,ROCm1"),
+            "the written file has no Devices line:\n{text}"
         );
     }
 
