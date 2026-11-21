@@ -179,7 +179,10 @@ pai-bff` fails "the web UI is not built" until `xtask build framework` has run. 
   nothing. Drive the timeout with `tokio::time::pause()`, and use
   `#[tokio::test(flavor = "multi_thread")]` when a real sleep is wanted.
 - The web UI's tests run from `fe/` only (`npm --prefix fe test`, `npx vitest run` inside `fe`): `npx
-vitest` from the repo root resolves a different config and lies about the files it ran.
+vitest` from the repo root resolves a different config and lies about the files it ran. It runs the NODE
+environment too (the `environment: 'jsdom'` of `fe/vite.config.ts` is not read), so every component test
+reds `ReferenceError: window is not defined` in `startAt`, which reads as a broken harness. A scoped run is
+`npm --prefix fe test -- src/X.test.tsx src/Y.test.tsx` (several files in one positional filter).
 - The type check that sees the test files is `npm --prefix fe run typecheck`; a bare
   `tsc -p tsconfig.json` checks the app only, so a test file's own type errors reach only the npm script.
   `npm --prefix fe test -- <part-of-the-file-name>` DOES filter (vitest 5 reads the positional as a file
@@ -209,6 +212,16 @@ vitest` from the repo root resolves a different config and lies about the files 
   ends at the navigation timeout), and the reset query in `load()` must carry EVERY key a state can set,
   since the stub keeps keys a `/__set` did not carry: a key missing from the reset leaves every later
   state with a held read, and each of them reports `not rendered`.
+- The UX check (`npm --prefix fe run build` then `npm --prefix fe/ux run check`, ~2 min) prints one line per
+  browser x width x theme (x text mode), so ONE unmet `expect` of one state is 18 lines: report the unique
+  lines (`sed 's/^chromium //..' | sort | uniq -c`), not the summary's count. A missing selector reads
+  `not rendered: <selector> x<count>`; an axe tag reads `axe: <tag> x<n>`. Failures of states the slice did
+  NOT touch land in the same summary (today: `instance-server: axe: target-size x2`, 8 lines) and are
+  pre-existing: say so, and prove the state is untouched with `git diff fe/ux/check.js`.
+- A `hover: { on, then }` pin acts on the FIRST match of `on`, so it only greens when that first element
+  provably triggers the reveal. A pill that needs a CUT chip (15 R5) cannot be pinned on a state whose
+  first chip is short: pick a state whose first match is the widest, or leave the reveal to the jsdom test,
+  where the test can SAY which element is cut (`measure()` sets `clientWidth`/`scrollWidth`).
 - jsdom's `closest` answers a COMPLEX selector (`el.closest('li > *')`): the element's own parent is the
   `li` gives the element ITSELF, a nested one gives the li's child. So a "these sit in one wrapper" pin by
   that locator is testable today, and the shape of the red is the field itself: pin
@@ -342,6 +355,14 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   container's `p`s for a `textContent` equal to the whole sentence (that list gives a "one line" count for
   free), and an absence pin by the sentence's HEAD, `en(key, '{0}').split('{0}')[0]`, so a line with ANY
   moment is caught, a regex's teeth are kept, and no English prose is written into the test.
+- When a brief AMENDS a value an existing suite reads through a SHARED helper (17b.1: the tile's Tags value,
+  which `InstanceTiles.test.tsx`'s `facts()` read as the joined text), change the READER and leave the
+  assertions: read the readable form (the list's items, joined for reading), and every existing pin of that
+  value greens today and stays a pin of its row, its order and its wording, while the new shape (the
+  `ul[role=list]` of `li.chip`, its CSS, its pill) is pinned in the new file, where the brief's criteria name
+  it. Two pin shapes cannot survive that and move to the new file: a "no element's text contains X" scan
+  (17b.2, which reds on the `dd`/`ul`/`li` ANCESTORS of the items), and a locator that found the value by
+  that text.
 - Reconciling an OLD pin against a NEW one: change only what the brief contradicts (a locator, a
   blanket "active" that the brief's ends rule refutes, a fixture key the title already claims, an
   order the fieldset's DOM order settles). Where the brief settles the rule IN THE OLD PIN'S FAVOUR,
@@ -1835,3 +1856,27 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
 - The server-profile routes (`GET|PUT /api/profiles/server/{id}`) have NO page: no `fe/src` code
   fetches them, so a defect that names "the server profile routes" is pinnable only on the bff side.
   Report the fe's reach, and never add a route to the shared fake to fake the coverage.
+
+## A nested `role="list"` breaks every scoped list locator (brief 17 U17b, 2026-11-21)
+
+- A brief that puts a `ul role="list"` INSIDE an item of another list (17b.1: the chips `ul.chips`
+  inside each tile's Tags `dd`) reds every `within(x).findByRole('list')` that scopes to the OUTER
+  list, with `Found multiple elements with the role "list"`. The fix keeps every assertion of the
+  caller: `findAllByRole('list')` + `filter((el) => el.closest('.tile') === null)` + a
+  `toHaveLength(1)` (that count is what the old `findByRole` pinned), one local helper per file.
+- The red list names only the helpers whose FIXTURE carries the new nested element: three files here
+  (`Instances.test.tsx`, `HearthTiles.test.tsx`, `HearthTilesBoot.test.tsx`) have the same unscoped
+  locator and stayed green on their tag-free fixtures. Enumerate the pattern with
+  `grep -rn "findByRole('list')" fe/src`, never from the reds: a green helper today is the suite that
+  breaks the day a fixture gains tags. Say so and leave them (the brief named four sites).
+- `HearthTokens.test.ts`'s H1a.12 message is ONE single-quoted string: a clause carrying an
+  apostrophe (`the tile's fact row`) is a SYNTAX error of the test file, and the RULES reader drops
+  `/* */` so a sheet comment never pollutes a selector. Run `npx prettier --write` on the touched
+  files FIRST: prettier prints the code frame of such a string before any test runs. The prose lists
+  in this file avoid apostrophes: write "the fact row of a tile".
+- The known fe flakes, with solo-rerun counts, so a report can name them as flakes: `09 S1a.10: at
+  #/sign-in signed in, the nav reads the alias as the Overview` fails 1 in 11 solo runs
+  (`expected '#/sign-in' to be '#/'` at `SignInOnly.test.tsx:722`: the alias `replaceState` assert
+  races the effect), `2d.63` (ModelProfilePage) and `13 N.3` (NodeNav) 0 in 3, and all three are
+  green in a full green suite (2609 tests). One green solo after one red solo is a flake: report the
+  runs, do not touch production code for it.

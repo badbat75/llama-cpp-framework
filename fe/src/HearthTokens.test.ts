@@ -687,7 +687,7 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     }
   expect(
     sizes,
-    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9)',
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9), and the fact row of a tile and its value cell shrink below their content (17b)',
   ).toEqual([
     '#root: min-height: 100vh',
     'button: min-height: var(--control-h)',
@@ -709,6 +709,12 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     '.model-profiles-filter-status: min-height: 1lh',
     // H6a.7: the id shrinks inside its tile; H6a.8: the pill is 28 px.
     '.tile-id: min-width: 0',
+    // 17b.5 (brief 17 U17b): the fact row and its value cell are flex/grid
+    // children, so min-width 0 lets them go below their content: the chips
+    // list of the Tags cell wraps inside the tile instead of pushing the tile
+    // past 320 px (the overflow the ux pass measured).
+    '.tile dl > div: min-width: 0',
+    '.tile dd: min-width: 0',
     '.badge: min-height: 28px',
     '.jump ul button: min-height: 32px',
     'fieldset: min-width: 0',

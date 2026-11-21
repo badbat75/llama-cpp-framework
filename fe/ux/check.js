@@ -150,10 +150,24 @@ const STATES = [
     name: 'overview-tiles',
     // The tiles of four instances (stub.py list=many): the 40-character id, the
     // badge, the engine line the second engine brings, and the boot row of a
-    // signed-in session, the `dl.tile-facts` of H6b.
+    // signed-in session, the `dl.tile-facts` of H6b. Brief 17 U17b (17b.4): the
+    // fourth tile's tags are the widest the rule allows, 8 tags of 32
+    // characters, and each shows as a fixed chip of its Tags row, so the state
+    // proves the chips rendered inside their tiles. The 320 px and 200 % text
+    // reads of 17b.4 (no sideways scroll) are the check's own; the expanded pill
+    // of 15 section 10 R5 is pinned on a tile in InstanceTileChips.test.tsx,
+    // where the test can say which chip is cut (jsdom lays out nothing).
     set: 'session=admin&list=many',
     hash: '#/',
-    expect: [{ selector: 'li.tile', count: 4 }, { selector: 'dl.tile-facts' }],
+    expect: [
+      { selector: 'li.tile', count: 4 },
+      { selector: 'dl.tile-facts' },
+      {
+        selector: '.tile .chip',
+        count: 13,
+        message: 'the 13 chips of the four tiles: 3 + 2 + 0 + 8',
+      },
+    ],
   },
   {
     name: 'instance-server',

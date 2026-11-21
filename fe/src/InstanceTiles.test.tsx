@@ -3,7 +3,9 @@
 // fetch); "12 T1.n" is the brief's criterion n. The instance-page criteria are
 // in InstanceTags.test.tsx. Since brief 13 (13 N.1) the boot row comes from
 // the item's `boot` in the list answer, so the fixtures carry it and no tile
-// sends a boot read of its own (13 N.2).
+// sends a boot read of its own (13 N.2). Brief 17 slice U17b amends the Tags
+// row: its value is a list of chips, so `facts` reads the items (the chips
+// themselves, their CSS and the pill are pinned in InstanceTileChips.test.tsx).
 import {
   cleanup,
   render,
@@ -40,13 +42,19 @@ afterEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** The Overview's tiles list. */
+/** The Overview's tiles list (`ul.tiles`), never a tile's own chips list:
+ *  17b.1 puts a `ul.chips role="list"` inside every tile's Tags cell, so a
+ *  bare findByRole('list') matches several. The tiles list is the one list
+ *  that is not inside a tile. */
 async function tiles(): Promise<HTMLElement> {
   await screen.findByRole('heading', {
     level: 2,
     name: en('instances-title'),
   })
-  return within(screen.getByRole('main')).findByRole('list')
+  const lists = await within(screen.getByRole('main')).findAllByRole('list')
+  const found = lists.filter((el) => el.closest('.tile') === null)
+  expect(found, 'one list outside the tiles').toHaveLength(1)
+  return found[0]!
 }
 
 /** The tile of one instance id, once it is on screen. */
@@ -57,17 +65,27 @@ async function tileOf(list: HTMLElement, id: string): Promise<HTMLLIElement> {
   return tile as HTMLLIElement
 }
 
-/** The tile's facts as the visitor reads them: term, value. Null with none. */
+/** The tile's facts as the visitor reads them: term, value. Null with none.
+ *  Brief 17 U17b amends the Tags value: the cell is a list of chips, so its
+ *  value is read as its items, in order, joined for reading (17b.1: the tags
+ *  are the items, no longer one string the tile spells with commas). */
 function facts(tile: HTMLElement): Array<[string, string]> | null {
   const dl = tile.querySelector('dl.tile-facts')
   if (dl === null) return null
   const terms = Array.from(dl.querySelectorAll('dt'))
   const values = Array.from(dl.querySelectorAll('dd'))
   expect(terms.length, 'one value per term').toBe(values.length)
-  return terms.map((term, i) => [
-    (term.textContent ?? '').trim(),
-    ((values[i] as HTMLElement).textContent ?? '').trim(),
-  ])
+  return terms.map((term, i) => {
+    const dd = values[i] as HTMLElement
+    const list = dd.querySelector('ul')
+    const value =
+      list === null
+        ? (dd.textContent ?? '')
+        : Array.from(list.querySelectorAll('li'))
+            .map((li) => (li.textContent ?? '').trim())
+            .join(', ')
+    return [(term.textContent ?? '').trim(), value.trim()]
+  })
 }
 
 /** The terms of the tile's facts. */
@@ -91,8 +109,9 @@ async function openOverview(items: () => unknown[]) {
 
 // ── T1.2: the three rows, in order ──────────────────────────────────────
 
-test('12 T1.2: the tile has Port, Tags and Start at boot in this order, all three with the first render (13 N.1: the row is there with the tile)', async () => {
+test('12 T1.2 (as 17b.1 amends it): the tile has Port, Tags and Start at boot in this order, all three with the first render (13 N.1: the row is there with the tile)', async () => {
   const { tile } = await openOverview(() => [ITEM])
+  // The Tags value is the tile's list of chips read as its items (17b.1).
   expect(await rows(tile, 3), 'the three rows come with the tile').toEqual([
     [en('server-port'), '8080'],
     [en('instance-tags'), 'edge, v2, gpu'],
@@ -100,7 +119,7 @@ test('12 T1.2: the tile has Port, Tags and Start at boot in this order, all thre
   ])
 })
 
-test('12 T1.2: the Port and Tags rows are there when the item carries no boot', async () => {
+test('12 T1.2 (as 17b.1 amends it): the Port and Tags rows are there when the item carries no boot', async () => {
   const { tile } = await openOverview(() => [{ ...ITEM, boot: null }])
   expect(
     await rows(tile, 2),

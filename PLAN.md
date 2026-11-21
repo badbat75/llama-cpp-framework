@@ -1041,7 +1041,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
     designer's audit of what is basic today and a phased brief, built in slices after C1; after U17b it
     waits for C2, 2g/2j, slice 17, then R4 and R5 (user, 2026-11-21)
-    (fe brief 17: U17a skeletons and U17c sorting built; left U17b, U17h, U17e, U17d, U17f, U17g in that order).
+    (fe brief 17: U17a skeletons, U17c sorting and U17b tile chips built; left U17h, U17e, U17d, U17f, U17g in that order).
     **One models folder for every engine** (user, 2026-11-21: "usa una folder unica per i modelli tra i
     differenti motori"; asked whether a server profile may still name another: "unica e basta"): one
     models folder per node, shared by llama.cpp and later Strata, owned by the framework rather than an

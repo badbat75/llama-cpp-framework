@@ -37,6 +37,17 @@ function item(id: string, boot?: unknown): Instance {
   return base as unknown as Instance
 }
 
+/** The tiles list (`ul.tiles`) of this section, never a tile's own chips
+ *  list: 17b.1 puts a `ul.chips role="list"` inside every tile's Tags cell, so
+ *  a bare findByRole('list') matches several. The tiles list is the one list
+ *  that is not inside a tile. */
+async function tilesList(container: HTMLElement): Promise<HTMLElement> {
+  const lists = await within(container).findAllByRole('list')
+  const found = lists.filter((el) => el.closest('.tile') === null)
+  expect(found, 'one list outside the tiles').toHaveLength(1)
+  return found[0]!
+}
+
 /** The Overview with this bff: the tiles list, once it is on screen. */
 async function open(options: BffOptions = {}) {
   const bff = fakeBff(options)
@@ -46,7 +57,7 @@ async function open(options: BffOptions = {}) {
     name: en('instances-title'),
   })
   const section = h2.parentElement as HTMLElement
-  return { bff, list: await within(section).findByRole('list') }
+  return { bff, list: await tilesList(section) }
 }
 
 /** The tile of one instance id, once it is on screen. */
@@ -214,7 +225,7 @@ test('13 N.2: a later list answer that flips boot moves the row with it, with no
     name: en('instances-title'),
   })
   const again = await tileOf(
-    await within(h2.parentElement as HTMLElement).findByRole('list'),
+    await tilesList(h2.parentElement as HTMLElement),
     'default',
   )
   expect(bootOf(again), 'the row follows the new answer').toBe(

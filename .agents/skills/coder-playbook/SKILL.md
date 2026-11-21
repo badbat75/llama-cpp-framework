@@ -961,9 +961,33 @@ Lessons only: the rules are in `AGENTS.md`.
   R1.1's frozen `overflow-wrap` list, so a value change there is the tester's.
 - GD1.5 splits `device` on `,` alone (an id holds a `/`) while GD2.1's `tensor-split` vector splits on
   `[,/]+`: two parsers, never one.
+- A chip (`.chip > span` is `white-space: nowrap`) inside a `dd` that is a flex item of a wrapping row
+  grows the row past its box: the row is a grid item, a grid item is floored at its min-content, and the
+  min-content of a wrapping flex row is the LARGEST item's min-content contribution, so one 32-character
+  tag scrolls the page sideways (the Overview at 320 px, brief 17 U17b.4). `min-width: 0` on the CHIP
+  changes nothing: a flex item's contribution is capped from above only, and `.chip { max-width: 100% }`
+  is indefinite during intrinsic sizing. The cure is `min-width: 0` on the ROW and on the CELL (the flex
+  item and the grid item), then the list wraps by chips and the chip that does not fit cuts its text.
+  Measure it in Chromium, jsdom lays out nothing (see the probe recipe below).
+- Those two `min-width: 0` rules cannot name `.tile-facts`: `HearthTilesBoot.test.tsx` H6b.6 pins
+  `.tile-facts`, `.tile-facts > div`, `.tile-facts dt` and `.tile-facts dd` to an EXACT declaration list
+  and refuses any other rule whose selector contains `.tile-facts`. The tile's row div has no class, so
+  `.tile dl > div` and `.tile dd` are the selectors that reach them. Any rule that sets `min-width`
+  needs its `selector: min-width: value` line in `HearthTokens.test.ts`'s H1a.12 ledger, in sheet order
+  (read the diff's insertion point), and the line is the tester's edit.
+- The UX check's `hover` state covers `li.chip` on the instance page's `tags` state, NOT `.tile .chip`:
+  the Overview's chip pill is only proven by the jsdom test, so a tile chip's pill has no real-browser
+  proof. Say so when the brief's criterion is about a tile chip.
 
 ## Tests that cannot pass, and what to report
 
+- A helper that reads a page's list with `within(getByRole('main')).findByRole('list')` reddens as
+  `Found multiple elements with the role "list"` the moment a nested `role="list"` joins the page (the
+  Overview's tiles list plus a tile's `ul.chips`, brief 17 U17b.1). No production markup escapes it:
+  `findByRole('list')` with no name matches EVERY role=list in scope, so the brief's own
+  `ul.chips role="list"` and the shipped `ul.tiles role="list"` (HearthTiles pins both) cannot coexist
+  under that query. It is a test-side scoping fix (scope to the tile, or name the list): report the
+  helper's file:line, edit no test.
 - A cascade test's self-probe can restate its own expectations as the PRE-slice sheet (H10: the probe
   wants min-height `32px` and the winner `.jump button`, while the test it probes wants
   `var(--control-h)` and `inline-flex` from the identical call). Satisfy the test, quote the pair.
@@ -1130,6 +1154,13 @@ Lessons only: the rules are in `AGENTS.md`.
   (`.chip button` styles the chip's x). Name the class in the report so the tester can amend the list.
 - A scratch probe's `console.log` is swallowed in a passing vitest file; `process.stdout.write` prints.
   Delete every probe file before reporting, and say the probe's result, not its path.
+- To read a layout in a real browser, copy `fe/ux/check.js`'s own bootstrap: `spawn('python3', ['-I',
+  'fe/ux/stub.py', DIST, '0'])`, read the port from the FIRST stdout line with `/^\d+/` (the stub prints
+  only the number, no colon: `/:(\d+)/` never matches), `fetch(\`${base}/__set?...\`)` for the state, then
+  `page.goto(\`${base}/#/…\`, { waitUntil: 'networkidle' })`. `require('playwright')` resolves only from
+  `fe/ux`, so require it by absolute path (`fe/ux/node_modules/playwright`), and build `fe/dist` first:
+  the stub serves the built files, an old `dist` reads as "the change does nothing". `p.kill()` the stub
+  at the end.
 
 ## `fe/`: the page's identity, the address, and jsdom's history
 
@@ -1280,3 +1311,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - `xtask/src/linux/package.rs`'s own source pin is `include_str!("package.rs")` sliced to `run()`
   (`split("pub fn run(").nth(1)` up to the next `\nfn `): the needles are the CALL texts, so a comment
   added inside `run()` is safe and `cmd("ldd")` must be gone from that region.
+
+## Stop every stub you start
+
+Probing the UI with `fe/ux/stub.py` by hand left eleven stubs running detached for the U17b slice
+(2026-11-21). Start a stub in the foreground of one command that kills its pid on exit (`python3 -I
+fe/ux/stub.py ... & pid=$!; ...; kill $pid`), and check `ps -eo pid,ppid,cmd | grep stub.py` is empty
+before you report.

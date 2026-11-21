@@ -207,6 +207,28 @@ page that shows them whole). Accessible text is unchanged in content: a list of 
 Tests that change: `InstanceTags.test.tsx` T1.2 to T1.4 and `InstanceTiles.test.tsx`, which read the
 joined text, now read the list items.
 
+### U17b review (designer, 2026-11-21): accepted
+
+Real browsers, `build/ux-review/u17b.js` against `fe/ux/stub.py` `list=many` and the built `fe/dist`:
+Chromium, Firefox and WebKit at 1280 and 320 px, light and dark, 100 % and 200 % text (24 runs).
+Every run: 13 `.tile .chip`, none past its tile, no sideways scroll, none focusable; fill `--bg`
+and border `--control` in both themes (17b.3 met, `index.css` `.tile .chip`). The 31-character tags
+are cut with the ellipsis in every run but the 1280 px 200 % ones, where the tile is wide enough.
+Hovering a cut chip opens the pill in every run where one is cut: the whole label, wrapped
+(`white-space: normal`), drawn over the next chip (`elementFromPoint` hits the pill), inside its tile
+and the viewport, also at 320 px 200 % (236 by 168 px, three lines). So the gap the coder named, no
+hover proof for `.tile .chip`, is closed. 17b.1, 17b.2 and 17b.5 are met by the tests
+(`InstanceTileChips.test.tsx`) and `Instances.tsx` ~336, which uses `ChipList`/`Chip` from `Chip.tsx`.
+
+Keyboard access to a cut tag on a tile, the reviewer's note: kept as briefed. A screen reader reads
+every tag whole (the list item holds the full text; the ellipsis is CSS only), so nothing is lost
+to it ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)). A sighted keyboard user
+reaches the whole tags in one Tab and Enter on the tile's id link, on the instance page whose chips
+take focus and open the pill. Showing the full text is not a function, so
+[2.1.1](https://www.w3.org/TR/WCAG22/#keyboard) does not ask for it; making each tile chip a tab
+stop would add up to 16 stops per tile before the next tile's link, which costs more than it gives
+(designer preference).
+
 ## U17e. Mark the changed fields
 
 React: none (the form already knows each field's saved and current value).

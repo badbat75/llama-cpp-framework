@@ -1023,6 +1023,24 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+/* The value cell is a flex item of its row, and a flex item keeps its
+   content's minimum width as its own: the chips list is text with no break
+   point (`.chip > span` is nowrap), so a tile whose tag is 32 characters long
+   grew its row past the tile and the Overview sideways at 320 px (brief 12
+   section 3, CSS Flexbox 1). `min-width: 0` on the row and on the cell lets
+   both go below their content, as `.chips { min-width: 0 }` does in the row of
+   the instance page: the list wraps by chips inside the cell, and the chip
+   that does not fit cuts its text to the cell (15 section 10 R3). The
+   selectors name the tile, not the row: the row's rules are the four of
+   brief 08 H6b.6. */
+.tile dl > div {
+  min-width: 0;
+}
+
+.tile dd {
+  min-width: 0;
+}
+
 /* State badge: the shape beside the state's text. */
 .badge {
   display: inline-flex;
@@ -2239,6 +2257,21 @@ html:has(.save-bar) {
   flex: 0 1 auto;
   background: var(--surface);
   border: var(--border-w) solid transparent;
+}
+
+/* The Overview's tiles show the tags as fixed chips (17-ux-pass.md U17b): the
+   tile is a lifted box, so its chip takes the box's fill and keeps the
+   control's border, the edge forced colours show (fe/DESIGN.md 5.2 "Chip"). A
+   tile chip has no x, so its pill covers the whole chip, and is drawn with the
+   same fill. */
+.tile .chip {
+  background: var(--bg);
+  border: var(--border-w) solid var(--control);
+}
+
+.tile .chip > .chip-full {
+  inset-inline-end: 0;
+  background: var(--bg);
 }
 
 /* The chip's full value (15 section 10 R5): the whole label, for the chip

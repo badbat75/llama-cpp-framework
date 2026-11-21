@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+import { Chip, ChipList } from './Chip.tsx'
 import Dialog from './Dialog.tsx'
 import {
   CheckboxField,
@@ -807,43 +808,6 @@ function TagsField({
     renewalsNow.current = renewals
   }, [renewals])
 
-  // The chip whose full label shows (15 section 10 R5), by its tag: only a
-  // chip whose text the ellipsis cut opens the pill, and the cut is read at
-  // the moment the pointer or the focus enters, from the span's box.
-  const [expanded, setExpanded] = useState<string | null>(null)
-  // Escape keeps the pill closed until the pointer or the focus enters the
-  // chip again (R5: Content on Hover or Focus, dismissible).
-  const dismissed = useRef(false)
-  // Each chip's text span, by its tag, for that measure.
-  const spans = useRef(new Map<string, HTMLElement | null>())
-  const isCut = (tag: string) => {
-    const box = spans.current.get(tag)
-    return (
-      box !== null && box !== undefined && box.scrollWidth > box.clientWidth
-    )
-  }
-  // Both flush: the pointer and the keyboard reach a chip outside React's own
-  // events (`focus()` of a test, a real click), and R5 asks the pill to be
-  // there the moment the focus is on the `x`, and gone the moment it leaves.
-  const showFull = (tag: string) => {
-    dismissed.current = false
-    if (isCut(tag)) flushSync(() => setExpanded(tag))
-  }
-  const hideFull = (tag: string) =>
-    flushSync(() => setExpanded((shown) => (shown === tag ? null : shown)))
-  // Escape closes it, wherever the focus is, and leaves the focus where it
-  // stands (R5, WCAG 2.1.1: nothing is reachable only by the pointer).
-  useEffect(() => {
-    if (expanded === null) return
-    const away = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      dismissed.current = true
-      setExpanded(null)
-    }
-    document.addEventListener('keydown', away)
-    return () => document.removeEventListener('keydown', away)
-  }, [expanded])
-
   /** Puts the focus on the field's control `suffix` names (`-add`, `-box`,
    * `-remove-<tag>`): the caller has flushed the state that puts it there. */
   function focusControl(suffix: string) {
@@ -1043,24 +1007,9 @@ function TagsField({
       <fieldset className="field-control" aria-labelledby={`${fieldId}-label`}>
         <div className="chips-row">
           {latched.length > 0 && (
-            <ul className="chips" role="list">
+            <ChipList>
               {latched.map((tag) => (
-                <li
-                  className="chip"
-                  key={tag}
-                  onMouseEnter={() => showFull(tag)}
-                  onMouseLeave={() => hideFull(tag)}
-                  onFocus={() => showFull(tag)}
-                  onBlur={() => hideFull(tag)}
-                >
-                  <span
-                    ref={(el) => {
-                      spans.current.set(tag, el)
-                    }}
-                  >
-                    {tag}
-                  </span>
-                  {expanded === tag && <ChipFull tag={tag} />}
+                <Chip key={tag} tag={tag}>
                   <button
                     type="button"
                     id={`${fieldId}-remove-${tag}`}
@@ -1072,9 +1021,9 @@ function TagsField({
                       {t('instance-tag-remove', tag)}
                     </span>
                   </button>
-                </li>
+                </Chip>
               ))}
-            </ul>
+            </ChipList>
           )}
           {open ? (
             <div className="tag-new">
@@ -1144,32 +1093,14 @@ function TagsField({
             <p className="tags-profile" id={`${fieldId}-profile`}>
               {t('instance-tags-from-profile')}
             </p>
-            <ul
-              className="chips chips-profile"
-              role="list"
-              aria-labelledby={`${fieldId}-profile`}
+            <ChipList
+              className="chips-profile"
+              labelledBy={`${fieldId}-profile`}
             >
               {profile.map((tag) => (
-                <li
-                  className="chip"
-                  key={tag}
-                  tabIndex={0}
-                  onMouseEnter={() => showFull(tag)}
-                  onMouseLeave={() => hideFull(tag)}
-                  onFocus={() => showFull(tag)}
-                  onBlur={() => hideFull(tag)}
-                >
-                  <span
-                    ref={(el) => {
-                      spans.current.set(tag, el)
-                    }}
-                  >
-                    {tag}
-                  </span>
-                  {expanded === tag && <ChipFull tag={tag} />}
-                </li>
+                <Chip key={tag} tag={tag} focusable />
               ))}
-            </ul>
+            </ChipList>
           </>
         )}
         {error !== undefined && (
@@ -1200,19 +1131,5 @@ function TagsField({
         </button>
       )}
     </div>
-  )
-}
-
-/**
- * The whole label of a chip whose text the ellipsis cut (fe/briefs/15-tag-chips.md
- * section 10 R5): the pill over the chip, opened while the pointer or the
- * keyboard is on it, closed when both have left, and by Escape. It draws the
- * whole label, so the list item that carries it is not read twice.
- */
-function ChipFull({ tag }: { tag: string }) {
-  return (
-    <span className="chip-full" aria-hidden="true">
-      {tag}
-    </span>
   )
 }

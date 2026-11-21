@@ -2,6 +2,7 @@
 // /api/instances.
 import { useEffect, useState } from 'react'
 import { apiError, call, sessionEnded, sessionRevoked } from './api.ts'
+import { Chip, ChipList } from './Chip.tsx'
 import { instanceHref } from './route.ts'
 import type { SignedOut } from './session.ts'
 import { Loading, Lines } from './Skeleton.tsx'
@@ -295,7 +296,9 @@ function Body({ answer }: { answer: Answer | undefined }) {
  * and the facts: the port, the tags and the boot state. Every fact comes with
  * the list, so its row is there with the tile (12 T1.2, and 13 N.1 for boot:
  * the Overview sends no boot read of its own). A fact with nothing to say has
- * no row, and a tile with no fact at all has no `dl`.
+ * no row, and a tile with no fact at all has no `dl`. The tags are the fixed
+ * chips of brief 17 U17b, in the order of `tags`, the instance's own and the
+ * profile's alike: the tile does not tell them apart, as it did not before.
  */
 function Tile({
   instance,
@@ -330,7 +333,13 @@ function Tile({
           {tags.length > 0 && (
             <div>
               <dt>{t('instance-tags')}</dt>
-              <dd>{tags.join(', ')}</dd>
+              <dd>
+                <ChipList>
+                  {tags.map((tag) => (
+                    <Chip key={tag} tag={tag} />
+                  ))}
+                </ChipList>
+              </dd>
             </div>
           )}
           {boot !== null && (
