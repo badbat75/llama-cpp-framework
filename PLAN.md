@@ -26,7 +26,7 @@ as the column says. A requirement still open must be covered by a step.
 | R10 | The GUI and the CLI are two executables over one shared library: GUI `pai-config`, CLI `pai`, the shared logic in a new crate without Slint (decided with the user on 2026-11-13) | Open: step 3 |
 | R11 | A backend-for-frontend (`bff`) running as a local service beside `private-ai-manager`, in the same packages: the web UI of the configurator (a `fe` it serves), a gateway in front of the llama-server instances (one OpenAI-compatible endpoint, authentication, routing across instances and later engines), and the benchmark portal over `bench.db` (decided with the user on 2026-11-14) | Open: step 10 |
 | R12 | The framework is built and versioned apart from its engines: each engine (llama.cpp today, Strata later) is named explicitly and has its own package at the engine's version, the framework's packages carry only the framework's version and a minimum-version dependency on the engine (decided with the user on 2026-11-14) | Open: step 11 |
-| R13 | A super-manager: an optional component, installed on its own server, that governs several `private-ai-manager`s on other machines (nodes); a bff connected to it also offers the management of the nodes (user, 2026-11-15) | Open: step 14 |
+| R13 | A super-manager: an optional component, installed on its own server, that governs several `private-ai-manager`s on other machines (nodes) and hosts the models they download (user, 2026-11-21); a bff connected to it also offers the management of the nodes (user, 2026-11-15) | Open: step 14 |
 
 ### How we work
 
@@ -529,6 +529,13 @@ slices, each test first, with the outcome each shows, are in `ARCHITECTURE.md` "
 
 - Done when: a bff in hub mode lists two joined nodes and starts and stops an instance on each, on
   the user's two machines, and every local-mode test still passes.
+
+Added (user, 2026-11-21): **the super-manager hosts the models for every node** and offers the joined
+nodes an endpoint to download them into their local models folder. To design with the architect (who
+may download, over which channel and identity, integrity checks, storage and quotas on the
+super-manager, resumable transfers, how it relates to a node's own Hugging Face downloads), then a
+slice after 9; the done-when gains: a node downloads a model from the super-manager into its models
+folder and an instance serves it.
 
 ### 4. Decide whether to bring back patches 0002 to 0004
 
