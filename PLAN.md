@@ -1082,7 +1082,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     **Create and delete model profiles from the web** (user, 2026-11-22): a model profile can be deleted
     only when it is switched off (in `models.ini.disabled`) and assigned to no instance; otherwise the
     manager refuses with a keyed refusal naming the reason (the instances it is assigned to). The web
-    also creates a model profile (an id and its model file), born switched off. Deleting drops its tags
+    also creates a model profile (an id and its model file), born switched off; creating can clone an
+    existing profile, copying its settings into the new one (user, 2026-11-22). Deleting drops its tags
     (`model-tags.ini`). Built with slice 17; the architect's design first (new manager methods, since the
     manager has none for create or delete today; the GUI keeps writing the pool files whole), then the
     designer's brief.
