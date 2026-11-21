@@ -137,3 +137,10 @@ once no agent builds, run `cargo run -q -p xtask -- build framework && cargo run
 framework`, then `cargo run -q -p xtask -- install`; check `systemctl is-active private-ai-manager
 private-ai-bff`, `/` 200 and `/api/instances` 401 on :8590, a CSS or route the slice added, and that
 Strata on :8580 still answers. Report it in the slice's message.
+
+## Every start updates the plan and the roadmap
+
+When a slice starts (user, 2026-11-22), mark it "In progress" on its PLAN.md item and move its card to
+the roadmap's Now in the same turn, then commit and publish; when it closes, the commit removes the
+mark and the card moves to Just closed. Run up to three local agents at once: one Rust build, one
+`fe/` user, and a third that builds nothing (a review, docs, a brief).
