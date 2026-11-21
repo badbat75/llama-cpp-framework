@@ -1019,6 +1019,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
     designer's audit of what is basic today and a phased brief, built in slices after C1 and before 17.
+    **One models folder for every engine** (user, 2026-11-21: "usa una folder unica per i modelli tra i
+    differenti motori"; asked whether a server profile may still name another: "unica e basta"): one
+    models folder per node, shared by llama.cpp and later Strata, owned by the framework rather than an
+    engine's tree; `[Server] ModelsDir` leaves the server profiles. No migration of existing folders
+    (pre-release). The architect designs the path per OS, the owner and permissions, what the engines'
+    packages and the model file picker (M3 lists that one folder) change; slices before M3.
     **Choosing the model file on the web model profile page** (user, 2026-11-21: "a quando la selezione
     degli asset nel repo dei modelli? (ora testo libero)"): `hf-repo` offers the GGUF files (quants) of
     the Hugging Face repo, read by the node as the GUI's `crates/app/src/hf.rs` does; `model` offers the
@@ -1027,7 +1033,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     state still to place), then the designer's brief, then tester and coder rounds. Decided (user,
     2026-11-21, ARCHITECTURE.md "Choosing the model file on the web"): public repos only (the token comes
     with item 13's machine-wide state), the endpoint fixed to huggingface.co, every models folder of the
-    node's server profiles grouped by folder. Slices M1 listing into `pai-core`, M2 `GET /api/hf/files`,
+    node's server profiles grouped by folder (superseded the same day: one models folder per node). Slices M1 listing into `pai-core`, M2 `GET /api/hf/files`,
     M3 the manager's `ModelFilesAs` and `GET /api/node/model-files`, M4 the pickers (designer first).
     Then (user, 2026-11-21): the Hugging Face token is handled through authentication, for gated and
     private repos and downloads: the architect designs it with item 13's machine-wide state (options:
