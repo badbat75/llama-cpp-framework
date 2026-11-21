@@ -501,7 +501,7 @@ Done answers the 200.
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id |
 | 409 | `{"key": "server-changed-elsewhere", "args": []}` | The file is not the one the form read: the sent revision does not match the read text, or the manager's compare and swap found it changed. Nothing is written, the session stays signed in |
 | 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, before the session is read |
-| 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`, its `args` naming who holds the address: the other instance, or `private-ai-bff`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body. A tags list the rule refuses is 422 `server-bad-tags` with `field: "tags"` (the form's control, lowercase, the only key not spelled as the INI writes it): the rule is `checks::tags_rule`, run by `server_cfg::check` on the body's list |
+| 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`, its `args` naming who holds the address: the other instance, or `private-ai-bff`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body. A tags list the rule refuses is 422 `server-bad-tags` with `field: "tags"` (the form's control, lowercase, the only key not spelled as the INI writes it): the rule is `checks::tags_rule`, run by `server_cfg::check` on the body's list. Since 5fb7b0e the manager judges `Devices` at this write too, when an instance runs the profile and the save changes the key: a model profile of that instance that fits the cards named today and not the new ones is 422 `model-profile-over-memory` `[profile, instance, needed MiB, available MiB]`, nothing written, with `field` the model profile's id (`field_of` reads `args[0]`, and the server form has no control for it) |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager reached and the write was never asked: the file is what it was |
 | 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out at the write, or a manager lost at the write. A limit that runs out after the write landed is the 200 above |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure. By the code a manager built before `WriteFileIf` answers that call with a refused frame that ends the connection, so it lands here: type-checked only, never run |
@@ -701,8 +701,9 @@ holds, so ids stay unique across the pair. A refusal is 422 with the check's key
 `tensor-split` for `tensor-split-format` (its args are the whole value), the key named in the check's
 args for the others (so `device-bad-name` marks `device`: its args are the key and the entry), and no
 `field` for a refusal about the model profile's name (`invalid-model-profile-id`,
-`model-profile-name-taken`) or about the node's GPU memory (`model-profile-over-memory`, its args the
-model profile, an instance and two memory figures, none of them a key). The destination is
+`model-profile-name-taken`) or about the GPU memory of the cards the instance's server profile names
+(`model-profile-over-memory`, its args the model profile, an instance and two memory figures, none of
+them a key). The destination is
 written first, so a refusal leaves both files as they were.
 
 | Status | Body | When |
@@ -822,7 +823,7 @@ the safe answer after a write that stands, as the switch's.
 | 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
 | 409 | `model-profile-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
 | 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
-| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node), `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB the node has, no `field`: a model profile the write makes larger does not fit the node's usable GPU memory), `device-bad-name` (args the key and the entry, `field` the key: a `device`, `device-draft` or `mmproj-device` entry llama.cpp's parser throws on, judged on the value the preset reader sees, never against the node's probe) and `tensor-split-format` (args the whole value, `field` `tensor-split`: weights the engine's parser throws on) |
+| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node), `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB those GPUs have, no `field`: a model profile the write makes larger does not fit the usable memory of the GPUs the instance's server profile names, 5fb7b0e), `device-bad-name` (args the key and the entry, `field` the key: a `device`, `device-draft` or `mmproj-device` entry llama.cpp's parser throws on, judged on the value the preset reader sees, never against the node's probe) and `tensor-split-format` (args the whole value, `field` `tensor-split`: weights the engine's parser throws on) |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
 | 502 | `client-other` | anything else, never the manager's detail |
@@ -958,7 +959,13 @@ at its next start. The record is read first, on the bff's own connect, so an id 
 untouched: a name the pool lacks is the manager's 404 `client-no-server-profile`, a profile another
 instance holds its 409 `client-server-profile-in-use`, and a port or a host the write makes unusable
 the 422 `client-address-in-use` or `client-unresolvable-host`, each with `field: "serverProfile"`.
-The answer is `{"running"}`, the instance's state read after the write: true only when the record
+Since 5fb7b0e the switch also refuses what the target's GPUs cannot hold: a model profile of the
+instance's render that fits the cards the profile it runs today names and not the ones the target
+names is 422 `model-profile-over-memory` `[profile, instance, needed MiB, available MiB]`, nothing
+written, with the same `field: "serverProfile"` the route's other 422 refusals carry (its 404, 409
+and 503 refusals name no field). A profile already over is no news, and a target with no card to
+measure (`Devices` of `none`, or ids the probe knows none of) judges nothing. The answer is
+`{"running"}`, the instance's state read after the write: true only when the record
 named another profile (a record naming none is a change) and the instance is up, the page's offer to
 restart an instance whose record changed under it. A record that already names that profile answers
 false and asks no state, and a record, or a state, that cannot be read is the safe true.
@@ -1001,7 +1008,7 @@ answer on one rule:
 | 409 | `client-server-profile-in-use` | another instance holds that server profile, `args` the profile and the instance |
 | 422 | `model-profile-bad-value` | a word the route does not write, `args` the word, `field` `value` or `all`, before any call |
 | 422 | `client-address-in-use`, `client-unresolvable-host` | the server profile the write selects makes the instance's address unusable (`args` the port) or its host unresolvable (`args` the host), `field` `serverProfile` |
-| 422 | `{"key", "args", "field"}` | the manager's check refused the file it was asked to write, nothing written: among them `load-on-startup-over-max`, `field` `serverProfile` on the server route and no `field` on the model ones |
+| 422 | `{"key", "args", "field"}` | the manager's check refused the file it was asked to write, nothing written: among them `load-on-startup-over-max` and, since 5fb7b0e, `model-profile-over-memory` on the server route, `field` `serverProfile` there and no `field` on the model ones |
 | 502 | `client-not-authorized` | the manager refused the record of the instances, asked before the write, on the bff's own account; the session lives on, nothing written. A refused state read after a write that stands is `running` true |
 | 502 | `client-other` | anything else, never the manager's detail |
 | 503 | `client-unavailable` | no manager, or one that outlives the route's limit, the reads' 5 s and the writes' 15 s |

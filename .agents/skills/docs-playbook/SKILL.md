@@ -417,6 +417,25 @@ Lessons only: the rules are in `AGENTS.md`.
   and its `SetModelProfile` bullet, and the probe's figures in the source map's `..\core\src\proc.rs`
   row (the 30 s bound, the 4 MiB of each stream kept, the 2 s grace): `ProbedGpus` and
   `check_render_memory` are the source, none of it is in `checks.rs`.
+  The memory an estimate is measured against is the server profile's, not the node's, since 5fb7b0e
+  (R3, retiring the rule of 2026-11-17 confirmed 2026-11-20): `devices_usable` over the `[Server]
+  Devices` names `instance_devices` reads, `pool_usable` only when the key is absent, and 0 (`none`,
+  ids the probe knows none of) judges nothing. Two refusal points more than the growth checks: the
+  server profile switch, and a save of an in-use profile that changes `Devices`
+  (`check_shrink_memory_of`), where the rule inverts (only a profile that fits today's cards and not
+  the new ones) and the probe runs only once a render has an estimate. That wording repeats in three
+  files: the config README (the checks bullet, the `SetModelProfile` and `SetServerProfile` bullets,
+  the Server tab's `Devices` bullet, the `..\core\src\devices.rs` source-map row), the bff README
+  (the switch's paragraph, the two save 422 rows, the association-routes 422 row) and
+  `fe/briefs/api-contract.md` (the `Devices` value bullet, the 422 `field` rule, the switch route, the
+  server-profile save's bullet, the resource-checks bullet). Grep `pool_usable`, `the node's GPU` and
+  `the MiB the node has`. The TWO `field_of` functions differ on this key: `model_profiles.rs` answers
+  NO field for `model-profile-over-memory`, `server.rs` falls through to `args[0]`, the model profile's
+  id, at a server-profile save, where the form has no control for it: read both before writing one
+  sentence about it. Not ours and still the old rule after the slice:
+  `fe/briefs/11-resource-refusals.md`, `fe/briefs/14-gpu-distribution.md`, `fe/DESIGN.md`, the tester
+  playbook, `ARCHITECTURE.md`'s 2026-11-17 records, and `service.rs`'s own test doc ("over the node's
+  usable memory"): report them.
 - The bff's two time limits: `MANAGER_TIMEOUT` (5 s, reads and control verbs) and `WRITE_TIMEOUT`
   (15 s, the server save and the model profile switch), both `lib.rs`, pinned by
   `the_write_limit_outlasts_the_read_limit` (`src/tests/timeouts.rs`). The 5 s sits in five bff README

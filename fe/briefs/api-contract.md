@@ -232,7 +232,8 @@ question C2.
   otherwise (`"nccl"`), `null` for an unset key. A save sends them back the same way.
   `Devices` (R2, 3aaa4dc) is a string: the server profile's GPUs in one value, the probe's names in
   the order llama-server's `--device` takes (`"ROCm0,ROCm1"`), or `"none"` for CPU only; `null` is
-  the key absent, which is every GPU of the node.
+  the key absent, which is every GPU of the node: these are the cards the memory check measures the
+  instances that run this profile against (5fb7b0e).
 - `defaults` are computed on the server from the saved file. `ModelsDir` and `StateDir` are the
   instance's own defaults, never a folder of the bff's account.
 - `limits` are `[min, max]`; the thread maximum is the server machine's logical CPU count.
@@ -298,7 +299,9 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   rule refuses, so the field is `Devices`), `ModelsMax` for `load-on-startup-over-max` and
   `load-on-startup-unlimited`, `Hostname` for `bind-all-with-others` (`args: []`) and
   `client-unresolvable-host` (`[host]`), `Port` for `client-address-in-use` (`[id]`). For any other
-  key of the manager's checks `field` is `args[0]`, or `""` when there are no args.
+  key of the manager's checks `field` is `args[0]`, or `""` when there are no args. So since 5fb7b0e
+  `model-profile-over-memory`, which a save of an in-use profile that narrows its `Devices` can raise,
+  answers with `field` the model profile's id (`args[0]`): the server form has no control for it.
 - 409 `server-changed-elsewhere`: the revision is stale (the file changed, or the bff restarted,
   since the read), or the manager found the file changed between the bff's read and its write.
   Nothing is written.
@@ -671,7 +674,9 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
     `defaults`, `limits`, `interfaces`, `withheld`; 200 `{"revision", "running"}`, `running` for the
     instance using it). 404 `client-no-server-profile` `[id]`, 409 `server-changed-elsewhere`, 400
     `server-malformed`, the check keys 422 (`client-address-in-use` `[instance]` when the profile is in
-    use; two unused profiles may share a port). `Tags` (0 to 8, each 1 to 32 of `a-z`, `0-9`, `-`, no
+    use; two unused profiles may share a port; and since 5fb7b0e, when an instance runs the profile and
+    the save moves its `Devices`, `model-profile-over-memory` `[profile, instance, needed MiB,
+    available MiB]`). `Tags` (0 to 8, each 1 to 32 of `a-z`, `0-9`, `-`, no
     duplicates, `server-bad-tags`) is kept when absent from the body, `[]` clears it.
   - `POST /api/profiles/server` `{"engine", "id"}`: 201 `{"id"}`; the new profile is the defaults
     (`render_for(ServerConfig::default(), true)`). 422 `server-profile-bad-id` `[id]` (`field` `id`;
@@ -694,7 +699,9 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
     first, on the bff's own account, nothing written); 404 `client-no-server-profile` `[profile]`; 409
     `client-server-profile-in-use` `[profile, instance]`; 422 `client-address-in-use` (`args` the
     port) and `client-unresolvable-host` (`args` the host), both `field` `serverProfile`; 422
-    `load-on-startup-over-max` and the other checks, `field` `serverProfile`.
+    `load-on-startup-over-max` and the other checks, `field` `serverProfile`, among them since 5fb7b0e
+    `model-profile-over-memory` `[profile, instance, needed MiB, available MiB]`: a model profile of
+    the instance that fits the GPUs of the profile it runs today and not those of the target.
   - `GET /api/instances/{id}/profiles/model`: 200 `{"all": "inherit" | "none", "profiles": [rows]}`,
     `all` the section's `*` as the page shows it (`inherit` when the section carries the key, `none`
     when it does not), rows the pool row's fields **without `assignments`** plus `value` (the explicit
@@ -755,13 +762,17 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
   **served since e262708** (`crates/bff/src/control.rs`, `crates/bff/README.md` "The instances from the
   manager"). `Stop` is never refused.
 - **The resource checks**, only on what a write puts into effect (an assignment or override on, the
-  global switch on, a model profile's save, a server profile assigned or saved while in use); every
-  refusal writes nothing and names the profile and the instance: `model-profile-over-memory` `[profile,
-  instance, needed MiB, available MiB]` (whole MiB, no `field`), `model-profile-model-missing`
-  `[profile, instance, path]` (`field` `model` on a save), `load-on-startup-over-max` `[count, max,
-  instance]`, `load-on-startup-unlimited` `[count, instance]` (the instance appended last, so the
-  built texts keep working). `preset-engine-mismatch` is dropped: another engine's profile is simply
-  not found.
+  global switch on, a model profile's save, a server profile assigned, or saved while in use: at the
+  last two the memory moves and not the need, so only a model profile that fits the cards named today
+  and not the new ones refuses, 5fb7b0e); every refusal writes nothing and names the profile and the
+  instance: `model-profile-over-memory` `[profile, instance, needed MiB, available MiB]` (whole MiB;
+  no `field` on the model routes, `field` `serverProfile` on the server profile switch, whose 422
+  refusals all carry it), the memory being what the cards that server profile's `Devices` names: every
+  GPU of the node when the key is absent, and nothing to judge for `none` or ids the probe knows none
+  of; `model-profile-model-missing` `[profile, instance, path]` (`field` `model` on a save),
+  `load-on-startup-over-max` `[count, max, instance]`, `load-on-startup-unlimited` `[count, instance]`
+  (the instance appended last, so the built texts keep working). `preset-engine-mismatch` is dropped:
+  another engine's profile is simply not found.
 - Every write: 401, 403 `session-not-administrator` (the session ended), 413, the guard's 403s, 503
   before asking, 504 `client-timeout` once asked (15 s). The four association routes (served) and the
   two instance routes (served since e262708) keep every part of that except the 504: a manager that
