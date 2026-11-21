@@ -1159,7 +1159,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     phase by three product arguments: `llama.cpp`, `strata` and `pai` (today's `framework`), so each
     builds, packages and installs on its own. The design decides the backend argument, the package
     names, Strata's licence in the packages and what happens to the strata-framework repo.
-13d. **Hardware monitoring, metrics and log consultation** (user, 2026-11-21). In the web UI: a live
+13d. **Hardware monitoring, metrics and log consultation** (user, 2026-11-21; built after 13c, user's order). In the web UI: a live
     view of the node's hardware streamed as the native GUI's HW Monitor does (`crates/app/src/hwmon.rs`:
     GPU busy, VRAM, GTT, memory activity, PCIe, CPU, I/O wait, RAM, swap, disk, one sample a second),
     and a history chart of the same metrics. Behind it a monitoring and logging module that collects
