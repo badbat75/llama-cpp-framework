@@ -357,13 +357,20 @@ impl ManagerClient for DbusClient {
         .map(|_| ())
     }
     fn devices(&self) -> Result<NodeDevices, ClientError> {
-        let (probed_at, rows): (u64, Vec<DeviceRow>) = match self.acting() {
-            Some(principal) => body(self.call("DevicesAs", &(principal,))?)?,
-            None => body(self.call("Devices", &())?)?,
-        };
+        // `(t probed_at, a(ssstt) devices, t ram_mib, u cpu_threads)`: the
+        // list with the host's inventory beside it (R1), the RAM `t` like the
+        // card sizes, the thread count a `u`. The inventory is the host's, so
+        // it is answered whatever the probe did, 0 for "no figure".
+        let (probed_at, rows, ram_mib, cpu_threads): (u64, Vec<DeviceRow>, u64, u32) =
+            match self.acting() {
+                Some(principal) => body(self.call("DevicesAs", &(principal,))?)?,
+                None => body(self.call("Devices", &())?)?,
+            };
         Ok(NodeDevices {
             // 0 on the wire is no probe, as the pipe reads it.
             probed_at: (probed_at != 0).then_some(probed_at),
+            ram_mib,
+            cpu_threads,
             devices: rows
                 .into_iter()
                 .map(|(id, name, backend, total_mib, free_mib)| DeviceInfo {
@@ -412,6 +419,21 @@ mod tests {
             <DeviceRow as Type>::SIGNATURE.to_string(),
             "(ssstt)",
             "the row is a struct of three strings and two uint64"
+        );
+    }
+
+    /// The whole reply, widened by R1 (ARCHITECTURE.md (1) "The node
+    /// inventory", slice R1 "Wire"): `(t probed_at, a(ssstt) devices,
+    /// t ram_mib, u cpu_threads)`. The RAM is `t` like the card sizes; the
+    /// thread count is `u`, a uint32, the width the bff's `cpuThreads` reads.
+    /// Additive at the end, so a reader of the list alone reads the fields it
+    /// knows and never moves.
+    #[test]
+    fn the_devices_reply_is_the_list_with_the_inventory() {
+        assert_eq!(
+            <(u64, Vec<DeviceRow>, u64, u32) as Type>::SIGNATURE.to_string(),
+            "(ta(ssstt)tu)",
+            "the probe's moment, the rows, the MiB of RAM, the thread count"
         );
     }
 }

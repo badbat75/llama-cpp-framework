@@ -354,12 +354,16 @@ where
         // The node's compute devices, as the probe read them, with the second
         // it ran beside them: 0 is no probe, as on the bus. The rows are the
         // probe's own, in its order, the CPU pseudo-device left out by the
-        // core.
+        // core. Beside them the host's inventory (R1): `ram_mib` MiB of RAM and
+        // `cpu_threads` logical CPUs, the node's own reading, answered whatever
+        // the probe did, 0 for a figure the host did not give.
         Request::Devices(principal) => requester(caller, principal)
             .and_then(|who| manager.devices(&who))
             .map(|list| {
                 json!({
                     "probed_at": list.probed_at.unwrap_or_default(),
+                    "ram_mib": list.ram_mib,
+                    "cpu_threads": list.cpu_threads,
                     "devices": list
                         .devices
                         .iter()

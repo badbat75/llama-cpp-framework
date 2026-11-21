@@ -130,18 +130,24 @@ async fn devices(connect: Connect, sessions: Arc<Sessions>, headers: HeaderMap) 
     )
 }
 
-/// The document: `{"probedAt", "devices"}`, `probedAt` the moment of the probe
-/// as UTC whole seconds (`null` when no probe answered) and `devices` one
-/// `{"id", "name", "backend", "totalMib", "freeMib"}` per device, in the
-/// probe's order. Every row travels as the manager answered it: the bff adds,
-/// drops, sorts and judges nothing, because the ids a model profile names that
-/// the list lacks are the page's to show, not an answer to hide.
+/// The document: `{"probedAt", "ramMib", "cpuThreads", "devices"}`, `probedAt`
+/// the moment of the probe as UTC whole seconds (`null` when no probe answered)
+/// and `devices` one `{"id", "name", "backend", "totalMib", "freeMib"}` per
+/// device, in the probe's order. Every row travels as the manager answered it:
+/// the bff adds, drops, sorts and judges nothing, because the ids a model
+/// profile names that the list lacks are the page's to show, not an answer to
+/// hide. Beside them the host's own inventory (R1), `ramMib` whole MiB of RAM
+/// and `cpuThreads` logical CPUs, answered whatever the probe did: the bff
+/// scales, rounds and interprets nothing, and 0 travels as the node's "no
+/// figure".
 fn devices_document(list: &pai_core::client::NodeDevices) -> serde_json::Value {
     serde_json::json!({
         "probedAt": list
             .probed_at
             .map(utc_text)
             .unwrap_or(serde_json::Value::Null),
+        "ramMib": list.ram_mib,
+        "cpuThreads": list.cpu_threads,
         "devices": list
             .devices
             .iter()

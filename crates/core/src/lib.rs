@@ -11,6 +11,8 @@ pub mod client;
 pub mod devices;
 // The GGUF header reader, a model's shape and the KV formula (the estimate's inputs).
 pub mod gguf_shape;
+// The node's own host: its total RAM and the CPUs the manager may use.
+pub mod host;
 pub mod http;
 pub mod ini;
 pub mod launch;

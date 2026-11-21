@@ -12,8 +12,9 @@
 //!   never polls it).
 //! - The list is asked with `DevicesAs` as the signed-in user: the connect
 //!   names that user, and one call answers the page.
-//! - 200 `{"probedAt": <RFC 3339 UTC>|null, "devices": [{"id", "name",
-//!   "backend", "totalMib", "freeMib"}]}`, in the probe's order, the CPU
+//! - 200 `{"probedAt": <RFC 3339 UTC>|null, "ramMib": <int>, "cpuThreads":
+//!   <int>, "devices": [{"id", "name", "backend", "totalMib", "freeMib"}]}`,
+//!   in the probe's order, the CPU
 //!   pseudo-device already left out by the manager. A node with no probe answer
 //!   is `{"probedAt": null, "devices": []}`, a CPU-only node a time with an
 //!   empty list: nothing to distribute, never an error page.
@@ -69,11 +70,18 @@ const PROBED_AT_TEXT: &str = "2026-11-20T09:14:03Z";
 
 type Log = Arc<Mutex<Vec<String>>>;
 
+/// The host's inventory the fake answers beside the list (R1): numbers no real
+/// host has, so a document carrying them carries the fake's answer.
+const RAM_MIB: u64 = 3_932_160;
+const CPU_THREADS: u32 = 8;
+
 /// The device list the fake answers: three entries in the probe's order, the
 /// CUDA/Vulkan twin of one card kept, the design's own rows.
 fn probed() -> NodeDevices {
     NodeDevices {
         probed_at: Some(PROBED_AT),
+        ram_mib: RAM_MIB,
+        cpu_threads: CPU_THREADS,
         devices: [
             (
                 "ROCm0",
@@ -113,6 +121,8 @@ fn probed() -> NodeDevices {
 fn listed() -> Value {
     json!({
         "probedAt": PROBED_AT_TEXT,
+        "ramMib": RAM_MIB,
+        "cpuThreads": CPU_THREADS,
         "devices": [
             {"id": "ROCm0", "name": "AMD Radeon AI PRO R9700", "backend": "ROCm", "totalMib": 32624, "freeMib": 32420},
             {"id": "CUDA0", "name": "NVIDIA GeForce RTX 4070 SUPER", "backend": "CUDA", "totalMib": 12281, "freeMib": 10844},
@@ -248,11 +258,14 @@ impl Fixture {
             delay: Arc::new(Mutex::new(Duration::ZERO)),
         }
     }
-    /// No probe answer: no time, no device.
+    /// No probe answer: no time, no device. The host's inventory is answered
+    /// all the same: it is the host's, not the engine's (R1).
     fn nothing() -> Fixture {
         Fixture {
             answer: Arc::new(Mutex::new(Ok(NodeDevices {
                 probed_at: None,
+                ram_mib: RAM_MIB,
+                cpu_threads: CPU_THREADS,
                 devices: vec![],
             }))),
             delay: Arc::new(Mutex::new(Duration::ZERO)),
@@ -263,6 +276,8 @@ impl Fixture {
         Fixture {
             answer: Arc::new(Mutex::new(Ok(NodeDevices {
                 probed_at: Some(PROBED_AT),
+                ram_mib: RAM_MIB,
+                cpu_threads: CPU_THREADS,
                 devices: vec![],
             }))),
             delay: Arc::new(Mutex::new(Duration::ZERO)),
@@ -508,14 +523,18 @@ async fn devices_answers_the_probe_rows_in_the_probe_order() {
 
 /// No probe answer is a 200 with no time and an empty list: a node with no
 /// engine, a probe that was killed or printed nothing. The page has nothing to
-/// distribute, and shows no error.
+/// distribute, and shows no error. The inventory is in the document all the
+/// same (R1): what the node is does not depend on the engine answering.
 #[tokio::test]
 async fn devices_of_no_probe_answer_is_no_time_and_an_empty_list() {
     let app = app(Fixture::nothing());
     let cookie = app.sign_in().await;
     let rep = app.devices(Some(&cookie)).await;
     assert_eq!(rep.status, StatusCode::OK, "{}", rep.body);
-    assert_eq!(rep.json(), json!({"probedAt": null, "devices": []}));
+    assert_eq!(
+        rep.json(),
+        json!({"probedAt": null, "ramMib": RAM_MIB, "cpuThreads": CPU_THREADS, "devices": []})
+    );
 }
 
 /// A node whose probe parsed only the CPU line has a time and an empty list:
@@ -529,7 +548,7 @@ async fn devices_of_a_cpu_only_node_is_a_time_and_an_empty_list() {
     assert_eq!(rep.status, StatusCode::OK, "{}", rep.body);
     assert_eq!(
         rep.json(),
-        json!({"probedAt": PROBED_AT_TEXT, "devices": []})
+        json!({"probedAt": PROBED_AT_TEXT, "ramMib": RAM_MIB, "cpuThreads": CPU_THREADS, "devices": []})
     );
 }
 
@@ -541,6 +560,8 @@ async fn devices_keeps_every_row_the_manager_answered() {
     let app = app(Fixture::probed());
     app.fixture.set(Ok(NodeDevices {
         probed_at: Some(PROBED_AT),
+        ram_mib: 1_048_576,
+        cpu_threads: 128,
         devices: vec![
             DeviceInfo {
                 id: "CPU".into(),
@@ -576,6 +597,15 @@ async fn devices_keeps_every_row_the_manager_answered() {
             {"id": "Vulkan9", "name": "", "backend": "Vulkan", "totalMib": 18446744073709551615u64, "freeMib": 0},
         ]),
         "nothing added, dropped, sorted or judged: {}",
+        rep.body
+    );
+    assert_eq!(
+        (
+            rep.json()["ramMib"].as_u64(),
+            rep.json()["cpuThreads"].as_u64()
+        ),
+        (Some(1_048_576), Some(128)),
+        "the inventory travels as the manager answered it, MiB and count: {}",
         rep.body
     );
 }

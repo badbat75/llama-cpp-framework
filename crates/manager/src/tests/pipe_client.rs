@@ -1637,40 +1637,50 @@ fn the_pipe_client_authenticates_as_the_bff() {
 /// The moment the seam's probe answered.
 const PROBED_AT: u64 = 1_766_271_243;
 
+/// The host's inventory the seam answers beside the list (R1): figures no real
+/// host has, so a reply carrying them came from the fake, and nothing read
+/// `/proc/meminfo`, `GlobalMemoryStatusEx` or the CPU count.
+const RAM_MIB: u64 = 3_932_160;
+const CPU_THREADS: u32 = 8;
+
 /// The device list the seam answers: three entries, in the probe's order.
 fn cards() -> crate::manager::service::fakes::FakeGpus {
-    crate::manager::service::fakes::FakeGpus::new(&[("CUDA0", 12281)]).with_devices(
-        Some(PROBED_AT),
-        &[
-            (
-                "CUDA0",
-                "NVIDIA GeForce RTX 4070 SUPER",
-                "CUDA",
-                12281u64,
-                10844u64,
-            ),
-            (
-                "Vulkan0",
-                "AMD Radeon(TM) Graphics",
-                "Vulkan",
-                33593u64,
-                31913u64,
-            ),
-            (
-                "Vulkan1",
-                "NVIDIA GeForce RTX 4070 SUPER",
-                "Vulkan",
-                11997u64,
-                10844u64,
-            ),
-        ],
-    )
+    crate::manager::service::fakes::FakeGpus::new(&[("CUDA0", 12281)])
+        .with_devices(
+            Some(PROBED_AT),
+            &[
+                (
+                    "CUDA0",
+                    "NVIDIA GeForce RTX 4070 SUPER",
+                    "CUDA",
+                    12281u64,
+                    10844u64,
+                ),
+                (
+                    "Vulkan0",
+                    "AMD Radeon(TM) Graphics",
+                    "Vulkan",
+                    33593u64,
+                    31913u64,
+                ),
+                (
+                    "Vulkan1",
+                    "NVIDIA GeForce RTX 4070 SUPER",
+                    "Vulkan",
+                    11997u64,
+                    10844u64,
+                ),
+            ],
+        )
+        .with_inventory(RAM_MIB, CPU_THREADS)
 }
 
 /// The list the client must hand back for [`cards`].
 fn listed() -> pai_core::client::NodeDevices {
     pai_core::client::NodeDevices {
         probed_at: Some(PROBED_AT),
+        ram_mib: RAM_MIB,
+        cpu_threads: CPU_THREADS,
         devices: [
             (
                 "CUDA0",

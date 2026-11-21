@@ -209,15 +209,24 @@ pub struct DeviceInfo {
     pub free_mib: u64,
 }
 
-/// The node's device list, as [`ManagerClient::devices`] answers it: the
+/// The node's inventory, as [`ManagerClient::devices`] answers it: the
 /// moment of the probe in Unix seconds UTC (`None` when no probe answered,
 /// which is no list either) and one entry per device in the probe's order,
 /// the CPU pseudo-device left out. The list lives as long as the manager's
 /// probe does, so the moment travels with it: the memory of a card is what it
 /// was at the probe, never now.
+///
+/// Beside the list, the host the cards sit in (ARCHITECTURE.md (1) "The node
+/// inventory"): `ram_mib`, the total physical memory in MiB, and
+/// `cpu_threads`, the logical CPUs the manager may use. They travel with the
+/// list because they are one read of what the node holds, never because the
+/// engine reported them: a probe that failed leaves both answered, and 0 on
+/// each is the host's own "no figure" (a caller caps nothing at 0).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeDevices {
     pub probed_at: Option<u64>,
+    pub ram_mib: u64,
+    pub cpu_threads: u32,
     pub devices: Vec<DeviceInfo>,
 }
 
@@ -401,11 +410,14 @@ pub trait ManagerClient {
     }
     /// The node's compute devices, from the engine's own probe, with the
     /// moment of that probe: the list a model profile distributes a model
-    /// over, the CPU pseudo-device left out. The manager runs its probe for
-    /// this, so it is guarded as `control` (asked without interaction, the
-    /// way a read that can prompt for nothing is asked), and as every `As`
-    /// method for the bff's read of a signed-in user: a caller with no right
-    /// is [`ClientError::NotAuthorized`] and runs no probe.
+    /// over, the CPU pseudo-device left out. The reply carries the host's
+    /// inventory beside the list ([`NodeDevices`]'s `ram_mib` and
+    /// `cpu_threads`): the manager reads its own machine for those, so the
+    /// numbers are the node's, not the engine's. The manager runs its probe
+    /// for this, so it is guarded as `control` (asked without interaction,
+    /// the way a read that can prompt for nothing is asked), and as every
+    /// `As` method for the bff's read of a signed-in user: a caller with no
+    /// right is [`ClientError::NotAuthorized`] and runs no probe.
     ///
     /// The default body is for a transport that speaks to a manager of an
     /// older protocol: the call is one it cannot make, said as
@@ -955,10 +967,20 @@ mod tests {
     /// device, in the probe's order, with the id `device` takes, the product
     /// name, the backend and both sizes in MiB. The sizes are u64: a card's
     /// total fits no u32 once a node grows.
+    ///
+    /// R1 adds the host's inventory beside the list (ARCHITECTURE.md (1) "The
+    /// node inventory"): `ram_mib`, the host's total physical memory in MiB,
+    /// and `cpu_threads`, the logical CPUs the manager may use (the count
+    /// `std::thread::available_parallelism` answers, the width of the D-Bus
+    /// `u`). The names are the contract for every transport, the bff's JSON
+    /// `ramMib` and `cpuThreads`, and the manager's `ram_mib` and
+    /// `cpu_threads`.
     #[test]
     fn the_device_list_carries_the_probe_moment_and_each_device_in_mib() {
         let got = NodeDevices {
             probed_at: Some(1_766_271_243u64),
+            ram_mib: 65_536,
+            cpu_threads: 16,
             devices: vec![
                 DeviceInfo {
                     id: "ROCm0".to_string(),
@@ -981,14 +1003,29 @@ mod tests {
         assert_eq!(got.devices[0].backend, "ROCm");
         assert_eq!(got.devices[1].total_mib, 12281);
         assert_eq!(got.devices[1].free_mib, 10844);
-        // No probe answered: no time, and no device.
+        assert_eq!(got.ram_mib, 65_536, "the host's RAM in MiB");
+        assert_eq!(got.cpu_threads, 16, "the host's logical CPUs");
+    }
+
+    /// The inventory is the host's, not the probe's (R1): a node whose probe
+    /// answered nothing, was killed, or printed only the CPU line, still
+    /// answers its RAM and its threads. The two travel on the same reply
+    /// because they are one read of what the node holds, never because the
+    /// engine reported them.
+    #[test]
+    fn the_inventory_is_answered_with_no_probe_and_no_device() {
+        let node = NodeDevices {
+            probed_at: None,
+            devices: vec![],
+            ram_mib: 65_536,
+            cpu_threads: 16,
+        };
+        assert_eq!(node.probed_at, None, "no probe: no time");
+        assert_eq!(node.devices, Vec::<DeviceInfo>::new(), "no device");
         assert_eq!(
-            NodeDevices {
-                probed_at: None,
-                devices: vec![],
-            }
-            .probed_at,
-            None
+            (node.ram_mib, node.cpu_threads),
+            (65_536, 16),
+            "the host's inventory is answered whatever the probe did"
         );
     }
 

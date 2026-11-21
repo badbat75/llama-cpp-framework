@@ -34,14 +34,16 @@ zbus = "5.19"
 nix = { version = "0.31", features = ["fs"] }
 
 # The Win32 calls of proc.rs (the std handles a child must not inherit) and
-# of the manager's pipe client (client/pipe.rs: `WaitNamedPipeW`), and the
-# engine's registration (paths.rs: `RegGetValueW`).
+# of the manager's pipe client (client/pipe.rs: `WaitNamedPipeW`), the
+# engine's registration (paths.rs: `RegGetValueW`), and the host's RAM
+# (host.rs: `GlobalMemoryStatusEx`).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Console",
     "Win32_System_Pipes",
     "Win32_System_Registry",
+    "Win32_System_SystemInformation",
 ] }
 
 [dev-dependencies]

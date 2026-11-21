@@ -496,6 +496,20 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             .get("probed_at")
             .and_then(Value::as_u64)
             .ok_or_else(|| ClientError::Other(v.to_string()))?;
+        // The host's inventory travels beside the list (R1): both numbers
+        // always, 0 allowed (the host's "no figure"), a missing field, a
+        // non-number, a negative one or a thread count past a uint32 refused
+        // like a row of the wrong shape. The pair ships with this protocol, so
+        // a reply without it is a shape, not an older manager to answer.
+        let ram_mib = v
+            .get("ram_mib")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| ClientError::Other(v.to_string()))?;
+        let cpu_threads = v
+            .get("cpu_threads")
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| ClientError::Other(v.to_string()))?;
         let rows = v
             .get("devices")
             .and_then(Value::as_array)
@@ -528,6 +542,8 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         }
         Ok(NodeDevices {
             probed_at: (probed_at != 0).then_some(probed_at),
+            ram_mib,
+            cpu_threads,
             devices: out,
         })
     }
@@ -1018,11 +1034,15 @@ mod tests {
 
     /// The device list `Devices` answers, read as it is: every row kept, in the
     /// manager's order, with the id, the product name, the backend, both sizes,
-    /// and the moment of the probe.
+    /// the moment of the probe, and the host's inventory R1 adds beside the
+    /// list: `ram_mib`, the host's total RAM in MiB, and `cpu_threads`, its
+    /// logical CPUs (ARCHITECTURE.md (1) "The node inventory").
     #[test]
     fn the_devices_reply_is_the_list_the_manager_answers() {
         let (client, sent) = client_on(input(&[json!({"ok": {
             "probed_at": 1_766_271_243u64,
+            "ram_mib": 3_932_160u64,
+            "cpu_threads": 8u64,
             "devices": [
                 {"id": "ROCm0", "name": "AMD Radeon AI PRO R9700", "backend": "ROCm", "total_mib": 32624u64, "free_mib": 32420u64},
                 {"id": "CUDA0", "name": "NVIDIA GeForce RTX 4070 SUPER", "backend": "CUDA", "total_mib": 12281u64, "free_mib": 10844u64},
@@ -1033,6 +1053,8 @@ mod tests {
             client.devices().expect("the device list"),
             NodeDevices {
                 probed_at: Some(1_766_271_243),
+                ram_mib: 3_932_160,
+                cpu_threads: 8,
                 devices: vec![
                     DeviceInfo {
                         id: "ROCm0".into(),
@@ -1068,7 +1090,9 @@ mod tests {
 
     /// A manager that never got a probe answered: `probed_at` 0 is no time
     /// (None), and no device is an empty list. The page shows the empty list
-    /// with no time, never an error.
+    /// with no time, never an error. The host's inventory is answered all the
+    /// same: it is the host's, not the engine's, so a node with no probe
+    /// reports what it is.
     #[test]
     fn a_devices_reply_of_no_probe_is_no_time_and_an_empty_list() {
         for (probed_at, devices) in [
@@ -1080,16 +1104,28 @@ mod tests {
         ] {
             let (client, _) = client_on(input(&[json!({"ok": {
                 "probed_at": probed_at,
+                "ram_mib": 3_932_160u64,
+                "cpu_threads": 8u64,
                 "devices": devices,
             }})]));
             let got = client.devices().expect("the empty device list");
             assert_eq!(got.probed_at, None, "0 is no probe ({probed_at})");
             assert_eq!(got.devices.len(), devices.as_array().unwrap().len());
+            assert_eq!(
+                (got.ram_mib, got.cpu_threads),
+                (3_932_160, 8),
+                "no probe leaves the inventory answered ({probed_at})"
+            );
         }
     }
 
     /// A device row of the wrong shape is Other, like every other row: a client
-    /// that guessed at a missing field would show a card that is not there.
+    /// that guessed at a missing field would show a card that is not there. The
+    /// inventory is read the same way: a reply with no `ram_mib`, no
+    /// `cpu_threads`, one of them not a number, a negative one, or a thread
+    /// count past a uint32, is refused (R1). The pair ships with protocol 3,
+    /// which is in no release, so a reply without it is an incomprehensible
+    /// shape, not an older manager to answer.
     #[test]
     fn a_devices_row_of_the_wrong_shape_is_other() {
         for row in [
@@ -1103,6 +1139,8 @@ mod tests {
         ] {
             let (client, _) = client_on(input(&[json!({"ok": {
                 "probed_at": 1u64,
+                "ram_mib": 1u64,
+                "cpu_threads": 1u64,
                 "devices": [row],
             }})]));
             let got = client.devices();
@@ -1112,7 +1150,7 @@ mod tests {
             );
         }
         // The reply itself of the wrong shape: not an object, no devices list,
-        // a devices list that is not a list, no probed_at.
+        // a devices list that is not a list, no probed_at, and no inventory.
         for reply in [
             json!({"ok": []}),
             json!({"ok": null}),
@@ -1120,6 +1158,12 @@ mod tests {
             json!({"ok": {"probed_at": 1u64}}),
             json!({"ok": {"probed_at": 1u64, "devices": {}}}),
             json!({"ok": {"probed_at": "1", "devices": []}}),
+            json!({"ok": {"probed_at": 1u64, "devices": [], "cpu_threads": 1u64}}),
+            json!({"ok": {"probed_at": 1u64, "devices": [], "ram_mib": 1u64}}),
+            json!({"ok": {"probed_at": 1u64, "devices": [], "ram_mib": "64 GiB", "cpu_threads": 1u64}}),
+            json!({"ok": {"probed_at": 1u64, "devices": [], "ram_mib": -1i64, "cpu_threads": 1u64}}),
+            json!({"ok": {"probed_at": 1u64, "devices": [], "ram_mib": 1u64, "cpu_threads": -1i64}}),
+            json!({"ok": {"probed_at": 1u64, "devices": [], "ram_mib": 1u64, "cpu_threads": 4294967296u64}}),
         ] {
             let (client, _) = client_on(input(std::slice::from_ref(&reply)));
             let got = client.devices();
@@ -1137,6 +1181,8 @@ mod tests {
     fn an_acting_client_asks_the_devices_for_the_signed_in_user() {
         let (client, sent) = client_on(input(&[json!({"ok": {
             "probed_at": 0u64,
+            "ram_mib": 0u64,
+            "cpu_threads": 0u64,
             "devices": [],
         }})]));
         let bound = client.acting_for("alice");

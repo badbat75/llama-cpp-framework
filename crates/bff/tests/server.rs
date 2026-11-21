@@ -283,6 +283,10 @@ struct Live {
     /// The failure to answer `Instances` with, when set: the record the bff
     /// cannot read.
     instances_outcome: Arc<Mutex<Option<Outcome>>>,
+    /// The node's inventory R1 answers beside the device list, `(ram_mib,
+    /// cpu_threads)` (ARCHITECTURE.md (1) "The node inventory"). `None` (the
+    /// default) is a manager that answers the read no answer at all.
+    devices: Arc<Mutex<Option<(u64, u32)>>>,
 }
 
 /// A call a test stops: armed for the next one, it holds there until the test
@@ -374,6 +378,22 @@ impl FakeManager {
 }
 
 impl ManagerClient for FakeManager {
+    /// The node's inventory beside the device list (R1): what the test put in
+    /// `live.devices`. With none the read answers no answer, the way a manager
+    /// the bff cannot reach answers one.
+    fn devices(&self) -> Result<pai_core::client::NodeDevices, ClientError> {
+        self.record("devices".into());
+        match *self.live.devices.lock().unwrap_or_else(|e| e.into_inner()) {
+            Some((ram_mib, cpu_threads)) => Ok(pai_core::client::NodeDevices {
+                probed_at: None,
+                ram_mib,
+                cpu_threads,
+                devices: vec![],
+            }),
+            None => Err(ClientError::Unavailable),
+        }
+    }
+
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
         if self.refused() {
@@ -1196,7 +1216,7 @@ async fn the_read_connects_as_the_signed_in_user() {
         assert_eq!(
             app.calls(),
             ["instances", "read server@default.ini"],
-            "{user}: the record first, then the profile it names"
+            "{user}: the record, then the profile it names"
         );
     }
 }
@@ -1437,7 +1457,8 @@ async fn any_other_failure_is_client_other_without_the_detail() {
 // ── The document ────────────────────────────────────────────────────────
 
 /// The reply has exactly the contract's five members, and the bff asks the
-/// manager for the instance's own file, nothing else.
+/// manager for the instance's own file and the node's thread width, nothing
+/// else.
 #[tokio::test]
 async fn the_document_has_exactly_the_contract_members() {
     let app = app_holding(SHIPPED);
@@ -1720,6 +1741,41 @@ async fn limits_are_the_checked_ranges_and_the_cpu_count() {
             "Threads": [1, cpus],
             "ThreadsBatch": [1, cpus],
         })
+    );
+}
+
+/// R1, as amended: a server document read asks the manager no `devices`. That
+/// call can run the engine's probe (up to 30 s) under the 5 s read bound, so a
+/// page load must never make it: the thread limits go back to the bff's own
+/// CPU count, even when the manager would answer a different one.
+#[tokio::test]
+async fn the_document_reads_ask_the_manager_no_devices() {
+    let cpus = std::thread::available_parallelism()
+        .expect("the CPU count")
+        .get();
+    let app = app_writing(SHIPPED);
+    *app.live.devices.lock().unwrap() = Some((3_932_160, 8));
+    let cookie = app.sign_in().await;
+    for path in [
+        "/api/instances/default/server",
+        "/api/profiles/server/default",
+    ] {
+        let doc = app.get(path, Some(&cookie)).await.document();
+        assert_eq!(
+            doc["limits"]["Threads"],
+            json!([1, cpus]),
+            "{path}: the form caps at the bff's own count, not the manager's 8"
+        );
+        assert_eq!(
+            doc["limits"]["ThreadsBatch"],
+            json!([1, cpus]),
+            "{path}: the batch limit is the same width"
+        );
+    }
+    let calls = app.calls();
+    assert!(
+        !calls.iter().any(|c| c == "devices"),
+        "neither document read asks the manager's devices: {calls:?}"
     );
 }
 
@@ -2095,7 +2151,8 @@ async fn a_save_writes_the_file_the_body_holds_as_the_signed_in_user() {
 
     // The save reads the file itself: the text it reads is the revision it
     // compares and the `expected` of the compare and swap. So the calls are
-    // the form's own read, the save's read, the write and the status.
+    // the form's own read (record, file), the save's read, the write and the
+    // status.
     assert_eq!(
         app.calls(),
         [
@@ -2401,8 +2458,8 @@ async fn a_time_limit_that_runs_out_at_the_read_is_503() {
     );
     assert_eq!(
         app.calls(),
-        // The record and the form's own read, then the save's: the save stops
-        // at its read and is never asked to write.
+        // The record and the form's own read (the file), then the save's:
+        // the save stops at its read and is never asked to write.
         [
             "instances",
             "read server@default.ini",
@@ -2434,8 +2491,8 @@ async fn a_time_limit_that_runs_out_before_the_manager_is_reached_is_503() {
         .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
     assert_eq!(
         app.calls(),
-        // Only the form's own read, record included: nothing else is asked of
-        // a manager that was never reached.
+        // Only the form's own read, the record and the file: nothing else
+        // is asked of a manager that was never reached.
         vec!["instances", "read server@default.ini"],
         "nothing is asked of a manager that was never reached"
     );

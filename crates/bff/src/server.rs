@@ -86,6 +86,15 @@ fn profile_file(client: &dyn ManagerClient, id: &str) -> Result<String, ClientEr
     Ok(format!("server@{profile}.ini"))
 }
 
+/// The width the two thread limits stop at (R1, as amended): the logical CPUs
+/// of the machine the web service itself runs on. The document reads ask the
+/// manager no `devices`: that call can run the engine's probe under the read's
+/// bound, so a page load must never make it. A host that answers nothing is
+/// one thread, as everywhere the bff bounds a thread count.
+fn own_cpu_count() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get())
+}
+
 /// The 200 document of the file. `values.OpencodeApiKey` is `null` and the
 /// document carries `"withheld": ["OpencodeApiKey"]` exactly when the
 /// manager's `withheld` flag is set, even when the text it sent still names
@@ -95,13 +104,16 @@ fn profile_file(client: &dyn ManagerClient, id: &str) -> Result<String, ClientEr
 /// the request names: the `defaults.StateDir` shown is that instance's folder
 /// (the engine's state root joined with the id, as the launch passes it),
 /// never the bare root.
+///
+/// The two thread limits stop at this service's own CPU count
+/// ([`own_cpu_count`]): the read asks the manager no `devices` (R1, as amended).
 pub(crate) fn document(file: &ManagerFile, key: [u8; 16], owner: Owner<'_>) -> Value {
     let text = file.text.as_str();
     let mut cfg = server_cfg::from_text(text);
     if file.withheld {
         cfg.opencode_api_key = None;
     }
-    let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let cpus = own_cpu_count();
     let range = |key: &str| checks::server_int_range(key).map(|r| json!([r.start(), r.end()]));
     let base_url = ServerConfig {
         opencode_base_url: None,

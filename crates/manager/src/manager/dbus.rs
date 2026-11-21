@@ -163,14 +163,19 @@ fn port_of(port: u16) -> Option<u16> {
 type DeviceRow = (String, String, String, u64, u64);
 
 /// The node's device list as the bus answers it, with the moment of the probe
-/// beside it: `0` is no probe, as `port_of`'s `0` is no port.
-fn device_list(list: pai_core::client::NodeDevices) -> (u64, Vec<DeviceRow>) {
+/// and the host's inventory beside it: `Devices` is
+/// `(t probed_at, a(ssstt) devices, t ram_mib, u cpu_threads)` (R1,
+/// ARCHITECTURE.md (1) "The node inventory"). `0` is no probe and no figure,
+/// as `port_of`'s `0` is no port.
+fn device_list(list: pai_core::client::NodeDevices) -> (u64, Vec<DeviceRow>, u64, u32) {
     (
         list.probed_at.unwrap_or_default(),
         list.devices
             .into_iter()
             .map(|d| (d.id, d.name, d.backend, d.total_mib, d.free_mib))
             .collect(),
+        list.ram_mib,
+        list.cpu_threads,
     )
 }
 
@@ -231,16 +236,18 @@ where
     }
 
     /// `Devices`: the node's compute devices as the engine's own probe read
-    /// them, `(t probed_at, a(ssstt) devices)`: the first the Unix seconds of
-    /// the probe, 0 when no probe answered, the rows the id `device` takes, the
-    /// product name, the backend and the device memory in MiB, in the probe's
-    /// order, the CPU pseudo-device left out. `control` asked of polkit WITHOUT
-    /// interaction: the manager runs the engine to read this, and a device list
-    /// is worth no challenge over the caller's own session.
+    /// them, `(t probed_at, a(ssstt) devices, t ram_mib, u cpu_threads)`: the
+    /// first the Unix seconds of the probe, 0 when no probe answered, the rows
+    /// the id `device` takes, the product name, the backend and the device
+    /// memory in MiB, in the probe's order, the CPU pseudo-device left out;
+    /// then the host's own RAM in MiB and its logical CPUs, answered whatever
+    /// the probe did. `control` asked of polkit WITHOUT interaction: the
+    /// manager runs the engine to read this, and a device list is worth no
+    /// challenge over the caller's own session.
     async fn devices(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
-    ) -> Result<(u64, Vec<DeviceRow>), Error> {
+    ) -> Result<(u64, Vec<DeviceRow>, u64, u32), Error> {
         let who = requester_of(&header)?;
         Ok(device_list(self.core(move |m| m.devices(&who)).await?))
     }
@@ -252,7 +259,7 @@ where
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
         principal: String,
-    ) -> Result<(u64, Vec<DeviceRow>), Error> {
+    ) -> Result<(u64, Vec<DeviceRow>, u64, u32), Error> {
         let who = requester_as(&header, principal)?;
         Ok(device_list(self.core(move |m| m.devices(&who)).await?))
     }

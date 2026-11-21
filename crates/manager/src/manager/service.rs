@@ -422,6 +422,12 @@ pub trait GpuTotals {
     /// left out, the CUDA and Vulkan views of one card both kept, in the probe's
     /// order. `probed_at` `None` with no list when no probe answered, which is
     /// nothing to distribute and never an error.
+    ///
+    /// The reply also carries the host's inventory (R1, ARCHITECTURE.md (1) "The
+    /// node inventory"): `ram_mib` and `cpu_threads`, read from the machine by
+    /// the seam, the manager never reading it itself. A test hands the pair to
+    /// its fake and so sees only figures it wrote: no test of the manager reads
+    /// `/proc/meminfo`, `GlobalMemoryStatusEx` or the CPU count.
     fn devices(&self) -> pai_core::client::NodeDevices;
 }
 
@@ -436,8 +442,12 @@ impl GpuTotals for NoGpus {
         None
     }
     fn devices(&self) -> pai_core::client::NodeDevices {
+        // The host's inventory is read, not guessed, so a seam that reads
+        // nothing answers 0 for both: no RAM to show, no thread to cap at.
         pai_core::client::NodeDevices {
             probed_at: None,
+            ram_mib: 0,
+            cpu_threads: 0,
             devices: Vec::new(),
         }
     }
@@ -602,14 +612,22 @@ impl GpuTotals for ProbedGpus {
         (!pool.is_empty()).then_some(pool)
     }
     fn devices(&self) -> pai_core::client::NodeDevices {
+        // The host's inventory is read here, once per call, whatever the probe
+        // did: the RAM and the CPUs are the node's, not the engine's, so a
+        // probe that died leaves them answered (R1).
+        let (ram_mib, cpu_threads) = (pai_core::host::ram_mib(), pai_core::host::cpu_threads());
         let Some((probed_at, parsed)) = self.probe() else {
             return pai_core::client::NodeDevices {
                 probed_at: None,
+                ram_mib,
+                cpu_threads,
                 devices: Vec::new(),
             };
         };
         pai_core::client::NodeDevices {
             probed_at: Some(probed_at),
+            ram_mib,
+            cpu_threads,
             devices: parsed
                 .iter()
                 .filter(|device| !device.is_cpu())
@@ -1775,7 +1793,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     }
 
     /// The node's compute devices, from the engine's own probe, with the moment
-    /// it ran: the list a model profile page distributes a model over. A read,
+    /// it ran: the list a model profile page distributes a model over. The
+    /// host's inventory travels with it (`NodeDevices`'s `ram_mib` and
+    /// `cpu_threads`, read from the machine by the seam, R1). A read,
     /// so it records no action, reaches no service manager and writes no file;
     /// the probe runs as the manager, which is why the right is asked before it.
     /// A call for the caller's own asks `control` of polkit WITHOUT interaction
@@ -2806,14 +2826,20 @@ pub(crate) mod fakes {
     }
 
     impl FakeService {
-        /// This service answering every unit as stopped.
+        /// This service answering every unit as stopped. `#[cfg(unix)]`: its
+        /// only callers are the D-Bus phases, run on Linux only, so a Windows
+        /// `--all-targets` check would see dead code.
+        #[cfg(unix)]
         pub fn stopped(mut self) -> Self {
             self.state = UnitState::Inactive;
             self
         }
 
         /// This service answering the units named in `ids` as active, and the
-        /// rest as its `state` is.
+        /// rest as its `state` is. `#[cfg(unix)]`: its only caller is the
+        /// pipe-client phase, run on Unix only, so a Windows `--all-targets`
+        /// check would see dead code.
+        #[cfg(unix)]
         pub fn running(mut self, ids: &[&str]) -> Self {
             self.running = ids.iter().map(|s| (*s).to_string()).collect();
             self
@@ -3099,6 +3125,14 @@ pub(crate) mod fakes {
         /// `(id, name, backend, total MiB, free MiB)`. `None` (the default):
         /// the seam speaks no device list, as a manager of an older protocol.
         pub devices: Option<FakeDeviceList>,
+        /// The host's inventory R1 answers beside the list, `(ram_mib,
+        /// cpu_threads)`. `None` (the default): the fake answers 0 and 0, the
+        /// pair no test of these fakes asserts.
+        /// The fake NEVER reads the host: every reading is the one the test
+        /// handed, so a test that sees a number it did not write is reading
+        /// `/proc/meminfo` / `GlobalMemoryStatusEx` / the CPU count in
+        /// production, which a test must never do.
+        pub inventory: Option<(u64, u32)>,
         pub asked: std::sync::Arc<Mutex<Vec<String>>>,
     }
 
@@ -3111,8 +3145,15 @@ pub(crate) mod fakes {
                         .collect(),
                 ),
                 devices: None,
+                inventory: None,
                 asked: std::sync::Arc::new(Mutex::new(Vec::new())),
             }
+        }
+        /// This seam answering the host's inventory as `ram_mib` MiB of RAM and
+        /// `cpu_threads` logical CPUs.
+        pub fn with_inventory(mut self, ram_mib: u64, cpu_threads: u32) -> Self {
+            self.inventory = Some((ram_mib, cpu_threads));
+            self
         }
         /// This seam answering `devices` as `list`, probed at `probed_at`.
         pub fn with_devices(
@@ -3146,6 +3187,7 @@ pub(crate) mod fakes {
             Self {
                 gpus: None,
                 devices: None,
+                inventory: None,
                 asked: std::sync::Arc::new(Mutex::new(Vec::new())),
             }
         }
@@ -3166,10 +3208,13 @@ pub(crate) mod fakes {
         }
         fn devices(&self) -> pai_core::client::NodeDevices {
             self.asked.lock().unwrap().push("devices".to_string());
+            let (ram_mib, cpu_threads) = self.inventory.unwrap_or((0, 0));
             self.devices
                 .as_ref()
                 .map(|(probed_at, list)| pai_core::client::NodeDevices {
                     probed_at: *probed_at,
+                    ram_mib,
+                    cpu_threads,
                     devices: list
                         .iter()
                         .map(
@@ -3185,6 +3230,8 @@ pub(crate) mod fakes {
                 })
                 .unwrap_or(pai_core::client::NodeDevices {
                     probed_at: None,
+                    ram_mib,
+                    cpu_threads,
                     devices: vec![],
                 })
         }
@@ -10208,7 +10255,15 @@ pub(crate) fn manager_server_profile_crud_e2e() {
         // profile whose delete landed.
         let rows = m.server_profiles();
         let ids = rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>();
+        // `ghost`, the dangling link, exists on a unix node only, so the
+        // `mut` is used on unix only: gate the binding with it (a Windows
+        // check sees no unused `mut`), the same rows on both sides.
+        #[cfg(unix)]
         let mut want = vec![
+            "big", "default", "lan-2", "secret", "shared", "spare", "zero",
+        ];
+        #[cfg(not(unix))]
+        let want = vec![
             "big", "default", "lan-2", "secret", "shared", "spare", "zero",
         ];
         #[cfg(unix)]
@@ -14704,37 +14759,48 @@ pub(crate) fn manager_devices_e2e() {
     };
 
     // The block of `tests/gpu_probe.rs`, as the widened probe caches it: three
-    // entries in the probe's order, the CPU pseudo-device left out.
+    // entries in the probe's order, the CPU pseudo-device left out. The
+    // inventory R1 adds (ARCHITECTURE.md (1) "The node inventory") is the
+    // fake's own reading, a pair no test writes anywhere else: a production
+    // code path that reads the host answers the host's own numbers, and these
+    // asserts see a mismatch. A test never reads `/proc/meminfo`,
+    // `GlobalMemoryStatusEx` or the CPU count.
+    const RAM_MIB: u64 = 3_932_160;
+    const CPU_THREADS: u32 = 8;
     let cards = |probed_at: Option<u64>| {
-        FakeGpus::new(&[("CUDA0", 12281)]).with_devices(
-            probed_at,
-            &[
-                (
-                    "CUDA0",
-                    "NVIDIA GeForce RTX 4070 SUPER",
-                    "CUDA",
-                    12281u64,
-                    10844u64,
-                ),
-                (
-                    "Vulkan0",
-                    "AMD Radeon(TM) Graphics",
-                    "Vulkan",
-                    33593u64,
-                    31913u64,
-                ),
-                (
-                    "Vulkan1",
-                    "NVIDIA GeForce RTX 4070 SUPER",
-                    "Vulkan",
-                    11997u64,
-                    10844u64,
-                ),
-            ],
-        )
+        FakeGpus::new(&[("CUDA0", 12281)])
+            .with_devices(
+                probed_at,
+                &[
+                    (
+                        "CUDA0",
+                        "NVIDIA GeForce RTX 4070 SUPER",
+                        "CUDA",
+                        12281u64,
+                        10844u64,
+                    ),
+                    (
+                        "Vulkan0",
+                        "AMD Radeon(TM) Graphics",
+                        "Vulkan",
+                        33593u64,
+                        31913u64,
+                    ),
+                    (
+                        "Vulkan1",
+                        "NVIDIA GeForce RTX 4070 SUPER",
+                        "Vulkan",
+                        11997u64,
+                        10844u64,
+                    ),
+                ],
+            )
+            .with_inventory(RAM_MIB, CPU_THREADS)
     };
     let listed = |probed_at: Option<u64>| pai_core::client::NodeDevices {
         probed_at,
+        ram_mib: RAM_MIB,
+        cpu_threads: CPU_THREADS,
         devices: vec![
             pai_core::client::DeviceInfo {
                 id: "CUDA0".into(),
@@ -14806,6 +14872,45 @@ pub(crate) fn manager_devices_e2e() {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(listing, Vec::<String>::new(), "the read writes no file");
+    }
+
+    // ── The host's inventory travels with the list (R1) ─────────────────────
+    {
+        // The two numbers are the fake's own readings, named above, and a
+        // production answer that reads the host cannot carry them.
+        let (m, _asked, _lines) = core(true, true, cards(Some(1_766_271_243)));
+        let got = m.devices(&member).expect("the read answers");
+        assert_eq!(
+            got.ram_mib, RAM_MIB,
+            "the host's total RAM, in MiB, the reading the seam was handed"
+        );
+        assert_eq!(
+            got.cpu_threads, CPU_THREADS,
+            "the host's logical CPUs, the reading the seam was handed"
+        );
+    }
+    {
+        // A node whose probe answered nothing: no moment, no device, and the
+        // inventory is answered all the same. The two figures are the host's,
+        // never the engine's, so a probe that died leaves nothing unknown.
+        let (m, asked, _) = core(
+            true,
+            true,
+            FakeGpus::new(&[("CUDA0", 12281)])
+                .no_devices()
+                .with_inventory(RAM_MIB, CPU_THREADS),
+        );
+        assert_eq!(
+            m.devices(&member),
+            Ok(pai_core::client::NodeDevices {
+                probed_at: None,
+                ram_mib: RAM_MIB,
+                cpu_threads: CPU_THREADS,
+                devices: vec![],
+            }),
+            "the inventory is answered with no probe and no device"
+        );
+        assert_eq!(*asked.lock().unwrap(), vec!["devices".to_string()]);
     }
 
     // ── The caller's own call: control asked quietly, never with a prompt ─
@@ -14917,6 +15022,10 @@ pub(crate) fn manager_devices_e2e() {
             m.devices(&member),
             Ok(pai_core::client::NodeDevices {
                 probed_at: None,
+                // A seam that names no inventory answers 0 for both, the
+                // host's own "no figure", never a guessed number.
+                ram_mib: 0,
+                cpu_threads: 0,
                 devices: Vec::new(),
             }),
             "no probe answer: no card and no time, never an error and never a card"

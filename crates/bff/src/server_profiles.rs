@@ -291,9 +291,9 @@ async fn remove(
 /// `GET /api/profiles/server/{id}`: the profile's document, today's Server form
 /// keyed by the profile's own file, with `instance` naming the instance whose
 /// record names it. The file and the record are two calls of one connect made
-/// for the session's user; a record the manager cannot read is the record's own
-/// failure, never `instance: null`, which would offer a delete of a profile
-/// that is in use.
+/// for the session's user; a record the manager cannot read is the record's
+/// own failure, never `instance: null`, which would offer a delete of a
+/// profile that is in use.
 async fn document(
     connect: Connect,
     timeout: Duration,
@@ -309,7 +309,8 @@ async fn document(
     let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
         let client = connect(Some(user.as_str()))?;
         let file = profile_file(&*client, &id)?;
-        Ok((file, user_of(&*client, &id)?))
+        let instance = user_of(&*client, &id)?;
+        Ok((file, instance))
     });
     match tokio::time::timeout(timeout, ask).await {
         Ok(Ok(Ok((file, instance)))) => axum::Json(server::document(

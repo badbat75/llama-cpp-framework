@@ -711,6 +711,28 @@ fn devices_of(gpus: &Arc<ProbedGpus>) -> (pai_core::client::NodeDevices, Duratio
     (answer, at.elapsed())
 }
 
+/// The part of a probe's answer a test can name: the moment of the probe and
+/// the device list, both the scripted exe's doing. The host's inventory
+/// (`ram_mib`, `cpu_threads`, R1) is left out, because this seam reads the
+/// real machine and no test may name what a machine holds: it is pinned by
+/// [`inventory_answered`] instead.
+#[cfg(unix)]
+fn probe_answer(
+    node: &pai_core::client::NodeDevices,
+) -> (Option<u64>, Vec<pai_core::client::DeviceInfo>) {
+    (node.probed_at, node.devices.clone())
+}
+
+/// The host's inventory is the node's, not the engine's (R1), so it is
+/// answered whatever the probe did, a probe that died included. The figures
+/// are this machine's, so the test pins that they are there, never their
+/// value: 0 on either is the host's own "no figure", which a real Linux host
+/// never answers.
+#[cfg(unix)]
+fn inventory_answered(node: &pai_core::client::NodeDevices) -> bool {
+    node.ram_mib > 0 && node.cpu_threads > 0
+}
+
 /// `BLOCK` as a device list: three entries in the probe's order, each the id,
 /// the product name, the backend (the id without its digits) and the two
 /// sizes. The ids and sizes are the block's; the backend of `Vulkan0` is
@@ -889,12 +911,13 @@ fn a_killed_probe_is_an_empty_list_with_no_time_and_is_not_cached() {
     let (second, _) = devices_of(&gpus);
 
     assert_eq!(
-        first,
-        pai_core::client::NodeDevices {
-            probed_at: None,
-            devices: vec![],
-        },
+        probe_answer(&first),
+        (None, Vec::new()),
         "a probe that is killed has no list and no moment"
+    );
+    assert!(
+        inventory_answered(&first),
+        "a killed probe still answers the host's RAM and CPUs: {first:?}"
     );
     assert_eq!(second, first, "the next caller gets the same answer");
     assert_eq!(
@@ -937,12 +960,14 @@ fn a_reader_that_waited_takes_the_answer_of_the_probe_it_waited_for() {
     let took = at.elapsed();
 
     assert_eq!(
-        answers[0],
-        pai_core::client::NodeDevices {
-            probed_at: None,
-            devices: vec![],
-        },
+        probe_answer(&answers[0]),
+        (None, Vec::new()),
         "the first reader gets the killed probe's answer: no list, no moment"
+    );
+    assert!(
+        inventory_answered(&answers[0]),
+        "the readers of a killed probe get the host's RAM and CPUs: {:?}",
+        answers[0]
     );
     assert_eq!(
         answers[1], answers[0],
@@ -972,12 +997,13 @@ fn a_silent_probe_is_an_empty_list_with_no_time_and_is_not_cached() {
     let (second, _) = devices_of(&gpus);
 
     assert_eq!(
-        first,
-        pai_core::client::NodeDevices {
-            probed_at: None,
-            devices: vec![],
-        },
+        probe_answer(&first),
+        (None, Vec::new()),
         "an exe printing nothing names no device and has no moment"
+    );
+    assert!(
+        inventory_answered(&first),
+        "a silent probe still answers the host's RAM and CPUs: {first:?}"
     );
     assert_eq!(second, first);
     assert_eq!(

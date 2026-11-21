@@ -2525,7 +2525,10 @@ runtimes (the `versions/` files, slice 13). The backends the engine can load are
   `GlobalMemoryStatusEx` (Microsoft Learn) in `pai-core`. The versions stay the bff's file read (the
   files are world-readable and per node; across machines they join the same reply in step 14).
 - **The bff.** `GET /api/node/devices` gains `ramMib` and `cpuThreads` (same gate, same deadline); the
-  server form's `limits.Threads` comes from `cpuThreads` instead of the bff's own count.
+  server documents' `limits.Threads` and the save's cap stay on the bff's own count (amended at the R1
+  review, 2026-11-21: `Devices()` runs the probe, up to 30 s, which the 5 s document read cannot carry);
+  the Server form's thread fields read `cpuThreads` from this route in R5. Open note: design (2) keeps a
+  `Threads` above `cpuThreads` legal, so the save's bff-count cap is to be relaxed later, not in R1.
 - **Stable identity.** Options: (i) the ggml name (`ROCm0`), as the probe and `device` already use; free,
   but an ordinal can move when a runtime is missing (the "ROCm availability" note in
   `crates/app/src/devices.rs`) or a card is added; (ii) the PCI bus id, which needs a llama.cpp patch
@@ -2606,9 +2609,15 @@ pair; a bare model profile shows `needMiB` only.
 #### (5) Slices (each test first; Linux, the Windows code type-checked)
 
 1. **R1 inventory** (`pai-core`, `pai-manager`, `pai-bff`): `Devices()` gains `ram_mib` and
-   `cpu_threads`; the route gains `ramMib`, `cpuThreads`; `limits.Threads` from it. Done when: a fake
-   answer gives both fields on D-Bus and the pipe and in the route; the server document's thread limit
-   follows the manager's figure, not the bff's.
+   `cpu_threads`; the route gains `ramMib`, `cpuThreads`. Done when: a fake answer gives both fields on
+   D-Bus and the pipe and in the route; neither server document read (instance, pool profile) calls
+   `Devices()`, so their `limits.Threads` stays the bff's own count (amended at review, see (1)).
+   *As built (2026-11-21, reviewed):* `pai_core::host` reads `MemTotal` / `GlobalMemoryStatusEx` and
+   `available_parallelism`, 0 for no figure (`crates/core/src/host.rs`); the manager answers both
+   whatever the probe did (`ProbedGpus::devices`, `service.rs`), D-Bus `(ta(ssstt)tu)`, pipe `ram_mib`,
+   `cpu_threads` (a reply missing either is refused); the route adds `ramMib`, `cpuThreads`
+   (`bff/src/node.rs`); the document reads ask no `devices` (test
+   `the_document_reads_ask_the_manager_no_devices`). RAM is read in `pai-core`, not `pai-hwmon`.
 2. **R2 `Devices`** (`pai-core`, `pai-bff`): the `ServerConfig` field, `render_for`, `launch::server_args`
    adds `--device <value>` (absent: no flag; `none`: `--device none`), the save refuses by
    `device_list`, the bff's server document carries it. Done when: the argv pins all three cases; a
@@ -2621,7 +2630,7 @@ pair; a bare model profile shows `needMiB` only.
 4. **R4 keys and the read** (`pai-core`, `pai-bff`): `device` back to the not-on-web list (the pin test
    in `pai-app` green); the instance's model profile rows gain `needMiB`, the reply `availableMiB`.
 5. **R5 web UI** (designer's brief first): the server profile's GPUs card; the GD card without the
-   device list.
+   device list; the thread fields capped at `cpuThreads` of `GET /api/node/devices`.
 
 Later, each when asked: the bus-id patch ((1) option ii), a RAM budget (decision 4), per-assignment
 overrides ((3) b), CPU pinning between instances (`--cpu-mask`, `common/arg.cpp` 1508).
