@@ -32,7 +32,8 @@ description: What the architect has learned about this project's components, int
 - Sources already checked for cross-machine designs (2026-11-15): D-Bus non-local TCP is deprecated
   and unprotected (D-Bus spec, "TCP Sockets"); OpenSSH server is in the box only on Windows Server
   2025 (Microsoft Learn, OpenSSH first use); kubeadm's SPKI-hash check is the precedent for join
-  codes. Since 2026-11-21 the super-manager is **the director** (`pai-director`) and nodes use its
+  codes. Leaves 90 days, renewal from 30 days before, every 5 min while connected, at once on
+  reconnection (user, 2026-11-21). Since 2026-11-21 the super-manager is **the director** (`pai-director`) and nodes use its
   private CA, not pinning (ARCHITECTURE.md Part 2): rustls 0.23 `WebPkiClientVerifier` takes CRLs
   (`with_crls`), `export_keying_material` binds a MAC to one connection, rcgen 0.14 parses CSRs
   (`from_der`, feature `x509-parser`) and signs with `signed_by`; rcgen's CRL writer is unverified.

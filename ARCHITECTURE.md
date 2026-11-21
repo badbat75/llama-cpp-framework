@@ -2956,7 +2956,7 @@ private CA ("Identity and joining").
    manager stays the authority over its machine.
 2. **Nodes are managers.** The director speaks to each node's `pai-manager` with **the existing
    manager protocol over TLS 1.3 with mutual authentication**, every certificate issued by **a
-   private CA the director holds** (30-day leaves, renewed by the nodes; revoked by refused renewal and
+   private CA the director holds** (90-day leaves, renewed by the nodes from 30 days before expiry; revoked by refused renewal and
    a deny list). No new protocol, no public CA, no D-Bus off the machine.
 3. **A node joins by a one-time code** its own administrator creates, carrying the node's key
    fingerprint and a secret; the node sends a CSR bound to the code and receives its certificate and
@@ -3047,9 +3047,9 @@ with no new certificate; no public name or public CA is involved.
 | Certificate | Key | SAN | Key usage / EKU | Lifetime |
 | --- | --- | --- | --- | --- |
 | CA | P-256, on the director only | none (subject `pai director CA <id>`) | `keyCertSign`, `cRLSign`; `is_ca`, path length 0 | 5 years, rotated at 4 |
-| Director | P-256 | `director.pai.invalid` | `digitalSignature`; `serverAuth` (store and renewal listener) and `clientAuth` (dialing nodes) | 30 days, renewed locally at day 20 |
-| Director signer | P-256, a key of its own (no TLS key signs records) | `signer.director.pai.invalid` | `digitalSignature`; one private EKU under the UUID arc `2.25.<uuid>` (ITU-T X.667), so no TLS verifier accepts it | 30 days, renewed locally |
-| Node | P-256, generated on the node, never leaves it | `<node>.node.pai.invalid` | `digitalSignature`; `serverAuth` (its listener) and `clientAuth` (renewal, store) | 30 days, renewed by the node at day 20 |
+| Director | P-256 | `director.pai.invalid` | `digitalSignature`; `serverAuth` (store and renewal listener) and `clientAuth` (dialing nodes) | 90 days, renewed locally from 30 days before expiry |
+| Director signer | P-256, a key of its own (no TLS key signs records) | `signer.director.pai.invalid` | `digitalSignature`; one private EKU under the UUID arc `2.25.<uuid>` (ITU-T X.667), so no TLS verifier accepts it | 90 days, renewed locally from 30 days before expiry |
+| Node | P-256, generated on the node, never leaves it | `<node>.node.pai.invalid` | `digitalSignature`; `serverAuth` (its listener) and `clientAuth` (renewal, store) | 90 days, renewed by the node from 30 days before expiry |
 
 Every leaf is issued with `notBefore` one hour in the past (preference: absorbs small clock skew) and
 the authority key identifier. A node trusts **only** the CA certificates of its trust bundle, and from
@@ -3098,28 +3098,35 @@ the join window does not reopen by itself (only `pai node enable` by a local `pa
 a new join). A missing or unreadable cache keeps the listener closed. Local clients (D-Bus, the named
 pipe, the local bff) are unaffected: they keep today's OS identity, polkit and `pai` rules.
 
-**Renewal, automatic and early.** At two thirds of its lifetime (day 20 of 30) the node's manager
-generates a new key and CSR and calls `Renew` on the director's listener (port 8593, the store's; ALPN
-`pai-director/1`), authenticated by its current certificate. A failure is retried with exponential
-backoff from 5 minutes to at most 1 hour, with jitter, until it succeeds or the certificate expires;
-the new certificate replaces the old one atomically (written, then renamed) and the old key is
-deleted. What the node says as expiry nears: every failed attempt is a warning in its log
-(`node-cert-renewal-failed`, with the reason); from 7 days before `notAfter` a daily
-`node-cert-expiring` warning; `pai node show` and the node's `GET /api/node` report the certificate's
-expiry and the last renewal attempt, and the director's hub shows `certExpires` per node, so an
-administrator sees the problem a week ahead. The director refuses a node
+**Renewal, automatic and early** (user, 2026-11-21: 90-day certificates, renewal from 30 days before
+expiry, every 5 minutes while connected, at once on reconnection). From 30 days before `notAfter` (day
+60 of 90) the node's manager generates a new key and CSR and calls `Renew` on the director's listener
+(port 8593, the store's; ALPN `pai-director/1`), authenticated by its current certificate. While the
+director is **connected** (its listener answers the TLS handshake), a refused or failed renewal is
+retried every 5 minutes, fixed, no backoff. While it is **disconnected** (the connection itself fails)
+the node keeps a connection attempt every 5 minutes as its probe, and renews **at once** on
+reconnection: the first successful connection to the director's listener, or the first authenticated
+connection the director opens to the node's listener, whichever comes first. The new certificate
+replaces the old one atomically (written, then renamed) and the old key is deleted. What the node says
+as expiry nears: a failed renewal is a warning in its log (`node-cert-renewal-failed`, with the reason),
+written when the reason changes and at most once an hour, so a 5-minute retry does not flood the log;
+a daily `node-cert-expiring` warning from 30 days before `notAfter` (recommended over 7: a renewal
+normally succeeds at its first attempt, so the warning only ever shows when something is wrong, and
+then a month ahead); `pai node show` and the node's `GET /api/node` report the certificate's expiry and
+the last renewal attempt, and the director's hub shows `certExpires` per node. The director refuses a node
 on the deny list, a removed node, a CSR whose name is not the caller's, and an expired certificate.
 Each reply carries the director's clock; a node whose clock differs by more than 5 minutes logs
 `node-clock-skew` (operational requirement: NTP on every machine, since `rustls-webpki` judges validity
 by the local clock).
 
-**When a node's certificate expires** (the director unreachable for more than 30 days): the node runs
+**When a node's certificate expires** (the director unreachable for the whole renewal window, 30 days, or refusing it): the node runs
 on (its instances, boot settings and local clients never depend on the director); the director's
 handshakes to it fail and it reads `expired` in the hub; it cannot renew with an expired certificate.
 It comes back by a new join (`pai node enable` prints a new code; the instances and files are kept);
 there is no grace period (user, 2026-11-21).
 
-**Revocation: refused renewal plus a deny list.** Removing a node puts its name and current serial on
+**Revocation: refused renewal plus a deny list.** A refused renewal alone takes effect when the
+current certificate expires, within 90 days at most; the deny list is what revokes at once. Removing a node puts its name and current serial on
 the director's deny list, published as a CRL the CA signs and checked at **every** handshake the
 director takes part in (as server: `WebPkiClientVerifier` `.with_crls`; as client: the same list
 checked on the node's certificate), and refuses its renewals; an entry is pruned once the denied
@@ -3134,7 +3141,7 @@ which director asked what for whom. The store's manifest is signed the same way.
 
 **CA rotation.** Planned: the director creates the new CA and pushes the bundle {old, new} to every node
 (`SetTrustBundle`, a signed command); once every reachable node has it, the director's own leaf and new
-issuances move to the new CA; after 30 days every live node certificate is from the new CA and the
+issuances move to the new CA; after 90 days every live node certificate is from the new CA and the
 bundle {new} is pushed. A node that was unreachable meanwhile renews under the new CA if it still holds
 the bundle, else joins again. A **compromised** CA key: every node joins again (`pai node leave`, a new
 code), since the attacker could push bundles too.
@@ -3272,16 +3279,17 @@ type-checked like the rest of the Windows code.
    unreadable the listener stays closed, and local clients still work.
 3. **The join.** Code, window, `Join` with its MAC over the exporter, the CSR bound to the code's key,
    issuing, install, `leave`. Done when: a right code leaves the node trusting the test CA and holding a
-   30-day certificate for `<name>.node.pai.invalid` with `serverAuth` and `clientAuth`; a wrong, expired
+   90-day certificate for `<name>.node.pai.invalid` with `serverAuth` and `clientAuth`; a wrong, expired
    or reused code is refused and counted; a CSR of another key, or for another name, is refused; a MAC
    computed on another connection (a relay) is refused; requested extensions outside the profile are
    not issued; after the window only CA-issued clients pass; `leave` closes the port and forgets the
    bundle.
 3b. **Renewal and the deny list.** `Renew` on the director's listener, the CRL at every handshake. Done
-   when: a renewal at day 20 gives a new key and certificate; a removed node's renewal and handshake
+   when: a renewal from 30 days before expiry gives a new key and certificate; a removed node's renewal and handshake
    are refused; an expired certificate cannot renew; a skew over 5 minutes is logged; a denied entry is
-   pruned after its `notAfter`; with the director down, retries back off from 5 minutes to 1 hour,
-   each failure logged, and `node-cert-expiring` appears from 7 days before expiry.
+   pruned after its `notAfter`; a refused renewal is retried every 5 minutes while the director
+   answers; a node disconnected renews at once on reconnection (either direction); the failure warning
+   is written at most once an hour; `node-cert-expiring` appears daily from 30 days before expiry.
 4. **Delegated rights and the signed log.** Done when: the CA-authenticated director may `configure`
    (including the API key in reads); each change it makes is logged with its principal and the
    signer's signature; a command unsigned, signed by a certificate without the private EKU, outside

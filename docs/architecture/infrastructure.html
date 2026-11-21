@@ -310,7 +310,7 @@ models folders for the bff (<code>ModelFilesAs</code>), which the bff's account 
   <rect class="node" x="550" y="30" width="330" height="90" rx="6"/>
   <text x="562" y="52" class="t-title">Node A (Linux or Windows)</text>
   <text x="562" y="72">pai-manager, listener off until joined</text>
-  <text x="562" y="90" class="t-small">one-time code, CSR: 30-day cert, auto-renewed</text>
+  <text x="562" y="90" class="t-small">one-time code, CSR: 90-day cert, auto-renewed</text>
   <text x="562" y="108" class="t-small">only -core and the engine needed</text>
   <rect class="node" x="550" y="150" width="330" height="80" rx="6"/>
   <text x="562" y="172" class="t-title">Node B</text>
@@ -320,7 +320,7 @@ models folders for the bff (<code>ModelFilesAs</code>), which the bff's account 
 <figcaption>Accepted by the user on 2026-11-15, not built. Each node's manager stays the authority over
 its machine; the hub never holds a node's files as truth. The director's CA (accepted 2026-11-21): ECDSA P-256, 5 years; its key a plain file,
 <code>/var/lib/private-ai-director/ca/ca.key</code> 0600 in a 0700 folder, carried by every backup of the
-director's disk; node certificates 30 days, renewed automatically at day 20. The model store (accepted 2026-11-21): the
+director's disk; node and director certificates 90 days, renewed automatically from 30 days before expiry. The model store (accepted 2026-11-21): the
 hub keeps GGUF files with a sha256 manifest (from Hugging Face, checked against its tree, or uploaded);
 a joined node's manager pulls one when an administrator asks, verifies it and renames it into its
 models folder.</figcaption>
