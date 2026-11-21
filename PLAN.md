@@ -1009,6 +1009,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
     designer's audit of what is basic today and a phased brief, built in slices after C1 and before 17.
+    **Choosing the model file on the web model profile page** (user, 2026-11-21: "a quando la selezione
+    degli asset nel repo dei modelli? (ora testo libero)"): `hf-repo` offers the GGUF files (quants) of
+    the Hugging Face repo, read by the node as the GUI's `crates/app/src/hf.rs` does; `model` offers the
+    GGUF files already in the models folder. After the UX pass (U17), before slice 17; the architect's
+    design first (the node calls huggingface.co: outbound network, the HF token in the machine-wide
+    state still to place), then the designer's brief, then tester and coder rounds.
     **Tags as chips** (user, 2026-11-21): the instance tags field becomes a row of chips: a round "+"
     that, clicked, opens an oval input for one label; confirmed, it becomes a chip and a new "+"
     follows. While typing, the labels already used (on any instance or server profile) are suggested.
