@@ -150,3 +150,6 @@ description: What the architect has learned about this project's components, int
   `service.rs`, `dbus.rs`, `pipe.rs` and `client.rs`. Add the key to `checks.rs`'s list, `Refusal::text`
   and both strings files. Windows `ScmService::start` and `set_boot_enabled` create a missing service,
   so a remove must cancel the restart gate first; systemd's template needs no create (checked 2026-11-21).
+- A post-build review checks every edge-case clause in the design text against the code, not only
+  the "done when" list: slice 16's "a newline first when the text does not end with one" was in the
+  design, missing in `append_record`, and in no done-when item (2026-11-21).
