@@ -1040,7 +1040,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     2026-11-21: "in generale usa tutte le feature per tutta la gui, al momento è molto basica"): a UX
     pass over every page (sign-in, Overview, instance, model profiles, About, the shell), from the
     designer's audit of what is basic today and a phased brief, built in slices after C1; after U17b it
-    waits for C2, 2g/2j, slice 17, then R4 and R5 (user, 2026-11-21)
+    waits for C2, 2g/2j, slice 17, model profile tags, then R4 and R5 (user, 2026-11-21,
+    2026-11-22)
     (fe brief 17: U17a skeletons, U17c sorting and U17b tile chips built; left U17h, U17e, U17d, U17f, U17g in that order).
     **One models folder for every engine** (user, 2026-11-21: "usa una folder unica per i modelli tra i
     differenti motori"; asked whether a server profile may still name another: "unica e basta"): one
@@ -1078,6 +1079,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     (user, 2026-11-21). Test flakes seen at C1, to fix test-side when
     a slice touches them: `ModelProfilePage.test.tsx` 2d.63 (title asserted before the effect writes
     it), `NodeNav.test.tsx` ~211 (a read count), `SignInOnly.test.tsx` S1a.10.
+    **Tags on model profiles** (user, 2026-11-22): a model profile carries tags too, as chips with the
+    same suggestions (C1, C2), for three uses: labels and a filter on the Models page, routing (the router
+    and the director pick a model by tag, step 14 and item 14), and shown to clients in the model list
+    the API offers. After slice 17 (it redoes the profile pages), before R4 and R5; the architect's
+    design first (where the key lives in `models.ini` and whether llama-server tolerates it, the
+    manager's checks, how the router and the client list read it), then the designer's brief.
     **Resources belong to the server profile, placement follows** (user, 2026-11-21): a bare model profile
     cannot know its GPU/CPU distribution until it runs on an instance. The server profile should bind the
     resources an instance may use (which GPUs, RAM, CPU threads, the backend SDK), so a model profile
