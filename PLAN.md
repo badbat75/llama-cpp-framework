@@ -1071,6 +1071,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     history store), what runs on each node, retention, the trust boundary (who reads logs, the group
     `pai`), how it reaches the super-manager (step 14) later, packaging on Linux and Windows; then a
     designer brief for the live view and the chart.
+    Decided (user, 2026-11-21): the manager's own sampler in a new crate `pai-hwmon` (shared with
+    pai-config's HW window), an in-memory 1 s ring and RRD-style history tiers in SQLite (5s:1h, 20s:4h,
+    2m:24h, 15m:7d, 1h:30d, configurable in `manager.ini`), an SSE stream through the bff; every `pai`
+    member reads instance logs; the disk card follows the default models folder only; an OTLP export
+    later. Slices: 1 pai-hwmon with measured sample cost, 2 live stream, 3 history, 4 log consultation.
+    A future central log collector (not now): OTLP, Fluent Bit on the nodes, VictoriaLogs behind the
+    super-manager (ARCHITECTURE.md 13d).
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
     (user, 2026-11-17: after nodes and instances). It logs every request (user, 2026-11-18): the

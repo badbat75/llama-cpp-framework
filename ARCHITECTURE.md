@@ -2130,7 +2130,7 @@ On the revision's three questions (user, 2026-11-17): server profiles keep the f
 `server@<profile>.ini`; the CLI is `pai model-profile <verb>`; a server profile created from the web
 starts from the defaults.
 
-### Monitoring and log consultation (step 10 item 13d): proposed, awaiting the user's choice
+### Monitoring and log consultation (step 10 item 13d): accepted (user, 2026-11-21), approach (a)
 
 The requirement (user, 2026-11-21, `PLAN.md` step 10 item 13d): the native GUI's HW Monitor streamed
 to the web UI, a history chart of the same metrics, and a module that collects the metrics and routes
@@ -2435,16 +2435,12 @@ cursor stays the journal's own cursor on Linux, so the web view and a collector 
 positions. Choosing OTel for metrics now (option b) would not make the log half easier: the
 collector's journald receiver is the weakest piece. Not a decision for this step.
 
-#### Decisions for the user
+#### Decisions (user, 2026-11-21)
 
-Open:
-
-1. **Approach.** (a) the manager's own sampler (`pai-hwmon`) and tiered store, export later
-   (recommended; its resources are estimated above and measured in slices 1 and 3); (b) the
-   OpenTelemetry Collector and a TSDB on each node; (c) Prometheus exporters and a TSDB; (a) now plus
-   an OTLP export in the same step.
-
-Answered (user, 2026-11-21): history is RRD-style tiers with the resolution following the range
+Approach (a): the manager's own sampler (`pai-hwmon`) and tiered store, an export (OTLP or
+Prometheus) later; (b), (c) and (d) are not taken. The slices run in order: 1 readings move
+(`pai-hwmon`, the `sample-cost` numbers reported), 2 live stream, 3 history, 4 log consultation;
+5 (the export) waits until a central store is wanted. Also decided: history is RRD-style tiers with the resolution following the range
 (5 s over 1 h, 20 s over 4 h, about 720 points), configurable (the tiers above); every `pai` member
 reads instance logs; the disk card follows the engine's default models folder only.
 
