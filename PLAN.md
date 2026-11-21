@@ -1090,6 +1090,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     the web keys first would make the model profile page's GPU card send a key the bff refuses.
     With R4/R5 also: fe briefs 11 and 14 and the doc comments at `service.rs` ~8660 and ~8878 and
     `devices.rs`:5 still describe the retired every-GPU memory rule.
+    **Also (found by the designer at C1, 2026-11-21):** the Server form's Hostname checkboxes are 20x20,
+    an axe target-size (WCAG 2.5.8) finding at 1280 px; fix in U17e or 17a, whichever touches the form first.
     **Fix first (found at R2's docs, 2026-11-21):** the web UI's server form (`fe/src/ServerForm.tsx`)
     sends 19 of the document's 21 keys, and the save writes an absent key as cleared, so saving the
     Server page drops `[Server] Tags` and `Devices`. Fix: the form sends back every key it read and did
