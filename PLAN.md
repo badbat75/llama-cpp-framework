@@ -536,6 +536,9 @@ may download, over which channel and identity, integrity checks, storage and quo
 super-manager, resumable transfers, how it relates to a node's own Hugging Face downloads), then a
 slice after 9; the done-when gains: a node downloads a model from the super-manager into its models
 folder and an instance serves it.
+Decided (user, 2026-11-21, ARCHITECTURE.md "The model store", slice 10): nodes pull from the
+super-manager over the step's mTLS channel; the store is filled from Hugging Face (checksum checked)
+and by upload; one size cap on the store.
 
 ### 4. Decide whether to bring back patches 0002 to 0004
 
@@ -1021,7 +1024,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     the Hugging Face repo, read by the node as the GUI's `crates/app/src/hf.rs` does; `model` offers the
     GGUF files already in the models folder. After the UX pass (U17), before slice 17; the architect's
     design first (the node calls huggingface.co: outbound network, the HF token in the machine-wide
-    state still to place), then the designer's brief, then tester and coder rounds.
+    state still to place), then the designer's brief, then tester and coder rounds. Decided (user,
+    2026-11-21, ARCHITECTURE.md "Choosing the model file on the web"): public repos only (the token comes
+    with item 13's machine-wide state), the endpoint fixed to huggingface.co, every models folder of the
+    node's server profiles grouped by folder. Slices M1 listing into `pai-core`, M2 `GET /api/hf/files`,
+    M3 the manager's `ModelFilesAs` and `GET /api/node/model-files`, M4 the pickers (designer first).
     **Tags as chips** (user, 2026-11-21): the instance tags field becomes a row of chips: a round "+"
     that, clicked, opens an oval input for one label; confirmed, it becomes a chip and a new "+"
     follows. While typing, the labels already used (on any instance or server profile) are suggested.
