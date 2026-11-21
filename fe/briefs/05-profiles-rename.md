@@ -278,7 +278,9 @@ GUI's strings do, in the same words.
   value, served here) and the resource refusals.
 - **05i Where a change applies** (platform slice 15): the pool rows' `assignments`, the save's and the
   switch's `restart` list, the instance named in the refusals.
-- **05j Create and remove an instance** (platform slice 16), `client-no-model-profiles` on Start.
+- **05j Create and remove an instance** (platform slice 16, served at e262708: the routes and the
+  statuses in `fe/briefs/api-contract.md`, the page's own work open), `instance-no-model-profiles` on
+  Start.
 - Later: the estimate as a read (platform slice 17).
 
 ## The user's answers of 2026-11-18 (they bind the slices above)

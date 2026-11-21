@@ -22,7 +22,6 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
-  before,
   deferred,
   en,
   fakeBff,
@@ -126,6 +125,10 @@ function boxEnabled(field: Field, values: Record<string, string>): boolean {
  * strings key; the Speculative decoding card's are the keyed fields of
  * `SPEC_BY_ID`. */
 const EDITABLE_BY_ID: Record<string, Field> = {
+  // Brief 14's GD1.2 (decision 6): the GPU distribution card's split mode
+  // select, always enabled. It is not a 2e card, so it joins the map to say the
+  // control is enabled, and changes nothing of the 2e set the title lists.
+  'model-profile-split-mode': 'model-profile-split-mode',
   'model-profile-ctx-size': 'model-profile-context-size',
   'model-profile-parallel': 'model-profile-parallel-slots',
   'model-profile-kv-unified': 'model-profile-unified-kv',
@@ -276,17 +279,21 @@ function inactive(el: HTMLElement): boolean {
   )
 }
 
-/** The save bar's status line: the only role="status" below the h2 of the
- * settings (the page's loading status is above it). */
+/**
+ * The save bar's status line. The GPUs card keeps its own status region
+ * in the DOM from its first render (brief 14 GD1.9), so the bar's line is
+ * picked inside the bar, not by counting the page's status regions (section
+ * 6 of fe/briefs/14-gpu-distribution.md, ruling of 2026-11-21).
+ */
 function status(main: HTMLElement): HTMLElement {
-  const h2 = within(main).getByRole('heading', {
+  within(main).getByRole('heading', {
     level: 2,
     name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
-    .filter((s) => before(h2, s))
-  expect(all, 'one status line once the page is loaded').toHaveLength(1)
+    .filter((s) => s.closest('.save-bar') !== null)
+  expect(all, 'the save bar has its status line').toHaveLength(1)
   return all[0]!
 }
 

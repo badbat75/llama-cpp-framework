@@ -721,6 +721,9 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     "input[type='text'], input[type='password'], select: min-height: var(--control-h)",
     "input[type='text'], input[type='password'], select: min-width: 0",
     '.check: min-height: 24px',
+    // Brief 14, DESIGN.md 5.2 "GPU list" (GD1.12): the row's label is a flex
+    // child, min-width 0 lets it shrink and break its 64-character id.
+    '.check-list > li > .check: min-width: 0',
     // H7.6 (brief 08): the sign-in panel is a grid child, min-width 0 lets it shrink.
     '.signin-panel: min-width: 0',
     '.save-messages: min-width: 0',

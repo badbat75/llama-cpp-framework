@@ -154,14 +154,15 @@ the user picks another option, and picking the first option back removes the key
 /api/node/devices` beside its profile read; leaving and coming back sends another; a save, Discard,
 Reload or any edit sends none, and nothing polls. Its time limit is **40 s** (the bff's 35 s plus a
 margin; `fe/DESIGN.md` 7's 15 s does not apply), a time-out being its network failure. While it is
-pending, the GPUs fieldset (GD1.4) shows `model-profile-gpu-detecting` in a `role="status"`
-paragraph after its legend, and the rows of the GPUs the profile names (GD1.6, no name or memory
+pending, the GPUs fieldset (GD1.4) shows `model-profile-gpu-detecting` in a plain paragraph
+after its legend (no `role="status"`: it is there when the card first renders, nobody acted, and it
+is replaced by a GD1.7 paragraph, as `fe/DESIGN.md` 5.2 Message; ruling of 2026-11-21), and the rows of the GPUs the profile names (GD1.6, no name or memory
 line yet); the rest of the page is usable and saves.
 
 **GD1.4 The GPUs fieldset.** After the split mode field: a `<fieldset>` whose `<legend>` is
 `model-profile-gpus`, holding in this order: the read's paragraphs (GD1.3, GD1.7), then a
-`ul role="list"` of one `li` per GPU row (GD1.5), then (GD2) the Auto and Even buttons, then the
-error paragraphs. Each row: a native checkbox whose `<label>` holds the id (monospace, weight 600)
+`ul role="list"` of one `li` per GPU row (GD1.5), then the move status region (GD1.9), then (GD2)
+the Auto and Even buttons, then the error paragraphs. Each row: a native checkbox whose `<label>` holds the id (monospace, weight 600)
 then the device's `name`; under it a `--muted` line with `model-profile-gpu-memory` filled with
 `totalMib / 1024` and `freeMib / 1024` to one decimal (`32624`, `32420` give `31.9 GiB, 31.7 GiB
 free`), its id the checkbox's `aria-describedby`; no memory line when `totalMib` is not a positive
@@ -205,9 +206,13 @@ with the accessible name of its visible text plus the id in a visually hidden sp
 [2.5.3 Label in Name](https://www.w3.org/TR/WCAG22/#label-in-name)). The first row's Move up and the
 last checked row's Move down are `aria-disabled="true"` (D5.2 Inactive: a click does nothing, focus
 stays). A press swaps the row with its neighbour among the checked rows; the pressed button keeps the
-focus in the moved row, and one visually hidden `role="status"` region of the card says
+focus in the moved row, and the fieldset's one visually hidden `role="status"` region says
 `model-profile-gpu-moved` filled with the id, its new position and the checked count ("rocm0: position
-1 of 2"). With fewer than two rows checked there are no move buttons; unchecked rows never have them.
+1 of 2"). The region is in the DOM, empty, from the card's first render, whatever the read's state
+or the number of checked rows, so the first move is announced (`fe/DESIGN.md` 5.2 Action feedback:
+a status line always in the DOM); it is the card's only `role="status"`. Page tests that count "the
+one status line" mean the save bar's and pick it inside the save bar, not by counting the page's
+regions (ruling of 2026-11-21). With fewer than two rows checked there are no move buttons; unchecked rows never have them.
 
 **GD1.10 Saving `device`.** The device state is the list of the checked rows' ids, in row order.
 Changed when that list differs (exact text, order included) from the list read in GD1.5; changing it
@@ -222,7 +227,12 @@ spells it (`ROCm0, ROCm1`), is never sent.
 after the list, every checked checkbox `aria-invalid="true"` with the error's id added to its
 `aria-describedby`, focus on the first checked checkbox (D5.2 Checkbox list), else on the first
 checkbox, and the bar's alert `save-refused` with the same text (02h 142). Checking, unchecking or
-moving a row clears the error, not the alert. With `field` `device-draft` or `mmproj-device` the error
+moving a row clears the error. The bar's alert follows 02h 198b (`fe/DESIGN.md` 5.2 Save bar,
+which wins over this brief): it stays while the form is still changed and goes, silently and without
+moving focus, when the edit returns the form to its loaded state (ruling of 2026-11-21). Example, with
+`device = CUDA9,CUDA0` and Vulkan0 checked then refused: checking rocm0, unchecking it, moving CUDA0
+up each clear the error and keep the alert (Vulkan0 still checked); unchecking Vulkan0 when the rows
+are back as loaded removes the alert. With `field` `device-draft` or `mmproj-device` the error
 goes on that device select, as any field (02h 142, 144); a 422 without `field` falls back to `args[0]`.
 
 **GD1.12 Keyboard, screen reader, 320 px, nothing else.** Tab order inside the card: the split mode
@@ -335,8 +345,9 @@ GPU, Tensor placement and the split mode warnings are unchanged.
 - The share is text ("Share: 75%", "unused"), the not-detected state a word, never a colour
   ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)); the free memory is dated, so it is not read
   as now ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions)).
-- "Detecting GPUs…" and the move's result are status messages; the read's outcome appears without a
-  user action, so it is not an alert ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)).
+- The move's result is a status message, in a region present before the first move; "Detecting
+  GPUs…" and the read's outcome are part of the card as it renders and appear without a user action,
+  so they are plain paragraphs, neither status nor alert ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)).
 - Errors name the problem and the fix, on the controls they concern
   ([3.3.1](https://www.w3.org/TR/WCAG22/#error-identification),
   [3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion)).
@@ -350,6 +361,12 @@ GPU, Tensor placement and the split mode warnings are unchanged.
 - The bff fake (`test/bff.ts`): it needs `GET /api/node/devices`; a suggestion, the tester's call:
   answer it only when a test asks, and let the other page tests see it pending or failed, which
   leaves every other card as today (decision 5).
+- The page tests' "one status line once the page is loaded" helpers (`fe/src/test/savealert.tsx`
+  `status()`, `oneStatus`): they meant the save bar's status line; with the GPUs card's move region
+  always present they pick the status inside the save bar instead of counting every `role="status"`
+  after the h2 (GD1.9).
+- The fake's `PUT` answer: the contract's `{ revision, running }` (02h, `fe/briefs/api-contract.md`);
+  this brief changes nothing in the save's reply.
 - Tests pinning the PUT's accepted keys or that `device`, `split-mode`, `tensor-split` are never sent.
 
 ## 7. Questions for the user

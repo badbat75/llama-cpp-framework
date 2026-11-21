@@ -79,3 +79,6 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - The labels in use across the node are `GET /api/instances` items' `tags`/`instanceTags` plus
   `GET /api/profiles/server` rows' `tags` (brief 15). The fe's icons were all decorative beside
   text until brief 15's chips: an icon-only button keeps its words in a visually hidden span.
+- In a wrapping flex row, a field's visible label and its input must be one flex item (a wrapper
+  span), or the label can end one line and the input start the next (brief 14 at 1280 px: "Weight"
+  beside the memory figures, its box on the line below). `build/ux-review/gd1.js states` shoots it.

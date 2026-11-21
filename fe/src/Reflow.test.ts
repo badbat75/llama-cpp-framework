@@ -183,6 +183,9 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
       '.jump ul button = anywhere',
       '.full-value = anywhere',
       '.assets dd = anywhere',
+      // Brief 14, DESIGN.md 5.2 "GPU list" (GD1.12): the row's label breaks a
+      // 64-character id inside the `li`, at 320 px and at 200 % text.
+      '.check-list > li > .check = anywhere',
     ].sort(),
   )
   for (const r of RULES.filter((r) => prop(r.body, 'overflow-wrap') !== ''))
@@ -361,14 +364,16 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // Every class the stylesheet selects, sorted, in the sheet's own words. R1.8
 // froze the list at one new class, table-scroll; brief 12 section 3 (the T1
 // review, 2026-11-20) amended that freeze with exactly six more: port,
-// tags-profile, tags-save, tags-status, tags-alert, tags-sign-in. A class
-// beside these is a look no brief asked for.
+// tags-profile, tags-save, tags-status, tags-alert, tags-sign-in; brief 14
+// (the GPU distribution card) with three: check-list-actions (the row of Auto
+// and Even), gpu-id (the row's monospace id) and gpu-weight (the weight field
+// of GD2.1). A class beside these is a look no brief asked for.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skip-link stacked subgroup tags-alert tags-profile tags-save tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list check-list-actions collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skip-link stacked subgroup tags-alert tags-profile tags-save tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 12 section 3 amends it): the classes the sheet gains are table-scroll and the six of brief 12, and the only id a selector names is the mount point #root', () => {
+test('10 R1.8 (as brief 12 section 3 and brief 14 amend it): the classes the sheet gains are table-scroll, the six of brief 12 and the three of brief 14, and the only id a selector names is the mount point #root', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -378,7 +383,7 @@ test('10 R1.8 (as brief 12 section 3 amends it): the classes the sheet gains are
     }
   expect(
     [...used].sort(),
-    'the classes of the sheet, with table-scroll and the six of brief 12 section 3 added and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
+    'the classes of the sheet, with table-scroll, the six of brief 12 section 3 and the three of brief 14 added and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(
     [...ids].sort(),

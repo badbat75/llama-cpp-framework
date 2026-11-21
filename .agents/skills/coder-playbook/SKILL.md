@@ -42,6 +42,21 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## Running the checks
 
+- A filtered web UI run is `npm --prefix fe test -- <file> -t '<test name>'`: npm runs the script with `fe/`
+  as cwd, and `fe/vite.config.ts`'s `test.environment: 'jsdom'` is read from there. `npx --prefix fe vitest
+  run <file>` keeps the repo root as cwd, finds no config, and reddens EVERY test with `window is not defined`.
+- A new CSS class is a test edit: `Reflow.test.ts`'s `CLASSES` is an exhaustive allowlist of every class the
+  sheet selects, so the suite is red until the name joins the string (append it, sorted; its comment above
+  and the test title count the classes of each brief, so say the wording is stale, do not rewrite the title).
+  `HearthTokens.test.ts` (min-height/min-width per rule), `HearthFonts.test.ts` (font-family), and
+  `Reflow.test.ts` (overflow-wrap, box-shadow) are the same exhaustive shape per property: a new rule that
+  sets one of those properties needs its line there.
+- `npm --prefix fe/ux run check` proves the wrap and sideways-scroll criteria on the BUILT `fe/dist` (build
+  first) with `fe/ux/stub.py`; the stub's profile carries `device` + `tensor-split` so the GPU rows are on
+  the page it measures at 320 px and 200 % text. To read a wrap yourself, spawn the same stub and node from
+  `fe/ux` (`NODE_PATH=<repo>/fe/ux/node_modules node /tmp/<x>.js`): a wrapping flex row that did NOT wrap has
+  a width equal to its children's widths plus the gaps, and `align-items: baseline` puts the children's
+  `top` at different pixels on ONE line, so top equality says nothing about wrapping.
 - `cargo clippy -p <crate> --all-targets -- -D warnings` builds the lib WITHOUT the tests, so a
   `pub(crate)` item of a private module that only `#[cfg(test)]` code calls is dead there. Split it: keep
   the production function, mark the wrapper the tests call `#[cfg(test)]` (a fn simply stops being built,
@@ -94,7 +109,7 @@ Lessons only: the rules are in `AGENTS.md`.
   file's own convention is the fix and it moves no assertion: gate the helper `#[cfg(unix)]` and say the
   reason in its doc (the gpu_probe helper module gates `use scripted::*` that way). A red you must NOT
   touch is a `let mut want` whose only `mut` use is a `#[cfg(unix)] want.insert(..)`: `unused_mut` on
-  windows-gnu (`manager/service.rs:9913`, from 5c8232b), pre-existing, outside any slice. Report it, and
+  windows-gnu (`manager/service.rs:9913` (10145 on 2026-11-21), from 5c8232b), pre-existing, outside any slice. Report it, and
   prove production is clean with the same crate WITHOUT `--all-targets`. The same region reddens the
   Windows `cargo check --all-targets` with
   `unresolved import` when a `#[cfg(unix)] mod`'s users sit behind a bare `use <mod>::*;`: the un-gated
@@ -235,6 +250,17 @@ Lessons only: the rules are in `AGENTS.md`.
   fixture that implements NO `instances()`, so the trait's default `Other` answers 502 the moment the
   route resolves the profile. Grep every file for the route's calls-list pins and for the whole-list
   literals BEFORE writing a per-item field.
+- The additive-key red is the same in slice 16 (`removable` on the instance rows): 10 whole-row literals in
+  `tests/instances.rs` and the 13 in `tests/origin.rs` went red beside the new test that pins the key.
+  `grep -n '"instanceTags"' crates/bff/tests/*.rs` (the row literal's last key) enumerates every pin in one
+  call, and the two counts in the report are the new test's rows and the stale literals.
+- `session::error(status, key, args)` takes `&[u64]`: an answer whose `args` are NAMES (`client-no-server-profile
+  [profile]`) needs the module's own helper building `{"key", "args"}` from `&[&str]`; the one in
+  `instances.rs` is `keyed`/`refused` (the 422 that carries `field`).
+- A write on a path a read already owns (`POST /api/instances` beside `router_with`'s `get(instances)`)
+  merges in axum 0.8: `Router::merge` adds the methods of the same path, and `PUT`/`DELETE` there stay the
+  router's 405. A module and a fn of one name (`mod instances` and `fn instances`) coexist, and the
+  handler's `json!` row keeps its keys in the order the tests read them.
 - A D-Bus row tuple that grows past clippy's `type_complexity` is a module-level `type InstanceRow = (...)`
   beside the other consts, with the signature `(s id, s engine, q port, ...)` in its doc comment.
 - One `Host` name rule over both families: strip the brackets and `text.parse::<IpAddr>()` covers IPv4 and
@@ -485,6 +511,16 @@ Lessons only: the rules are in `AGENTS.md`.
 - A record write (`assignments.ini`, `instances.ini`) goes through `write_served_file(..., &ConfigFile::Models, ...)`: mode 0644 whatever the umask, temp file renamed over the target. `ini::atomic_write` lands 0600, and the e2e pins the mode over a 0600 seed with the process masked `0o077`, so the swap shows as one red mode assertion.
 - A "the profile my own section names is no conflict" answer must come BEFORE the address walk: two sections naming one server profile make the other instance's port look taken (`AddressInUse`), so a later check cannot rescue the early one.
 - `ini::detect_eol` is `pub`: a writer outside core that appends a section writes it in the file's own style. An empty text reads as CRLF.
+- The record's `append_record` styles ONLY its leading break (the design's "a newline first"), never the
+  section it appends: every byte-pin of a created instance is LF (`"[pipe-i]\nServerProfile = pipe-i\n"`,
+  and the empty-record `"[spared]\nServerProfile = free\n"`), and the whole-section style of the sibling
+  `with_profile` is the shape that reddens them, because `detect_eol("")` is CRLF. The text the writer
+  needs is the `record` the verb already read under `writing`, so pass it in, no second read.
+- The manager's create/remove verbs have no test of their own: they are phases (`manager_instance_crud_e2e`,
+  `manager_dbus_instance_crud_e2e`) of the ONE `tests::data_root_e2e`, so the filter is `data_root_e2e` and
+  a `create_instance` filter runs 0 tests. In the windows-gnu check the fakes' `stopped`/`running` builders
+  are `dead_code` (their only callers are the `#[cfg(unix)]` pipe phases), beside the known `let mut want`;
+  both are test-region, `cargo check` (no `-D warnings`) ends `Finished`.
 - `set_key` and `remove_key` already keep the section's trailing blank separator line: a writer that trims the section tail is the one that eats it. If a brief pins "every other byte kept", drop the tail trim, and expect the older assertion in the same test function (the `none` path, section text pinned without the blank) to go red: PIN-4a and that one are unsatisfiable together. Report the pair, keep the brief's rule.
 - A `models@<id>.ini` render is written after the record change and its failure is the CALL's answer, so a
   verb's doc states which one the caller sees; the renders go through `render_all_locked` (no lock
@@ -733,8 +769,9 @@ Lessons only: the rules are in `AGENTS.md`.
   `@axe-core/playwright`, but the page needs the stub's `__set?session=admin` fetch and a
   `waitForSelector` before it renders.
 - axe's `aria-required-children` fires on a plain `<div>` child of a `<ul role="list">`, and only webkit
-  reports it: chromium and firefox pass the same page. The fix keeps both the sheet and the tests:
-  `role="listitem"` on the div (its role, not an `li` element, so a test that reads the list's rows as
+  reports it: chromium and firefox pass the same page. The fix is to leave the list a list of rows and put
+  the buttons AFTER it (the shipped shape of GD1.4/GD2.4); `role="listitem"` on the div is the narrower
+  fix (its role, not an `li` element, so a test that reads the list's rows as
   `[...list.children].filter(el => el.tagName === 'LI')` still counts only rows).
 - A `<button>` with no class is a webkit `color-contrast` violation: the UA paints it grey (`#c0c0c0`)
   with white text at 1.81:1, and axe's own fix is the sheet's rule, so give the control the shipped
@@ -750,6 +787,30 @@ Lessons only: the rules are in `AGENTS.md`.
   count, so a "…ing…" line is a plain `<p className="muted">`, and an announcement line carries
   `aria-live`/`aria-atomic` ONLY while it has text: `ModelProfileContent` 2d.79 refuses any live region on
   arrival, and a second status reddens two shipped helpers at once.
+- That count is a fixture guard in **27 files** (`queryAllByRole('status').filter(s => before(h2, s))`
+  with `toHaveLength(1)`, the model-profile `h2` above every card, and the same helper in
+  `fe/src/test/savealert.tsx`), so ANY `role="status"` a new card renders is counted. Brief 14 pins two
+  in the GPU card (GD1.3's pending line, GD1.9's always-there move line), so the guard is what must
+  narrow, to the bar's own `.save-status` (the harness, the tester's call). Ship the brief's region and
+  report the count, do not trade it away: the guarded window is 1 to 2 microtasks (the fake bff rejects a
+  `devices` route the test never asked, GD1.7's failure), so which old test lands in it moves between
+  runs (28 to 30 reds of the same cause).
+- An element in a sentence's `{0}` slot (GD1.7's `<time dateTime={probedAt}>{shown}</time>`) splits the
+  paragraph's text, and RTL's `getByText`/`findByText` read DIRECT text children only: the `<p>` reads
+  "Free memory as of ." and every test that locates that paragraph by its full sentence goes red, in a
+  `ready()` helper of every suite, so one production line cascades (1 of 188 red became 169). Build it as
+  `t(key, shown).split(shown)` around the element: the key stays pinned by `strings.test.ts`'s `\bt\('`
+  regex (a `tAround(key)` helper reddens "values no code uses"), the parts are JSX expressions so the
+  "no component writes text of its own in JSX" lint passes, and the paragraph's `textContent` is exactly
+  the filled sentence. Locate such a paragraph by the slot's PREFIX (`/Free memory as of/`).
+- When the tests AND the component they pin are untracked (`?? fe/src/GpuSplit.tsx`), a `git worktree`
+  baseline has NO tests at all ("No test files found") and is no baseline: copy the working tree
+  (`rsync -a --exclude build --exclude .git --exclude node_modules --exclude dist`, symlink
+  `fe/node_modules`), restore the OLD production in the copy by exact-text python, run there, and the
+  red list of the copy is the inherited one (there: 1 red at `ModelProfileGpu2.test.tsx:382`).
+- Prove a stub's shape, not the page, is red: copy the file to `fe/src/Zz*.test.tsx` with the stub's
+  reply fixed (GD1.6, GD1.8 and GD1.10 went green with `running: false` added), run the copy, then
+  DELETE every `Zz*` file and show `git status --short fe` clean of them.
 - One label, two names: `nameOf(checkbox)` is the whole label text, so a row labelled `${id} ${name}`
   answers a pin of the bare `id` list with the name appended. When one test lists the rows by name and
   another matches them by `id` prefix, the prefixed form satisfies both; the bare form satisfies neither.
@@ -762,6 +823,43 @@ Lessons only: the rules are in `AGENTS.md`.
 - `npm --prefix fe test -- src/<File>.test.tsx` is the single-file form (npm sets the cwd to `fe`, so the
   jsdom config applies). `npx --prefix fe vitest run src/<File>.test.tsx` from the repo root picks the
   node environment and dies on every test with `ReferenceError: window is not defined`.
+- The 2026-11-21 ruling SHIPPED the GPU card's move line as a permanent `<p className="visually-hidden"
+  id="model-profile-gpu-moved" role="status">` INSIDE the GPUs fieldset, after the `ul` (GD1.4's place, so
+  GD1.3's and GD2.9's `within(fieldset)` counts find it), and the detecting line as a plain `<p>`: carry NO
+  `aria-live`/`aria-atomic` (role=status is the whole of it), because 2d.79's second assertion is
+  `[role=alert],[role=log],[aria-live]` equals `[]`. The 27 fixture guards are narrowed to
+  `.closest('.save-bar')`; the one the pass missed is `ModelProfileContent` 2d.79's own
+  `within(main).queryAllByRole('status')` `toHaveLength(1)`, unsatisfiable beside GD1.9's always-there
+  region (report, do not trade the region away).
+- GD2.2 and GD2.6 are ONE rule over the same trimmed weight: gate the share on `GPU_WEIGHT_RULE`, never on
+  `Number.isFinite` (JS reads a number out of `-1`, `1e3`, `+1`, `0x10` and `' '`, so a `Number` gate shows
+  a share on a vector the check refuses, five reds), and read the check on the COMPOSED vector: one written
+  weight makes it non-null, so an empty weight beside it fails too (the all-empty vector composes `null`,
+  the one exempt state). `flat` (the `even`/`auto` word) is `known && sum === 0`: the rule's non-negative
+  numbers make a sum of 0 exactly the all-empty-or-0 case.
+- A live-region test that was red at its FIRST assertion never exercised its later ones: after the region
+  shipped, `GD1.9: the last move only` surfaced an arithmetic slip (rows `ROCm0 CUDA0 Vulkan0`, Move down
+  on `CUDA0` from position 2 lands at 3, the literal says 2). Prove the numbers in a copy
+  (`rsync -a --exclude node_modules fe/ /tmp/<x>/`, symlink the repo's `fe/node_modules`, copy the test
+  file to `src/<Name>Probe.test.tsx`, insert `console.info` of the row ids and the region text, `npx vitest
+  run src/<Name>Probe.test.tsx`): captured stdout prints on the failure, so the probe lines are the state.
+- `getByText(sentence)` reads ONLY the element's DIRECT text children (`@testing-library/dom` 10.4.2,
+  `dist/get-node-text.js`: `childNodes` filtered to `TEXT_NODE`, joined). So a paragraph of
+  `"Free memory as of " + <time>20 Nov, 09:14</time> + "."` is NOT findable by the full sentence, and an
+  element whose text you must match exactly cannot carry a text-bearing child. GD1.7's two shapes:
+  `<p>{t(key, shown)}<time aria-hidden="true" dateTime={at} /></p>` (empty `time`, the sentence direct in
+  the `p`) answers `getByText(asOf)`, `line.textContent === asOf` and `datetime`; a `time` WITH text
+  answers `time.textContent === shown` and makes `textContent` name the moment twice. The pair is
+  unsatisfiable, quote both lines.
+- The UX check's `expect[].text` is a Playwright `locator(selector).filter({ hasText })`, a SUBSTRING: a
+  state marker for text whose tail is locale-dependent (a `Date.toLocaleString` in the strings file's
+  `{0}`) is the string up to `{0}`, `S[key].split('{0}')[0]`.
+- `overflow-wrap: anywhere` on a flex label splits a SHORT id inside its own word before the longer name
+  beside it moves down (the label is one flex item): the wrap the reflow test wants is `flex-wrap: wrap`
+  on the label, so the break lands BETWEEN its items. `.check-list > li > .check` is in `Reflow.test.ts`
+  R1.1's frozen `overflow-wrap` list, so a value change there is the tester's.
+- GD1.5 splits `device` on `,` alone (an id holds a `/`) while GD2.1's `tensor-split` vector splits on
+  `[,/]+`: two parsers, never one.
 
 ## Tests that cannot pass, and what to report
 
@@ -805,10 +903,22 @@ Lessons only: the rules are in `AGENTS.md`.
   only, so `fe/ux/check.js` is linted by nothing: match its style by hand (no semicolons, single quotes).
 - A Playwright pass that finds nothing prints no line: prove it bites by injecting a planted
   `body { min-width: 500px }` in the same way the pass injects its CSS and reading `scrollWidth`. With
-  the text pass (200 %, 200 %+1.4.12) the whole check is 72 loads per browser and about 4 minutes.
+  the text pass (200 %, 200 %+1.4.12) the whole check is 78 loads per browser (today, 2026-11-21:
+  11 states x 2 widths x 2 themes = 44, + 3 stored-choice states, + 2 text modes x 11 states) and about
+  4 minutes. Its last line IS the report: `browsers chromium firefox webkit; ... ; N failing`.
 - Two assertions in one new test file can be unsatisfiable together: one pins a default box ENABLED, the
   next pins the same input `disabled` and empty with its box `checked`, from the identical fixture. The
   other one's wording governs; report the exact triple and change nothing.
+- Brief 14's new criteria make FIVE shipped GPU-card tests unsatisfiable (7 reds, all pre-existing):
+  GD1.7's old as-of test wants `time.textContent === shown` beside the new "no second copy of the date"
+  (`Gpu2.test.tsx` 359 vs 383); GD1.9's old pair wants both move buttons of a two-row split active beside
+  the new "both directions have an end" (`Gpu3.test.tsx` 387 vs 506); GD2.1 wants NO weight field with one
+  row checked beside GD2.3's `[[A,'3']]` for the same fixture (`Gpu4.test.tsx` 487 vs 729); GD1.4/GD2.4
+  want Auto and Even after the whole list beside GD2.9's `names[last + 3] === AUTO`, which is only true
+  when no unchecked row follows the last checked one (`Gpu4.test.tsx` 777 vs 1371); and GD2.2's old
+  `test.each` is titled "under tensor" while its fixture sends NO `split-mode`, so it pins `even` on the
+  blank (layer) mode the new test pins at `auto` (`Gpu4.test.tsx` 541 vs 595). The brief's rule wins each
+  pair, the old fixture is what is wrong (the tensor case needs `'split-mode': 'tensor'`).
 - A test that saves a checkbox to `"false"` and then expects checking it again to be clean contradicts its
   own pin of the round trip (a loaded `false`, checked, sends `null`): making the saved value the loaded
   value makes checking a change. Report it.

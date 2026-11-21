@@ -194,16 +194,21 @@ async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(1))
 }
 
-/** The save bar's status line (the only role="status" after the h2). */
+/**
+ * The save bar's status line. The GPUs card keeps its own status region
+ * in the DOM from its first render (brief 14 GD1.9), so the bar's line is
+ * picked inside the bar, not by counting the page's status regions (section
+ * 6 of fe/briefs/14-gpu-distribution.md, ruling of 2026-11-21).
+ */
 function status(main: HTMLElement): HTMLElement {
-  const h2 = within(main).getByRole('heading', {
+  within(main).getByRole('heading', {
     level: 2,
     name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
-    .filter((s) => before(h2, s))
-  expect(all, 'one status line once the page is loaded').toHaveLength(1)
+    .filter((s) => s.closest('.save-bar') !== null)
+  expect(all, 'the save bar has its status line').toHaveLength(1)
   return all[0]!
 }
 
@@ -380,7 +385,7 @@ test('2h.196: the jump nav named model-profile-jump-label sits between the h2 an
 
 test.each([
   ['the first card', ASSETS, 0],
-  ['a middle card', KV, 4],
+  ['a middle card', KV, TITLES.indexOf(KV)],
   ['the last card', SPEC, TITLES.length - 1],
 ])(
   '2h.196: activating the %s jump button moves focus to that card h3 and scrolls it into view, and location.hash is unchanged',
@@ -405,7 +410,7 @@ test('2h.196: with a dirty form a jump opens no discard dialog, keeps the edit, 
   const { main } = await form()
   const ctx = control('ctx-size') as HTMLInputElement
   type(ctx, '65536')
-  const button = jumpButtons(main)[4]!
+  const button = jumpButtons(main)[TITLES.indexOf(KV)]!
   fireEvent.click(button)
   const h3 = headingOf(main, KV)
   expect(dialogs.opened.length, '196: no dialog while dirty').toBe(0)

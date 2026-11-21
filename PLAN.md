@@ -1015,6 +1015,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     (GD1, GD2). User decisions (2026-11-20): a number field per GPU with its share shown, Move up / Move
     down for the order; per-GPU layer sliders like the GUI's come with 2g (the model's layer count);
     Draft device and Vision GPU list the probed GPUs in a small later follow-up.
+    Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
+    designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
+    memory as of" line and Auto/Even sit in the form's label column, away from the weights.
     **Presets are a shared pool per node, assigned to instances** (user, 2026-11-17, a requirement
     change that replaces "a model belongs to one instance" of the same day): a preset is assigned to
     one or more instances; removing an instance removes only its assignments; editing a preset applies

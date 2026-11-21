@@ -696,19 +696,23 @@ test('2d.79: a screen reader: the h1 is the id at level 1, the Engine row of the
   ])
   expect(second).toEqual([en('model-profile-project-url'), URL])
   // The loading status went with the content. 2h.1's 135 keeps the save bar's
-  // status line on the page permanently: it is the only live region, it is
+  // status line on the page permanently, and GD1.9 keeps the GPUs card's move
+  // region there from its first render, so the bar's line is picked inside the
+  // bar, not by counting the page's regions (ruling of 2026-11-21). Both are
   // empty on arrival, so the page still announces nothing.
-  const statuses = within(main).queryAllByRole('status')
-  expect(
-    statuses,
-    'the loading status is gone, the bar line is the only one left',
-  ).toHaveLength(1)
+  const statuses = within(main)
+    .queryAllByRole('status')
+    .filter((s) => s.closest('.save-bar') !== null)
+  expect(statuses, 'the save bar has its status line').toHaveLength(1)
   const line = statuses[0]!
-  expect(
-    line.closest('.save-bar'),
-    'the line is the save bar of 135',
-  ).toBeTruthy()
   expect(text(line), 'empty on arrival: nothing announced').toBe('')
+  expect(
+    within(main)
+      .queryAllByRole('status')
+      .filter((s) => s.closest('.save-bar') === null)
+      .map(text),
+    'the card move region of GD1.9 is there and empty on arrival too',
+  ).toEqual([''])
   expect(
     [...main.querySelectorAll('[role="alert"], [role="log"], [aria-live]')],
     'no alert, no log, no explicit live region on arrival (a NodeList is not deep-equal to [])',

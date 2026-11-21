@@ -64,6 +64,11 @@ const SETTLE_MS = 400
 const USER = 'abcdefghijklmnopqrstuvwxyz012345'
 const MODEL_PROFILE_ID = 'Qwen3-27B'
 const MISSING_ID = 'No-Such-Model-Profile'
+// The start of the GPU card's as-of line (brief 14 GD1.7): the sentence of
+// `model-profile-gpu-probed-at` up to its `{0}`, which the page fills with the
+// probe's moment in the browser's own locale, so no state can name the whole
+// sentence. The stub's probe answers, so the line lands.
+const AS_OF = S['model-profile-gpu-probed-at'].split('{0}')[0]
 
 // The states to look at: the stub's /__set query, the route, the expect: the
 // selectors (with the text they carry) only that state shows, and the optional
@@ -148,9 +153,15 @@ const STATES = [
     name: 'model-profile',
     set: 'session=admin',
     hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
+    // The GPU distribution card is the last read of the page (brief 14
+    // GD1.3): its as-of line lands once the device probe answered, so the
+    // check reads the page with the GPU rows, their memory lines and their
+    // weights there. The text is the sentence up to its `{0}`, whose date
+    // depends on the browser's locale.
     expect: [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       { selector: 'h3', text: S['model-profile-assets'] },
+      { selector: 'p', text: AS_OF },
     ],
   },
   {

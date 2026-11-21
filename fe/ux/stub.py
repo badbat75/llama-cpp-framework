@@ -69,7 +69,26 @@ MODEL_PROFILE_DOC = {
         "model-draft": "/m/qwen/Qwen3-0.6B-Q8_0.gguf",
         "spec-type": "ngram-mod,draft-mtp",
         "ctx": "4096",
+        # Brief 14: a profile split over two GPUs, so the GPU distribution card
+        # shows its two checked rows with their weight fields, shares and the
+        # reorder buttons (GD2.1).
+        "split-mode": "tensor",
+        "device": "CUDA0,ROCm0",
+        "tensor-split": "0.6,0.4",
     },
+}
+
+# GET /api/node/devices (brief 14, GD): the engine's probe, in probe order, the
+# CPU left out. The names are the long ones a real probe answers with: the
+# widest row is the one the check measures at 320 px and at 200 % text, where a
+# long id or name must wrap inside its li and ask for no sideways scroll (GD1.12).
+DEVICES = {
+    "probedAt": "2026-11-20T09:14:03Z",
+    "devices": [
+        {"id": "CUDA0", "name": "NVIDIA GeForce RTX 5080", "backend": "CUDA", "totalMib": 16304, "freeMib": 15200},
+        {"id": "ROCm0", "name": "AMD Radeon AI PRO R9700 / RDNA4", "backend": "ROCm", "totalMib": 32624, "freeMib": 32420},
+        {"id": "Vulkan0", "name": "Intel(R) Arc(TM) A770 Graphics", "backend": "Vulkan", "totalMib": 8129, "freeMib": 7900},
+    ],
 }
 
 # GET /api/instances/default/server: the server document, as the bff gives it.
@@ -149,6 +168,10 @@ class Handler(SimpleHTTPRequestHandler):
         # h2 and the About page all read this one.
         if p == "/api/node":
             return self.json(200, NODE)
+        # The host's GPUs, for the model profile page's GPU distribution card
+        # (brief 14): the probe the manager caches, with the moment it ran.
+        if p == "/api/node/devices":
+            return self.json(200, DEVICES)
         if p == "/api/session":
             if STATE["session"] == "out":
                 return self.json(401, {"key": "session-required", "args": []})

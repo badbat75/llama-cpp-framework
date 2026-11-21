@@ -1623,6 +1623,73 @@ input[role='switch'][aria-disabled='true']::before {
   gap: var(--space-1);
 }
 
+/* The GPU list of the model profile page's GPU distribution card (brief 14,
+   DESIGN.md 5.2 "GPU list"): its rows are checkboxes, so the list carries no
+   marker and no indent. Each row is a wrapping flex row, so its label, memory
+   line, weight, share and reorder buttons wrap inside the li at 320 px and at
+   200 % text with no sideways scroll; the label breaks by `overflow-wrap:
+   anywhere`, a 64-character id or name included. The label itself is a
+   wrapping flex row too, so its box, its id and its name break BETWEEN them:
+   `anywhere` gives every one of them a break at each character, and without a
+   wrap between the items a short id is split inside its own word before the
+   longer name next to it is moved down. The weight is a number of about six
+   characters, so it asks for no more room than that, and the Auto and Even
+   buttons follow the list, in a row of their own. */
+ul.check-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.check-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.check-list > li > .check {
+  flex: 1 1 12rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The row's id (DESIGN.md 5.2 "GPU list"): monospace and weight 600, so it
+   reads as the device the engine names, beside the product name. */
+.check-list .gpu-id {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.check-list > li > p,
+.check-list .weight-group > p {
+  margin: 0;
+}
+
+/* The weight of a row with its label and its share (DESIGN.md 5.2 "GPU list"):
+   one item of the wrapping row, so the row breaks AROUND the weight and never
+   between its label and its field. The three sit on the baseline, and wrap
+   only when the row is too narrow for them (320 px, 200 % text): the field is
+   7ch, and the label and the share break between their words. */
+.check-list > li > .weight-group {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.check-list .gpu-weight {
+  flex: 0 1 7ch;
+  width: 7ch;
+}
+
+.check-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .unit {
   color: var(--muted);
 }

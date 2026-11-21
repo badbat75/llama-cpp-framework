@@ -554,6 +554,50 @@ export const EN: Record<string, string> = {
   'model-profile-draft-gpu-layers-hint':
     'How many layers of a separate draft model file run on the GPU.\nFor an MTP head file, which has no layers, 99 puts the draft on the GPU and 0 on the CPU.\nPin a device above: MTP heads crash on an automatic multi-GPU split.\nDisabled with built-in MTP heads.\nDefault: all draft layers on the GPU.\nFlag: --n-gpu-layers-draft',
   'model-profile-device-same-as-model': '(auto / same as model)',
+  // Brief 14 (fe/briefs/14-gpu-distribution.md), section 2: the GPU distribution
+  // card. GD1's keys, from model-profile-gpu-distribution to
+  // model-profile-gpu-moved and api-device-bad-name, then GD2's (the weights).
+  // Every English is the brief's, the web text of the column that says "web".
+  'model-profile-gpu-distribution': 'GPU distribution',
+  'model-profile-gpu-distribution-intro':
+    "Which GPUs run THIS model and how much each holds, saved to models.ini. Check nothing to let llama.cpp choose. With two GPUs of different sizes, check both and give the bigger one more weight; left blank, the split follows free VRAM at load, not an even cut. The weights are ratios: 3 and 1 give 75% and 25%. The checked GPUs, top to bottom, are the split order: Move up and Move down change it; the first one is llama.cpp's main GPU.\nKeys: split-mode, device, tensor-split.",
+  'model-profile-split-mode': 'GPU split mode',
+  'model-profile-split-mode-hint':
+    'How THIS model is divided between GPUs. Does nothing with one GPU checked. Same on CUDA and ROCm.\nlayer (default): each GPU takes a consecutive run of blocks, in the proportion of its weight. Fastest prefill; copes with a slow link between GPUs.\nnone: one GPU, the first checked row; other checked rows go unused.\ntensor (experimental): the GPUs act as one device, and all weights and the KV cache are divided by the ratio (blank = even). Fastest decode, needs a fast link. Flash attention must not be off, Fit to VRAM is skipped (set Context size yourself), some architectures refuse to load, and llama.cpp tunes it for CUDA with no guarantees on other backends.\nrow (deprecated, use tensor): weights are split by rows by the ratio (CUDA/ROCm; Vulkan falls back to layer). The KV cache follows the layer cut.\nFlag: --split-mode',
+  'model-profile-split-layer': 'layer: split by blocks (default)',
+  'model-profile-split-none': 'none: single GPU',
+  'model-profile-split-tensor':
+    'tensor: tensor parallel across GPUs (experimental)',
+  'model-profile-split-row': 'row: split matrices by rows (deprecated)',
+  'model-profile-gpus': 'GPUs',
+  'model-profile-gpu-detecting': 'Detecting GPUs…',
+  'model-profile-gpu-failed':
+    "The host's GPU list could not be read. The GPUs this profile names are shown; to add another, open the page again.",
+  'model-profile-gpu-no-probe':
+    "No GPU list: the engine's device probe gave no answer on this host.",
+  'model-profile-gpu-none-found': 'No GPU found on this host.',
+  'model-profile-gpu-probed-at': 'Free memory as of {0}.',
+  'model-profile-gpu-memory': '{0} GiB, {1} GiB free',
+  'model-profile-gpu-not-detected': '(not detected)',
+  'model-profile-gpu-move-up': 'Move up',
+  'model-profile-gpu-move-down': 'Move down',
+  'model-profile-gpu-moved': '{0}: position {1} of {2}',
+  'api-device-bad-name':
+    '{0}: `{1}` is not a device llama.cpp accepts: no spaces, none of ; # =, not CPU, and none only alone',
+  // GD2: the weights (tensor-split).
+  'model-profile-gpu-weight': 'Weight',
+  'model-profile-gpu-share': 'Share: {0}',
+  'model-profile-gpu-share-auto': 'auto',
+  'model-profile-gpu-share-even': 'even',
+  'model-profile-gpu-share-unused': 'unused',
+  'model-profile-gpu-auto': 'Auto',
+  'model-profile-gpu-even': 'Even',
+  'model-profile-gpu-weights-incomplete':
+    'Give every checked GPU a weight of 0 or more, or clear them all for Auto.',
+  'model-profile-gpu-split-without-device':
+    "This profile's tensor-split {0} applies to every GPU llama.cpp finds, in its order. Checking GPUs here replaces it.",
+  'api-tensor-split-format':
+    'tensor-split = `{0}` is not a list of up to 15 numbers of 0 or more, separated by , or /',
   // Slice 2e.5 (fe/briefs/02e-model-profile-cards.md, criterion 116): the Speculative
   // decoding card. Every English is the en_US.toml line the criterion names
   // (367 to 397), unchanged.
@@ -768,6 +812,53 @@ export const NODE: NodeInfo = {
   ],
 }
 
+/**
+ * One GPU as GET /api/node/devices lists it (fe/briefs/14-gpu-distribution.md
+ * section 0): the engine's id, its product name, the backend that probed it and
+ * its memory in MiB at the probe. A real answer can leave any of them out or
+ * spell it badly: the page reads them forgivingly (GD1.7).
+ */
+export type Device = {
+  id?: string | null
+  name?: string | number | null
+  backend?: string
+  totalMib?: number | string | null
+  freeMib?: number | string | null
+}
+
+/** What GET /api/node/devices answers: the probe's time (RFC 3339 UTC, `null`
+ * when no probe answered), and the devices in the engine's probe order. */
+export type DeviceProbe = { probedAt?: string | null; devices?: Device[] }
+
+/** The brief's reply of section 0: two discrete cards and an integrated GPU, in
+ * probe order, the CPU left out. */
+export const DEVICES: DeviceProbe = {
+  probedAt: '2026-11-20T09:14:03Z',
+  devices: [
+    {
+      id: 'CUDA0',
+      name: 'NVIDIA GeForce RTX 5080',
+      backend: 'CUDA',
+      totalMib: 16304,
+      freeMib: 15200,
+    },
+    {
+      id: 'ROCm0',
+      name: 'AMD Radeon AI PRO R9700',
+      backend: 'ROCm',
+      totalMib: 32624,
+      freeMib: 32420,
+    },
+    {
+      id: 'Vulkan0',
+      name: 'Intel Arc Graphics',
+      backend: 'Vulkan',
+      totalMib: 8129,
+      freeMib: 7900,
+    },
+  ],
+}
+
 /** One model profile as GET /api/profiles/model lists it (fe/briefs/api-contract.md). */
 export type ModelProfile = {
   id: string
@@ -896,6 +987,14 @@ export type BffOptions = {
    * fallback "Instances" (13 N.4).
    */
   node?: NodeInfo | Record<string, unknown> | Answer
+  /**
+   * GET /api/node/devices (brief 14 section 0, fe/briefs/api-contract.md): the
+   * probe to answer 200 with, or the reply. A test names one (`DEVICES`, the
+   * brief's reply, is exported for it). Where it names none the route rejects as
+   * an unknown one does, so a page that reads the GPUs sees GD1.7's failure and
+   * every other card stays as today (brief 14, section 6, decision 5).
+   */
+  devices?: DeviceProbe | Record<string, unknown> | Answer
   /** GET /api/instances: the instances, or the reply. Default INSTANCES. */
   instances?: Instance[] | Answer
   /** GET /api/profiles/model: the model profiles, or the reply. Default MODEL_PROFILES. */
@@ -1046,6 +1145,16 @@ export function fakeBff(options: BffOptions = {}) {
       if (typeof n === 'function' || n instanceof Response)
         return answer(n, init)
       return Promise.resolve(reply(200, n))
+    }
+    if (route === 'GET /api/node/devices') {
+      const d = options.devices
+      // A test that never asked about the GPUs gets the rejection of an unknown
+      // route: the page sees GD1.7's failure, and every other card is as today.
+      if (d === undefined)
+        return Promise.reject(new TypeError(`unexpected ${route}`))
+      if (typeof d === 'function' || d instanceof Response)
+        return answer(d, init)
+      return Promise.resolve(reply(200, d))
     }
     if (route === 'GET /api/instances') {
       const i = instances ?? INSTANCES

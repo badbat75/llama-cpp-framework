@@ -207,37 +207,32 @@ export async function waitForPut(bff: ReturnType<typeof fakeBff>, url: string) {
 
 // ── The bar ───────────────────────────────────────────────────────────────
 
-/** The model profile page's status line: the one role="status" of the settings
- * (the page's loading status is above the section's h2). */
+/** The model profile page's status line: the save bar's (the settings section
+ * is loaded, the bar is below it). */
 export function profileStatus(main: HTMLElement): HTMLElement {
-  return oneStatus(
-    main,
-    within(main).getByRole('heading', {
-      level: 2,
-      name: en('model-profile-settings-title'),
-    }),
-  )
+  within(main).getByRole('heading', {
+    level: 2,
+    name: en('model-profile-settings-title'),
+  })
+  return oneStatus(main)
 }
 
-/** The Server page's status line: the one role="status" after the section's
- * h2 (the header's run status comes before it, 1c.40). */
+/** The Server page's status line: the save bar's (the header's run status is
+ * outside the bar, 1c.40). */
 export function serverStatus(main: HTMLElement): HTMLElement {
-  return oneStatus(
-    main,
-    within(main).getByRole('heading', { level: 2, name: en('server-title') }),
-  )
+  within(main).getByRole('heading', { level: 2, name: en('server-title') })
+  return oneStatus(main)
 }
 
-/** The one role="status" of `main` that comes after `h2`. */
-function oneStatus(main: HTMLElement, h2: HTMLElement): HTMLElement {
+/** The save bar's role="status". A card that announces what the user did keeps
+ * its own status region in the DOM from its first render (brief 14 GD1.9), so
+ * the bar's line is picked inside the bar, not by counting the page's regions
+ * (fe/briefs/14-gpu-distribution.md section 6, ruling of 2026-11-21). */
+function oneStatus(main: HTMLElement): HTMLElement {
   const all = within(main)
     .queryAllByRole('status')
-    .filter(
-      (s) =>
-        (h2.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING) !==
-        0,
-    )
-  expect(all, 'one status line once the form is loaded').toHaveLength(1)
+    .filter((s) => s.closest('.save-bar') !== null)
+  expect(all, 'the save bar has its status line').toHaveLength(1)
   return all[0]!
 }
 

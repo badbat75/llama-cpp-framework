@@ -46,6 +46,7 @@ import {
   SelectField,
   TextField,
 } from './Field.tsx'
+import { GpuFieldset, type GpuCardProps } from './GpuSplit.tsx'
 import { t } from './strings.ts'
 
 /** A select's option: the value the file holds, the text the user reads. */
@@ -102,6 +103,10 @@ type RowBase = {
    * changed. Absent for every other row: its control stays natively disabled
    * (85), so the page only shows the file for it. */
   editable?: true
+  /** Brief 14's split mode row: its hint is one paragraph, its line breaks kept
+   * by CSS, so one read of the whole text reaches it. Absent: one paragraph per
+   * line, as every other row writes it. */
+  hintSingle?: true
 }
 
 /** A number: the default box and a text input showing the string as it is. The
@@ -123,6 +128,11 @@ type SelectRow = RowBase & {
    * absent one included. The absent option is only what the control shows for a
    * key the file lacks, and picking it back is no change (132). */
   ownValue?: true
+  /** Brief 14's split mode row: a spelling of the value the file holds that the
+   * row reads as one of its options (`layer` for the default the key leaves
+   * out). Read before the option match, so the state and what the save sends
+   * are that option's. */
+  alias?: Record<string, string>
 }
 
 /** A text: one monospace input showing the string as it is. The unit, when the
@@ -162,6 +172,12 @@ type CheckboxRow = RowBase & {
  * when it has one. The device list arrives with 2f. `empty` is the text of the
  * empty option, which each field words for its own device (110). */
 type DeviceRow = RowBase & { kind: 'device'; empty: string }
+
+/** The GPUs fieldset of the GPU distribution card (brief 14): not a field of
+ *  the table. Its rows are the host's GPUs and the ones the profile names, and
+ *  it composes the `device` and `tensor-split` keys from them, so it writes
+ *  nothing at the page's `onEdit` and sits beside the draft's keys. */
+type GpuRow = RowBase & { kind: 'gpu' }
 
 /** A note between fields (criterion 90): the GUI's muted paragraph. Its `key`
  * is only the list's: a note reads no key of the file. `shownWithout` is the
@@ -206,7 +222,14 @@ type GroupRow = {
 }
 
 type Row =
-  NumberRow | SelectRow | TextRow | CheckboxRow | DeviceRow | NoteRow | GroupRow
+  | NumberRow
+  | SelectRow
+  | TextRow
+  | CheckboxRow
+  | DeviceRow
+  | GpuRow
+  | NoteRow
+  | GroupRow
 
 /** The rows that are a field or a note: what a group holds, and what
  * `ModelProfileField` shows. */
@@ -226,6 +249,8 @@ type CardFields = {
    * `note` sits right after the card's h3, before the first field: a plain
    * paragraph in reading order (181), never a control's description. */
   needsFile?: { key: string; note: string }
+  /** Brief 14: the card's intro, one paragraph per line, right after the h3. */
+  introLines?: string[]
   rows: Row[]
 }
 
@@ -313,6 +338,35 @@ const LOAD_MODES: Option[] = [
  * cache, and Vision, 102, after Advanced), and the one of 2e.5 (Speculative
  * decoding, 112, after Vision, in the five groups of 90). */
 const CARDS: CardFields[] = [
+  {
+    // Brief 14 (fe/briefs/14-gpu-distribution.md), in the place 02e's 83
+    // reserves: after the page's Assets card, before the Hardware card. Its one
+    // editable field is the split mode select; the GPUs beside it are not a
+    // field of the table, they compose `device` and `tensor-split`.
+    id: 'gpu',
+    title: t('model-profile-gpu-distribution'),
+    introLines: t('model-profile-gpu-distribution-intro').split('\n'),
+    rows: [
+      {
+        kind: 'select',
+        key: 'split-mode',
+        label: t('model-profile-split-mode'),
+        hint: t('model-profile-split-mode-hint'),
+        // The four values of the table, with the default the key leaves out
+        // first (GD1.2). `layer` is that default spelled out (GD1.2).
+        options: [
+          { value: '', text: t('model-profile-split-layer') },
+          { value: 'none', text: t('model-profile-split-none') },
+          { value: 'tensor', text: t('model-profile-split-tensor') },
+          { value: 'row', text: t('model-profile-split-row') },
+        ],
+        absent: '',
+        alias: { layer: '' },
+        editable: true,
+      },
+      { kind: 'gpu', key: 'device', label: t('model-profile-gpus'), hint: '' },
+    ],
+  },
   {
     id: 'hardware',
     title: t('model-profile-hardware-config'),
@@ -1207,6 +1261,11 @@ export function selectState(
 ): string {
   const value = heldFor(row, values)
   if (value === undefined) return row.absent
+  // Brief 14 GD1.2: a spelling the row aliases to one of its options is that
+  // option; any other spelling of it is the file's own value, shown as an
+  // extra last option.
+  const alias = row.alias?.[value]
+  if (alias !== undefined) return alias
   if (row.options.some((o) => o.value === value)) return value
   const state =
     row.reading === undefined ? undefined : readAs(row.reading, value)
@@ -1825,6 +1884,7 @@ function ModelProfileField({
   onTick,
   onBoxText,
   errors,
+  gpu,
 }: {
   row: FieldRow
   values: Record<string, string>
@@ -1834,6 +1894,7 @@ function ModelProfileField({
   onTick: (key: string, ticked: boolean) => void
   onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
+  gpu?: GpuCardProps
 }) {
   if (row.kind === 'note') {
     // 177: a note that speaks for a rule sits only while the rule is not met.
@@ -1845,6 +1906,30 @@ function ModelProfileField({
     // 181: a plain paragraph in reading order, never a live region and never a
     // control's description.
     return <p className="note">{row.text}</p>
+  }
+  if (row.kind === 'gpu') {
+    // Brief 14: the GPUs fieldset. Its state is the page's (the device read,
+    // the rows' weights, the last move), and the fieldset composes the `device`
+    // and `tensor-split` keys from it, so it writes no `onEdit`.
+    return gpu === undefined ? null : (
+      <GpuFieldset
+        probe={gpu.probe}
+        device={values[row.key] ?? null}
+        loadedDevice={gpu.loadedDevice}
+        mode={values['split-mode'] ?? null}
+        tensorSplit={values['tensor-split'] ?? null}
+        weights={gpu.weights}
+        deviceError={errors[row.key]}
+        splitError={errors['tensor-split']}
+        splitErrorIds={gpu.weightIds ?? undefined}
+        onToggle={gpu.onToggle}
+        onMove={gpu.onMove}
+        onWeight={gpu.onWeight}
+        onAuto={gpu.onAuto}
+        onEven={gpu.onEven}
+        moved={gpu.moved}
+      />
+    )
   }
   // What every control of a read-only card shares: its id, the texts of its
   // field, and the native disabled of criterion 85. Each control's own
@@ -1858,6 +1943,7 @@ function ModelProfileField({
     id: fieldId(row.key),
     label: row.label,
     hint: row.hint,
+    hintSingle: row.hintSingle === true,
     disabled: true,
     error: errors[row.key],
   }
@@ -2062,6 +2148,7 @@ function ModelProfileRow({
   onTick,
   onBoxText,
   errors,
+  gpu,
 }: {
   row: Row
   values: Record<string, string>
@@ -2071,6 +2158,7 @@ function ModelProfileRow({
   onTick: (key: string, ticked: boolean) => void
   onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
+  gpu?: GpuCardProps
 }) {
   if (row.kind === 'group') {
     const heading = `model-profile-group-${row.key}`
@@ -2098,6 +2186,7 @@ function ModelProfileRow({
               onTick={onTick}
               onBoxText={onBoxText}
               errors={errors}
+              gpu={gpu}
             />
           ))}
         </div>
@@ -2114,6 +2203,7 @@ function ModelProfileRow({
       onTick={onTick}
       onBoxText={onBoxText}
       errors={errors}
+      gpu={gpu}
     />
   )
 }
@@ -2175,6 +2265,7 @@ export default function ModelProfileCards({
   onTick,
   onBoxText,
   errors,
+  gpu,
 }: {
   values: Record<string, string>
   loaded: Record<string, string>
@@ -2183,6 +2274,9 @@ export default function ModelProfileCards({
   onTick: (key: string, ticked: boolean) => void
   onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
+  /** Brief 14: the GPU distribution card's fieldset, the page's GPU state. A
+   * page that only shows the file passes none: the fieldset shows nothing. */
+  gpu?: GpuCardProps
 }) {
   return (
     <>
@@ -2203,6 +2297,11 @@ export default function ModelProfileCards({
               : undefined
           }
         >
+          {card.introLines?.map((line, i) => (
+            <p className="intro" key={i}>
+              {line}
+            </p>
+          ))}
           {card.rows.map((row) => (
             <ModelProfileRow
               key={row.key}
@@ -2214,6 +2313,7 @@ export default function ModelProfileCards({
               onTick={onTick}
               onBoxText={onBoxText}
               errors={errors}
+              gpu={gpu}
             />
           ))}
         </Card>

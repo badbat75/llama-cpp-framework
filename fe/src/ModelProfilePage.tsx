@@ -61,6 +61,20 @@ import ModelProfileCards, {
   textSend,
   unlockControl,
 } from './ModelProfileCards.tsx'
+import {
+  gpuComposeDevice,
+  gpuComposeSplit,
+  gpuFileIds,
+  gpuFileWeights,
+  gpuHas,
+  gpuNewWeight,
+  gpuSplitLoaded,
+  gpuWeightFailures,
+  readGpuProbe,
+  type GpuCardProps,
+  type GpuDirection,
+  type GpuProbe,
+} from './GpuSplit.tsx'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
 import {
@@ -432,6 +446,10 @@ const REFUSALS: RefusalTable = {
         return t('api-model-profile-over-memory', ...args)
       case 'model-profile-model-missing':
         return t('api-model-profile-model-missing', ...args)
+      case 'device-bad-name':
+        return t('api-device-bad-name', ...args)
+      case 'tensor-split-format':
+        return t('api-tensor-split-format', ...args)
       default:
         return undefined
     }
@@ -454,6 +472,12 @@ const REFUSALS: RefusalTable = {
         return 'load-on-startup'
       case 'model-profile-no-model':
         return 'model'
+      // Brief 14 GD1.11: the reply names the key, `device`, `device-draft` or
+      // `mmproj-device`; the GPUs fieldset speaks for `device`.
+      case 'device-bad-name':
+        return args[0]
+      case 'tensor-split-format':
+        return 'tensor-split'
       case 'override-no-pattern':
       case 'override-no-device':
         return 'override-tensor'
@@ -509,24 +533,70 @@ function controlWithId(
     : null
 }
 
+/** The GPUs fieldset's checkboxes, in the order they are on screen: the
+ * checked rows first, in the split order (brief 14 GD1.5). */
+function gpuBoxes(onlyChecked: boolean): HTMLInputElement[] {
+  return [
+    ...document.querySelectorAll<HTMLInputElement>('input[data-gpu-box]'),
+  ].filter((box) => !onlyChecked || box.checked)
+}
+
+/** The weight fields that show, in the order they are on screen. */
+function gpuWeightFields(): HTMLInputElement[] {
+  return [
+    ...document.querySelectorAll<HTMLInputElement>('input[data-gpu-weight]'),
+  ]
+}
+
+/** The controls the field of a GPU key answers to, in the order the focus is
+ * put on them (GD1.11, GD2.6, GD2.7): a checked checkbox for `device`, a marked
+ * weight field, then any one, then a checked checkbox, then the split mode
+ * select, for `tensor-split`. The fieldset has no control of the cards' kind,
+ * so the keys name it, not a field of the table. */
+function gpuFieldControls(
+  key: string,
+): (HTMLInputElement | HTMLSelectElement)[] {
+  if (key === 'device')
+    return [...gpuBoxes(true), ...gpuBoxes(false)].slice(0, 1)
+  if (key !== 'tensor-split') return []
+  const marked = gpuWeightFields().filter(
+    (input) => input.getAttribute('aria-invalid') === 'true',
+  )
+  const mode = controlWithId(`${fieldId('split-mode')}-control`)
+  return [
+    ...marked,
+    ...gpuWeightFields(),
+    ...gpuBoxes(true),
+    ...(mode === null ? [] : [mode]),
+  ]
+}
+
+/** The controls of the field a refusal names, in the order the focus is put on
+ * them: the control, the box that ticks it on, and for the GPUs fieldset's two
+ * keys, its checkboxes and weight fields. */
+function fieldControls(key: string): (HTMLInputElement | HTMLSelectElement)[] {
+  const id = fieldId(key)
+  const found = [
+    controlWithId(`${id}-control`),
+    controlWithId(`${id}-box`),
+  ].filter((control) => control !== null)
+  return found.length === 0 ? gpuFieldControls(key) : found
+}
+
 /** The control of the field a refusal names, when this page renders it: a key
  * of the Assets card, or one 2h shows nowhere, has no control here (143). */
 function fieldControl(
   key: string,
 ): HTMLInputElement | HTMLSelectElement | null {
-  return controlWithId(`${fieldId(key)}-control`)
+  return fieldControls(key)[0] ?? null
 }
 
 /** Puts the focus on the marked field's control (142). A disabled control
  * takes no focus, so the field's next one is tried: the default box, first in
  * the field (144). With no enabled control the focus stays where it is. */
 function focusField(key: string) {
-  const id = fieldId(key)
-  for (const control of [
-    controlWithId(`${id}-control`),
-    controlWithId(`${id}-box`),
-  ]) {
-    if (control !== null && !control.disabled) {
+  for (const control of fieldControls(key)) {
+    if (!control.disabled) {
       control.focus()
       return
     }
@@ -537,10 +607,7 @@ function focusField(key: string) {
  *  box that ticks it on is. A field the page cannot edit has no control and no
  *  box at all, so nothing to mark and nowhere to go. */
 function fieldTakesFocus(key: string): boolean {
-  const id = fieldId(key)
-  return [controlWithId(`${id}-control`), controlWithId(`${id}-box`)].some(
-    (control) => control !== null && !control.disabled,
-  )
+  return fieldControls(key).some((control) => !control.disabled)
 }
 
 /** The rows the save of its own check reads: the kind `checkRows` answers. */
@@ -612,6 +679,29 @@ function Content({
   const [assetsOpen, setAssetsOpen] = useState(false)
   // The field a save refusal marked (142).
   const fields = useFieldErrors<string>()
+  // The GPU distribution card (brief 14): the host's GPUs, read once per
+  // arrival (GD1.3) and never again, the rows' weights (the rows and their
+  // checks are the draft's `device`), the weights a check or a refusal marked
+  // (`null` is every one that shows, what a refusal of the server does), and
+  // what the last move announced (GD1.9).
+  const [probe, setProbe] = useState<GpuProbe | null | undefined>(undefined)
+  const [weights, setWeights] = useState<Record<string, string>>(() =>
+    gpuFileWeights(
+      doc.values['tensor-split'] ?? null,
+      gpuFileIds(doc.values['device'] ?? null),
+    ),
+  )
+  const [marks, setMarks] = useState<string[] | null>(null)
+  const [moved, setMoved] = useState('')
+  // The one read of the GPUs, kept out of the double mount of the development
+  // StrictMode the way the node read is (App.tsx): the read is not cancelled,
+  // so its answer lands.
+  const devicesRead = useRef(false)
+  useEffect(() => {
+    if (devicesRead.current) return
+    devicesRead.current = true
+    readGpuProbe().then(setProbe)
+  }, [])
   // A second Save while one runs sends nothing (137).
   const saving = useRef(false)
   const bar = useSaveBarPadding()
@@ -701,6 +791,103 @@ function Content({
     setPhase((p) => (p === 'saving' ? p : 'idle'))
   }
 
+  /** The rows the GPUs fieldset shows checked, in the split order: the ids the
+   * draft's `device` names (GD1.10). */
+  function gpuChecked(): string[] {
+    return gpuFileIds(draft['device'] ?? null)
+  }
+
+  /** Checking or unchecking a row (GD1.8): a checked row joins at the end of
+   * the checked rows at the weight GD2.3 gives a new row, an unchecked row
+   * takes its weight with it. The row's checkbox keeps the focus: the rows are
+   * keyed by id, so nothing is re-created under it. The device error goes, the
+   * bar's alert stays (GD1.11). */
+  function gpuToggle(id: string) {
+    const checked = gpuChecked()
+    const on = gpuHas(checked, id)
+    edit(
+      'device',
+      (on
+        ? checked.filter((one) => !gpuHas([one], id))
+        : [...checked, id]
+      ).join(','),
+    )
+    setWeights((w) => {
+      const next = { ...w }
+      if (on) delete next[id]
+      else next[id] = gpuNewWeight(checked, w)
+      return next
+    })
+    fields.clear('tensor-split')
+    setMarks(null)
+  }
+
+  /** Move up or Move down (GD1.9): the row swaps with its neighbour among the
+   * checked rows, its weight going with it, and the card's visually hidden
+   * status says where it landed. The pressed button keeps the focus. A Move
+   * changes the checked rows, so the weights' error and the marks go with it
+   * (GD2.6), as under a checkbox. */
+  function gpuMove(id: string, dir: GpuDirection) {
+    const checked = gpuChecked()
+    const at = checked.findIndex(
+      (one) => one.toLowerCase() === id.toLowerCase(),
+    )
+    const to = dir === 'up' ? at - 1 : at + 1
+    if (at < 0 || to < 0 || to >= checked.length) return
+    const next = [...checked]
+    next[at] = next[to]!
+    next[to] = checked[at]!
+    edit('device', next.join(','))
+    setMoved(
+      t('model-profile-gpu-moved', id, String(to + 1), String(checked.length)),
+    )
+    fields.clear('tensor-split')
+    setMarks(null)
+  }
+
+  /** What the user typed in a row's weight (GD2.1): the text is kept as typed,
+   * and the weights' error goes with it (GD2.6). */
+  function gpuWeight(id: string, value: string) {
+    setWeights((w) => ({ ...w, [id]: value }))
+    fields.clear('tensor-split')
+    setMarks(null)
+    setPhase((p) => (p === 'saving' ? p : 'idle'))
+  }
+
+  /** Auto and Even (GD2.4): every checked row's weight emptied, or set to 1.
+   * The focus stays on the pressed button, and the weights' error goes. */
+  function gpuWeightsAll(value: string) {
+    setWeights(Object.fromEntries(gpuChecked().map((id) => [id, value])))
+    fields.clear('tensor-split')
+    setMarks(null)
+    setPhase((p) => (p === 'saving' ? p : 'idle'))
+  }
+
+  /** The two keys the GPUs fieldset composes (GD1.10, GD2.5): the checked rows
+   * and their weights say both, so neither is ever typed. `tensor-split`
+   * counts as changed when the rows moved or a weight differs from what it
+   * loaded with, and the vector composed then differs from the one read. */
+  function gpuChanges(): Record<string, string | null> {
+    const checked = gpuChecked()
+    const loadedIds = gpuFileIds(loaded.values['device'] ?? null)
+    const device = gpuComposeDevice(checked)
+    const deviceWas = gpuComposeDevice(loadedIds)
+    const values: Record<string, string | null> = {}
+    if (device !== deviceWas) values['device'] = device
+    const split = gpuComposeSplit(checked, weights)
+    const splitWas = gpuSplitLoaded(loaded.values['tensor-split'] ?? null)
+    const loadedWeights = gpuFileWeights(
+      loaded.values['tensor-split'] ?? null,
+      loadedIds,
+    )
+    const typed =
+      checked.map((id) => (weights[id] ?? '').trim()).join(',') !==
+      loadedIds.map((id) => (loadedWeights[id] ?? '').trim()).join(',')
+    if ((device !== deviceWas || typed) && split !== splitWas)
+      values['tensor-split'] = split
+    return values
+  }
+
   /** The changed keys as the body of 133 spells them. A number field with its
    * box ticked is a key to remove, and a key the file never had is sent as
    * nothing; with the box unticked, the field sends the number its text holds
@@ -745,6 +932,8 @@ function Content({
       if (send === (loaded.values[row.key] ?? null)) continue
       values[row.key] = send
     }
+    // Brief 14: the GPUs fieldset's two composed keys.
+    Object.assign(values, gpuChanges())
     return values
   }
 
@@ -779,16 +968,37 @@ function Content({
           ] as const,
       )
       .filter((one): one is [CheckedRow, string] => one[1] !== undefined)
-    if (failures.length > 0) {
+    // Brief 14 GD2.6: when `tensor-split` is changed and composes a vector,
+    // every checked row's weight must be a number: one that is not stops the
+    // save, and the fieldset says so after the list, after the device error.
+    const incomplete = gpuWeightFailures(gpuChecked(), weights)
+    const weightsBad =
+      'tensor-split' in changes &&
+      gpuComposeSplit(gpuChecked(), weights) !== null &&
+      incomplete.length > 0
+    if (failures.length > 0 || weightsBad) {
+      const marked: Record<string, string> = Object.fromEntries(
+        failures.map(([row, error]) => [row.key, error]),
+      )
+      if (weightsBad) {
+        marked['tensor-split'] = t('model-profile-gpu-weights-incomplete')
+        // The device error a refusal left stands beside it.
+        const device = fields.errors['device']
+        if (device !== undefined) marked['device'] = device
+      }
       // Rendered first, so the focused control is announced with its error.
       flushSync(() => {
         alerts.setAlert({ text: t('save-invalid') })
-        fields.set(
-          Object.fromEntries(failures.map(([row, error]) => [row.key, error])),
-        )
+        fields.set(marked)
+        setMarks(weightsBad ? incomplete : null)
       })
-      const [row] = failures[0]!
-      focusFailure(row, ruleLocked(row, draft, loaded.values, boxed))
+      const first = failures[0]
+      if (first === undefined) focusField('tensor-split')
+      else
+        focusFailure(
+          first[0],
+          ruleLocked(first[0], draft, loaded.values, boxed),
+        )
       return
     }
     if (!dirty) return
@@ -799,6 +1009,7 @@ function Content({
     setPhase('saving')
     alerts.setAlert(null)
     fields.set({})
+    setMarks(null)
     const answer = await sendModelProfileSave(doc.id, loaded.revision, values)
     saving.current = false
     if (answer.kind === 'saved') {
@@ -877,8 +1088,33 @@ function Content({
     if (saving.current || !dirty) return
     setDraft(loaded.values)
     setBoxed(numberStates(loaded.values))
+    // Brief 14 GD1.10: the rows, their checks, their order and their weights
+    // go back with the draft.
+    setWeights(
+      gpuFileWeights(
+        loaded.values['tensor-split'] ?? null,
+        gpuFileIds(loaded.values['device'] ?? null),
+      ),
+    )
+    setMarks(null)
+    setMoved('')
     fields.set({})
     setPhase('idle')
+  }
+
+  /** The GPU distribution card's state, as the cards' table passes it to the
+   * GPUs fieldset (brief 14). */
+  const gpu: GpuCardProps = {
+    probe,
+    weights,
+    weightIds: marks,
+    loadedDevice: loaded.values['device'] ?? null,
+    onToggle: gpuToggle,
+    onMove: gpuMove,
+    onWeight: gpuWeight,
+    onAuto: () => gpuWeightsAll(''),
+    onEven: () => gpuWeightsAll('1'),
+    moved,
   }
 
   return (
@@ -1013,6 +1249,7 @@ function Content({
           onTick={tickBoxed}
           onBoxText={textBoxed}
           errors={fields.errors}
+          gpu={gpu}
         />
         <SaveBar
           bar={bar}

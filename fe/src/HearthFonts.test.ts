@@ -425,6 +425,8 @@ test('H1b guard: the stacks reach the page through the tokens only: body is var(
     used.sort(),
     'every family comes from a token, so the faces apply page wide and no rule dodges them',
   ).toEqual([
+    // Brief 14, DESIGN.md 5.2 "GPU list": the row's id is monospace.
+    '.check-list.gpu-id: var(--mono)',
     '.full-value: var(--mono)',
     '.mono,input.mono: var(--mono)',
     'body: var(--font)',

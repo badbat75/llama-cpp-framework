@@ -60,6 +60,15 @@ export type Card = { heading: string; fields: Field[] }
 
 export const MODEL_PROFILE_CARDS: Card[] = [
   { heading: 'model-profile-assets', fields: [] },
+  // Brief 14 (fe/briefs/14-gpu-distribution.md, GD1.1): 02e's 83 reserved this
+  // place between Assets and Hardware. The GPUs are no field of 2e's table 112,
+  // so the card's one field is the split mode select; the GPU rows, their
+  // checkboxes, weights and move buttons depend on the device read and the
+  // user's checks, and are pinned in ModelProfileGpu*.test.tsx.
+  {
+    heading: 'model-profile-gpu-distribution',
+    fields: ['model-profile-split-mode'],
+  },
   {
     heading: 'model-profile-hardware-config',
     fields: [
@@ -293,6 +302,9 @@ function fieldId(field: Label): string {
  * by their label.
  * Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS: Label[] = [
+  // Brief 14 (GD1.2): the GPU distribution card's split mode select, always
+  // enabled (decision 6).
+  'model-profile-split-mode',
   'model-profile-context-size',
   'model-profile-parallel-slots',
   'model-profile-unified-kv',

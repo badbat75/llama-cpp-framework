@@ -183,16 +183,21 @@ function sentValues(
   return body.values as Record<string, unknown>
 }
 
-/** The save bar's status line (the only role="status" in the settings). */
+/**
+ * The save bar's status line. The GPUs card keeps its own status region
+ * in the DOM from its first render (brief 14 GD1.9), so the bar's line is
+ * picked inside the bar, not by counting the page's status regions (section
+ * 6 of fe/briefs/14-gpu-distribution.md, ruling of 2026-11-21).
+ */
 function status(main: HTMLElement): HTMLElement {
-  const h2 = within(main).getByRole('heading', {
+  within(main).getByRole('heading', {
     level: 2,
     name: en('model-profile-settings-title'),
   })
   const all = within(main)
     .queryAllByRole('status')
-    .filter((s) => before(h2, s))
-  expect(all, 'one status line once the page is loaded').toHaveLength(1)
+    .filter((s) => s.closest('.save-bar') !== null)
+  expect(all, 'the save bar has its status line').toHaveLength(1)
   return all[0]!
 }
 
