@@ -2127,6 +2127,249 @@ On the revision's three questions (user, 2026-11-17): server profiles keep the f
 `server@<profile>.ini`; the CLI is `pai model-profile <verb>`; a server profile created from the web
 starts from the defaults.
 
+### Monitoring and log consultation (step 10 item 13d): proposed, awaiting the user's choice
+
+The requirement (user, 2026-11-21, `PLAN.md` step 10 item 13d): the native GUI's HW Monitor streamed
+to the web UI, a history chart of the same metrics, and a module that collects the metrics and routes
+an administrator's log reads to the host that holds the log; logs stay on each host, read on demand,
+no central collector yet. External tools welcome where they fit (OpenTelemetry named).
+
+**What exists, and what the design keeps, moves or removes.**
+
+- The sampler is `pai-app`'s `hwmon` (`crates/app/src/hwmon.rs`, `hwmon/linux.rs`, `hwmon/windows.rs`,
+  `hwmon/sdk.rs`): one `Sampler::sample()` a second, needing no root on either system (the module
+  header's tables): amdgpu sysfs (`gpu_busy_percent`, `mem_info_vram_*`, `mem_info_gtt_*`,
+  `mem_busy_percent`), NVML loaded at runtime (busy, VRAM, memory activity, PCIe RX/TX, the
+  throughput call measuring over 20 ms), `/proc/stat`, `/proc/meminfo`, `/sys/block/<disk>/stat`; on
+  Windows PDH (`GPU Engine`, `GPU Adapter Memory`), D3DKMT, `GetSystemTimes`, `GetPerformanceInfo`,
+  `IOCTL_DISK_PERFORMANCE`. It returns `Group`/`Bar`, already formatted text for the GUI, and the
+  disk card follows one models directory. **Moved**: the readings (numbers with units, per device)
+  go to a crate the manager can link; the GUI's formatting and peaks stay in `pai-app`. The manager
+  cannot link `pai-app` today (it pulls `rusqlite`, `image`, a build script reading the llama.cpp
+  clone: `crates/app/Cargo.toml`, `build.rs`).
+- The manager already answers a hardware read: `Devices` (`service.rs` `devices`, gated by
+  `authorize_quietly(.., Action::Control)`, the `As` form for the bff). Metrics follow that pattern.
+- The bff (`crates/bff`) is tokio and axum, unprivileged, writes nothing, and its unit has
+  `PrivateDevices=yes` (`xtask/src/linux/system_files.rs` `bff_unit`), which hides `/dev/nvidia*`
+  from NVML. And in step 14 a node needs only `-core` and the engine, no bff (Part 2, "Who listens").
+  So the bff cannot be the sampler; the node's collector must be in `-core`.
+- Logs: the instance's journal on Linux (`llama.cpp@<id>.service`; readable by root and the groups
+  `systemd-journal`, `adm`, `wheel`, [journalctl(1)](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html));
+  on Windows `%ProgramData%\llama.cpp\logs\llama-server@<id>.log` and `.previous.log`, which users
+  already read (`AGENTS.md`, "Key conventions"). The bff's account is in none of those groups.
+  **Kept**: logs stay where they are; nothing copies them.
+- **Removed**: nothing.
+
+**What GPU monitoring needs, and who gives it** (the GUI's bars are the bar to meet):
+
+| Source | amdgpu busy | VRAM | GTT / shared | memory activity | NVIDIA | Windows |
+| --- | --- | --- | --- | --- | --- | --- |
+| Our `hwmon` | yes | yes | yes | yes | NVML: busy, VRAM, memory activity, PCIe | PDH + D3DKMT, every adapter |
+| OTel Collector `hostmetrics` | no GPU scraper ([README](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/hostmetricsreceiver/README.md)) | | | | | |
+| OTel `windowsperfcounters` | | | | | | any PDH counter, so `GPU Engine` and `GPU Adapter Memory` by configuration; contrib only, beta ([README](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/windowsperfcountersreceiver/README.md)) |
+| node_exporter `drm` (off by default, amdgpu only) | yes | yes | yes | no | no (points to DCGM) | ([README](https://github.com/prometheus/node_exporter), [drm_linux.go](https://github.com/prometheus/node_exporter/blob/master/collector/drm_linux.go)) |
+| windows_exporter `gpu` (off by default) | | | | | | engine time, dedicated, shared ([collector.gpu.md](https://github.com/prometheus-community/windows_exporter/blob/master/docs/collector.gpu.md)) |
+| DCGM exporter | | | | | Linux only; GeForce "limited functionality" ([DCGM getting started](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html)) | no |
+| AMD device-metrics-exporter | Instinct MI2xx/MI3xx, MI350P, "Radeon AI platform"; Ubuntu 22.04/24.04, in a container ([docs](https://instinct.docs.amd.com/projects/device-metrics-exporter/en/latest/)) | | | | | no |
+| Telegraf `amd_rocm_smi` | yes | yes | not listed | yes | `nvidia_smi` input | needs the `rocm-smi` binary ([README](https://github.com/influxdata/telegraf/blob/master/plugins/inputs/amd_rocm_smi/README.md)) |
+| Netdata `proc.plugin` amdgpu | yes | yes | yes | yes | `nvidia_smi` module | ([AMD GPU](https://learn.netdata.cloud/docs/data-collection/hardware-devices-and-sensors/amd-gpu)) |
+
+No external tool covers the GUI's set on both systems alone: every external option needs at least
+two agents per node (a host one and a GPU one, on Linux a different GPU one per vendor), and on Linux
+NVIDIA's own exporter is the data-centre one.
+
+#### Options
+
+Licences and versions below are each project's GitHub record (checked 2026-11-21 with `gh api
+repos/<repo>` and its latest release); sizes are the release archives' downloads.
+
+**(a) The manager's own sampler, a small history store, a stream through the bff.**
+
+- On a node: nothing new runs. A sampler thread in `pai-manager` (root, LocalSystem) calls the moved
+  readings once a second into a ring in memory; once a minute it folds the last minute into a store
+  on disk. The disk card follows each instance's models directory (deduplicated), not one user's.
+- Interface: three manager methods with their `As` forms, request and reply as every other one, so
+  D-Bus, the pipe and step 14's mTLS link carry them unchanged: `Metrics(after: seq)` (the samples
+  after a sequence number, from the ring; a gap says so), `MetricsHistory(from, to)` (the tier that
+  fits the range, at most a bounded number of points), `ReadLog(instance, cursor, lines)` (below).
+  The bff polls `MetricsAs` once a second with ONE task for all viewers and fans it out as
+  server-sent events (`GET /api/node/metrics/stream`, axum's `sse`,
+  [docs.rs](https://docs.rs/axum/latest/axum/response/sse/index.html)); the browser's `EventSource`
+  reconnects by itself and sends `Last-Event-ID` ([HTML standard, server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html)),
+  which maps to `after`. SSE over WebSocket because the flow is one way, it is plain HTTP through the
+  existing `Host` guard and session cookie, and it needs no new crate.
+- Footprint: no process, account, port or package. The store: SQLite through `rusqlite` with
+  `bundled`, already in the workspace (`crates/app/Cargo.toml`); SQLite is public domain
+  ([sqlite.org/copyright](https://www.sqlite.org/copyright.html)). Estimate, not measured: about 25
+  values a second for two GPUs; at one row per minute per device with average and maximum, 30 days stay
+  in the low tens of MB.
+- Linux and Windows: the sources exist and are tested in `pai-app`; on Windows they have run under a
+  desktop user, never as LocalSystem in session 0 (a slice's check on the user's Windows build).
+- Trust: the browser to the bff (session, a `pai` member); the bff to the manager (`MetricsAs`,
+  `ReadLogAs`, the principal re-checked per call as every `As` verb); the manager reads sysfs, `/proc`,
+  NVML, PDH and the journal itself. Cost: root now parses sysfs text and loads the NVIDIA library
+  (`dlopen`) once a second; a panic in the sampler thread must not take the manager down (caught,
+  the sampler restarted, readings missing until then). If that is judged too much, the sampler can
+  later run as a child under the instance account (`private-ai`, groups `render video`) streaming
+  lines to the manager; not proposed now (preference: simplest first, the sources need no root).
+- Step 14: the super-manager calls the same `MetricsAs`, `MetricsHistoryAs`, `ReadLogAs` on each node
+  over the mTLS link (Part 2), the hub's bff under `/api/nodes/{node}/...`. History and logs stay on
+  the node and are read on demand: the "log router" is the manager protocol itself. A central store,
+  when wanted, is a later export (below), not a redesign.
+- Test effort: low to moderate; the sources have tests; new are the ring, the fold, the store's
+  pruning, three methods, the SSE route and its session ending.
+
+**(b) OpenTelemetry.** Two separate pieces.
+
+- (b1) The Rust SDK in the manager: metrics API, SDK and OTLP exporter **stable**, logs **stable** as a
+  bridge (appenders for `log` and `tracing`, no new logging API), traces beta; latest
+  `opentelemetry-0.33.1`, Apache-2.0 ([opentelemetry-rust README](https://github.com/open-telemetry/opentelemetry-rust)).
+  It only emits: it gives the web UI neither a live stream nor history; something must receive and
+  store. Worth it later as the export of (a).
+- (b2) The Collector, a Go binary per node: `hostmetrics` (metrics **beta**, core and contrib, cpu,
+  disk, filesystem, load, memory, network, paging on all systems; no GPU), `journald` (logs **alpha**,
+  Linux only, runs `journalctl`, its user in `systemd-journal`;
+  [README](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/journaldreceiver/README.md)),
+  `filelog` (logs beta, Windows supported with exceptions;
+  [README](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/filelogreceiver/README.md)),
+  `windowsperfcounters` (contrib only). The distribution that has `journald` and
+  `windowsperfcounters` is contrib: v0.165.0, 109 MiB `linux_amd64.tar.gz`, 97 MiB Windows MSI
+  (core `otelcol` 45 MiB; [releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases)),
+  Apache-2.0, with the licences of its Go dependencies to list for our packages (the rule in
+  `installer/AGENTS.md`). On Linux still no amdgpu or NVML receiver in the tables above: the GPU
+  half stays ours or another exporter. Plus a store: Prometheus 3.16.0 (108 MiB tarball, Apache-2.0,
+  15 days by default, about 1 to 2 bytes a sample, [storage](https://prometheus.io/docs/prometheus/latest/storage/))
+  or VictoriaMetrics 1.156.0 (Apache-2.0).
+- Trust: a new service account per node, the collector's listeners and the store's HTTP API (bound to
+  the loopback, or one more authenticated channel between machines beside step 14's mTLS); the log
+  pipeline is push: it ships the journal somewhere continuously, the opposite of "read on demand", and
+  needs a user in `systemd-journal` permanently. The on-demand read and the `pai` check would still
+  be ours.
+- Step 14: the natural central shape (every node exports OTLP to a central collector), at the cost of
+  a second trust fabric to keep consistent with the manager's.
+
+**(c) Prometheus-style exporters and a TSDB.** node_exporter 1.13.1 (Apache-2.0, 12 MiB, `drm` for
+amdgpu busy, VRAM, GTT, off by default), windows_exporter 0.32.1 (MIT, 13 MiB MSI, `gpu` off by
+default, Windows 10/11 21H2+ and Server 2016+, [README](https://github.com/prometheus-community/windows_exporter)),
+for NVIDIA on Linux dcgm-exporter 4.9.0 (Apache-2.0, needs DCGM, Linux only), for AMD's own exporter
+the Instinct-class list above; Prometheus or VictoriaMetrics to store and query. No logs (another
+stack). Three to four HTTP listeners per node, each a separate package to install, update and
+firewall; memory activity and NVIDIA PCIe throughput missing on Linux consumer cards; history by PromQL
+from the bff. Step 14: Prometheus scrapes nodes over its own TLS, again a second trust fabric.
+
+**(d) Other light agents.** Telegraf 1.40.3 (MIT, one Go agent with GPU inputs that shell out to
+`rocm-smi` / `nvidia-smi`, Windows counters, its own outputs), Vector 0.62.0 (MPL-2.0, 55 MiB, host
+metrics and journald sources, a pipeline not a store), Netdata 2.13.0 (GPL-3.0; amdgpu with GTT and
+memory activity, NVIDIA; "under 5% of one CPU core and about 200 MB of RAM" by default,
+[resource utilization](https://learn.netdata.cloud/docs/netdata-agent/resource-utilization)) with its
+own dashboard and own access model beside our sign-in; a GPL program can be a dependency but not
+bundled into our MIT packages without its source obligations. Each is a capable fit for an operator
+who already runs it, none removes the need for (a)'s on-demand log read through the `pai` check.
+
+#### Recommendation
+
+**(a)**, with the readings' names and units chosen so a later export (b1's OTLP, or a Prometheus
+text endpoint) is a mapping, not a redesign. Why: it is the only option that adds no process,
+account, port or bundled Go binary per node, covers every bar the GUI has on both systems today,
+keeps the one trust path (session, `As` method, the manager's `pai` check) for metrics and logs alike,
+and rides step 14's mTLS link with no second fabric. The external stacks earn their cost when there
+is a central store to feed; that requirement is explicitly not now.
+
+**Who may do what.** Metrics: `control`, asked quietly, as `Devices` (hardware load is no secret, and
+the GUI shows it to any desktop user). Logs: an administrator (a `pai` member) on the web, the
+manager reading them as root; this widens Linux journal access from root and `systemd-journal`/`adm`/
+`wheel` to `pai` for the instance units only (decision 3). Logs may hold request details; whether
+llama-server writes prompt text at its default verbosity is unverified, which is part of why the read
+is admin-only.
+
+**Fails closed.** `ReadLog` refuses an instance not in `instances.ini` before anything runs; on Linux
+the manager runs `journalctl` with an argument vector it builds (no shell): `-u llama.cpp@<id>.service
+-o json --no-pager -n <lines>` and `--after-cursor=<c>` when given (options as journalctl(1) above),
+one at a time, with a timeout, lines and bytes capped under the 1 MiB frame; on Windows a byte-offset
+cursor into the two files, read only, capped likewise. A sampler source that fails drops its readings,
+never the sample; a store write that fails leaves a gap in history and the live stream runs on. The
+SSE stream reads the session as a gate without moving its idle deadline (as the polled reads,
+`crates/bff/README.md`) and closes when the session ends (sign-out, idle, the manager's refusal),
+checked at each event. Bounds: one poller in the bff whatever the number of viewers, a cap on
+concurrent streams per session, history replies capped in points.
+
+**Retention defaults** (decision 2): the ring 1 s for 15 minutes in memory (live view and catch-up,
+lost at a manager restart); on disk 1 minute average and maximum for 30 days, pruned hourly. The store:
+`/var/lib/private-ai-manager/metrics.db` (a new `StateDirectory=private-ai-manager`, mode 0700, not
+`/var/lib/private-ai`, which is the instance user's home) and `%ProgramData%\private-ai\metrics\`
+(inherits the root's protected DACL: the playbook's note on `MachineDataRoot`). The schema is the
+coder's; a done-when bounds its size.
+
+#### Slices
+
+Test first, Linux first, the Windows halves type-checked; each a useful piece.
+
+1. **Readings move.** A crate the manager and `pai-app` both link (preference: a new `pai-hwmon`,
+   so `pai-bff` and `pai` do not compile the samplers; `pai-core` is the other choice) returns typed
+   readings per device; `pai-app` formats them for the GUI as today. Done when: the GUI's hwmon tests
+   pass unchanged, and the readings come from a fake sysfs root (`/proc`, `/sys` rooted in a temp dir)
+   with values and units pinned.
+2. **Live stream.** The manager's sampler and ring, `Metrics`/`MetricsAs`; the bff's poller and
+   `GET /api/node/metrics/stream`; then the designer's brief and the live view. Done when: a fake
+   source's samples arrive in order with their sequence; a reconnect with `Last-Event-ID` resumes
+   without a duplicate and a gap is flagged; no session is 401 with the manager not asked; a refused
+   principal ends the stream and the session; one poller serves two streams; a panicking source
+   leaves the manager answering.
+3. **History.** The fold, the store, pruning, `MetricsHistory`/`As`, `GET /api/node/metrics/history`,
+   the chart. Done when: a simulated month of samples folds to the expected rows and averages and
+   maxima, rows older than retention go, a range picks the right tier with points capped, a store that
+   cannot be written leaves the live stream running, the file stays under the stated bound.
+4. **Log consultation.** `ReadLog`/`As`, `GET /api/instances/{id}/log`, the log view. Done when: an
+   unknown instance is refused with no process spawned; the argument vector is exactly the one above
+   (a fake runner); the cursor pages forward; caps hold; a non-`pai` principal is refused; the Windows
+   reader pages across `.previous.log` and the current file.
+5. Later, not now: an export (OTLP through b1, or a Prometheus endpoint) when a central store is
+   wanted; the super-manager's node-prefixed routes come with Part 2's slice 7.
+
+**Open after this design:** the sampler as an unprivileged child (only if the review of slice 2 asks);
+the manager's own action log in the log view; live log follow (polling the cursor is enough first);
+a per-instance GPU attribution (which instance uses which card).
+
+#### A future central log collector (not built in this step)
+
+Asked by the user on 2026-11-21 so that today's choice does not block it. Logs stay on the hosts in
+this step; this is the direction, judged now, built later (with or after Part 2).
+
+| Piece | Choice | Source |
+| --- | --- | --- |
+| Common format | OTLP logs | VictoriaLogs ingests OpenTelemetry, Loki JSON, Elasticsearch bulk, journald export format and others ([data ingestion](https://docs.victoriametrics.com/victorialogs/data-ingestion/)) |
+| Node agent, recommended | **Fluent Bit** v5.2.0, C, Apache-2.0 (GitHub record); Linux, macOS, Windows ([supported platforms](https://docs.fluentbit.io/manual/installation/supported-platforms)); `systemd` input reading the journal through libsystemd with a `_SYSTEMD_UNIT` filter and a cursor kept in its `DB` ([systemd input](https://docs.fluentbit.io/manual/pipeline/inputs/systemd)), `tail` for the Windows log files; OTLP out over HTTP (protobuf) or gRPC with `tls.crt_file`/`tls.key_file`/`tls.ca_file` ([OpenTelemetry output](https://docs.fluentbit.io/manual/pipeline/outputs/opentelemetry)) | as cited |
+| Node agent, alternative | The OpenTelemetry Collector: one agent for metrics and logs only if metrics went OTel (option b), but its `journald` receiver is alpha, Linux only and shells out to `journalctl` (above), and contrib is 97 to 109 MiB | as cited |
+| Central store | **VictoriaLogs** v1.54.0 single node, Apache-2.0 (GitHub record), 12 MiB `linux-amd64` archive, on the super-manager's node; 7 days retention by default (`-retentionPeriod`), an optional disk cap; TLS and basic auth in the open binaries, **mTLS only in Enterprise** ([security](https://docs.victoriametrics.com/victorialogs/security-and-lb/), [flags](https://docs.victoriametrics.com/victorialogs/)) | as cited |
+| Not chosen | Promtail: end of life on 2026-03-02, development moved to Grafana Alloy ([Promtail](https://grafana.com/docs/loki/latest/send-data/promtail/)). Loki: **AGPL-3.0** (GitHub record of `grafana/loki`, so the user's belief is confirmed), with Alloy (Apache-2.0) only if Grafana dashboards are wanted. Vector (MPL-2.0): valid, no gain over Fluent Bit here | as cited |
+
+The trust boundary is the part to design then, not the tools: open VictoriaLogs cannot check a
+client certificate, so it listens on the super-manager's loopback only and the nodes reach it through
+an ingest endpoint of the super-manager that checks each node's pinned key (Part 2's identity, no
+second fabric); the agent on each node is one more account reading the journal (Fluent Bit's user in
+`systemd-journal`, read only, the same rule journalctl(1) states). Logs then leave the node
+continuously, a change from "read on demand" the user approves when that step comes; the on-demand
+`ReadLog` stays for a node that has no collector.
+
+**What it changes now: nothing.** Option (a) leaves the logs where they are and in their native form
+(journal fields, plain files), which is what Fluent Bit reads; the only care is that `ReadLog`'s
+cursor stays the journal's own cursor on Linux, so the web view and a collector speak of the same
+positions. Choosing OTel for metrics now (option b) would not make the log half easier: the
+collector's journald receiver is the weakest piece. Not a decision for this step.
+
+#### Decisions for the user
+
+1. **Approach.** (a) the manager's own sampler and store, export later (recommended); (b) the
+   OpenTelemetry Collector and a TSDB on each node; (c) Prometheus exporters and a TSDB; (a) now plus
+   an OTLP export in the same step.
+2. **History retention.** 1-minute average and maximum for 30 days (recommended); 7 days; 90 days;
+   30 days plus a 10-second tier for the last 24 hours.
+3. **Who reads instance logs from the web.** Every `pai` member (recommended: they already administer
+   the instances); on Linux only `pai` members who are also in `systemd-journal` or `adm`, as the OS
+   grants today.
+4. **The disk card.** The disks of every instance's models directory (recommended); the engine's
+   default models folder only.
+
 ## Part 2: the super-manager (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,

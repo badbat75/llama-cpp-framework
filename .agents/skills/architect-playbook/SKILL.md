@@ -153,3 +153,11 @@ description: What the architect has learned about this project's components, int
 - A post-build review checks every edge-case clause in the design text against the code, not only
   the "done when" list: slice 16's "a newline first when the text does not end with one" was in the
   design, missing in `append_record`, and in no done-when item (2026-11-21).
+- Monitoring sources checked 2026-11-21 (ARCHITECTURE.md "Monitoring and log consultation"): no OTel
+  Collector receiver reads amdgpu or NVML (hostmetrics has no GPU scraper; journald receiver alpha,
+  Linux only, runs journalctl); node_exporter `drm` (off by default) has amdgpu busy, VRAM, GTT but no
+  `mem_busy_percent`; DCGM is Linux only, GeForce limited. OTel Rust: metrics and logs stable, traces
+  beta (0.33.1). Licences: Loki AGPL-3.0, Netdata GPL-3.0, Fluent Bit and VictoriaLogs Apache-2.0;
+  VictoriaLogs' mTLS is Enterprise only; Promtail EOL 2026-03-02. The bff's unit has
+  `PrivateDevices=yes` (no `/dev/nvidia*`) and a step 14 node has no bff: node-side collection
+  belongs in `-core`.
