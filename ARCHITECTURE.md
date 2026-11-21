@@ -1787,7 +1787,8 @@ merge conflicts.
      included (it saves through the same manager and keeps unknown ids on purpose). The probe also runs
      as root, not as the instance. So a well-formed unknown id saves; the web UI flags it. The GUI's
      warnings (`split-tensor-no-gpu`, `split-tensor-mixed-backends`) stay warnings, the UI's.
-   - The memory check still counts every card of the node, whatever `device` says (user, 2026-11-17).
+   - The memory check still counts every card of the node, whatever `device` says (user, 2026-11-17;
+     superseded 2026-11-21: only the server profile's `Devices`, "Resources belong to the server profile").
 
 4. **Done when** (test first; Linux, the Windows code type-checked).
    - **G1** (`pai-core`, `pai-bff`): the three keys are in `WEB_MODEL_PROFILE_KEYS` and out of the
@@ -1812,7 +1813,8 @@ merge conflicts.
      two value rules and the key move (the move is pinned by `pai-app`'s test, the rules by their cases),
      the probe's cache and serialization.
    - **Decided by the user (2026-11-20)**: the memory check still counts every GPU of the node, not only
-     those a profile's `device` names (the 2026-11-17 rule stands); no refresh: the page shows each
+     those a profile's `device` names (the 2026-11-17 rule stands; superseded 2026-11-21 by the server
+     profile's `Devices`, "Resources belong to the server profile"); no refresh: the page shows each
      card's free memory as of `probedAt`.
    - **As built (G1+G2 reviewed, 2026-11-21, uncommitted).** Met: the key move, both keys in `KEYS`
      and both strings files, `Devices`/`DevicesAs` under the quiet `control` check and the `As` gate
@@ -2125,7 +2127,8 @@ Then the docs agent: AGENTS.md (the overview, "Key conventions" file names), "Th
 
 **Decided by the user (2026-11-17)** on the earlier version's two questions: the memory check refuses
 anything over the full-GPU estimate, even with `fit` on or a CPU placement ((b) 2); every instance sees
-all the node's GPUs and is checked alone against them (a per-instance `Devices` key waits until asked).
+all the node's GPUs and is checked alone against them (a per-instance `Devices` key waits until asked; asked and decided 2026-11-21: the server profile's
+`Devices`, "Resources belong to the server profile").
 On the revision's three questions (user, 2026-11-17): server profiles keep the file name
 `server@<profile>.ini`; the CLI is `pai model-profile <verb>`; a server profile created from the web
 starts from the defaults.
@@ -2444,7 +2447,18 @@ Prometheus) later; (b), (c) and (d) are not taken. The slices run in order: 1 re
 (5 s over 1 h, 20 s over 4 h, about 720 points), configurable (the tiers above); every `pai` member
 reads instance logs; the disk card follows the engine's default models folder only.
 
-### Resources belong to the server profile (step 10 item 13, "placement follows"): proposed, awaiting the user's choice
+### Resources belong to the server profile (step 10 item 13, "placement follows"): accepted (user, 2026-11-21)
+
+**Decided by the user (2026-11-21)**, each the recommendation of (6) below: (1) option (a) of (3): the
+GPUs in the server profile (`[Server] Devices` -> `--device`), the split weights and optional fixed
+values (`n-gpu-layers`, `n-cpu-moe`, `fit-target`) in the model profile, `--fit` places the rest;
+(2) a GPU is named by the probe's id (`ROCm0`), the bus id later only if ordinals move; (3) the memory
+check counts only the GPUs of the instance's server profile (every GPU when `Devices` is unset): this
+**replaces** the 2026-11-17 rule, confirmed 2026-11-20, that every instance is checked against every GPU
+of the node ((b) 2 and G2's "Decided by the user" now read as superseded on this point); (4) RAM is
+shown in the inventory, with no budget and no OS limit. The slices R1 to R5 of (5) run in order; the
+drawn views (`docs/architecture/system.html`, "Saving a model profile, with the memory check") change
+with R3, when the check does.
 
 The user's words (2026-11-21, translated): "A bare model profile cannot know the GPU/CPU distribution
 until it is applied to an instance. There is a server profile that associates the resources to use with
