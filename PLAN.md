@@ -1085,13 +1085,20 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     node's info, which also gains the version of every engine (llama.cpp, Strata, ...), the operating
     system and its version, and the GPU driver versions. Right after C2, before 2g/2j: the architect's
     design for the new `GET /api/node` fields (where each version is read, and from which account),
-    then the designer's brief for both pages.
+    then the designer's brief for both pages. Decided (user, 2026-11-22, ARCHITECTURE.md "About and
+    node info"): the manager reads the node facts (new `NodeInfo`/`NodeInfoAs`, which the director
+    will call too), the Vulkan driver per GPU included (a `pai-manager vulkan-probe` child; its first
+    run on this machine needs the user's go-ahead), About reads `/api/version` with `os`. Slices AN1 to
+    AN5.
     **Tags on model profiles** (user, 2026-11-22): a model profile carries tags too, as chips with the
     same suggestions (C1, C2), for three uses: labels and a filter on the Models page, routing (the router
     and the director pick a model by tag, step 14 and item 14), and shown to clients in the model list
     the API offers. After slice 17 (it redoes the profile pages), before R4 and R5; the architect's
     design first (where the key lives in `models.ini` and whether llama-server tolerates it, the
     manager's checks, how the router and the client list read it), then the designer's brief.
+    Decided (user, 2026-11-22, ARCHITECTURE.md "Tags on model profiles"): a manager-owned side record
+    `model-tags.ini`, no restart for a tags-only save, one shared tag vocabulary, routing by
+    `"model": "tag:<t>"`; no tags on macOS yet. Slices MT1 to MT3.
     **Resources belong to the server profile, placement follows** (user, 2026-11-21): a bare model profile
     cannot know its GPU/CPU distribution until it runs on an instance. The server profile should bind the
     resources an instance may use (which GPUs, RAM, CPU threads, the backend SDK), so a model profile

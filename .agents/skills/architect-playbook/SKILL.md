@@ -205,3 +205,23 @@ description: What the architect has learned about this project's components, int
   export only), no grace for an expired node (rejoin), P-256, CA 5 years rotated at 4, no offline root.
   The user overrode two security recommendations this day (path, key at rest): state the exposure
   plainly and let them choose.
+- Before inventing a framework key for `models.ini`, grep llama.cpp's `common/arg.cpp` for a native
+  option: v1.0.0 has `--tags` (preset key `tags`, listed in the router's `/models`) and `--alias`
+  (checked 2026-11-22). A router reload unloads a running model whose preset options changed, `tags`
+  included (`server-models.cpp` `preset_options_for_compare` strips only host, port, alias, log
+  colours). The GUI's model profile save rewrites the whole section from `ModelProfile`, so any key
+  the web writes needs a `ModelProfile` field or a GUI save drops it.
+- Model profile tags live in the manager's record `model-tags.ini` (user, 2026-11-22, against the
+  native `tags` key): the manager has no create/rename/delete of model profiles (the GUI writes the
+  pool whole), so a record keyed by profile id needs a prune after every pool write and the renamer
+  carrying the tags; review both when a slice adds a new way to write the pool.
+- Node facts (checked 2026-11-22): `--list-devices` and `ggml_backend_dev_props` carry no driver version;
+  a kernel driver's version is `/sys/module/<driver>/version` only when it sets `MODULE_VERSION`
+  (DKMS amdgpu, NVIDIA `nv.c` yes; in-tree amdgpu, i915, xe no: show the kernel). The bff's unit
+  hardening hides `/dev` and `/usr/lib/modules`, not `/sys` or `/proc/driver` (systemd.exec(5)), so
+  sysfs and os-release reads work as `private-ai-bff`; Windows per-adapter driver versions are
+  `DEVPKEY_Device_DriverVersion` via `CM_Get_DevNode_PropertyW`.
+  The device probe runs `llama-server --list-devices` as the manager itself (root/LocalSystem), so ICDs
+  already load as root in a child; `ash` 0.38 is in `Cargo.lock` through `wgpu-hal` (`loaded`
+  feature: run-time loader, no link). A polled read may ask the manager: peek the session and use
+  its identity as the `As` principal (`control.rs` `boot_read` precedent).

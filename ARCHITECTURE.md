@@ -3177,6 +3177,316 @@ lists a node's folder through the manager, so one path serves both).
 home opened to 0751 as above (the architect had recommended `/var/lib/private-ai-models`). 2. The
 instances and the members of `pai` write. 3. macOS keeps the per-user `~/.llama.cpp`.
 
+### Tags on model profiles (user, 2026-11-22, `PLAN.md` "Tags on model profiles"): accepted (user, 2026-11-22), a side record
+
+The requirement: a model profile (one section of `models.ini` or `models.ini.disabled`) carries tags,
+shown as chips with suggestions as instance tags are (fe brief 15), for (1) labels and a filter on the
+web Models page, (2) routing: the router (`PLAN.md` step 10 item 14) and the director (step 14) pick a
+model by tag, (3) the model list the API offers to clients. After slice 17, before R4 and R5.
+
+**What exists (checked 2026-11-22).**
+- llama.cpp v1.0.0 (the tagged clone, `build/linux/llama.cpp`) has a native option: `--tags STRING`,
+  "informational, not used for routing", env `LLAMA_ARG_TAGS` (`common/arg.cpp` 3006-3017;
+  `tools/server/README.md` line 192), so `tags` is a known preset key (`common/preset.cpp`
+  `get_map_key_opt`, 251-262; an unknown key throws, 325-332). The router lists it as `"tags"` in its
+  model list (`server-models.cpp` 471-479, 2202), and a reload unloads a running model whose `tags`
+  changed (`preset_options_for_compare`, 884-890, 949-958). **The user chose not to use it** (below).
+- The manager hands llama-server only the per-instance render `models@<id>.ini`
+  (`pai_core::assign::render`); macOS's configurator passes the user's `models.ini` itself
+  (`crates/app/src/runstate.rs` 490).
+- The manager's own records beside the pool: `assignments.ini` and `instances.ini`, readable by any
+  client and written only by the manager (`service.rs` `read_only_file`, ~2787); a missing record reads
+  as empty (`read_record`). An assignment key naming an id the pool does not hold renders nothing, and
+  nothing prunes it today.
+- Instance and server profile tags: one rule `checks::tags_rule` (at most 8, each 1..32 characters of
+  `a-z0-9-`, no duplicate; read by `tags_list`), one refusal key `server-bad-tags`; the instance's own
+  written by `SetInstanceTags` / `SetInstanceTagsAs` (`service.rs` `set_instance_tags`: `configure`,
+  the `writing` lock, the rule before any read, one action record) and `PUT /api/instances/{id}/tags`,
+  each chip saved at once (brief 15, 1).
+- Model profiles have no create, rename or delete method in the manager: the GUI renames and deletes
+  by writing the pool files whole (`crates/app/src/model_profiles.rs` `rename_with`, `delete`, through
+  the manager's `WriteFile`); the web has no create or delete yet. A missing model profile answers
+  `no-model-profile-named` (`crates/bff/src/model_profiles.rs` `not_found`, `SetModelProfile`).
+
+**(1) Where the tags live: decided, a side record.** Options weighed: (a) llama.cpp's `tags` key (the
+architect's recommendation: no new method, the tags travel with the section); (b) a framework key
+stripped at render; (c) a comment line; (d) a side record. **The user chose (d)** (2026-11-22). What it
+gains: llama-server never sees a tag, so a tag change is never a preset change (no restart, no unload
+at a reload), and `models.ini` keeps llama.cpp keys only. What it costs: a new manager method and
+route, and keeping the record in step with the pool's ids (below).
+
+- **The record**: `model-tags.ini` in the engine's config directory (`paths::engine_config_dir`:
+  `/etc/llama.cpp/`, `%ProgramData%\llama.cpp\config\`), beside `assignments.ini`; tags are per engine
+  because the profiles are. One section per model profile id, as the pool spells it, with one key:
+  `[qwen-27b]` / `Tags = coding,fast`. No `[*]` section (`*` is not a profile). A section with no tags
+  is removed, not left empty. No package ships it: a missing record is no tags, and the manager's first
+  write creates it with the mode and group of every served file (`write_served_file`); on Windows it
+  inherits the config folder's ACL (users have no access). It joins `read_only_file`: any client reads
+  it through `ReadFile` / `ReadFileAs`, no client writes it. Removed with the engine's tree only when
+  that uninstall's checkbox is ticked, as the other records.
+- **Matching**: a section matches a profile id in any letter case (the render's rule: one id is one
+  profile), the first section wins.
+- **The pool is the source of ids.** A section whose id is in neither pool file is an orphan: every
+  reader ignores it, and the manager prunes orphans after every write of a pool file (`WriteFile` or
+  `WriteFileIf` of `models.ini` or `models.ini.disabled`; `SetModelProfile` writes only
+  `assignments.ini` and does not prune), under the same
+  `writing` lock, before releasing it. So a delete (the GUI's, a future web delete) drops the tags, and
+  a profile created later under the same id starts with none. A hand edit of the pool by root leaves an
+  orphan until the next pool write (read as nothing meanwhile; a hand re-create in between inherits it:
+  accepted, a label only).
+- **Rename**: a pool write cannot tell a rename from a delete plus a create, so the renamer carries the
+  tags: the GUI's `rename_with`, through the manager backend, reads the old id's tags first, writes the
+  pool (which prunes the old section), then calls `SetModelProfileTags(new, tags)`. A failure between
+  the two loses the tags of that profile, nothing else (a label; the GUI shows the error). The
+  alternative, a `RenameModelProfile` method doing both under one lock, is not worth a new method
+  while the GUI is the only renamer; a web rename, when one is designed, should take it.
+- **Switch on/off** moves the section between the pool files; the id stays in the pool, so the tags
+  stay. Tags of a switched-off profile are shown, as its other values are.
+
+**(2) Grammar and checks.** `checks::tags_rule` unchanged, refusal `server-bad-tags` (args as today,
+`field` `tags`), applied to the list before the record is read, so a refused list writes nothing. The
+record is written by the manager only, as `Tags = a,b` (no spaces); readers parse it with `tags_list`.
+A hand-written bad list in the record is shown as read (it is root's file), and replaced whole at the
+next write. The charset excludes `;`, `#`, `,` and spaces, so no comment-marker or injection case
+reaches a value; the record never reaches llama-server's argv or a shell.
+
+**(3) Manager, `pai-core`, bff.**
+- `pai-core` (`model_tags.rs`, pure, texts in and out, shared by manager, bff and the router):
+  `tags_of(record, id) -> Vec<String>`, `set(record, id, tags) -> String` (the section's `Tags`
+  replaced, or the section removed for `[]`, or appended with a newline first when the text does not
+  end with one), `prune(record, enabled, disabled) -> String` (orphans dropped, other bytes kept).
+- **`SetModelProfileTags(profile, tags)`** `(sas)`, and `SetModelProfileTagsAs(principal, profile,
+  tags)` for the bff (the `As` rule: answered only to the bff's account for a current member of
+  `pai`). Guarded as `set_instance_tags`: `configure`, `writing` lock, one action record. Refusals:
+  `server-bad-tags`; `no-model-profile-named` `[profile]` when neither pool file holds the id (any
+  letter case; `*` is never a profile id); `Io`. Writes the record only: no render, no pool file
+  touched. On D-Bus, the pipe and `ManagerClient` (`set_model_profile_tags`, `acting_for`).
+- **Pool writes prune** the record as in (1); a failed prune write fails the call with `Io` after the
+  pool write landed (the orphan is harmless and the next write retries).
+- `GET /api/profiles/model`: each row gains `tags: [string]` from the record (one more `ReadFileAs`
+  over the same connect; a missing record is `[]`; a failed read is the list's 502 as for the other
+  files). `GET /api/profiles/model/{id}`: the document gains `tags: [string]` the same way.
+- **`PUT /api/profiles/model/{id}/tags`** `{"tags": [string]}`: 204; 404 `no-model-profile-named`;
+  422 `server-bad-tags` `field` `tags`; 400 `tags-malformed` (the route's body, as the instance route);
+  401, 403 (ending the session), 503, 502 as every manager-backed route. No revision: the record is not
+  the section, so a chip save leaves the page's section revision valid and a pending form edit is not
+  refused as changed elsewhere. `tags` stays out of `WEB_MODEL_PROFILE_KEYS`.
+- **Restart: none** (user, 2026-11-22). The record touches no `models.ini` and no render, so
+  llama-server sees nothing and the reload caveat of the native key does not apply.
+
+**(4) The GUI and macOS.** Under the manager (Linux, Windows) the GUI shows no tags in this step; its
+saves rewrite only the section, so they never touch the record; its delete prunes through the
+manager's pool write; its rename carries the tags as in (1). `pai` gets no tags command now. macOS has
+no manager, no bff and no router, and keeps its files per user: it has no model profile tags in this
+step (no record, nothing read). If a macOS GUI control comes later, a per-user `model-tags.ini` beside
+`models.ini` with the same `pai-core` functions is the shape; not designed now.
+
+**(5) Suggestions: one vocabulary** (user, 2026-11-22). The instance, server profile and model profile
+tag fields all suggest the union of the three, from reads the fe already makes plus the Models list's
+`tags`; no backend. The designer extends brief 15's rule.
+
+**(6) The router and the client list** (built with item 14; recorded so it starts from here).
+- llama-server's own `/v1/models` carries no framework tags (its `"tags"` field stays empty: no
+  `tags` key is written). The gateway's `GET /v1/models` builds its own list: each model profile at
+  least one instance serves (`pai_core::assign::rows`, effective) once, `{id, object: "model",
+  created, owned_by, tags}`, `tags` from the record (`model_tags::tags_of`), the field name llama-server
+  uses. A client talking to an instance's port directly sees no tags: documented. Tags are visible to
+  every API client the gateway admits; documented with the route.
+- **Routing by tag: `"model": "tag:<tag>"`** (user, 2026-11-22). A profile id never holds `:`
+  (`checks::valid_model_profile_id`), so the prefix cannot shadow an id. Among several served profiles
+  with the tag, item 14 sets the order (proposed: one already loaded on a running instance, then the
+  first by id); none is the unknown-model answer.
+- The director (step 14) reads and copies the record's sections with the profiles it holds and pushes
+  (a profile copied without its section arrives untagged); its design takes this with it.
+
+**Trust boundaries.** Unchanged in kind: tags are written only by a `pai` member through the manager
+(`configure`; the bff as the signed-in user through the `As` method), judged by the manager, which
+fails closed (a refused list writes nothing; an unknown id writes nothing). Readers are signed-in
+administrators (the Models page), any manager client (the record is readable as `assignments.ini`
+is), and later API clients through the gateway, who learn the tags and nothing else of the profile.
+
+**(7) Slices (each test first; Linux, the Windows code type-checked).**
+- **MT1. The record in `pai-core` and the manager.** `model_tags.rs`; `SetModelProfileTags` and its
+  `As` on D-Bus, the pipe and `ManagerClient`; `model-tags.ini` in `read_only_file`; the prune after
+  every pool write. Done when: `tags_of` matches any letter case and ignores orphans; `set` with `[]`
+  removes the section and keeps every other byte; `prune` drops only ids in neither pool text; an e2e
+  sets `["coding","fast"]` and reads `Tags = coding,fast` under `[<id>]`, through D-Bus and the pipe;
+  nine tags or `Bad Tag` is `server-bad-tags` and the record is unchanged; an id in neither pool file,
+  and `*`, is `no-model-profile-named`; a profile in `models.ini.disabled` is accepted; `SetModelProfileTagsAs`
+  for a non-member is refused and for a non-bff caller too; a client `WriteFile("model-tags.ini")` is
+  a bad name; a pool write that deletes a profile leaves the record without its section, a write that
+  keeps it leaves the record byte for byte; neither `models.ini` nor any `models@<id>.ini` changes on a
+  tags call.
+- **MT2. The bff and the GUI's rename.** Rows and the page document carry `tags`; `PUT
+  /api/profiles/model/{id}/tags`. Done when: `crates/bff/tests` show a row's `tags` from the stub's
+  record, `[]` with no record; 204 on a save and the stub received the list; 404, 422 `field` `tags`,
+  400 `tags-malformed`, 403 ending the session; the page's section revision is the same before and
+  after a tags save. In `pai-app`, a rename through the manager backend leaves the new id with the old
+  id's tags and the old section gone (a test against the backend seam). `fe/briefs/api-contract.md`
+  gains the route and fields (docs agent).
+- **MT3. The web UI** (designer's brief first): chips on the model profile page saved at once, labels
+  and a tag filter on the Models page, the shared suggestions of (5). Done when: the brief's criteria
+  pass and the UX check is green.
+- Item 14 takes (6); step 14 takes the director's line of (6).
+
+**(8) Decisions (user, 2026-11-22).** 1. A side record, not llama.cpp's `tags` key (the architect had
+recommended the key). 2. A tags-only save asks no restart. 3. One shared vocabulary for instance,
+server profile and model profile tags. 4. Routing by `"model": "tag:<tag>"`.
+
+### About and node info (user, 2026-11-22, `PLAN.md` "About and node info"): accepted (user, 2026-11-22), the manager reads the node
+
+The requirement: the web About page shows only the framework's version and the operating system, with
+its version, of the machine the web service runs on (the node's bff today, the director's in step 14).
+The host name and the engine and GPU runtime versions it shows today move to the node's info, which also
+gains every engine's version, the node's OS and version, and the GPU driver versions: the kernel
+driver's and the Vulkan driver's, per GPU.
+
+**What exists (checked 2026-11-22).**
+- `GET /api/version` answers `{"version"}`, `GET /api/node` answers `{"name", "api", "version",
+  "engines"}` (`crates/bff/src/node.rs` `document`); both are session-gated, ask the manager nothing
+  and leave the idle deadline alone (`Sessions::peek`, which still hands back the identity), and the
+  shell polls them (`crates/bff/README.md` "The node"). `engines` already lists every engine that ships
+  a versions file (`pai_core::versions::installed`), so Strata (13c) appears when its package writes
+  `versions/strata`: no new field is needed for "every engine".
+- A polled read that asks the manager already exists: `GET /api/instances/{id}/boot` peeks the session
+  and asks under `MANAGER_TIMEOUT` (5 s), 503 `client-unavailable` on no answer
+  (`crates/bff/src/control.rs` 146-162).
+- The engine probe gives no driver version: `--list-devices` prints name, description and memory only
+  (llama.cpp v1.0.0 `common/arg.cpp` 1149-1175), `ggml_backend_dev_props` has no driver field
+  (`ggml/include/ggml-backend.h` 167-184), and Vulkan's `driverName` reaches only a debug log line
+  (`ggml-vulkan.cpp` 5455). The manager's device probe (`ProbedGpus`, `service.rs` 500-635) runs
+  `llama-server --list-devices` as the manager itself (root, LocalSystem), bounded by
+  `GPU_PROBE_TIMEOUT` (30 s), through `pai_core::proc::run_hidden_probe_within`, and `Devices` is gated
+  on `control` asked quietly, the `As` form for a current `pai` member (`service.rs` 1820-1832): so the
+  engine's Vulkan ICDs are already loaded by a root child of the manager today.
+- The OS is read today only by `pai-app` (`crates/app/src/bench/host.rs` 166). The host's RAM and CPU
+  readers are `pai-core` `host.rs`, called by the manager (`devices`).
+- `ash` 0.38.0 (MIT or Apache-2.0) is already in `Cargo.lock` through `wgpu-hal` (the GUI's Slint):
+  with its `loaded` feature, `Entry::load` opens the platform's Vulkan loader at run time and returns
+  `LoadingError` when there is none (docs.rs, ash 0.38 `Entry`), so nothing links against libvulkan.
+
+**Facts and where the manager reads each.**
+
+| Fact | Linux | Windows |
+| --- | --- | --- |
+| OS name, version | `/etc/os-release`, else `/usr/lib/os-release`, never both: `NAME`, `VERSION_ID` (os-release(5)) | `RtlGetVersion` (ntdll): `"Windows"`, `<major>.<minor>.<build>` (Microsoft Learn, RtlGetVersion: documented as the kernel routine, ntdll listed as an export; chosen over `GetVersionEx`, whose answer depends on the caller's manifest) |
+| Kernel | `uname(2)` release | the same `<major>.<minor>.<build>` |
+| Engines and runtimes | unchanged: the packages' versions files, read by the bff | unchanged |
+| Kernel driver, one row per GPU | each `/sys/bus/pci/devices/*` whose `class` is `0x03xxxx` (VGA and 3D controllers, so a compute card, or NVIDIA without `nvidia-drm`, is listed): the bus id, `vendor`, the bound driver (the `driver` link's name) and `/sys/module/<driver>/version`, present only when the module sets `MODULE_VERSION` (kernel ABI `sysfs-module`): ROCm's DKMS amdgpu (`7.1.9.31600000` on this machine) and NVIDIA's `nvidia` (`kernel-open/nvidia/nv.c` 126) do, an in-tree amdgpu, i915 or xe does not, so `version` is `null` and the fe shows the kernel | each present device of the display class, through `CM_Get_DevNode_PropertyW`: `DEVPKEY_Device_DriverVersion` (the INF `DriverVer`, such as `32.0.15.6094`; Microsoft Learn, DEVPKEY_Device_DriverVersion), `DEVPKEY_Device_DriverProvider`, `DEVPKEY_NAME`, and the bus id from `DEVPKEY_Device_BusNumber` and `DEVPKEY_Device_Address` (domain taken as 0; unverified on hardware) |
+| Vulkan driver, per GPU | a child process `pai-manager vulkan-probe` (below): per physical device not of type CPU, `vkGetPhysicalDeviceProperties2` with `VkPhysicalDeviceDriverProperties` (`driverName`, `driverInfo`, `driverID`; core in Vulkan 1.2, else `VK_KHR_driver_properties`) and `VkPhysicalDevicePCIBusInfoPropertiesEXT` (`VK_EXT_pci_bus_info`) for the bus id (docs.vulkan.org refpages of both) | the same child; the loader `vulkan-1.dll` comes with the GPU driver |
+
+**The Vulkan reader.**
+- **Options.** (a) **A hidden subcommand `pai-manager vulkan-probe`, run as a child** with
+  `run_hidden_probe_within` under an 8 s bound, printing one JSON document on stdout that the manager
+  parses with caps (recommended). The child links `ash` (`loaded`): an ICD that hangs or crashes kills
+  the child, not the manager, and the bound frees the caller. (b) **The same code in the manager's
+  process**: no spawn, but every ICD (vendor code) is loaded into the long-lived root service, where a
+  hang or a crash takes the manager down and its memory stays mapped. (c) **The engine's probe**:
+  llama-server prints no driver field; a patch to `--list-devices` is ours to carry on every release.
+  (d) **`vulkaninfo`**: not shipped by our packages (vulkan-tools). (a) has the same exposure as today:
+  the device probe already loads the same ICDs as root; dropping the child to the `private-ai` user
+  (which has `render` and `video`) is a possible later hardening, not needed for parity.
+- **Fallbacks, each a fact, never an error:** no loader (`Entry::load` fails) or no ICD
+  (`vkCreateInstance` answers `VK_ERROR_INCOMPATIBLE_DRIVER`) gives `"vulkan": "none"` in the reply
+  and `vulkan: null` on every row; a child that times out, crashes or prints what does not parse gives
+  `"vulkan": "failed"`; a device below 1.2 without `VK_KHR_driver_properties` gives a row's `vulkan` with
+  `driver` and `info` `null`; a device without `VK_EXT_pci_bus_info` cannot be joined and becomes its own
+  row (below). `driverVersion` is not sent: its encoding is the vendor's (`ggml-vulkan.cpp` 1874-1876
+  decodes AMD's apart), while `driverInfo` already carries the readable version (Mesa's, NVIDIA's).
+- **Join.** A Vulkan device whose bus id matches a kernel row fills that row's `vulkan` (and its `name`
+  from `deviceName` when the row has none, as on Linux); an unmatched one is appended as a row with
+  `driver` and `version` `null`. The rule lives in the manager (`pai-core`), so the director gets the
+  same rows.
+- **Cost and cache.** A child spawn plus loader and ICD start, well under the bound (a guess, not
+  measured: the first slice's test run on this machine gives the figure for the README). The Vulkan
+  answer (success, `none` or `failed`) is cached for 10 minutes, so a polled page spawns at most one
+  child per 10 minutes and a userspace driver upgrade shows within that; concurrent callers share one
+  run (the `ProbedGpus` serial-probe pattern). The OS, kernel and sysfs or CfgMgr32 reads are not
+  cached: a few small reads per call.
+
+**The manager method: `NodeInfo` / `NodeInfoAs`.** One read, on D-Bus, the pipe and `ManagerClient`,
+gated exactly as `Devices` (`control` asked quietly; the `As` form only from the bff's account for a
+current `pai` member), because it may spawn a child. Answer:
+`{"os": {"name", "version", "kernel"}, "vulkan": "ok"|"none"|"failed", "gpus": [{"pci", "vendor",
+"name", "driver", "version", "vulkan": null | {"driver", "info"}}]}`, every text field a string or
+`null`; `vendor` the PCI vendor id as 4 lower-case hex digits (`1002`, `10de`, `8086`; the fe's strings
+name them); rows in bus id order, kernel rows first. Bounds: os-release read up to 4 KiB, each sysfs
+value up to 128 bytes and printable ASCII trimmed (the versions files' rule), each Vulkan string up to
+256 bytes, at most 32 rows, the child's stdout capped by `PROBE_STREAM_CAP`; a value outside these is
+`null`. A plain method rather than a field of `Devices`: the device list is the engine's view and its
+cold probe can take 30 s, the node info is the host's and polled. Additive, so it follows the
+playbook's protocol rule (local skew needs a broken install). Step 14: the director calls the node
+manager's `NodeInfo` over the mutual TLS channel, under Part 2's "Who may act on which node", and
+answers `GET /api/nodes/{node}` with the same object.
+
+**The bff's routes.**
+- `GET /api/version`, the About read (decision 3): `{"version", "os": {"name", "version", "kernel"}}`.
+  The bff reads `os` itself with the same `pai-core` reader (it is the web service's machine, and the
+  readers need no privilege: the bff's unit hides `/dev` and `/usr/lib/modules`, not `/etc` or `/sys`,
+  systemd.exec(5)). It keeps its rules: no manager, idle deadline unmoved, 401 or 200. In step 14 the
+  director's bff answers its own machine here, beside `nodes`.
+- `GET /api/node`, the node's info: today's `{"name", "api", "version", "engines"}` from the bff, plus
+  `os`, `vulkan` and `gpus` from `NodeInfoAs` as the signed-in user. Its rules, restated:
+  - **Idle deadline: still left alone.** It is a polled read; the session is read with `peek`, whose
+    identity is the `As` principal (as `boot_read` peeks).
+  - **Manager down or slow: a partial 200, not 503** (preference: the navigation's host name and the
+    versions must not vanish with the manager). `os`, `vulkan` and `gpus` are `null` (unknown, distinct
+    from `gpus: []`, a node with no GPU), plus `"nodeInfo": {"key": "client-unavailable", "args": []}`
+    so the page can say why; any other client failure is `"nodeInfo": {"key": "client-other", ...}`.
+    Without a failure, `nodeInfo` is absent.
+  - **A refusal of the user ends the session**, 403 `session-not-administrator`, as every `As` read.
+  - **Bound:** the bff waits `NODE_INFO_TIMEOUT` = 10 s (the child's 8 s plus the reads); the fe's 15 s
+    for a `GET` stays above it. No manager ask without a session: 401 `session-required` first.
+- No new route. The About page reads `/api/version` only; the host name, engines and runtimes, OS and
+  GPU drivers go to the node's info page or section (the designer's brief decides where).
+
+**Trust boundaries.** The bff to the manager is the existing `As` boundary (the manager trusts the
+bff's account for a principal and checks `pai` itself); the manager to its child is a process it
+spawns from its own executable, reading only stdout, capped and parsed as untrusted text. What a
+signed-in administrator learns is more fingerprinting detail (kernel, driver versions), behind the
+same session; nothing reaches a visitor. A caller without `control` cannot make the manager spawn the
+child (refused before the read, as `Devices`). Fails closed: an unreadable or malformed value is
+`null`, never a guess, and no failure of the reader fails `/api/node` as a whole.
+
+**Slices (each test first; Linux, the Windows code type-checked).**
+- **AN1. The host readers in `pai-core`.** `host::os(root)` and `host::gpu_drivers(root)` over a
+  fixture root; the Windows readers behind a seam. Done when: an `/etc/os-release` fixture gives
+  `Ubuntu`/`26.04`; with only `/usr/lib/os-release` that one is read, with both only `/etc`'s; a missing
+  or 5 KiB file is all `null`; a PCI tree with a `0x030000` amdgpu device and `module/amdgpu/version`
+  gives one row with its version, a `0x030200` nvidia device a row, a `0x020000` NIC no row, a driver
+  with no `version` file a row with `version: null`, an unbound device a row with `driver: null`; 40
+  display devices give 32 rows; the Windows code type-checks.
+- **AN2. The Vulkan probe and its join.** `pai-manager vulkan-probe` and its parser and join in
+  `pai-core`. Done when: the parser turns a fixture document into rows and refuses (as `failed`) a
+  document over the cap, a non-JSON one and strings over 256 bytes (cut to `null`); the join fills a
+  kernel row with a matching bus id, appends an unmatched device as its own row, and skips a CPU-type
+  device; a probe script that sleeps past the bound gives `failed` within bound plus 1 s; a script that
+  prints `none` gives `none`; two concurrent calls run the script once and a call within 10 minutes
+  runs it not at all (a clock seam). Run once by hand on this machine (the user's go-ahead, a GPU
+  read) to record the real rows and the time in the README.
+- **AN3. `NodeInfo` / `NodeInfoAs` in the manager.** Done when: an e2e over D-Bus and the pipe returns
+  the document from fakes; a caller without quiet `control` is refused and the probe never ran; `As`
+  for a non-member, and `As` from a caller that is not the bff, are refused; `ManagerClient::node_info`
+  decodes it.
+- **AN4. The bff's replies.** Done when: `crates/bff/tests` show `/api/version` with `os` from a
+  fixture root and the fake manager never connected; `/api/node` with the unchanged fields plus `os`,
+  `vulkan`, `gpus` from the fake manager, asked `NodeInfoAs` with the session's user; the idle
+  deadline unchanged after either read; a fake manager that does not answer within the bound gives
+  200 with the bff's fields, `os`/`vulkan`/`gpus` `null` and `nodeInfo` `client-unavailable`; a refusal
+  gives 403 `session-not-administrator` and the session ended; 401 with no session and the manager
+  never connected. `fe/briefs/api-contract.md` and `crates/bff/README.md` gain the fields (docs agent).
+- **AN5. The web UI** (designer's brief first): About shows version and OS only; the node's info shows
+  name, OS, engines and runtimes, and per GPU the kernel and Vulkan drivers. Done when: the brief's
+  criteria pass and the UX check is green.
+- Step 14 takes the director's call of `NodeInfo` and `GET /api/nodes/{node}`.
+
+**Decisions (user, 2026-11-22).** 1. The manager reads the node facts, through `NodeInfo` /
+`NodeInfoAs` added now (the architect had recommended the bff). 2. The Vulkan driver per GPU is included,
+read by the manager (the architect had recommended leaving it out). 3. About reads `/api/version`
+with `os` added. The architect's calls within them: a plain method gated as `Devices`, a child
+process for the Vulkan read, a partial 200 for `/api/node` when the manager is down, a 10-minute cache
+of the Vulkan answer.
+
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
