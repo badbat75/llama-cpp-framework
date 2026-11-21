@@ -110,3 +110,11 @@ new capability goes into the flyer (the `docs` agent). Say in the commit which o
 Their published previews (private), republished from the repo file after each change: flyer
 https://claude.ai/artifact/YWeQJxnxL67EqBDb1jdnYp, infrastructure https://claude.ai/artifact/3CoviYjx7ToXCnaAxACzm9,
 system https://claude.ai/artifact/E964mpfjYWoU5jToTUprJ3 (from a new session: publish with `url`).
+
+## Every new requirement updates the plan and the architecture at once (user, 2026-11-21)
+
+When the user states a requirement or changes one, put it in `PLAN.md` in its place in the order (with
+the user's date and words) and commit it in the same turn, without asking; recompute the roadmap dates.
+When it touches a component, protocol, identity, trust boundary, deployment or packaging shape, brief the
+`architect` in the same turn to record it in `ARCHITECTURE.md` (and in `docs/architecture/*.html` once
+built), proposed or decided. Tell the user in one line what changed in each.
