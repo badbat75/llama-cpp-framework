@@ -173,6 +173,13 @@ description: What the architect has learned about this project's components, int
   `--device` is parsed at the router's start (unknown name: it exits); `--fit` is on by default and
   fills unset placement; `tensor-split` is positional, extra weights ignored; `--list-devices` prints
   no PCI bus id (the props have it), so identical cards differ only by ordinal.
+- Layer and tensor facts (llama.cpp v1.0.0, checked 2026-11-21): the GUI's per-GPU "layer sliders"
+  are `tensor-split` weights stored as block counts (`gpu_split.rs` `Layout`, `set_blocks`), not a key
+  of their own. `-ot`'s device is an exact buffer-type name looked up among EVERY device, not the
+  `--device` subset (`common/arg.cpp` 229-259, `llama-model-loader.cpp` 1330-1345), so `-ot`,
+  `device-draft`, `mmproj-device` can escape a server profile's `Devices`. `--n-cpu-moe N` loops N
+  times (`common.h` 1291). `Shape` has no `block_count`/expert KVs; `Header.tensors` + `tensor_bytes`
+  list tensors without ggml.
 - History tiers (13d) must have each step a whole multiple of the previous one, or the fold is not
   exact: 720 points over 7 days would be 14 min, which 1 h does not divide (15 min used).
 - HF and models-folder facts (checked 2026-11-21): `hf.rs` curl runs with `-L` and takes the endpoint

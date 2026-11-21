@@ -2669,6 +2669,208 @@ RAM and CPU counts are read by root and given only to callers the gate admits.
 4. **RAM**: shown in the inventory, no budget yet; or a budget the check reads (allowing a CPU share and
    relaxing the strict full-GPU rule); or a limit the OS enforces (`MemoryMax=`, a job object).
 
+### Layers, MoE and tensor placement on the web model profile page (step 10, 2g and 2j): proposed (2026-11-21)
+
+The requirement (`PLAN.md`, order of 2026-11-21): after C2 and before slice 17, the web model profile page
+gets the GUI's per-GPU layer sliders (2g, which need the model's layer count), the Draft device and
+Vision GPU lists from the probed GPUs, and tensor placement, `override-tensor` (2j). This section is the
+backend; the designer's briefs follow it.
+
+**What exists (read 2026-11-21 at c0dac10).**
+
+- *The GUI's sliders are not a key of their own.* `pai-app` `gpu_split.rs` (module header, `Layout`,
+  `block_counts`, `set_blocks`): the per-GPU slider edits the **`tensor-split` weights as block counts**.
+  llama.cpp cuts `block_count + 1` positions (every block plus the output layer) by the normalized
+  weights; under partial offload the first `positions - n-gpu-layers` go to the CPU and the split runs
+  over the rest (`Layout::new(n_layer_all, n_gpu_layers)`, `n_gpu_layers` negative = all). A weight
+  vector summing to `Layout.count` IS the per-device count, so `set_blocks` stores the counts as the
+  weights (one slider up, the later rows give it back first). The view is per split mode: blocks only
+  under `layer`; `row` and `tensor` edit ratios; `none` keeps the head row. With no model read
+  (`Layout` is `None`) the table falls back to raw weights. The GUI reads `block_count`, `expert_count`,
+  `expert_used` from the header (`gguf.rs` `ModelInfo`, `models_tab.rs` 1196-1199); its "GPU layers"
+  and "MoE CPU layers" sliders run `0..=block_count` (`state.slint` 346, `models_page.slint` 483, 494),
+  the MoE one usable only on a MoE model.
+- *`override-tensor`* (`pai-app` `tensor_override.rs`): rules `<regex>=<buffer type>` joined by `,`; the
+  GUI's table builds them from canned kinds (`KINDS`, a layer range written as `blk\.(10|11)...`) or a
+  custom regex with `,` and `=` stripped (`sanitize_pattern`), the device from a dropdown of probed ids
+  plus `CPU`, unknown ids kept as `(custom)`; its picker and coverage lines read the model's tensor list
+  (`gguf::read_tensors`, through ggml). The shared rule today is `checks::override_tensor`: every rule has
+  a pattern and a device (`override-no-pattern` `[n]`, `override-no-device` `[n, pattern]`), plus the `;`/`#`
+  rule of `MODEL_PROFILE_TEXT_KEYS`.
+- *Keys on the web* (`checks.rs` 263-361): `tensor-split`, `split-mode`, `device`, `n-gpu-layers`,
+  `device-draft`, `mmproj-device`, `mmproj-offload` are already in `WEB_MODEL_PROFILE_KEYS`;
+  `n-cpu-moe`, `moe-cache-mib`, `override-tensor` (and the file picks) are in
+  `MODEL_PROFILE_KEYS_NOT_ON_WEB`. `n-cpu-moe` has no value rule (not in `MODEL_PROFILE_INT_KEYS`).
+- *Reading a model as root already happens*: the memory check resolves a profile's `model` (own key,
+  else the pool's `[*]`; absolute, else against the instances' working directory, which is node-wide:
+  `launch::instance_current_dir`) and reads every shard's header with `gguf_shape::local_shape`
+  (regular files only, header capped at `MAX_HEADER`), skipping a profile with a `FETCH_KEYS` key
+  (`service.rs` `estimated_of`, 2656). `Shape` has `layers` (from `blk.N.` tensor names) and `moe`, not
+  the header's `block_count` or expert counts; `Header.tensors` and `tensor_bytes` give every tensor's
+  name and size with no ggml.
+- *The bff cannot read the model*: `ProtectHome=yes`, and a `model` path may be anywhere (relative to
+  the instances' directory, under `/var/lib/private-ai`, 0750 for its data root); across machines
+  (Part 2) only the node sees its files. So the manager reads, as M3's `ModelFilesAs` does.
+
+**Facts** (llama.cpp v1.0.0, `build/linux/llama.cpp`, read 2026-11-21):
+
+1. `--n-cpu-moe N` throws below 0 and otherwise adds one CPU override per block `0..N`
+   (`common/arg.cpp` 2730-2738, `common/common.h` 1291-1298): a value above the block count matches
+   nothing, but the loop runs `N` times in the instance, so a huge `N` costs memory there.
+2. `--n-gpu-layers` takes an integer, `auto` or `all` (`common/arg.cpp` 2773-2789).
+3. `--override-tensor` splits on `,` and each rule at its first `=`, trims nothing, and looks the right
+   side up **exactly** among the default buffer type names of every device ggml loaded
+   (`common/arg.cpp` 229-259; `ROCm0`, `CUDA0`, `Vulkan0`, `CPU`): no `=` or an unknown name throws,
+   the instance's model never loads. The list is every device, **not** the `--device` subset.
+4. The loader compiles each pattern with `std::regex` (ECMAScript) and, on a match to a non-CPU buffer
+   type, uses it as is (`src/llama-model-loader.cpp` 1330-1345): an `override-tensor` (and likewise a
+   `device-draft` or `mmproj-device`, parsed by their own `parse_device_list`) can place weights on a
+   GPU outside the server profile's `Devices`; the memory check (R3) counts only `Devices`. A pattern
+   with a leading space (`a=CPU, b=ROCm0`) matches no tensor name and does nothing, silently.
+
+#### (1) The model facts: a manager read (`ModelInfo` / `ModelInfoAs`)
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. The manager reads the saved profile's model**, by profile id | one method on D-Bus and the pipe, one bff route; reuses `estimated_of`'s resolution | root parses a header at a path a `pai` member wrote: already true of the memory check | **Recommended** |
+| B. The manager reads a path the page sends (the unsaved form value) | the same plus a path rule (only under `paths::models_dir()`, canonicalized) | a probe of file names under that folder; a second resolution rule | later, with the M4 `model` picker, if the saved value proves too slow a loop |
+| C. The bff reads the file | none on the manager | cannot: `ProtectHome`, and no access across machines | rejected |
+
+**The method.** `ModelInfo(profile)` / `ModelInfoAs(principal, profile)`, the gate of reading
+`models.ini` (`control` asked quietly; the `As` form for the bff's account and a current `pai` member;
+refused with nothing read). The manager finds the section in `models.ini`, else `models.ini.disabled`
+(a switched-off profile has sliders too); none, or `*`: keyed `Refusal` `no-model-profile-named` `[id]`
+(already in `checks.rs` and both strings files). It resolves `model` exactly as `estimated_of` does (one
+helper shared by both, so the sliders and the memory check read the same file). Outcomes, all a
+success of the call:
+
+| Case | Reply |
+| --- | --- |
+| a `FETCH_KEYS` key (`hf-repo`, `model-url`, `docker-repo`) in the section | `info` null, `reason` `model-info-fetched` `[key]`; nothing read |
+| no `model` | `info` null, `reason` `model-profile-no-model` `[id]` (existing key) |
+| the path (or a shard) does not exist | `info` null, `reason` `model-info-missing` `[path]` |
+| not a regular file, not a GGUF, cut short, over 256 shards | `info` null, `reason` `model-info-unreadable` `[path]`; never the reader's text, so no byte of a non-GGUF file reaches the reply |
+| read | `info` = `{blockCount, moe, expertCount, expertUsed}` |
+
+`blockCount` is `<arch>.block_count`, else the number of `blk.N` blocks the tensors name (a new
+`Shape.block_count`, read in `shape_of`); `moe` is `Shape.moe` (routed-expert tensors); `expertCount`
+and `expertUsed` are `<arch>.expert_count` and `<arch>.expert_used_count`, 0 when absent (what the
+GUI's `ModelInfo` reads). In 2j the reply gains `tensors`: `[{name, bytes}]` from `tensor_bytes` over
+every shard, in file order, at most 20 000 entries, then `tensorsTruncated: true`. D-Bus and pipe carry
+the same fields (`model` the resolved absolute path, `info`, `reason` as `{key, args}`); additive while
+the protocol is in no release.
+
+**The `hf-repo` profile not yet downloaded.** (i) **Recommended now**: no facts (`model-info-fetched`);
+the page shows raw weights and plain number fields, as the GUI does with no model read. (ii) After M1 and
+M2: the bff reads the repo's remote header by HTTP range through M1's fixed-endpoint curl profile
+(`pai-app` `hf_fit` already does this for the GUI), so the facts come from huggingface.co; a later
+slice, only if asked. (iii) Finding the downloaded file in llama.cpp's cache layout under
+`paths::models_dir()`: rejected, the layout is llama.cpp's and moves between releases.
+
+**The bff route.** `GET /api/profiles/model/{id}/model-info` behind a session, the manager asked as the
+signed-in user (`ModelInfoAs`), on `MANAGER_TIMEOUT`; answers
+`{"model":"/abs/x.gguf"|null,"info":{"blockCount":64,"moe":true,"expertCount":128,"expertUsed":8}|null,"reason":{"key":"…","args":[…]}|null}`
+(2j adds `tensors`, `tensorsTruncated` inside `info`). Failures as every `As` read: 401 `session-*`, 403
+and a refusal ending the session, 404 `no-model-profile-named`, 503 `session-unavailable` and 504 on
+the deadline. It moves the idle deadline like any user read (it is asked on open and after a save that
+changes `model`, not polled).
+
+**Bounds and caching.** The header read is `local_shape`'s (8 MiB first read, `MAX_HEADER` cap per
+shard) with a 256-shard cap; no cache in the manager or the bff (one read per page open or `model`
+save; a `(path, size, mtime)` cache waits until a measured page is slow). Several concurrent reads are
+bounded by the bff's existing per-session handling; nothing new.
+
+#### (2) 2g: the keys and how the sliders map
+
+- **Per-GPU layer sliders write `tensor-split`**, already a web key: the weights are the block counts
+  of `gpu_split::Layout` under `split-mode` `layer` (absent = `layer`), exactly as the GUI stores them;
+  under `row` and `tensor` the page edits ratios, under `none` nothing. The fe reimplements `Layout`,
+  `block_counts` and `set_blocks` (pure arithmetic; the fe cannot link `pai-app`), pinned by the test
+  vectors of `gpu_split.rs`'s unit tests copied into the fe's tests. No server rule changes: any weight
+  list `tensor_split` accepts stays legal, and a hand-written ratio shows as its block counts.
+- **`n-gpu-layers`** (web already): the slider `0..=blockCount`, "auto" = key absent, as the GUI.
+- **`n-cpu-moe` moves to `WEB_MODEL_PROFILE_KEYS`** with a value rule: `("n-cpu-moe", 0..=4096)` in
+  `MODEL_PROFILE_INT_KEYS` (fact 1: below 0 never loads; 4096 is `shape_of`'s block cap, so no real model
+  is refused and a huge loop is). The slider shows only when `info.moe`; "auto" = absent.
+- **`moe-cache-mib` stays off the web**: the GUI refuses a value under its floor (`moe_cache::floor`,
+  `pai-app`), which needs the tensors and that code in `pai-core`; it comes with 2j's tensor list or
+  later (decision 4).
+- **Draft device and Vision GPU lists**: no backend change. `device-draft` and `mmproj-device` are web
+  keys with `checks::device_list`; the lists come from `GET /api/node/devices` (G2), each id as the probe
+  prints it, an id the probe lacks kept and flagged (G1's rule), `none` offered for `mmproj-device`.
+- **With R4/R5 (after slice 17)**: `device` leaves the page; the slider rows become positions over the
+  server profile's `Devices` (fact 4 of "Resources belong to the server profile"); the arithmetic is
+  unchanged, so 2g is not redone.
+
+#### (3) 2j: `override-tensor` on the web
+
+- **The key moves to `WEB_MODEL_PROFILE_KEYS`**; the body carries the INI value (rules joined by `,`, no
+  spaces), built by the page as the GUI's `render` does. The canned kinds: the fe keeps its own copy of
+  `KINDS` (id, pattern, block suffix; llama.cpp regex constants that change with llama.cpp only), and an
+  unknown pattern reads as custom, so a drift never rewrites a rule. Option B, serving `KINDS` from
+  `pai-core`, costs a move and a route for a dozen constants: not now.
+- **Value rules added to `checks::override_tensor`** (shape only, never against the probe, for G1's
+  reason), each keyed:
+  - `override-tensor-space` `[n]`: a rule whose pattern or device has a leading or trailing space
+    (fact 3: the device then never matches; fact 4: the pattern matches nothing);
+  - `override-bad-device` `[n, device]`: a device that is not `[A-Za-z0-9_]+`, or is `cpu` in another
+    case than `CPU` (exact match, fact 3).
+  Both run only when the key's line changed, through the same `known_key_line` exemption as
+  `comment_markers` (decision c1): a hand-written value already in the file never blocks saving other
+  keys of the section. The existing two rules keep running on the value.
+- **Not judged**: the regex itself. Rust's `regex` crate is not ECMAScript (`std::regex`), so it would
+  refuse some patterns llama.cpp takes and pass some it throws on; a bad pattern fails the model's load
+  in the instance, never the manager.
+- **The tensor list** for the picker and the coverage lines is `info.tensors` of (1), read by
+  `pai-core` (`tensor_bytes`), not ggml.
+- **Devices outside the server profile** (fact 4): the page lists the probed GPUs and `CPU`, and flags a
+  GPU outside the `Devices` of the server profiles the model profile is assigned to; no refusal now
+  (decision 3).
+
+#### (4) Slices (each test first; Linux, the Windows code type-checked)
+
+1. **L1 `ModelInfo` in the manager** (`pai-core`, `pai-manager`): `Shape.block_count`, the shared
+   resolution helper, the method on D-Bus, the pipe and `ManagerClient`. Done when, on fixture GGUFs
+   (`gguf_declared`): an absolute and a relative `model` give `blockCount`, `moe`, the expert counts;
+   a switched-off profile is answered; `hf-repo` gives `model-info-fetched` and opens no file (a path
+   that does not exist beside it still answers fetched); a missing file and a missing shard give
+   `model-info-missing`; a non-GGUF text file gives `model-info-unreadable` with none of its bytes in the
+   reply; an unknown id and `*` are `no-model-profile-named`; a non-`pai` principal is refused with
+   nothing read; `estimated_of` still passes its tests through the shared helper.
+2. **L2 the route** (`pai-bff`): `GET /api/profiles/model/{id}/model-info`. Done when, on a fake manager:
+   no session is 401 and asks nothing; the three shapes of the reply are relayed; a 404 and a session
+   ending refusal map as other `As` reads; `crates/bff/README.md`'s route table names it (docs agent).
+3. **L3 `n-cpu-moe` on the web** (`pai-core`, `pai-bff`): the key move and its range. Done when: the
+   `pai-app` pin test of the two lists is green; a body with `n-cpu-moe = -1` or `4097` is 422 with the
+   range key naming `n-cpu-moe`, nothing written; `24` saves.
+4. **2g web UI** (designer's brief first): the per-GPU sliders, `n-gpu-layers` and `n-cpu-moe` sliders,
+   the Draft device and Vision GPU lists. Done when: the designer's review; the fe's block arithmetic
+   passes the copied `gpu_split.rs` vectors.
+5. **J1 `override-tensor`** (`pai-core`, `pai-manager`, `pai-bff`): `tensors` in the reply, the key move,
+   the two rules with the exemption. Done when: a 3-shard fixture lists every tensor in file order; a
+   header of 20 001 tensors gives 20 000 and `tensorsTruncated`; `a=CPU, b=ROCm0` is 422
+   `override-tensor-space` `[2]`; `x=cpu` is `override-bad-device` `[1, cpu]`; the same values already on
+   disk in the section do not block a save of another key; `x(=CPU` is not refused.
+6. **2j web UI** (designer's brief first). Done when: the designer's review.
+
+Security: no new boundary. The read is the memory check's own (root opening a path a `pai` member
+wrote, regular files only, header bounded), now answered to a `pai` member through the `As` gate; the
+reply carries counts, names and sizes of a GGUF, never other bytes. The new keys are written under
+`configure` and judged by the manager as every model profile key; their failures fall on the
+instance's model load (facts 1, 3, 4), never on the manager.
+
+#### (5) Decisions for the user (recommendation first)
+
+1. **Which `model` the sliders read**: the saved one (the page re-reads after a save that changes
+   `model`); or the unsaved form value, a path the manager reads only under the models folder.
+2. **An `hf-repo` profile not yet downloaded**: no layer facts (raw weights, as the GUI with no model);
+   or, after M1/M2, the facts from the repo's remote header read by the bff.
+3. **A draft device, vision GPU or `override-tensor` target outside the server profile's `Devices`**:
+   flagged on the page, saved; or refused by the manager at the pair (as R3's memory check), which
+   also makes the server profile a hard bound on every device a model profile names.
+4. **`moe-cache-mib` on the web**: later, with its floor moved to `pai-core` after J1; or in 2g with the
+   range rule only (the GUI's floor not applied on the web).
+
 ### Choosing the model file on the web (step 10, "Choosing the model file"): accepted (user, 2026-11-21)
 
 The requirement (user, 2026-11-21): on the web model profile page, `hf-repo` offers the GGUF files
