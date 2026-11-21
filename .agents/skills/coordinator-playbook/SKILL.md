@@ -98,3 +98,12 @@ Exit code 0 does not mean the agent finished. Now and then (3 of 185 logs on 202
 ## The roadmap page is updated at every closed slice
 
 The user asked (2026-11-21) for a roadmap with estimated dates, kept current: https://claude.ai/artifact/9UmGaM7x8X9R34PKZKiK1P (private). After each slice commit, move its card to "Just closed" with the commit hash, put the next ones in "Now", redo the dates from the pace so far and change the "Status as of" line. A new session reads the page with the Artifact tool's `read` (its source is in the old session's scratchpad) and republishes to the same `url`.
+
+## Documents kept current at every closed slice (user, 2026-11-21)
+
+Beside the roadmap page: `docs/flyer/product-sheet.html` (the product vision for prospects: change it only
+when a capability is added or dropped, it keeps the generic "in development" footnote) and
+`docs/architecture/infrastructure.html` and `system.html` (what is built, planned parts labelled). At a
+slice close, check whether the slice changed any of them: a new service, account, port, route, method,
+package or file goes into the architecture pages (the `architect` updates them, with ARCHITECTURE.md); a
+new capability goes into the flyer (the `docs` agent). Say in the commit which of them changed, or none.
