@@ -107,3 +107,6 @@ when a capability is added or dropped, it keeps the generic "in development" foo
 slice close, check whether the slice changed any of them: a new service, account, port, route, method,
 package or file goes into the architecture pages (the `architect` updates them, with ARCHITECTURE.md); a
 new capability goes into the flyer (the `docs` agent). Say in the commit which of them changed, or none.
+Their published previews (private), republished from the repo file after each change: flyer
+https://claude.ai/artifact/YWeQJxnxL67EqBDb1jdnYp, infrastructure https://claude.ai/artifact/3CoviYjx7ToXCnaAxACzm9,
+system https://claude.ai/artifact/E964mpfjYWoU5jToTUprJ3 (from a new session: publish with `url`).
