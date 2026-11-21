@@ -3016,7 +3016,7 @@ or a new node agent (another account, unit, package and trusted caller). The ris
 - Port: a proposal, 8592 (the bff is 8590), set in the node's config, opened in the firewall by the
   administrator (the packages open nothing).
 
-### Identity and joining: a private CA held by the director (user, 2026-11-21)
+### Identity and joining: a private CA held by the director: accepted (user, 2026-11-21)
 
 Revised 2026-11-21 (user, `PLAN.md` step 14): links between the nodes and the director are secured by
 **a private CA the director holds**; this replaces the pinned self-signed fingerprints of 2026-11-15.
@@ -3042,8 +3042,7 @@ section 6.4), and the TLS client asks for that name whatever address it dials (r
 for a node, `<node>` being the registry name (letters, digits, `-`, at most 63). An address can change
 with no new certificate; no public name or public CA is involved.
 
-**Certificate profile** (preference, recommended: ECDSA P-256, the most widely supported key type in
-rustls' and rcgen's providers):
+**Certificate profile** (user, 2026-11-21: ECDSA P-256; the CA 5 years, rotated at 4):
 
 | Certificate | Key | SAN | Key usage / EKU | Lifetime |
 | --- | --- | --- | --- | --- |
@@ -3060,15 +3059,15 @@ client (at its own listener); the director trusts only its CA and, per node, the
 **No offline root** (user, 2026-11-21: "if the director is compromised there are no other problems left
 anyway"): one CA, its key on the director only; no intermediate, no root kept elsewhere.
 
-**Where the CA key lives.** `/var/lib/private-ai-director/ca/` (mode 0700, the director's user
-`private-ai-director`). Two options (question 1): **(a)** the key file encrypted at rest as a systemd
-credential and handed to the service with `LoadCredentialEncrypted=` (systemd.exec(5); `systemd-creds`
-binds it to the host key and to the TPM2 when present, systemd-creds(1)), so a copied disk or backup
-alone does not yield the key; the cost is that a TPM2-bound key cannot be restored on other hardware,
-so the director also writes, once at creation and on request, a passphrase-encrypted export for an
-offline backup; **(b)** a plain 0600 file, simplest, and anyone who reads the disk or a backup holds
-the fleet. Either way the process is unprivileged and hardened like the bff, the key is loaded only by
-the director, and a hardware key (PKCS#11) can come later.
+**Where the CA key lives** (user, 2026-11-21: a plain file). `/var/lib/private-ai-director/ca/ca.key`,
+mode 0600, owner and group `private-ai-director` (the director's system user), in a directory of mode
+0700 with the same owner, under the director's `StateDirectory=` (so systemd re-applies its owner and
+mode at each start). No systemd credential and no TPM binding. Consequences, accepted: whoever can read
+that file, root on the director's machine or any backup of its disk, holds the CA and so the fleet;
+backups of the director's disk carry the key and must be kept like it. An optional manual export,
+`pai-director ca export <file>` (a `pai` member on the director's machine), writes a copy encrypted with
+a passphrase typed at the prompt, for an offline copy; restoring it on a new director keeps every node
+joined. The process is unprivileged and hardened like the bff; a hardware key (PKCS#11) can come later.
 
 **The join** (the director still dials, the code still comes from the node):
 
@@ -3117,8 +3116,8 @@ by the local clock).
 **When a node's certificate expires** (the director unreachable for more than 30 days): the node runs
 on (its instances, boot settings and local clients never depend on the director); the director's
 handshakes to it fail and it reads `expired` in the hub; it cannot renew with an expired certificate.
-It comes back by a new join (`pai node enable` prints a new code; the instances and files are kept).
-A grace period for renewal after expiry is question 2.
+It comes back by a new join (`pai node enable` prints a new code; the instances and files are kept);
+there is no grace period (user, 2026-11-21).
 
 **Revocation: refused renewal plus a deny list.** Removing a node puts its name and current serial on
 the director's deny list, published as a CRL the CA signs and checked at **every** handshake the
@@ -3193,7 +3192,7 @@ them) and it cannot impersonate the director to other nodes.
 | The director down | Nodes run on: systemd and the SCM own the instances and the boot settings, local `pai-config`, `pai` and a local bff work; the hub's web UI shows `director-unavailable` |
 | The director gone for good | Each node's administrator runs `pai node leave`; nothing else on the node changes |
 | A node reinstalled, or its certificate expired or denied | Read as `untrusted`, `expired` or `removed`; it joins again |
-| The director's CA key lost | Every node joins again; with question 1 (a), the offline export restores it |
+| The director's CA key lost | Every node joins again, unless the optional manual export restores it |
 | Version skew | Below |
 
 ### Packaging, upgrades and version skew
@@ -3287,9 +3286,10 @@ type-checked like the rest of the Windows code.
    (including the API key in reads); each change it makes is logged with its principal and the
    signer's signature; a command unsigned, signed by a certificate without the private EKU, outside
    the 5-minute window, or with a replayed nonce is refused.
-5. **The director.** Crate and binary, the CA (question 1's storage), its leaves and the signer, the
-   registry, `add` against an in-process node. Done when: the CA key is created with the chosen
-   protection and mode; `add` with a code issues the node's certificate; a node presenting a
+5. **The director.** Crate and binary, the CA (a plain 0600 file), its leaves and the signer, the
+   registry, `add` against an in-process node. Done when: the CA key is created as `ca.key` 0600
+   `private-ai-director` in a 0700 directory; `ca export` writes a passphrase-encrypted copy that a
+   fresh director imports and then still verifies the nodes' certificates; `add` with a code issues the node's certificate; a node presenting a
    certificate of another CA reads `untrusted`, an expired one `expired`; a stopped node reads
    `unreachable` within the timeout while another answers.
 6. **Its local interface.** The protocol with `node` and principal on a Unix socket, the bff's uid
@@ -3359,3 +3359,5 @@ credential (host key, plus TPM2 when present) with a passphrase-encrypted offlin
 renews an expired certificate within a grace period (for example 30 more days) when the node is not
 denied, which weakens revocation by as much. 10. **Key type**: ECDSA P-256; or Ed25519. 11. **CA
 lifetime**: 5 years, rotated at 4; or 10 years.
+Answers (user, 2026-11-21): 8. a plain 0600 file (not the architect's recommendation), with the optional
+manual export; 9. it joins again, no grace; 10. ECDSA P-256; 11. 5 years, rotated at 4.

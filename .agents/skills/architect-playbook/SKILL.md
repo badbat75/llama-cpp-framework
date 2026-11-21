@@ -192,3 +192,7 @@ description: What the architect has learned about this project's components, int
 - systemd re-applies `StateDirectoryMode=` to EVERY listed `StateDirectory=` at each start and chowns
   one recursively to `User=`/`Group=` when the owner differs (systemd.exec(5)): a mode or group set by
   tmpfiles on such a folder is undone; keep shared folders (the models folder, group `pai`) out of it.
+- Director CA decisions (user, 2026-11-21): plain 0600 key file (backups carry it; manual passphrase
+  export only), no grace for an expired node (rejoin), P-256, CA 5 years rotated at 4, no offline root.
+  The user overrode two security recommendations this day (path, key at rest): state the exposure
+  plainly and let them choose.
