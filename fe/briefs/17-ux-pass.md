@@ -49,13 +49,13 @@ hand: `ModelProfiles.tsx` ~298, `InstancePage.tsx` ~656; moving them to `useOpti
 nothing the user sees, so it is a refactor for the coder's own time, not a slice), the run controls'
 pending and timeout texts, the Unsaved changes dialog, the not-found page.
 
-Not proposed (questions for the user, section 4): Start/Stop on the Overview tiles; code-splitting
-the bundle with `React.lazy` and `Suspense`.
+Asked and answered (section 4): Start/Stop on the Overview tiles, yes (U17h); code-splitting the
+bundle with `React.lazy`, no.
 
 ## 2. Order
 
-U17a, U17c, U17b, U17e, U17d, U17f, U17g. Each stands alone; U17g comes last because it fades what
-U17a and U17b add.
+U17a, U17c, U17b, U17h, U17e, U17d, U17f, U17g. Each stands alone. U17h follows U17b because both
+change the tile and its tests; U17g comes last because it fades what U17a and U17b add.
 
 ## U17a. Skeletons while loading
 
@@ -253,6 +253,70 @@ the identity's calm). It applies to: the content that replaces a skeleton (U17a)
 3. **17g.3** The UX check passes with `reducedMotion: 'reduce'` and `'no-preference'` (the designer
    runs both).
 
+## U17h. Start and Stop on the Overview tiles
+
+User (2026-11-21, Q1): yes. React: none new. The tiles read the shared `InstancesStore`, and each tile
+keeps its own run state. **Rule**: the instance page's run controls (`InstancePage.tsx` ~340 to 460,
+brief 01 40a and on) brought to each tile, with the same states, cadence and refusals. The
+differences: only **Start** and **Stop** (Restart stays on the instance page), and texts that name
+the instance, because several tiles speak in one page. Under the tile's facts sits a
+`div.run-actions` (the existing class) with two secondary buttons. Their visible text is `Start` /
+`Stop` (`run-start`, `run-stop`); their accessible name, set with `aria-label`, is `Start <id>` /
+`Stop <id>`, which begins with the visible text ([2.5.3](https://www.w3.org/TR/WCAG22/#label-in-name)).
+After the buttons, the tile's own `p role="status"` (`.run-status`) and, on a failure,
+`p role="alert"` (`.run-alert`) with a Sign in button when the session ended. Buttons that cannot act
+are `aria-disabled` and keep focus ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)). **One write
+at a time per tile**: while a tile's action runs, both its buttons are `aria-disabled`; other tiles
+stay usable. After a 2xx the list is re-read every `ACTION_MS` (1 s), as on the instance page, until
+the tile's state settles or the deadline passes (a minute for Start, six minutes for Stop).
+
+| Key | English |
+|---|---|
+| `tile-start` | `Start {0}` |
+| `tile-stop` | `Stop {0}` |
+| `tile-starting` | `Starting {0}…` |
+| `tile-stopping` | `Stopping {0}…` |
+| `tile-started` | `{0} started.` |
+| `tile-stopped` | `{0} stopped.` |
+| `tile-ended-failed` | `{0} is in the Failed state. Its log on the server says why.` |
+| `tile-timeout` | `{0} did not reach the expected state within a minute. Its state keeps updating.` |
+| `tile-timeout-stop` | `{0} did not reach the expected state within six minutes. Its state keeps updating.` |
+
+`{0}` is the instance id. Failure texts are the instance page's, unchanged (its `failureText`).
+
+1. **17h.1** `en_US.json` has the nine keys with exactly that text.
+2. **17h.2** Each tile shows, after its facts, buttons with visible text `Start` and `Stop` and names
+   `Start <id>` / `Stop <id>`; no Restart. Tab order in a tile: the id link, Start, Stop.
+3. **17h.3** Inactive by state, as `inactiveIn`: `active` Start; `inactive` and `failed` Stop;
+   `activating` and `deactivating` both; an unknown state neither. A click on an `aria-disabled`
+   button sends nothing.
+4. **17h.4** Clicking `Start coder` sends one `POST /api/instances/coder/start` with no body; that
+   tile's status reads `Starting coder…` and both its buttons are `aria-disabled`; `Stop default`
+   on another tile stays active and sends its own POST when clicked.
+5. **17h.5** After 204, `GET /api/instances` is sent every 1 s; when `coder` reads `active` the
+   status reads `coder started.`, the buttons follow the state, and focus has stayed on
+   `Start coder` throughout. Stop works the same way with `coder stopped.` on `inactive`.
+6. **17h.6** Reaching `failed` shows `coder is in the Failed state. Its log on the server says
+   why.`; no settled state by the deadline shows `tile-timeout` (Start) or `tile-timeout-stop`
+   (Stop) with `coder`, the buttons follow the state again, and the 1 s re-reads stop (the 5 s poll
+   goes on).
+7. **17h.7** Each refusal shows in that tile's `role="alert"` the instance page's text for the same
+   reply (404 `instance-not-found` with the id; 503 `api-client-unavailable`; 403
+   `client-not-authorized`; 422 unknown key `api-other`; 400, 502, a body that is not JSON and a
+   network failure `request-failed`); the status is empty; the buttons follow the state.
+8. **17h.8** 401: the alert `session-ended-retry` and a `Sign in` button; a sign-in that keeps the
+   page removes the alert and puts focus back on the button that was clicked; nothing is resent.
+   403 `session-not-administrator`: `session-revoked` with `Sign in`, as on the instance page.
+9. **17h.9** Opening the instance page from a tile during a run shows the state the store read; the
+   Overview unmounting stops that tile's re-reads (no request after the unmount).
+10. **17h.10** Layout: no new class; the tile's buttons are `.run-actions` buttons; the UX check's
+    `overview-tiles` state at 320 px and 200 % text has no sideways scroll.
+
+Tests that change: tests of the tile's tab stops and content (`InstanceTiles.test.tsx`, the H6 tile
+tests in `Overview*.test.tsx`), which expected the id link as the tile's only control; tests that
+count `role="status"` regions on the Overview. `fe/ux/check.js` `overview-tiles` now has buttons in
+each tile.
+
 ## 3. Accessibility (WCAG 2.2 AA), across the slices
 
 - Skeletons are `aria-hidden` and the status text carries the state
@@ -270,12 +334,10 @@ the identity's calm). It applies to: the content that replaces a skeleton (U17a)
 - New targets: the sort buttons, at least 24 px high; Copy versions at `--control-h`
   ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)).
 
-## 4. Questions only the user can answer
+## 4. Questions answered by the user (2026-11-21)
 
-- **Q1** Start and Stop on each Overview tile, so the admin need not open the instance page? It
-  reuses the run controls' rules, about 8 criteria. Recommended: yes, as U17h after this pass.
-- **Q2** Split the bundle with `React.lazy` + `Suspense` (the model profile page is most of its
-  389 kB)? Served from the same host, so the gain is small. Recommended: no, for now.
+- **Q1** Start and Stop on each Overview tile: **yes**, U17h.
+- **Q2** Split the bundle with `React.lazy` + `Suspense`: **no**, not for now.
 
 ## 5. Out of scope
 
