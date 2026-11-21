@@ -1395,8 +1395,8 @@ recorded:
 | `SetServerProfile(instance, profile)` | `(ss)` | `NoInstance`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`, `UnresolvableHost`, `load-on-startup-over-max` (the new cap against the instance's render, even when the count does not rise), `Io` when a file it reads cannot be read. The profile the instance already names answers Ok and writes nothing. Never restarts the instance: the switch applies at its next start, and until then the old address stays bound while the checks judge the new one, so another instance given the old address fails at its start, not at the save |
 | `CreateServerProfile(engine, profile, port)` (port `0` = absent, answer 2 below) | `(ssq)` | `unknown-engine`, `server-profile-bad-id`, `ServerProfileExists`; writes `render_for(ServerConfig { port, ..Default }, true)` (a create-if-absent under the lock, so it never overwrites) |
 | `DeleteServerProfile(engine, profile)` | `(ss)` | `NoServerProfile`, `ServerProfileInUse` |
-| `CreateInstance(engine, id, serverProfile)` (replaces `(engine, id, port, tags)`: port and tags are the profile's) | `(sss)` | `unknown-engine`, `instance-bad-id`, `InstanceExists`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`; writes its `instances.ini` section, then an empty render; assigned no model profile; boot off |
-| `RemoveInstance(id)` | `(s)` | as (d); removes the service, the `assignments.ini` section, the render, then the `instances.ini` section last; the server profile stays in the pool |
+| `CreateInstance(engine, id, serverProfile)` (replaces `(engine, id, port, tags)`: port and tags are the profile's) | `(sss)` | `unknown-engine`, `instance-bad-id`, `instance-exists` (keyed refusals, slice 16), `NoServerProfile`, `ServerProfileInUse`, `AddressInUse`; writes an empty render, then its `instances.ini` section last (slice 16); assigned no model profile; boot off |
+| `RemoveInstance(id)` | `(s)` | as (d), the refusals keyed `instance-protected`, `instance-running` (slice 16); removes the service, the `assignments.ini` section, the render, then the `instances.ini` section last; the server profile stays in the pool |
 | `ReadFile`/`WriteFile`/`WriteFileIf` | unchanged | names: `server@<profile>.ini` (needs `control` to read, as today), `models.ini`, `models.ini.disabled`; `instances.ini` and `assignments.ini` read only; `models@<id>.ini` `BadFileName` |
 
 New `ManagerError`s: `NoServerProfile(profile)`, `ServerProfileInUse(profile, instance)`,
@@ -1940,6 +1940,104 @@ router's file is the same; `running` stays "the effective set changed and the in
 out: the save's `None if !changed => list_instances()` (`model_profiles.rs` 1062): no record means
 no instance is given the profile, so `restart: []` and no state asked.
 
+*Slice 16's decisions (2026-11-21, architect; each a preference unless sourced).*
+
+- **One round**, the size of slice 14: the two manager methods with their `As` forms on D-Bus, the pipe
+  and `ManagerClient` (`create_instance`, `remove_instance`), the start refusal, and the bff's two routes.
+  Inside the round the tester orders: the start refusal first (a created instance has an empty render),
+  then create, remove, the bff. If the red set is too big for one coder run, cut at the client: 16a the
+  manager and its transports, 16b the bff. Protocol stays 3 (no release carries it; last tag 2.4.0).
+- **Refusals are keyed `Invalid` refusals, not new variants** (changed from (d) and (d')'s
+  `InstanceExists`, `InstanceProtected`, `InstanceRunning`, `NoModelProfiles`): `Refusal` already crosses
+  both transports and `ClientError` decodes it, so no `ManagerError`/`ClientError`/D-Bus/pipe arm is
+  added four times. New keys in `checks.rs`'s list, `Refusal::text` and both strings files, one value
+  each, the id: `instance-bad-id`, `instance-exists`, `instance-protected`, `instance-running`,
+  `instance-no-model-profiles`.
+- **`Start`, `Restart`**: after `existing_id`, before any service call (so a restart never stops a
+  running instance it cannot start again), `instance-no-model-profiles` [id] when
+  `launch::has_model_profiles_in(paths::instance_models(id))` is false; a missing render is refused
+  (fails closed, the launch would refuse it anyway, `launch.rs` 247).
+- **`CreateInstance(engine, id, serverProfile)`** `(sss)`, under `configure` and `writing`, one action
+  record (target the id). Checks in order, each writing nothing: `unknown-engine` (`known_engine`);
+  `instance-bad-id` [id] when `valid_instance_id` refuses (a refusal, not `InvalidId`: it is the create's
+  input, 422 with a field); the record read with `read_record` (`Io` on a failure, never "absent");
+  `instance-exists` [id] when a section has the id; `NoServerProfile` (`paths::instance_ini` none or no
+  file); `ServerProfileInUse` (`record_holder`); `UnresolvableHost` and `AddressInUse` from
+  `check_binding(&binding(profile), |_| false)`, which also judges `[Bff] Listen` (slice 8's walk: the
+  new instance has no current profile to skip). No `ModelsMax` check: the render loads nothing. Writes,
+  record last: (1) a stale `[id]` section of `assignments.ini`, only from a hand edit, deleted
+  (`ini::text::delete_section`; no write when absent), so the new instance is assigned nothing; (2) the
+  render `models@<id>.ini` from `render_of` (empty after (1)); (3) the section `[id]` with
+  `ServerProfile = <profile>` appended to `instances.ini` (a newline first when the text does not end
+  with one). The record write is the instance's birth: a failure before it leaves no instance, only a
+  render no launch reads (rewritten by the next create of that id). **No service call** on either OS:
+  systemd's template `llama.cpp@.service` serves any id and a new id has no `wants/` link, so boot is
+  off; Windows creates `llama.cpp_<id>` at its first `Start` or `SetBootEnabled` with a demand start
+  (`scm.rs` `start`, `windows.rs` `service_spec`), and `sync` at the manager's start. A link left by hand
+  for a reused id is the administrator's.
+- **`RemoveInstance(id)`** `(s)`, same guard and record. Checks: `InvalidId`; record read (`Io`);
+  `NoInstance`; `instance-protected` for `default`; `Status` must be `inactive` or `failed`, anything
+  else (and a `Status` failure, `Service`) `instance-running` or the error: never remove what cannot be
+  seen stopped. Then, each step idempotent (absent is success), record last: (1) new
+  `ServiceControl::remove(id)`; (2) the `assignments.ini` section; (3) `remove_file` of the render, its
+  path from `paths::instance_models` (the id checked first: no path is built from an unchecked id);
+  (4) the `instances.ini` section (`delete_section`). A failure halfway leaves a listed, stopped
+  instance that a second remove finishes. Stay: the server profile, the model profiles, `state/<id>`
+  (a later instance of that id finds its snapshots), the Windows log, the journal. Accepted race: a
+  `Start` (which does not take `writing`) between the status check and (4) leaves a running unit with
+  no record; `Stop` needs only a valid id, so it can still be stopped, and its launch, reading the
+  record, fails `NoConfig` if it starts after (4).
+- **`ServiceControl::remove`**. Linux (`SystemdService`, the manager runs as root, no `User=` in
+  `private-ai-manager.service`, so systemd asks polkit nothing, as for today's `EnableUnitFiles`):
+  `DisableUnitFiles([llama.cpp@<id>.service], false)`, `Reload`, then `ResetFailedUnit`, its error
+  ignored (a unit not loaded has nothing to reset), so a reused id does not read `failed`
+  ([org.freedesktop.systemd1(5)](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.systemd1.html)).
+  Windows (`ScmService`): `gate.cancel(id)` first (a restart's delayed start would otherwise
+  re-create the service through `start`), then `DeleteService`; `ERROR_SERVICE_DOES_NOT_EXIST` (1060,
+  never started) and `ERROR_SERVICE_MARKED_FOR_DELETE` (1072) are success; a create of the same id
+  while the service is marked fails at its `Start` with 1072 ((d)). Type-checked only.
+- **The bff**, both routes behind the session gate (401 `session-required`, manager never asked),
+  `sessions.current`, the call `As` the signed-in user under `write_timeout`, `NotAuthorized` 403
+  `session-not-administrator` ending the session, no manager or past the deadline 503
+  `client-unavailable`, else 502 `client-other` (slice 15's rules):
+  - `POST /api/instances` `{"engine", "id", "serverProfile"}` -> 201 `{id}`. 400 `instance-malformed`;
+    422 `unknown-engine` `field` `engine`, `instance-bad-id` `field` `id`; 409 `instance-exists` [id];
+    404 `client-no-server-profile` [profile] (as slice 15's switch); 409 `client-server-profile-in-use`
+    [profile, instance]; 422 `client-address-in-use` [instance], `client-unresolvable-host` [host], `field`
+    `serverProfile`.
+  - `DELETE /api/instances/{id}` -> 204. 404 `client-no-instance` (`NoInstance`, `InvalidId`); 409
+    `instance-protected` [id], 409 `instance-running` [id]; 502 `client-service-failed` (`Service`, the
+    message kept out of the body, as `control.rs`).
+  - `POST .../start` and `.../restart`: 409 `instance-no-model-profiles` [id].
+  - `GET /api/instances` items gain `removable`: `id != "default"` (the one protected id; whether it
+    runs is `state`, and the DELETE refuses a running one). Additive.
+- **Security code (mutants):** both methods' `configure` gate and principal (`As` carries it; a mutant
+  dropping `authorize_as` or `acting_for` fails a test), `valid_instance_id` before any path (a `../x`
+  id deletes and writes nothing), `default` protected, a running or unreadable state refused, record
+  last in both orders; the bff's session gate and `As`. Not security code: the body parse, `removable`.
+  Trust: unchanged from (d): a compromised bff can, during a member's session, create instances on free
+  addresses and remove stopped ones other than `default`.
+- **The web UI needs a slice** (slice 17, the designer's brief: a create form and a remove action);
+  this round is backend only, every reply change additive. A `pai instance create|remove` waits until
+  asked (default taken, user away (2026-11-21)).
+
+**Slice 16 done when** (test first; Linux, the Windows code type-checked): `pai-manager`, on D-Bus and
+the pipe, with fakes: `Start` and `Restart` of an instance whose render holds only `[*]`, or none, are
+`instance-no-model-profiles` with no service call (no stop for `Restart`); `CreateInstance` writes the
+section naming the profile, an empty render and no service call, its new instance listed by
+`Instances()` and `BootEnabled` false, and each refusal above writes no file (`unknown-engine`, `instance-bad-id`
+for `../x` and `A`, `instance-exists`, `NoServerProfile`, `ServerProfileInUse`, `AddressInUse` against an
+instance and against `[Bff] Listen`, a non-`configure` caller); a stale `assignments.ini` section of the
+id is gone after a create; `RemoveInstance` of a stopped instance calls `remove` once, then removes the
+`assignments.ini` section, the render and the record section, leaving the profile and other instances'
+bytes; `default`, an active, activating or deactivating one, a `Status` failure, an unknown or invalid
+id each write nothing and call no `remove`; a `remove` failure leaves the record section and a second
+call finishes; the systemd stand-in records `DisableUnitFiles`, `Reload`, `ResetFailedUnit` (its error
+ignored). `pai-bff`, from the recording fake: both routes 401 with no call, 403 ending the session,
+each refusal's status, key, `args` and `field`, `CreateInstanceAs`/`RemoveInstanceAs` carrying the
+principal; start and restart 409 `instance-no-model-profiles`; `removable` false for `default` only.
+Clippy, fmt and the Windows check green per crate; mutants on the security code above.
+
 **Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
 
 4. **The rename** (13a), no behaviour change, across `pai-core`, `pai-manager`, `pai-app`, `pai-cli`,
@@ -2006,8 +2104,9 @@ no instance is given the profile, so `restart: []` and no state asked.
     `SetServerProfile` answers nothing about a restart: the route reads `Status` after the switch and
     answers `{running}`, true when the instance must be restarted to apply it. Decisions and "done
     when" under "Slice 15's decisions" before this list; backend only, the web UI in 17.
-16. **`CreateInstance`, then `RemoveInstance`** (two slices, `NoModelProfiles` at start), then the bff's
-    `POST` and `DELETE /api/instances` (old 11, 12).
+16. **`CreateInstance`, `RemoveInstance`**, the start refusal `instance-no-model-profiles`, and the bff's
+    `POST` and `DELETE /api/instances` (old 11, 12): one round (cut at the client if too big). Decisions
+    and "done when" under "Slice 16's decisions" before this list; backend only, the web UI in 17.
 17. **The web UI** (the web UI session, designer's brief first), then **the estimate as a read** (old 13, 14).
 
 Then the docs agent: AGENTS.md (the overview, "Key conventions" file names), "Through the manager",

@@ -145,3 +145,8 @@ description: What the architect has learned about this project's components, int
   global switch alone (an `on` override serves a switched-off profile). The fe's type guards check
   the fields they need and ignore extra ones (`fe/src/ModelProfiles.tsx`), so additive reply fields
   let a backend slice land without the fe.
+- A new refusal is cheapest as a keyed `checks::Refusal` (`ManagerError::Invalid`): it already crosses
+  D-Bus and the pipe and `ClientError` decodes it; a new `ManagerError` variant needs an arm in
+  `service.rs`, `dbus.rs`, `pipe.rs` and `client.rs`. Add the key to `checks.rs`'s list, `Refusal::text`
+  and both strings files. Windows `ScmService::start` and `set_boot_enabled` create a missing service,
+  so a remove must cancel the restart gate first; systemd's template needs no create (checked 2026-11-21).
