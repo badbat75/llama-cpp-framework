@@ -1029,6 +1029,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     with item 13's machine-wide state), the endpoint fixed to huggingface.co, every models folder of the
     node's server profiles grouped by folder. Slices M1 listing into `pai-core`, M2 `GET /api/hf/files`,
     M3 the manager's `ModelFilesAs` and `GET /api/node/model-files`, M4 the pickers (designer first).
+    Then (user, 2026-11-21): the Hugging Face token is handled through authentication, for gated and
+    private repos and downloads: the architect designs it with item 13's machine-wide state (options:
+    "Sign in with Hugging Face" OAuth from the web UI, or a token an administrator enters; stored once by
+    the manager, used by the bff's listing and the instances' downloads, never shown back), a slice M5.
     **Tags as chips** (user, 2026-11-21): the instance tags field becomes a row of chips: a round "+"
     that, clicked, opens an oval input for one label; confirmed, it becomes a chip and a new "+"
     follows. While typing, the labels already used (on any instance or server profile) are suggested.
