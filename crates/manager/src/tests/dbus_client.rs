@@ -183,6 +183,21 @@ pub(crate) fn manager_dbus_client_e2e() {
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
     std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
     std::fs::write(sys.join("instances.ini"), record).expect("write instances");
+    // A start loads the instance's render and refuses one with nothing to run.
+    // The render is the manager's, from the pool and the assignment, so the
+    // fixture assigns the profile and writes the render it renders.
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\nQwen3.8-27B = on\n\n[broken]\nQwen3.8-27B = on\n",
+    )
+    .expect("write assignments");
+    for id in ["default", "broken"] {
+        std::fs::write(
+            sys.join(format!("models@{id}.ini")),
+            "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+        )
+        .expect("write render");
+    }
     let alice = Caller(":1.42".into());
 
     // ── No sender: every change refused, nobody asked ────────────────────
@@ -618,13 +633,16 @@ pub(crate) fn manager_dbus_client_e2e() {
     {
         let c = core(true, &[]);
         let (_server, client) = connect(&c, None);
+        let assignments =
+            std::fs::read_to_string(sys.join("assignments.ini")).expect("assignments");
         assert_eq!(
             client.set_model_profile("default", "Qwen3.8-27B", "on"),
             Err(ClientError::NotAuthorized),
             "no sender, no assignment"
         );
-        assert!(
-            !sys.join("assignments.ini").exists(),
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).expect("assignments"),
+            assignments,
             "the refused call writes nothing"
         );
         // SSP-B-PRE-1 BEGIN (pre-existing red: the verb, not a pin)
@@ -1336,6 +1354,16 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
         "[default]\nServerProfile = default\n",
     )
     .expect("write instances");
+    // A start loads the instance's render, which the manager renders from the
+    // pool and the assignment: these pins are about the caller, so `default`
+    // has a model profile assigned and the render that names it.
+    std::fs::write(sys.join("assignments.ini"), "[default]\nQwen3.8-27B = on\n")
+        .expect("write assignments");
+    std::fs::write(
+        sys.join("models@default.ini"),
+        "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+    )
+    .expect("write render");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // polkit refuses this caller everything, and would challenge it for

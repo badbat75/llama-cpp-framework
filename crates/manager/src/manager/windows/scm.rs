@@ -30,6 +30,9 @@ use windows_sys::Win32::System::Services::{
 
 /// `ERROR_SERVICE_DOES_NOT_EXIST`: open the service to create it.
 const NO_SERVICE: u32 = 1060;
+/// `ERROR_SERVICE_MARKED_FOR_DELETE`: the service is already going away, and
+/// is gone once the last handle to it closes.
+const MARKED_FOR_DELETE: u32 = 1072;
 /// `ERROR_INVALID_PARAMETER`: an id the core should have refused.
 const INVALID: u32 = 87;
 /// `ERROR_SERVICE_REQUEST_TIMEOUT`: a restart whose stop never ended.
@@ -197,6 +200,23 @@ impl ServiceControl for ScmService {
             }
         });
         Ok(())
+    }
+
+    /// Take the service away. `DeleteService` marks it: the SCM removes it once
+    /// the last handle closes and no process runs it, so a service already
+    /// marked is as good as gone, and one that never existed has nothing to
+    /// take away. The delayed start of a restart is cancelled first, so a start
+    /// waiting on a stop cannot bring the service back after it.
+    fn remove(&self, id: &str) -> Result<(), ServiceError> {
+        let name = service_name(id).ok_or_else(|| scm_error(id, INVALID))?;
+        self.gate.cancel(id);
+        let deleted = open_scm(SC_MANAGER_CONNECT)
+            .and_then(|scm| open_service(&scm, &name, DELETE))
+            .and_then(|service| ok(unsafe { DeleteService(service.0) }));
+        match deleted {
+            Ok(()) | Err(NO_SERVICE) | Err(MARKED_FOR_DELETE) => Ok(()),
+            Err(code) => Err(scm_error(id, code)),
+        }
     }
 
     fn status(&self, id: &str) -> Result<UnitState, ServiceError> {

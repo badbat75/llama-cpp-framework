@@ -28,7 +28,8 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// `Instances`, the list with each instance's tags, and `SetInstanceTags`
 /// with its `As` form; 3 also carries `CreateServerProfile` and
 /// `DeleteServerProfile`, each with its `As` form, and `ServerProfiles`, the
-/// list of the node's profiles.
+/// list of the node's profiles, and `CreateInstance` and `RemoveInstance`,
+/// each with its `As` form.
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -62,6 +63,10 @@ enum Request {
     CreateServerProfile(String, String, u16, Option<Principal>),
     /// `engine`, `profile`: removes a server profile no instance points at.
     DeleteServerProfile(String, String, Option<Principal>),
+    /// `engine`, `instance`, `server_profile`: creates an instance.
+    CreateInstance(String, String, String, Option<Principal>),
+    /// `instance`: removes an instance.
+    RemoveInstance(String, Option<Principal>),
     /// Every server profile of the node, with the instance running it.
     ServerProfiles,
     /// The node's compute devices, from the engine's own probe.
@@ -189,6 +194,24 @@ impl Request {
                 arg("profile")?,
                 principal().map(Some)?,
             ),
+            // The create of an instance: the engine, the id and the server
+            // profile it runs. The id is the frame's `instance`, the name every
+            // verb keyed on an instance uses.
+            "CreateInstance" => Request::CreateInstance(
+                arg("engine")?,
+                arg("instance")?,
+                arg("server_profile")?,
+                None,
+            ),
+            "CreateInstanceAs" => Request::CreateInstance(
+                arg("engine")?,
+                arg("instance")?,
+                arg("server_profile")?,
+                principal().map(Some)?,
+            ),
+            // Its removal.
+            "RemoveInstance" => Request::RemoveInstance(arg("instance")?, None),
+            "RemoveInstanceAs" => Request::RemoveInstance(arg("instance")?, principal().map(Some)?),
             // The list, like `Instances`, with no `As` form: it is answered to
             // any caller.
             "ServerProfiles" => Request::ServerProfiles,
@@ -303,6 +326,17 @@ where
         // Its removal.
         Request::DeleteServerProfile(engine, profile, principal) => requester(caller, principal)
             .and_then(|who| manager.delete_server_profile(&who, &engine, &profile))
+            .map(|()| Value::Null),
+        // A new instance. The reply is empty as every write's: the caller sent
+        // the id, and the create answers before the record is written.
+        Request::CreateInstance(engine, instance, server_profile, principal) => {
+            requester(caller, principal)
+                .and_then(|who| manager.create_instance(&who, &engine, &instance, &server_profile))
+                .map(|()| Value::Null)
+        }
+        // Its removal.
+        Request::RemoveInstance(instance, principal) => requester(caller, principal)
+            .and_then(|who| manager.remove_instance(&who, &instance))
             .map(|()| Value::Null),
         // One object per server profile, the instance that runs it the empty
         // string when no instance does: the same answer the bus gives.
@@ -1259,6 +1293,186 @@ mod tests {
             vec![
                 error("Invalid", &refusal("server-profile-bad-id", &["../x"])),
                 error("NoServerProfile", "../x"),
+                error("NotAuthorized", "NotAuthorized"),
+                error("NotAuthorized", "NotAuthorized"),
+            ],
+            "a member reaches the core's own checks, a caller outside `pai` is refused"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            vec![
+                "alice".to_string(),
+                "alice".into(),
+                "bob".into(),
+                "bob".into()
+            ],
+            "the membership of the name the request vouches for, once per call"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "polkit asked, so the call ran as the bff's own, not for the principal"
+        );
+        assert_eq!(asked_bff(&c), vec![bff(); 4]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    // ── Creating and removing an instance (slice 16) ──────────────────────
+    // Refused before the core resolves a path: plain tests. The round trips are
+    // in `src/tests/pipe_client.rs`.
+
+    /// Creating and removing an instance ask `configure` as every write of a
+    /// served file does; a caller the authority refuses is answered
+    /// NotAuthorized with nothing done, the id of both calls one the rule
+    /// refuses, so nothing reaches `paths::` (this unit test does not redirect
+    /// the data root).
+    #[test]
+    fn the_instance_create_and_remove_ask_configure_and_a_refused_caller_changes_nothing() {
+        let c = core(false);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "../x", "server_profile": "free"}),
+                json!({"method": "RemoveInstance", "instance": "../x"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("NotAuthorized", "NotAuthorized"),
+                error("NotAuthorized", "NotAuthorized")
+            ]
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// A connection with no identity is refused both verbs before anybody is
+    /// asked, even by an authority that would allow it.
+    #[test]
+    fn an_empty_caller_is_refused_the_instance_create_and_remove_unasked() {
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            Caller(String::new()),
+            requests(&[
+                json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
+                json!({"method": "RemoveInstance", "instance": "default"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        let refused = error("NotAuthorized", "NotAuthorized");
+        assert_eq!(
+            replies,
+            vec![refused.clone(), refused],
+            "no caller, no call"
+        );
+        assert_eq!(asked(&c), vec![], "nobody asked");
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// The refusals of the two verbs over the wire: the engine the manager does
+    /// not serve and an id the rule refuses, each with its own key encoded as
+    /// every `Invalid` reply is. `RemoveInstance` of an id the rule refuses is
+    /// the older `InvalidId`, as every verb keyed on an instance id is.
+    #[test]
+    fn the_instance_verbs_answer_the_rules_refusals() {
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "CreateInstance", "engine": "vllm", "instance": "newone", "server_profile": "free"}),
+                json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "../x", "server_profile": "free"}),
+                json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "A", "server_profile": "free"}),
+                json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "", "server_profile": "free"}),
+                json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "a_b", "server_profile": "free"}),
+                json!({"method": "RemoveInstance", "instance": "../x"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("Invalid", &refusal("unknown-engine", &["vllm"])),
+                error("Invalid", &refusal("instance-bad-id", &["../x"])),
+                error("Invalid", &refusal("instance-bad-id", &["A"])),
+                error("Invalid", &refusal("instance-bad-id", &[""])),
+                error("Invalid", &refusal("instance-bad-id", &["a_b"])),
+                error("InvalidId", "InvalidId"),
+            ],
+            "the engine, then the id, both as the check's key; an id the rule refuses \
+             on a remove is the verb's own InvalidId"
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 6]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `engine`, `instance` and `server_profile` are all required and of their
+    /// own types, and `RemoveInstance` requires `instance`: a missing field, a
+    /// string where a name belongs, a null, a principal that disagrees with the
+    /// `As` spelling, a list verb with an `As` form, or a method spelled
+    /// otherwise, is no request.
+    #[test]
+    fn a_malformed_instance_create_request_is_a_bad_request() {
+        for body in [
+            json!({"method": "CreateInstance", "instance": "newone", "server_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "server_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone"}),
+            json!({"method": "CreateInstance", "engine": 5, "instance": "newone", "server_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": 5, "server_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": null, "server_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": 5}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": null}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": ["free"]}),
+            json!({"method": "CreateInstanceAs", "principal": "alice", "engine": "llama.cpp", "instance": "newone"}),
+            json!({"method": "CreateInstanceAs", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
+            json!({"method": "CreateInstance", "principal": "alice", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
+            json!({"method": "createInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
+            json!({"method": "CreateInstances", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
+            json!({"method": "RemoveInstance"}),
+            json!({"method": "RemoveInstance", "instance": 5}),
+            json!({"method": "RemoveInstance", "instance": null}),
+            json!({"method": "RemoveInstanceAs", "principal": "alice"}),
+            json!({"method": "RemoveInstance", "instance": "default", "principal": "alice"}),
+            json!({"method": "removeInstance", "instance": "default"}),
+            json!({"method": "RemoveInstances", "instance": "default"}),
+            json!({"method": "InstancesAs", "principal": "alice"}),
+        ] {
+            let c = core(true);
+            let (result, replies) = serve(&c, alice(), requests(std::slice::from_ref(&body)));
+            assert!(result.is_err(), "{body}");
+            assert_eq!(replies.len(), 1, "{body}: {replies:?}");
+            assert_bad_request(&replies[0], &body.to_string());
+            assert_eq!(asked(&c), vec![], "{body}");
+            assert_eq!(calls(&c), vec![], "{body}");
+        }
+    }
+
+    /// The `As` forms carry the principal and run for the bff's account alone:
+    /// a member's call reaches the core's own checks, a principal outside `pai`
+    /// is refused, the membership asked for the name sent, polkit never asked.
+    #[test]
+    fn the_instance_crud_as_forms_act_for_the_principal() {
+        let (c, admins) = principal_core(FakePasswords::new());
+        let (result, replies) = serve(
+            &c,
+            bff(),
+            requests(&[
+                json!({"method": "CreateInstanceAs", "principal": "alice", "engine": "llama.cpp", "instance": "../x", "server_profile": "free"}),
+                json!({"method": "RemoveInstanceAs", "principal": "alice", "instance": "../x"}),
+                json!({"method": "CreateInstanceAs", "principal": "bob", "engine": "llama.cpp", "instance": "../x", "server_profile": "free"}),
+                json!({"method": "RemoveInstanceAs", "principal": "bob", "instance": "../x"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("Invalid", &refusal("instance-bad-id", &["../x"])),
+                error("InvalidId", "InvalidId"),
                 error("NotAuthorized", "NotAuthorized"),
                 error("NotAuthorized", "NotAuthorized"),
             ],

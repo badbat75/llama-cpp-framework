@@ -4,6 +4,7 @@
 pub mod bff;
 mod control;
 mod instance_profiles;
+mod instances;
 pub mod listen;
 mod model_profiles;
 pub mod node;
@@ -58,7 +59,9 @@ pub const DEVICES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// `GET /api/instances/{id}/server` and its `PUT`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}`, the boot flag at
 /// `GET`/`PUT /api/instances/{id}/boot`, the instance's tags at
-/// `PUT /api/instances/{id}/tags`, the web UI's page at `/` and its
+/// `PUT /api/instances/{id}/tags`, the instance writes `POST /api/instances`
+/// and `DELETE /api/instances/{id}` (`instances::routes`), the web UI's page at
+/// `/` and its
 /// files under `/assets/`, the model-profile list at `GET /api/profiles/model`, and the
 /// model profile switch at `PUT /api/profiles/model/{id}/enabled`. The revision secret is
 /// drawn from the OS, and a bff that cannot draw one has no
@@ -159,7 +162,9 @@ pub(crate) fn router_with(
 /// `/api/profiles/server/{id}`, `server_profiles::routes`), the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}` and the boot write
 /// `PUT /api/instances/{id}/boot`, the instance's tags
-/// `PUT /api/instances/{id}/tags`, the model-profile list
+/// `PUT /api/instances/{id}/tags`, the instance create
+/// `POST /api/instances` and the removal `DELETE /api/instances/{id}`
+/// (`instances::routes`), the model-profile list
 /// `GET /api/profiles/model`, the model profile save `PUT /api/profiles/model/{id}` and the model profile
 /// switch `PUT /api/profiles/model/{id}/enabled`. The boot read
 /// `GET /api/instances/{id}/boot` is gated by a session too, and reads the
@@ -348,6 +353,11 @@ fn router_with_policy(
             axum::routing::put(set_enabled),
         )
         .merge(control::routes(connect.clone(), timeout, sessions.clone()))
+        .merge(instances::routes(
+            connect.clone(),
+            write_timeout,
+            sessions.clone(),
+        ))
         .merge(instance_profiles::routes(
             connect.clone(),
             timeout,
@@ -495,8 +505,8 @@ async fn version(
 }
 
 /// `GET /api/instances`: `[{"id", "engine", "serverProfile", "state", "port",
-/// "tags", "instanceTags", "boot"}]` in the manager's order, to a signed-in
-/// reader, or
+/// "tags", "instanceTags", "boot", "removable"}]` in the manager's order, to a
+/// signed-in reader, or
 /// `{"key": <strings key>, "args": []}`, never the manager's detail. The
 /// manager's row of the instance carries the server profile it runs, named as
 /// the manager names it (`serverProfile`, `null` when the row names none: the
@@ -506,7 +516,9 @@ async fn version(
 /// lists (the server profile's first, none twice), `instanceTags` the
 /// instance's own list, the one the editor saves back. `boot` is the
 /// instance's own start-at-boot flag (`BootEnabled`); one the service manager
-/// cannot answer is `null`. With no live session
+/// cannot answer is `null`. `removable` says the page may offer a remove of the
+/// row: true of every id, false of the one protected id alone
+/// (`instances::removable`, the id the removal refuses). With no live session
 /// the answer is 401 `session-required`, the manager is not connected to, and
 /// no `Set-Cookie` goes out. The session gates the read and is not its
 /// principal: the list, the rows and the states are what the manager answers
@@ -544,6 +556,7 @@ async fn instances(
                     "tags": tags_of_row(row),
                     "instanceTags": row.map_or_else(Vec::new, |row| row.instance_tags.clone()),
                     "boot": client.boot_enabled(&id).ok(),
+                    "removable": instances::removable(&id),
                 })),
                 Err(ClientError::NoInstance) => {}
                 Err(e) => return Err(e),

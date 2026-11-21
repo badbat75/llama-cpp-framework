@@ -996,6 +996,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     turn the whole list into a 503 instead of per-item nulls; `GET /api/node` reads its folder in the async
     handler (tiny, not `spawn_blocking`); `installer/llama.cpp.wxs` ~121 describes the payload without
     `share\versions`; `fe/briefs/api-contract.md` still calls `/api/node` and `boot` "being built".
+    Creating and removing instances is done in the manager and the bff (slice 16, 2026-11-21; the web UI
+    is slice 17). Left from its review: on a CRLF `instances.ini` the appended section is LF, so the file
+    has mixed line endings (the manager reads both); `"default"` as the protected id is written in both
+    `service.rs` and `crates/bff/src/instances.rs`.
     **Tags as chips** (user, 2026-11-21): the instance tags field becomes a row of chips: a round "+"
     that, clicked, opens an oval input for one label; confirmed, it becomes a chip and a new "+"
     follows. While typing, the labels already used (on any instance or server profile) are suggested.

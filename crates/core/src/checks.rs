@@ -44,6 +44,11 @@ pub const KEYS: &[&str] = &[
     "server-profile-bad-id",
     "device-bad-name",
     "tensor-split-format",
+    "instance-bad-id",
+    "instance-exists",
+    "instance-protected",
+    "instance-running",
+    "instance-no-model-profiles",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -123,6 +128,11 @@ impl Refusal {
             "server-profile-bad-id" => strings::fill("server-profile-bad-id", &[&v(0)]),
             "device-bad-name" => strings::fill("device-bad-name", &[&v(0), &v(1)]),
             "tensor-split-format" => strings::fill("tensor-split-format", &[&v(0)]),
+            "instance-bad-id" => strings::fill("instance-bad-id", &[&v(0)]),
+            "instance-exists" => strings::fill("instance-exists", &[&v(0)]),
+            "instance-protected" => strings::fill("instance-protected", &[&v(0)]),
+            "instance-running" => strings::fill("instance-running", &[&v(0)]),
+            "instance-no-model-profiles" => strings::fill("instance-no-model-profiles", &[&v(0)]),
             other => other.to_string(),
         }
     }
@@ -1052,6 +1062,17 @@ mod tests {
     ];
     const MOE_TENSOR: &str = "moe-cache-with-tensor-split";
 
+    /// The keys the instance verbs of slice 16 refuse with (`ARCHITECTURE.md`):
+    /// each one value, the id, so the refusal crosses both transports and the
+    /// bff answers it with its key.
+    const INSTANCE_KEYS: [&str; 5] = [
+        "instance-bad-id",
+        "instance-exists",
+        "instance-protected",
+        "instance-running",
+        "instance-no-model-profiles",
+    ];
+
     fn refusal(key: &'static str, values: &[&str]) -> Refusal {
         Refusal {
             key,
@@ -1142,6 +1163,35 @@ top-p = 0.95\r\n";
             assert!(KEYS.contains(key), "{key} missing from checks::KEYS");
             assert!(cli.contains_key(*key), "{key} missing from cli.toml");
             assert!(gui.contains_key(*key), "{key} missing from en_US.toml");
+        }
+    }
+
+    /// The instance verbs' refusals are keyed `Invalid` refusals, not new
+    /// `ManagerError` variants (slice 16): each of the five is a key of
+    /// [`KEYS`], is in BOTH strings files taking exactly one value, and has its
+    /// own arm in [`Refusal::text`] that shows the id it names.
+    #[test]
+    fn the_instance_keys_are_keyed_refusals_with_the_id() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        for key in INSTANCE_KEYS {
+            assert!(KEYS.contains(&key), "{key} missing from checks::KEYS");
+            for (name, table) in [("cli.toml", &cli), ("en_US.toml", &gui)] {
+                let text = table
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{key} missing from {name}"));
+                assert_eq!(placeholders(text), 1, "{key} in {name}: {text:?}");
+            }
+            // The wire form round trips: the verb's refusal reaches the client
+            // as the key and the id.
+            let r = Refusal {
+                key,
+                values: vec!["lan-2".to_string()],
+            };
+            assert_eq!(Refusal::decode(&r.encode()), Some(r.clone()), "{key}");
+            let text = r.text();
+            assert_ne!(text, key, "{key}: Refusal::text has no arm for it");
+            assert!(text.contains("lan-2"), "{key}: the id is not in {text:?}");
         }
     }
 

@@ -94,6 +94,10 @@ type Log = Arc<Mutex<Vec<String>>>;
 struct FakeManager {
     instances: Result<Vec<String>, ClientError>,
     states: HashMap<String, Result<InstanceState, ClientError>>,
+    /// What `create_instance` answers (slice 16).
+    create: Result<(), ClientError>,
+    /// What `remove_instance` answers (slice 16).
+    remove: Result<(), ClientError>,
     /// How long `list_instances` takes.
     delay: Duration,
     /// What `boot_enabled` answers, for the tests that read the boot flag.
@@ -125,11 +129,16 @@ impl FakeManager {
     /// `'static` closure.
     fn listing(log: &Log, instances: &[(String, InstanceState)]) -> FakeManager {
         FakeManager {
-            instances: Ok(instances.iter().map(|(id, _)| id.clone()).collect()),
+            instances: Ok(instances
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<String>>()),
             states: instances
                 .iter()
                 .map(|(id, s)| (id.clone(), Ok(s.clone())))
                 .collect(),
+            create: Ok(()),
+            remove: Ok(()),
             delay: Duration::ZERO,
             boot: Ok(false),
             boots: HashMap::new(),
@@ -184,6 +193,19 @@ impl ManagerClient for FakeManager {
     fn restart(&self, id: &str) -> Result<(), ClientError> {
         self.record(format!("restart {id}"));
         Ok(())
+    }
+    fn create_instance(
+        &self,
+        engine: &str,
+        id: &str,
+        server_profile: &str,
+    ) -> Result<(), ClientError> {
+        self.record(format!("create {engine} {id} {server_profile}"));
+        self.create.clone()
+    }
+    fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
+        self.record(format!("remove {id}"));
+        self.remove.clone()
     }
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
@@ -632,18 +654,25 @@ async fn a_terminated_session_is_refused_on_the_reads() {
 /// nothing.
 #[tokio::test]
 async fn instances_refuses_another_method_without_asking_the_manager() {
-    for uri in ["/api/instances", "/api/version"] {
-        for method in [Method::POST, Method::PUT, Method::DELETE] {
-            let app = app_listing(&[("default", InstanceState::Active)]);
-            let r = app.ask(method.clone(), uri, None).await;
-            assert_eq!(
-                r.status,
-                StatusCode::METHOD_NOT_ALLOWED,
-                "{method} {uri}: {}",
-                r.body
-            );
-            app.assert_asked_nothing(&format!("{method} {uri}"));
-        }
+    // The two writes of slice 16 (`POST /api/instances`,
+    // `DELETE /api/instances/{id}`) are routed, so only the verbs no route
+    // answers are here.
+    for (method, uri) in [
+        (Method::POST, "/api/version"),
+        (Method::PUT, "/api/version"),
+        (Method::DELETE, "/api/version"),
+        (Method::PUT, "/api/instances"),
+        (Method::DELETE, "/api/instances"),
+    ] {
+        let app = app_listing(&[("default", InstanceState::Active)]);
+        let r = app.ask(method.clone(), uri, None).await;
+        assert_eq!(
+            r.status,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method} {uri}: {}",
+            r.body
+        );
+        app.assert_asked_nothing(&format!("{method} {uri}"));
     }
 }
 
@@ -781,7 +810,7 @@ async fn an_instance_removed_meanwhile_is_left_out() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
         "no rows: port 0, no tags"
     );
 }
@@ -820,12 +849,12 @@ async fn each_instance_with_its_state_in_the_manager_s_order() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "big-model", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "a", "engine": "llama.cpp", "serverProfile": null, "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "z", "engine": "llama.cpp", "serverProfile": null, "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "odd", "engine": "llama.cpp", "serverProfile": null, "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
+            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "big-model", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "a", "engine": "llama.cpp", "serverProfile": null, "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "z", "engine": "llama.cpp", "serverProfile": null, "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "odd", "engine": "llama.cpp", "serverProfile": null, "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
         ])
     );
 }
@@ -853,8 +882,8 @@ async fn each_instance_carries_its_own_boot_flag() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true },
-            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false },
+            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
         ])
     );
     assert_eq!(
@@ -897,8 +926,8 @@ async fn a_boot_flag_that_cannot_be_read_is_null_and_the_list_answers() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null },
+            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
+            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null, "removable": true },
         ]),
         "the instance whose flag is unanswerable is listed, its flag null"
     );
@@ -970,7 +999,7 @@ async fn a_manager_started_later_is_seen_at_the_next_request() {
     assert_eq!(second.status, StatusCode::OK, "{}", second.body);
     assert_eq!(
         second.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }])
+        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }])
     );
     assert_eq!(asked.load(Ordering::SeqCst), 2, "asked anew each time");
     assert_eq!(app.connects.load(Ordering::SeqCst), 2);
@@ -1051,7 +1080,7 @@ async fn a_session_read_only_through_the_gated_reads_still_expires() {
     let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
         "{}",
         r.body
     );
@@ -1111,8 +1140,8 @@ async fn the_row_carries_the_server_profile_the_manager_names() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "big", "engine": "llama.cpp", "serverProfile": "big-model", "state": "active", "port": 8080, "tags": [], "instanceTags": [], "boot": false },
-            { "id": "plain", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 8080, "tags": [], "instanceTags": [], "boot": false },
+            { "id": "big", "engine": "llama.cpp", "serverProfile": "big-model", "state": "active", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "plain", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true },
         ]),
         "the profile the row names, and `null` where the row names none"
     );
@@ -1142,8 +1171,8 @@ async fn the_rows_carry_the_tags_of_the_profile_then_their_own_none_twice() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": "default", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false },
-            { "id": "coder", "engine": "llama.cpp", "serverProfile": "coder", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false },
+            { "id": "default", "engine": "llama.cpp", "serverProfile": "default", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false, "removable": false },
+            { "id": "coder", "engine": "llama.cpp", "serverProfile": "coder", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false, "removable": true },
         ]),
         "the union, the profile's tags first, `v2` once, in the list's order; the port the row carries, not a constant"
     );
@@ -1176,7 +1205,7 @@ async fn the_shown_tags_are_the_union_the_editable_ones_the_instance_s_own() {
             "tags": ["edge", "v2", "gpu", "lab"],
             "instanceTags": ["v2", "lab"],
             "boot": false,
-            "boot": false,
+            "removable": false,
         }]),
         "the union, then the instance's own list: `edge` and `gpu` are the profile's, they stay out of `instanceTags`"
     );
@@ -1196,7 +1225,7 @@ async fn a_manager_that_answers_no_rows_shows_no_tags() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false }]),
+        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
         "no rows: port 0, no tags"
     );
     assert!(
@@ -1422,4 +1451,431 @@ async fn the_tags_route_answers_only_the_write() {
         assert_eq!(r.status, StatusCode::METHOD_NOT_ALLOWED, "{method}");
         app.assert_asked_nothing(&format!("{method} /api/instances/default/tags"));
     }
+}
+
+// ── Creating and removing an instance (slice 16) ─────────────────────────
+// `POST /api/instances` `{"engine", "id", "serverProfile"}` answers 201
+// `{"id": ...}` once the manager created it, `DELETE /api/instances/{id}`
+// answers 204. Both sit behind the session gate like every other write: with
+// no session 401 `session-required` and the manager is asked nothing; a
+// refusal of the signed-in user 403 `session-not-administrator` ending the
+// session; no manager 503 `client-unavailable`; anything else 502. Each
+// refusal of the manager keeps its key and its args in the body, the
+// manager's own message staying out of it: 409 `instance-exists`,
+// `instance-protected` and `instance-running` naming the id, 404
+// `client-no-instance`, 404 `client-no-server-profile`, 409
+// `client-server-profile-in-use`, 422 `client-address-in-use` and
+// `client-unresolvable-host` with `field` `serverProfile`. The id and the
+// engine the bff itself refuses are 422 with the check's key and the form's
+// field, and a body it cannot read is 400 `instance-malformed` with the
+// manager not asked. `GET /api/instances` items carry `removable` besides
+// `boot`: true for every id that is not the protected `default`.
+
+/// The app whose manager answers `create_instance` with `create` and
+/// `remove_instance` with `remove`, listing `lan-2` stopped and the default.
+fn app_crud(create: Result<(), ClientError>, remove: Result<(), ClientError>) -> App {
+    app_at(move |l| FakeManager {
+        create: create.clone(),
+        remove: remove.clone(),
+        ..FakeManager::new(
+            l,
+            &[
+                ("default", InstanceState::Active),
+                ("lan-2", InstanceState::Inactive),
+            ],
+        )
+    })
+}
+
+/// `POST /api/instances` with `body`, under `cookie` (none for a visitor).
+async fn create(app: &App, cookie: Option<&str>, body: &str) -> Reply {
+    app.ask_json(Method::POST, "/api/instances", cookie, body)
+        .await
+}
+
+/// The error body of a refusal: the key, its args, and the field to mark when
+/// the answer names one.
+fn args_doc(key: &str, args: &[&str], field: Option<&str>) -> Value {
+    let mut doc = json!({ "key": key, "args": args });
+    if let Some(field) = field {
+        doc["field"] = json!(field);
+    }
+    doc
+}
+
+/// The body a create sends: the engine, the id, the server profile to bind.
+const CREATE_BODY: &str = r#"{"engine": "llama.cpp", "id": "lan-2", "serverProfile": "free"}"#;
+
+/// The whole call of a create: the route calls `create_instance` as the
+/// signed-in user, once, with the three words of the body, and answers 201
+/// with the id it created.
+#[tokio::test]
+async fn an_instance_is_created_through_the_manager() {
+    let app = app_crud(Ok(()), Ok(()));
+    let cookie = app.sign_in().await;
+    let r = create(&app, Some(&cookie), CREATE_BODY).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
+    assert_eq!(r.json(), json!({ "id": "lan-2" }), "{}", r.body);
+    assert_eq!(
+        app.calls(),
+        ["create llama.cpp lan-2 free"],
+        "one call, the body's three words"
+    );
+    assert_eq!(
+        principals_of(&app.principals),
+        [Some("alice".to_string())],
+        "as the signed-in user"
+    );
+}
+
+/// The whole call of a remove: `DELETE /api/instances/{id}` calls
+/// `remove_instance` once with the id of the path and answers 204 with no body.
+#[tokio::test]
+async fn an_instance_is_removed_through_the_manager() {
+    let app = app_crud(Ok(()), Ok(()));
+    let cookie = app.sign_in().await;
+    let r = app
+        .ask(Method::DELETE, "/api/instances/lan-2", Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.body);
+    assert_eq!(r.body, "", "204 carries no body");
+    assert_eq!(app.calls(), ["remove lan-2"]);
+    assert_eq!(
+        principals_of(&app.principals),
+        [Some("alice".to_string())],
+        "as the signed-in user"
+    );
+}
+
+/// A visitor: both writes are 401 `session-required` with no cookie set, and
+/// the manager is not connected to at all: the gate answers on its own, so a
+/// visitor creates and removes nothing.
+#[tokio::test]
+async fn the_instance_crud_without_a_session_is_refused_and_asks_nothing() {
+    let app = app_crud(Ok(()), Ok(()));
+    create(&app, None, CREATE_BODY)
+        .await
+        .assert_session_required();
+    app.assert_asked_nothing("POST /api/instances with no session");
+
+    let app = app_crud(Ok(()), Ok(()));
+    app.ask(Method::DELETE, "/api/instances/lan-2", None)
+        .await
+        .assert_session_required();
+    app.assert_asked_nothing("DELETE /api/instances/lan-2 with no session");
+}
+
+/// Every answer a create's refusal takes, as the body the page reads: the
+/// manager's key, its args and the field to mark, its message staying out; the
+/// manager's absence 503; anything else 502 `client-other` with no args.
+#[tokio::test]
+async fn the_instance_create_answers_the_refusals() {
+    let refusal = |key: &'static str, value: &str| {
+        ClientError::Invalid(Refusal {
+            key,
+            values: vec![value.to_string()],
+        })
+    };
+    for (failure, status, key, args, field) in [
+        (
+            refusal("unknown-engine", "vllm"),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unknown-engine",
+            &["vllm"][..],
+            Some("engine"),
+        ),
+        (
+            refusal("instance-bad-id", "A"),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "instance-bad-id",
+            &["A"][..],
+            Some("id"),
+        ),
+        (
+            refusal("instance-exists", "lan-2"),
+            StatusCode::CONFLICT,
+            "instance-exists",
+            &["lan-2"][..],
+            None,
+        ),
+        (
+            ClientError::NoServerProfile("free".into()),
+            StatusCode::NOT_FOUND,
+            "client-no-server-profile",
+            &["free"][..],
+            None,
+        ),
+        (
+            ClientError::ServerProfileInUse("free".into(), "default".into()),
+            StatusCode::CONFLICT,
+            "client-server-profile-in-use",
+            &["free", "default"][..],
+            None,
+        ),
+        (
+            ClientError::AddressInUse("lan-2".into()),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "client-address-in-use",
+            &["lan-2"][..],
+            Some("serverProfile"),
+        ),
+        (
+            ClientError::UnresolvableHost("ns.example".into()),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "client-unresolvable-host",
+            &["ns.example"][..],
+            Some("serverProfile"),
+        ),
+        (
+            ClientError::Unavailable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "client-unavailable",
+            &[][..],
+            None,
+        ),
+    ] {
+        let app = app_crud(Err(failure), Ok(()));
+        let cookie = app.sign_in().await;
+        let r = create(&app, Some(&cookie), CREATE_BODY).await;
+        assert_eq!(
+            r.json(),
+            args_doc(key, args, field),
+            "{status} {key}: {}",
+            r.body
+        );
+        assert_eq!(r.status, status, "{key}: {}", r.body);
+    }
+}
+
+/// The manager's detail is not the page's: any other failure is 502
+/// `client-other` with no args and no word of the manager's message.
+#[tokio::test]
+async fn a_create_failure_that_is_not_a_refusal_keeps_the_detail_out() {
+    let app = app_crud(
+        Err(ClientError::Other(
+            "org.freedesktop.DBus.Error.AccessDenied: secret-detail".into(),
+        )),
+        Ok(()),
+    );
+    let cookie = app.sign_in().await;
+    let r = create(&app, Some(&cookie), CREATE_BODY).await;
+    r.assert_error(StatusCode::BAD_GATEWAY, "client-other");
+    assert!(!r.body.contains("secret-detail"), "{}", r.body);
+}
+
+/// Every answer a remove's refusal takes: the protected id and a running one
+/// 409 with the id, no such instance and an id the rule refuses 404
+/// `client-no-instance`, the service manager's failure 502
+/// `client-service-failed` with its message kept out.
+#[tokio::test]
+async fn the_instance_remove_answers_the_refusals() {
+    let refusal = |key: &'static str, value: &str| {
+        ClientError::Invalid(Refusal {
+            key,
+            values: vec![value.to_string()],
+        })
+    };
+    for (failure, status, key, args) in [
+        (
+            refusal("instance-protected", "default"),
+            StatusCode::CONFLICT,
+            "instance-protected",
+            &["default"][..],
+        ),
+        (
+            refusal("instance-running", "lan-2"),
+            StatusCode::CONFLICT,
+            "instance-running",
+            &["lan-2"][..],
+        ),
+        (
+            ClientError::NoInstance,
+            StatusCode::NOT_FOUND,
+            "client-no-instance",
+            &[][..],
+        ),
+        (
+            ClientError::InvalidId,
+            StatusCode::NOT_FOUND,
+            "client-no-instance",
+            &[][..],
+        ),
+        (
+            ClientError::Unavailable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "client-unavailable",
+            &[][..],
+        ),
+    ] {
+        let app = app_crud(Ok(()), Err(failure));
+        let cookie = app.sign_in().await;
+        let r = app
+            .ask(Method::DELETE, "/api/instances/lan-2", Some(&cookie))
+            .await;
+        assert_eq!(r.status, status, "{key}: {}", r.body);
+        assert_eq!(r.json(), json!({ "key": key, "args": args }), "{}", r.body);
+    }
+}
+
+/// A remove the service manager refuses is the service's failure, not the
+/// manager's: 502 `client-service-failed`, the message staying in the bff. The
+/// record stays, so the page's next list still shows the instance.
+#[tokio::test]
+async fn a_remove_the_service_manager_refuses_is_a_failed_service() {
+    let app = app_crud(Ok(()), Err(ClientError::Service("secret-detail".into())));
+    let cookie = app.sign_in().await;
+    let r = app
+        .ask(Method::DELETE, "/api/instances/lan-2", Some(&cookie))
+        .await;
+    r.assert_error(StatusCode::BAD_GATEWAY, "client-service-failed");
+    assert!(!r.body.contains("secret-detail"), "{}", r.body);
+}
+
+/// A caller the manager will not let write: 403 `session-not-administrator`,
+/// and the session ends, as on every other write of the signed-in user.
+#[tokio::test]
+async fn a_refusal_of_the_signed_in_user_ends_the_session_on_the_instance_crud() {
+    for (method, uri, body) in [
+        (Method::POST, "/api/instances", Some(CREATE_BODY)),
+        (Method::DELETE, "/api/instances/lan-2", None),
+    ] {
+        let refused = ClientError::NotAuthorized;
+        let app = if body.is_some() {
+            app_crud(Err(refused), Ok(()))
+        } else {
+            app_crud(Ok(()), Err(refused))
+        };
+        let cookie = app.sign_in().await;
+        let r = match body {
+            Some(body) => create(&app, Some(&cookie), body).await,
+            None => app.ask(method.clone(), uri, Some(&cookie)).await,
+        };
+        r.assert_error(StatusCode::FORBIDDEN, "session-not-administrator");
+        app.get("/api/instances", Some(&cookie))
+            .await
+            .assert_session_required();
+    }
+}
+
+/// A body the bff cannot read is its own 400 `instance-malformed`, before the
+/// manager is connected to: no id is created on a body that names none, and
+/// the words of a body the route does not read (`null`, a list, a number) are
+/// no id.
+#[tokio::test]
+async fn a_create_body_the_bff_cannot_read_is_refused_before_the_manager() {
+    for body in [
+        "not json",
+        "[]",
+        "{}",
+        r#"{"id": "lan-2", "serverProfile": "free"}"#,
+        r#"{"engine": "llama.cpp", "serverProfile": "free"}"#,
+        r#"{"engine": "llama.cpp", "id": "lan-2"}"#,
+        r#"{"engine": "llama.cpp", "id": null, "serverProfile": "free"}"#,
+        r#"{"engine": "llama.cpp", "id": 5, "serverProfile": "free"}"#,
+        r#"{"engine": 5, "id": "lan-2", "serverProfile": "free"}"#,
+        r#"{"engine": "llama.cpp", "id": "lan-2", "serverProfile": null}"#,
+        r#"{"engine": "llama.cpp", "id": "lan-2", "serverProfile": 5}"#,
+        r#"{"engine": "llama.cpp", "id": "lan-2", "serverProfile": ["free"]}"#,
+    ] {
+        let app = app_crud(Ok(()), Ok(()));
+        let cookie = app.sign_in().await;
+        let r = create(&app, Some(&cookie), body).await;
+        r.assert_error(StatusCode::BAD_REQUEST, "instance-malformed");
+        app.assert_asked_nothing(&format!("create on {body}"));
+    }
+}
+
+/// The list says which row the page may offer a remove of: `removable` is true
+/// of every id and false of the protected `default` alone, whatever its state.
+/// Additive: the keys of every row before it are unchanged.
+#[tokio::test]
+async fn the_instance_list_carries_removable() {
+    let app = app_listing(&[
+        ("default", InstanceState::Active),
+        ("lan-2", InstanceState::Inactive),
+    ]);
+    let cookie = app.sign_in().await;
+    let r = app.get("/api/instances", Some(&cookie)).await;
+    assert_eq!(
+        r.json(),
+        json!([
+            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
+            { "id": "lan-2", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true }
+        ]),
+        "{}",
+        r.body
+    );
+}
+
+/// The two writes are actions, not reads: each moves the session's idle
+/// deadline, which starts again from the call, to the second: at the call's own
+/// timeout the session is alive, one second later it is gone (a read would
+/// expire at the sign-in's deadline, well before).
+#[tokio::test]
+async fn the_instance_crud_moves_the_idle_deadline() {
+    for (method, uri, body) in [
+        (Method::POST, "/api/instances", Some(CREATE_BODY)),
+        (Method::DELETE, "/api/instances/lan-2", None),
+    ] {
+        let app = app_crud(Ok(()), Ok(()));
+        let cookie = app.sign_in().await;
+        app.clock.advance(SHORT);
+        let r = match body {
+            Some(body) => app.ask_json(method.clone(), uri, Some(&cookie), body).await,
+            None => app.ask(method.clone(), uri, Some(&cookie)).await,
+        };
+        assert!(r.status.is_success(), "{method} {uri}: {}", r.body);
+        app.clock.advance(IDLE);
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+
+        // One second past the deadline from the call: the write moved it, and
+        // only that.
+        let app = app_crud(Ok(()), Ok(()));
+        let cookie = app.sign_in().await;
+        app.clock.advance(SHORT);
+        match body {
+            Some(body) => app.ask_json(method.clone(), uri, Some(&cookie), body).await,
+            None => app.ask(method.clone(), uri, Some(&cookie)).await,
+        };
+        app.clock.advance(IDLE + Duration::from_secs(1));
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_error(StatusCode::UNAUTHORIZED, SESSION_REQUIRED);
+    }
+}
+
+/// The two routes answer their own verb and nothing else: `PUT` the list, and
+/// the verbs the page uses on an id, are the router's 405, answered before the
+/// session is read, asking the manager nothing.
+#[tokio::test]
+async fn the_instance_crud_routes_answer_only_their_method() {
+    for (method, uri) in [
+        (Method::PUT, "/api/instances"),
+        (Method::DELETE, "/api/version"),
+        (Method::POST, "/api/instances/lan-2"),
+        (Method::PUT, "/api/instances/lan-2"),
+    ] {
+        let app = app_crud(Ok(()), Ok(()));
+        let cookie = app.sign_in().await;
+        let r = app.ask(method.clone(), uri, Some(&cookie)).await;
+        assert_eq!(
+            r.status,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method} {uri}: {}",
+            r.body
+        );
+        app.assert_asked_nothing(&format!("{method} {uri}"));
+    }
+}
+
+/// A 405 answer carries the framing headers like every other reply.
+#[tokio::test]
+async fn a_405_on_the_instance_crud_carries_the_framing() {
+    let app = app_crud(Ok(()), Ok(()));
+    let r = app.ask(Method::PUT, "/api/instances", None).await;
+    assert_eq!(r.status, StatusCode::METHOD_NOT_ALLOWED, "{}", r.body);
+    assert_eq!(r.values_of("x-frame-options"), ["DENY"]);
+    assert_eq!(r.values_of("x-content-type-options"), ["nosniff"]);
 }

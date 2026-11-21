@@ -182,6 +182,13 @@ pub trait ServiceControl {
     fn boot_enabled(&self, id: &str) -> Result<bool, ServiceError>;
     /// Make the instance's unit start when the system starts, or not.
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ServiceError>;
+    /// Take the instance's unit away: the `wants/` link and the unit itself, so
+    /// a later instance of the same id starts clean. An id with no unit is
+    /// success (the step is idempotent, the record of the instances is written
+    /// after it).
+    fn remove(&self, _id: &str) -> Result<(), ServiceError> {
+        Err(ServiceError("this service manager has no Remove".into()))
+    }
 }
 
 /// Why the manager refused or failed an operation.
@@ -349,6 +356,11 @@ pub const INSTANCES_FILE: &str = "instances.ini";
 /// profile names: the only value `CreateServerProfile` and `DeleteServerProfile`
 /// accept.
 const ENGINE: &str = "llama.cpp";
+
+/// `default`: the instance every install ships, the one the configurator
+/// controls and the web UI calls the node's own. `RemoveInstance` refuses it;
+/// every other id is the administrator's to create and remove.
+const PROTECTED_INSTANCE: &str = "default";
 
 /// The `models_max` of the pool checks: the `load-on-startup` count is judged
 /// per instance, against that instance's own `ModelsMax` and its own render,
@@ -824,6 +836,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let run = || -> Result<(), ManagerError> {
             self.authorize_as(&who, Action::Control)?;
             existing_id(id)?;
+            has_profiles(id)?;
             self.service.start(id).map_err(ManagerError::Service)
         };
         let answer = run();
@@ -848,6 +861,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let run = || -> Result<(), ManagerError> {
             self.authorize_as(&who, Action::Control)?;
             existing_id(id)?;
+            has_profiles(id)?;
             self.service.restart(id).map_err(ManagerError::Service)
         };
         let answer = run();
@@ -1435,6 +1449,147 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
+    /// Creates the instance `id` of the engine `engine`, running the server
+    /// profile `server_profile`. Nothing is asked of the service manager: the
+    /// Linux unit template and the Windows `sync` serve an id the record names,
+    /// and a new id has no wants link, so it does not start at boot. Every
+    /// check answers before a byte is written, in this order: the engine
+    /// ([`known_engine`]), the id rule (a `../x` id writes and deletes nothing,
+    /// so it is judged before any path is built), the record read with
+    /// [`read_record`] (a record that cannot be read is [`ManagerError::Io`],
+    /// never an empty one), a record section with the id (`instance-exists`),
+    /// the profile: a name the id rule refuses or one with no
+    /// `server@<name>.ini` is [`ManagerError::NoServerProfile`], a profile a
+    /// section of the record already runs is
+    /// [`ManagerError::ServerProfileInUse`] naming that instance, and the
+    /// profile's own address is judged against every instance and against the
+    /// web service ([`Self::check_binding`], the new instance out of the walk
+    /// because the record does not name it yet). Then, in this order: the
+    /// `assignments.ini` section of an id used before, so the new instance is
+    /// assigned nothing; its render `models@<id>.ini`, of the pool as it is on
+    /// disk; and the record last. A create that wrote the render and failed on
+    /// the record leaves a file no instance reads, never an instance with no
+    /// render. Guarded as a write of a served file is: the principal gate and
+    /// `configure`, the `writing` lock, one action record for the whole call.
+    pub fn create_instance<W: AsRequester>(
+        &self,
+        who: &W,
+        engine: &str,
+        id: &str,
+        server_profile: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            known_engine(engine)?;
+            if !crate::paths::valid_instance_id(id) {
+                return Err(one_value_refusal("instance-bad-id", id));
+            }
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let dir = crate::paths::engine_config_dir();
+            let record = read_record(&dir.join(INSTANCES_FILE)).map_err(io)?;
+            if pai_core::ini::parse_sections(&record)
+                .iter()
+                .any(|section| section.id == id)
+            {
+                return Err(one_value_refusal("instance-exists", id));
+            }
+            let no_profile = || ManagerError::NoServerProfile(server_profile.to_string());
+            let path = crate::paths::instance_ini(server_profile).ok_or_else(no_profile)?;
+            if std::fs::symlink_metadata(&path).is_err() {
+                return Err(no_profile());
+            }
+            if let Some(holder) = record_holder(&record, server_profile) {
+                return Err(ManagerError::ServerProfileInUse(
+                    server_profile.to_string(),
+                    holder,
+                ));
+            }
+            let contents = std::fs::read_to_string(&path).map_err(io)?;
+            let mine = binding(&crate::server_cfg::from_text(&contents), &self.resolver)
+                .map_err(ManagerError::UnresolvableHost)?;
+            self.check_binding(&mine, |_| false)?;
+            // A section an id used before left behind: the new instance is
+            // assigned nothing, so its render starts no model profile.
+            pai_core::ini::delete_section(&dir.join(ASSIGNMENTS_FILE), id).map_err(io)?;
+            let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
+            let render = pai_core::assign::render(
+                &on_disk("models.ini"),
+                &on_disk("models.ini.disabled"),
+                None,
+            );
+            write_served_file(
+                &crate::paths::instance_models(id).ok_or(ManagerError::InvalidId)?,
+                &ConfigFile::Models,
+                &render,
+                &*self.group,
+            )
+            .map_err(io)?;
+            // The record last, and appended: every byte of the file, the notes
+            // of the other sections included, stays as it was.
+            append_record(&dir.join(INSTANCES_FILE), &record, id, server_profile).map_err(io)?;
+            Ok(())
+        };
+        let answer = run();
+        self.record_action("create_instance", id, Some(&who), &answer);
+        answer
+    }
+
+    /// Removes the instance `id`: its unit, its `assignments.ini` section, its
+    /// render and its record section, in that order, the record last. The
+    /// server profile it runs, the pool, its state directory and every other
+    /// instance's render stay. The checks answer before anything is removed:
+    /// the id rule ([`ManagerError::InvalidId`], before any path), the record
+    /// read with [`read_record`] (a record that cannot be read is
+    /// [`ManagerError::Io`], one with no section of the id
+    /// [`ManagerError::NoInstance`]), [`PROTECTED_INSTANCE`] (even stopped), and
+    /// the unit's state read from the service manager: anything but inactive or
+    /// failed is `instance-running`, and a state that cannot be read is the
+    /// service manager's own failure, never a state seen stopped. Every step is
+    /// idempotent, so a remove that failed partway leaves the instance listed
+    /// and stopped, and the next one finishes it. Guarded as a write of a
+    /// served file is: the principal gate and `configure`, the `writing` lock,
+    /// one action record for the whole call.
+    pub fn remove_instance<W: AsRequester>(&self, who: &W, id: &str) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            valid_id(id)?;
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let dir = crate::paths::engine_config_dir();
+            let record = read_record(&dir.join(INSTANCES_FILE)).map_err(io)?;
+            if !pai_core::ini::parse_sections(&record)
+                .iter()
+                .any(|section| section.id == id)
+            {
+                return Err(ManagerError::NoInstance);
+            }
+            if id == PROTECTED_INSTANCE {
+                return Err(one_value_refusal("instance-protected", id));
+            }
+            let state = self.service.status(id).map_err(ManagerError::Service)?;
+            if !matches!(state, UnitState::Inactive | UnitState::Failed) {
+                return Err(one_value_refusal("instance-running", id));
+            }
+            self.service.remove(id).map_err(ManagerError::Service)?;
+            pai_core::ini::delete_section(&dir.join(ASSIGNMENTS_FILE), id).map_err(io)?;
+            let render = crate::paths::instance_models(id).ok_or(ManagerError::InvalidId)?;
+            match std::fs::remove_file(&render) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                done => done.map_err(io),
+            }?;
+            pai_core::ini::delete_section(&dir.join(INSTANCES_FILE), id).map_err(io)?;
+            Ok(())
+        };
+        let answer = run();
+        self.record_action("remove_instance", id, Some(&who), &answer);
+        answer
+    }
+
     /// Every instance the record lists, in id order as `list_instances`
     /// answers it, each with the server profile its section names (the
     /// `ServerProfile` of the section, verbatim: the file the launch reads is
@@ -1871,6 +2026,30 @@ fn read_record(path: &std::path::Path) -> std::io::Result<String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(e),
     }
+}
+
+/// Adds the section of the new instance to the record `path`, over the record
+/// text `existing` that is there: the header and its one key, appended after
+/// every byte, so the notes of the other sections and the file's own spacing
+/// are untouched. A record whose last line has no ending gets a line ending of
+/// the file's own style first, so the section it ends with keeps the keys it
+/// names and the new header starts a line of its own. A record the install
+/// never copied is created by this.
+fn append_record(
+    path: &std::path::Path,
+    existing: &str,
+    id: &str,
+    server_profile: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut record = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        record.write_all(pai_core::ini::detect_eol(existing).as_bytes())?;
+    }
+    record.write_all(format!("[{id}]\nServerProfile = {server_profile}\n").as_bytes())
 }
 
 /// `engine` if this manager serves it ([`ENGINE`], the one engine of a node),
@@ -2423,6 +2602,21 @@ fn valid_id(id: &str) -> Result<(), ManagerError> {
     }
 }
 
+/// Refuse a start of the instance `id` when its render has no model profile to
+/// load: the launch hands llama-server the render as `--models-preset`, and a
+/// preset file naming no model profile starts a server with nothing to serve. A
+/// render that is not there at all is the same refusal, the instance assigned no
+/// model profile yet. `Stop` is never refused: an instance is always stoppable,
+/// and a `Restart` refused here stops nothing.
+fn has_profiles(id: &str) -> Result<(), ManagerError> {
+    let path = crate::paths::instance_models(id).ok_or(ManagerError::InvalidId)?;
+    if pai_core::launch::has_model_profiles_in(&path) {
+        Ok(())
+    } else {
+        Err(one_value_refusal("instance-no-model-profiles", id))
+    }
+}
+
 /// `id` if it is a valid id and a section of the record (`paths::instance_ids`).
 /// The record is the instance, not a file named after the id: a section naming
 /// a server profile whose `server@<profile>.ini` is missing IS an instance,
@@ -2572,14 +2766,21 @@ pub(crate) mod fakes {
         Status(String),
         BootEnabled(String),
         SetBootEnabled(String, bool),
+        Remove(String),
     }
 
     /// A service manager that records calls, reports `state`, starts at boot
     /// the ids in `enabled` and fails every call for the ids in `failing`.
+    /// `failing_remove` fails only `remove`, so a remove that fails halfway is
+    /// testable beside a status that answers.
     pub struct FakeService {
         pub calls: Mutex<Vec<Call>>,
         pub state: UnitState,
+        /// The units `status` answers active, whatever `state` is: the state of
+        /// a unit is its own, and a remove refuses the running ones.
+        pub running: Vec<String>,
         pub failing: Vec<String>,
+        pub failing_remove: Vec<String>,
         pub enabled: Mutex<std::collections::BTreeSet<String>>,
     }
 
@@ -2588,7 +2789,9 @@ pub(crate) mod fakes {
             Self {
                 calls: Mutex::new(Vec::new()),
                 state: UnitState::Active,
+                running: Vec::new(),
                 failing: Vec::new(),
+                failing_remove: Vec::new(),
                 enabled: Mutex::new(Default::default()),
             }
         }
@@ -2599,6 +2802,21 @@ pub(crate) mod fakes {
                 return Err(ServiceError(format!("llama.cpp@{id}.service failed")));
             }
             Ok(())
+        }
+    }
+
+    impl FakeService {
+        /// This service answering every unit as stopped.
+        pub fn stopped(mut self) -> Self {
+            self.state = UnitState::Inactive;
+            self
+        }
+
+        /// This service answering the units named in `ids` as active, and the
+        /// rest as its `state` is.
+        pub fn running(mut self, ids: &[&str]) -> Self {
+            self.running = ids.iter().map(|s| (*s).to_string()).collect();
+            self
         }
     }
 
@@ -2614,7 +2832,11 @@ pub(crate) mod fakes {
         }
         fn status(&self, id: &str) -> Result<UnitState, ServiceError> {
             self.record(Call::Status(id.into()), id)?;
-            Ok(self.state)
+            Ok(if self.running.iter().any(|name| name == id) {
+                UnitState::Active
+            } else {
+                self.state
+            })
         }
         fn boot_enabled(&self, id: &str) -> Result<bool, ServiceError> {
             self.record(Call::BootEnabled(id.into()), id)?;
@@ -2628,6 +2850,14 @@ pub(crate) mod fakes {
             } else {
                 set.remove(id);
             }
+            Ok(())
+        }
+        fn remove(&self, id: &str) -> Result<(), ServiceError> {
+            self.record(Call::Remove(id.into()), id)?;
+            if self.failing_remove.iter().any(|name| name == id) {
+                return Err(ServiceError(format!("remove {id} fails")));
+            }
+            self.enabled.lock().unwrap().remove(id);
             Ok(())
         }
     }
@@ -3153,6 +3383,19 @@ fn write_record(dir: &std::path::Path, ids: &[&str]) {
             .join("\n"),
     )
     .expect(INSTANCES_FILE);
+}
+
+/// The render `models@<id>.ini` of the engine's config directory `dir`, with one
+/// model profile in it: a start loads the render and refuses one with nothing to
+/// run, and a fixture that seeds the pool by hand writes no render of its own.
+#[cfg(test)]
+fn write_render(dir: &std::path::Path, id: &str) {
+    std::fs::create_dir_all(dir).expect("engine config dir");
+    std::fs::write(
+        dir.join(format!("models@{id}.ini")),
+        "[seed]\nmodel = /models/seed.gguf\n",
+    )
+    .expect("render");
 }
 
 /// A fixture's model profile text with files the node has. A write that puts a
@@ -4577,6 +4820,15 @@ pub(crate) fn manager_engine_dir_e2e() {
         "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
     );
     let disabled = real_model_files(dir.path(), "[Old]\nmodel = /models/old.gguf\n");
+    // The record and the assignment come first: a pool write renders
+    // `models@<id>.ini` for the instances the record names, and the start below
+    // needs a render with a model profile in it.
+    write_record(&engine, &["default"]);
+    std::fs::write(
+        engine.join(ASSIGNMENTS_FILE),
+        "[default]\nQwen3.8-27B = on\n",
+    )
+    .expect(ASSIGNMENTS_FILE);
     assert_eq!(
         m.write_file(&alice, "server@default.ini", ini, false),
         Ok(())
@@ -4589,7 +4841,6 @@ pub(crate) fn manager_engine_dir_e2e() {
         m.write_file(&alice, "models.ini.disabled", &disabled, false),
         Ok(())
     );
-    write_record(&engine, &["default"]);
     for (name, text) in [
         ("server@default.ini", ini),
         ("models.ini", &model_profiles),
@@ -4708,6 +4959,15 @@ pub(crate) fn manager_waits_e2e() {
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("write default");
         std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
         write_record(&sys, &["default"]);
+        // A start needs a render with a model profile in it, so the fixture
+        // assigns one and renders it, as a pool write would.
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), "[default]\nQwen3.8-27B = on\n")
+            .expect(ASSIGNMENTS_FILE);
+        std::fs::write(
+            crate::paths::instance_models("default").expect("render path"),
+            render_of("default", &model_profiles, ""),
+        )
+        .expect("render");
 
         let gate = Gate::new();
         let m = Arc::new(
@@ -4819,6 +5079,8 @@ pub(crate) fn manager_waits_e2e() {
         // bob's start needs the record: a `server@default.ini` no section
         // names is no instance.
         write_record(&sys, &["default"]);
+        // bob's start also needs a render with a model profile to load.
+        write_render(&sys, "default");
 
         let gate = Gate::new();
         let m = Arc::new(
@@ -10077,6 +10339,930 @@ pub(crate) fn manager_server_profile_crud_e2e() {
         );
     }
 }
+/// Creating and removing the node's instances (ARCHITECTURE.md, slice 16).
+/// `Start` and `Restart` of an instance with no model profile to run, an empty
+/// render (only `[*]`) or none at all, are the keyed refusal
+/// `instance-no-model-profiles` [id], asked after the id is known to exist and
+/// before the service manager is reached: a `Restart` never stops an instance
+/// it cannot start again. `Stop` is not refused, an instance is always
+/// stoppable.
+///
+/// `CreateInstance(engine, id, serverProfile)` writes under `configure` and the
+/// `writing` lock, one action record with the id as its target, and writes in
+/// one order: a stale `[id]` section of `assignments.ini` (only a hand edit
+/// leaves one) is deleted, the render `models@<id>.ini` is written from
+/// [`Manager`]'s own render, and only then is `[id]` with
+/// `ServerProfile = <profile>` appended to `instances.ini`: the record is the
+/// birth, so every refusal (`unknown-engine` first, then `instance-bad-id`,
+/// `instance-exists`, `NoServerProfile`, `ServerProfileInUse`,
+/// `UnresolvableHost` and `AddressInUse`, an instance's and the web service's
+/// `[Bff] Listen` alike) writes no file at all. No service call on either OS:
+/// systemd's template serves any id and a new id has no `wants/` link, so
+/// `BootEnabled` is false; Windows creates the service at the first `Start`.
+///
+/// `RemoveInstance(id)` reads the state first, and removes only an instance
+/// seen stopped (`inactive` or `failed`): `default` is `instance-protected`,
+/// anything else and a state that cannot be read is `instance-running` or the
+/// failure. Then, each step idempotent and the record last, it calls the new
+/// [`ServiceControl::remove`], deletes the `assignments.ini` section, the
+/// render and the record section. It leaves the server profile, the model
+/// profiles, the state directory and every other instance's bytes, and a
+/// failure at the service manager leaves the record: the instance stays listed
+/// and stopped, and a second call finishes it.
+#[cfg(test)]
+pub(crate) fn manager_instance_crud_e2e() {
+    use fakes::{
+        Call, FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core_with = |service: FakeService, allow: bool, group: FakeGroup, log: FakeActionLog| {
+        Manager::new(
+            service,
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(group)
+        .with_passwords(FakePasswords::new())
+        .with_log(log)
+    };
+    let core = |allow: bool, log: FakeActionLog| {
+        core_with(FakeService::new(), allow, FakeGroup::new(), log)
+    };
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let bytes_of = |name: &str| std::fs::read(sys.join(name)).expect("bytes");
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    let render_of = |id: &str| sys.join(format!("models@{id}.ini"));
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    // Every file of the engine's config directory, by name and bytes: a
+    // refusal must leave the tree exactly as it was.
+    let snapshot = || -> Vec<(String, Vec<u8>)> {
+        let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(&sys)
+            .expect("dir")
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(e.path()).expect("bytes"),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    };
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    let refused = |key: &'static str, value: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::Invalid(pai_core::checks::Refusal {
+            key,
+            values: vec![value.to_string()],
+        }))
+    };
+
+    // The record, seeded with the note of one section, so a write of the
+    // record can be pinned against keeping every other byte.
+    const SEEDED: &str = "# the manager's own record\n[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n; a note\nnote = keep me\n\n[lan-3]\nServerProfile = lan-3\n";
+    std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+    let profile = |name: &str, text: &str| {
+        std::fs::write(sys.join(format!("server@{name}.ini")), text).expect("server profile");
+    };
+    profile(
+        "default",
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\nTags = edge\n",
+    );
+    profile("lan-2", "[Server]\nPort = 8081\nHostname = 127.0.0.1\n");
+    profile("lan-3", "[Server]\nPort = 8082\nHostname = 127.0.0.1\n");
+    // A profile no instance uses, one at lan-2's address, one at the web
+    // service's, and one naming a host that does not resolve.
+    profile("free", "[Server]\nPort = 8123\nHostname = 127.0.0.1\n");
+    profile("dupe", "[Server]\nPort = 8081\nHostname = 127.0.0.1\n");
+    profile("bffdupe", "[Server]\nPort = 8590\nHostname = 127.0.0.1\n");
+    profile(
+        "gone2",
+        "[Server]\nPort = 8124\nHostname = nowhere.invalid\n",
+    );
+    // The web service's own address, the one `check_binding` judges.
+    let framework = crate::paths::system_config_dir();
+    std::fs::create_dir_all(&framework).expect("framework config dir");
+    std::fs::write(
+        framework.join("bff.ini"),
+        "[Bff]\nListen = 127.0.0.1:8590\n",
+    )
+    .expect("bff.ini");
+
+    // The pool: two model profiles, and `lan-2` the only instance assigned one.
+    const POOL: &str =
+        "[*]\non = true\n\n[qwen]\nmodel = qwen.gguf\n\n[other]\nmodel = other.gguf\n";
+    std::fs::write(sys.join("models.ini"), POOL).expect("models.ini");
+    std::fs::write(
+        sys.join(ASSIGNMENTS_FILE),
+        "[lan-2]\nqwen = on\n\n[lan-3]\nother = off\n",
+    )
+    .expect(ASSIGNMENTS_FILE);
+    // `default`'s render holds the global section alone: nothing to run.
+    std::fs::write(render_of("default"), "[*]\non = true\n").expect("render");
+    std::fs::write(
+        render_of("lan-2"),
+        "[*]\non = true\n\n[qwen]\nmodel = qwen.gguf\n",
+    )
+    .expect("render");
+    // `lan-3` has no render at all. Its state directory and a snapshot of
+    // `lan-2`'s are there to stay.
+    let state = crate::paths::instance_state_dir();
+    std::fs::create_dir_all(state.join("lan-2")).expect("state dir");
+    std::fs::write(state.join("lan-2/keep.llamastate"), "snapshot").expect("snapshot");
+
+    // ── Start and Restart: nothing to run ─────────────────────────────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let mut service = FakeService::new();
+        service.state = UnitState::Inactive;
+        let m = core_with(service, true, FakeGroup::new(), log);
+        let taken = || -> Vec<Call> { m.service().calls.lock().unwrap().clone() };
+        for (verb, id) in [
+            ("start", "default"),
+            ("start", "lan-3"),
+            ("restart", "default"),
+            ("restart", "lan-3"),
+        ] {
+            let got = match verb {
+                "start" => m.start(&desktop, id),
+                _ => m.restart(&desktop, id),
+            };
+            assert_eq!(
+                got,
+                refused("instance-no-model-profiles", id),
+                "{verb} of {id}: an empty render (`default`) and no render at all \
+                 (`lan-3`) are both refused"
+            );
+        }
+        assert_eq!(
+            taken(),
+            Vec::<Call>::new(),
+            "no service call at all, and no stop for a `Restart`"
+        );
+        // An instance with a model profile runs, and stopping needs no profile.
+        assert_eq!(m.start(&desktop, "lan-2"), Ok(()), "lan-2 has qwen");
+        assert_eq!(m.restart(&desktop, "lan-2"), Ok(()));
+        assert_eq!(
+            taken(),
+            vec![Call::Start("lan-2".into()), Call::Restart("lan-2".into()),],
+            "one call each, no stop"
+        );
+        m.service().calls.lock().unwrap().clear();
+        assert_eq!(
+            m.stop(&desktop, "default"),
+            Ok(()),
+            "an instance with nothing to run is always stoppable"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            vec![Call::Stop("default".into())]
+        );
+        let got = records(&lines);
+        assert_eq!(
+            got.iter()
+                .map(|l| l.rsplit_once("outcome=").expect("outcome").1.to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "ok",
+                "ok",
+                "ok"
+            ],
+            "one record per call, the refusals keyed"
+        );
+        assert_eq!(
+            got.iter()
+                .map(|l| l
+                    .split(" target=\"")
+                    .nth(1)
+                    .expect("target")
+                    .split('"')
+                    .next()
+                    .expect("target")
+                    .to_string())
+                .collect::<Vec<_>>(),
+            vec!["default", "lan-3", "default", "lan-3", "lan-2", "lan-2", "default"],
+            "the target of every record is the instance id: {got:?}"
+        );
+        assert_eq!(
+            got.iter()
+                .map(|l| l
+                    .split("action=\"")
+                    .nth(1)
+                    .unwrap_or_default()
+                    .split('"')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string())
+                .collect::<Vec<_>>(),
+            vec!["start", "start", "restart", "restart", "start", "restart", "stop"],
+            "the verbs in order: {got:?}"
+        );
+        assert!(
+            got.iter().all(
+                |l| l.starts_with(r#"action=""#) && l.contains(r#"caller=":1.42" principal=-"#)
+            ),
+            "the desktop caller, vouching for nobody: {got:?}"
+        );
+    }
+
+    // ── A create: the section, the render, and no service call ────────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let mut service = FakeService::new();
+        service.state = UnitState::Active;
+        let m = core_with(service, true, FakeGroup::new(), log);
+        // A stale `[newone]` section of the assignments, the mark of an id used
+        // before: the create leaves that id assigned nothing.
+        std::fs::write(
+            sys.join(ASSIGNMENTS_FILE),
+            "[lan-2]\nqwen = on\n\n[newone]\nqwen = on\nother = off\n",
+        )
+        .expect(ASSIGNMENTS_FILE);
+        let before = listing();
+        assert_eq!(m.create_instance(&member, ENGINE, "newone", "free"), Ok(()));
+
+        let record = text_of(INSTANCES_FILE);
+        assert_eq!(
+            &record[SEEDED.len()..],
+            "[newone]\nServerProfile = free\n",
+            "the section is appended, naming the profile, and every byte before \
+             it is the seed's, the note included"
+        );
+        assert_eq!(
+            section(&text_of(ASSIGNMENTS_FILE), "newone"),
+            "",
+            "the stale section is gone"
+        );
+        assert_eq!(
+            text_of(ASSIGNMENTS_FILE),
+            "[lan-2]\nqwen = on\n\n",
+            "every other assignment is the file's own: the section is cut out, \
+             its separating blank line left as `delete_section` leaves it"
+        );
+        assert!(
+            !pai_core::launch::has_model_profiles_in(&render_of("newone")),
+            "the new instance has no model profile: a start of it is refused"
+        );
+        assert_eq!(
+            text_of("models@newone.ini"),
+            pai_core::assign::render(POOL, "", None),
+            "the render is the manager's own, of the pool with the new instance \
+             assigned nothing"
+        );
+        let mut want = before.clone();
+        want.push("models@newone.ini".to_string());
+        want.sort();
+        assert_eq!(
+            listing(),
+            want,
+            "the render is the only new file: no temp file is left"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            Vec::<Call>::new(),
+            "no service call: systemd's template serves the id and a new id has \
+             no wants link, so boot is off"
+        );
+        let rows = m.instances();
+        let new = rows.iter().find(|r| r.id == "newone").expect("listed");
+        assert_eq!(new.engine, ENGINE);
+        assert_eq!(new.server_profile.as_deref(), Some("free"));
+        assert_eq!(new.port, 8123, "the port of the profile it names");
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["default", "lan-2", "lan-3", "newone"],
+            "the new instance is listed, sorted with the rest"
+        );
+        assert_eq!(
+            m.boot_enabled("newone"),
+            Ok(false),
+            "a new instance does not start at boot"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            vec![Call::BootEnabled("newone".into())],
+            "boot is read from the service manager, and it answers off for an id \
+             with no wants link"
+        );
+        let got = records(&lines);
+        assert_eq!(got.len(), 1, "one record for the create: {got:?}");
+        assert!(
+            got[0].starts_with(
+                r#"action="create_instance" target="newone" caller=":1.9" principal="alice""#
+            ),
+            "{}`, not the record of the create",
+            got[0]
+        );
+        assert_eq!(
+            got[0].rsplit_once("outcome=").expect("outcome").1,
+            "ok",
+            "`{}` is not ok",
+            got[0]
+        );
+    }
+
+    // ── Every refusal writes no file ──────────────────────────────────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let before = snapshot();
+        type CreateCase = (
+            &'static str,
+            &'static str,
+            &'static str,
+            Result<(), ManagerError>,
+            &'static str,
+        );
+        let cases: Vec<CreateCase> = vec![
+            (
+                "vllama",
+                "spared",
+                "free",
+                refused("unknown-engine", "vllama"),
+                "the engine is asked first",
+            ),
+            (
+                "vllama",
+                "../x",
+                "free",
+                refused("unknown-engine", "vllama"),
+                "a bad id with an unknown engine is the engine's refusal",
+            ),
+            (
+                "llama.cpp",
+                "../x",
+                "free",
+                refused("instance-bad-id", "../x"),
+                "the id rule before any path: a `../x` id writes and deletes nothing",
+            ),
+            (
+                "llama.cpp",
+                "A",
+                "free",
+                refused("instance-bad-id", "A"),
+                "an upper case id",
+            ),
+            (
+                "llama.cpp",
+                "",
+                "free",
+                refused("instance-bad-id", ""),
+                "an empty id",
+            ),
+            (
+                "llama.cpp",
+                "a_b",
+                "free",
+                refused("instance-bad-id", "a_b"),
+                "an underscore",
+            ),
+            (
+                "llama.cpp",
+                "lan-2",
+                "free",
+                refused("instance-exists", "lan-2"),
+                "a section of the record has the id",
+            ),
+            (
+                "llama.cpp",
+                "lan-2",
+                "gone2",
+                refused("instance-exists", "lan-2"),
+                "the record is read before the profile is looked at",
+            ),
+            (
+                "llama.cpp",
+                "spared",
+                "gone",
+                Err(ManagerError::NoServerProfile("gone".into())),
+                "no file of that profile",
+            ),
+            (
+                "llama.cpp",
+                "spared",
+                "../x",
+                Err(ManagerError::NoServerProfile("../x".into())),
+                "a profile name the id rule refuses is no profile",
+            ),
+            (
+                "llama.cpp",
+                "spared",
+                "lan-2",
+                Err(ManagerError::ServerProfileInUse(
+                    "lan-2".into(),
+                    "lan-2".into(),
+                )),
+                "the profile an instance runs",
+            ),
+            (
+                "llama.cpp",
+                "spared",
+                "dupe",
+                Err(ManagerError::AddressInUse("lan-2".into())),
+                "the address of another instance",
+            ),
+            (
+                "llama.cpp",
+                "spared",
+                "bffdupe",
+                Err(ManagerError::AddressInUse(BFF_NAME.into())),
+                "the web service's `[Bff] Listen`",
+            ),
+            (
+                "llama.cpp",
+                "spared",
+                "gone2",
+                Err(ManagerError::UnresolvableHost("nowhere.invalid".into())),
+                "a host of the profile that does not resolve",
+            ),
+        ];
+        for (engine, id, name, want, why) in cases {
+            assert_eq!(
+                m.create_instance(&member, engine, id, name),
+                want,
+                "create({engine}, {id}, {name}): {why}"
+            );
+        }
+        assert_eq!(
+            snapshot(),
+            before,
+            "every refused create wrote no file, anywhere"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            Vec::<Call>::new(),
+            "a refused create reaches no service manager"
+        );
+        assert_eq!(
+            records(&lines)
+                .iter()
+                .map(|l| l.rsplit_once("outcome=").expect("outcome").1.to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"Invalid\"",
+                "\"NoServerProfile\"",
+                "\"NoServerProfile\"",
+                "\"ServerProfileInUse\"",
+                "\"AddressInUse\"",
+                "\"AddressInUse\"",
+                "\"UnresolvableHost\"",
+            ],
+            "one record per refused call, keyed as the refusal is"
+        );
+    }
+
+    // ── A create whose render cannot be written leaves no section ─────────
+    // The record is the last thing a create writes, so a create that fails
+    // writing its render leaves the instance unlisted: the id the create was
+    // asked for is nowhere, and nothing of the tree moved.
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core_with(FakeService::new(), true, FakeGroup::new(), log);
+        profile("blockp", "[Server]\nPort = 8125\nHostname = 127.0.0.1\n");
+        // The render's path is a directory: its write, the create's last step
+        // before the record, fails on the host.
+        std::fs::create_dir(sys.join("models@blocked.ini")).expect("render dir");
+        let before = snapshot();
+        let answer = m.create_instance(&member, ENGINE, "blocked", "blockp");
+        assert!(
+            matches!(answer, Err(ManagerError::Io(_))),
+            "the render cannot be written: {answer:?}"
+        );
+        assert_eq!(
+            snapshot(),
+            before,
+            "a create with no render wrote no file: the record is the last thing \
+             it writes, so a failed render leaves no section"
+        );
+        assert_eq!(
+            records(&lines).len(),
+            1,
+            "one action record for the create that failed"
+        );
+    }
+
+    // ── The gates: polkit for a caller's own write, the pair for the `As` ──
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let before = snapshot();
+        // polkit refuses the caller's own `configure`, and this authority does
+        // not know the bff's account: every call here is refused, the write for
+        // its action, the vouched ones because the `As` form is answered to
+        // nobody.
+        let m = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(false).quietly(true),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_log(log);
+        assert_eq!(
+            m.create_instance(&desktop, ENGINE, "spared", "free"),
+            Err(ManagerError::NotAuthorized),
+            "a desktop caller's own create: polkit is asked, and refuses"
+        );
+        assert_eq!(
+            m.remove_instance(&desktop, "lan-2"),
+            Err(ManagerError::NotAuthorized),
+            "the same for a desktop caller's own remove"
+        );
+        for (who, verb) in [
+            (&member as &Requester, "create"),
+            (&outsider, "create"),
+            (&member, "remove"),
+            (&outsider, "remove"),
+        ] {
+            let got = match verb {
+                "create" => m.create_instance(who, ENGINE, "spared", "free"),
+                _ => m.remove_instance(who, "lan-2"),
+            };
+            assert_eq!(
+                got,
+                Err(ManagerError::NotAuthorized),
+                "{verb} as {}: an authority that does not know the bff answers \
+                 the `As` form to nobody",
+                who.principal.as_ref().map(|p| p.0.as_str()).unwrap_or("-")
+            );
+        }
+        assert_eq!(
+            snapshot(),
+            before,
+            "a refused call wrote no file: the create of `spared` is nowhere"
+        );
+        assert_eq!(
+            records(&lines)
+                .iter()
+                .map(|l| l.rsplit_once("outcome=").expect("outcome").1.to_string())
+                .collect::<Vec<_>>(),
+            vec!["refused"; 6],
+            "every refused call is recorded"
+        );
+    }
+
+    // ── A principal outside `pai`, and a member the bff vouches for ────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        // polkit answers and this authority knows the bff's account: the pair is
+        // all an `As` call needs, so the gate is the principal's own.
+        let mut service = FakeService::new();
+        service.state = UnitState::Inactive;
+        let m = core_with(service, true, FakeGroup::new(), log);
+        // A profile no instance holds, so the member's create has one to bind.
+        std::fs::write(
+            sys.join("server@spared-p.ini"),
+            "[Server]\nPort = 8131\nHostname = 127.0.0.1\n",
+        )
+        .expect("server@spared-p.ini");
+        let before = snapshot();
+        assert_eq!(
+            m.create_instance(&outsider, ENGINE, "spared", "spared-p"),
+            Err(ManagerError::NotAuthorized),
+            "bob is outside `pai`: the create is refused whole"
+        );
+        assert_eq!(
+            m.remove_instance(&outsider, "lan-2"),
+            Err(ManagerError::NotAuthorized),
+            "the remove asks the same pair: lan-2 stays"
+        );
+        assert_eq!(snapshot(), before, "a refused principal wrote nothing");
+        assert_eq!(
+            m.create_instance(&member, ENGINE, "spared", "spared-p"),
+            Ok(()),
+            "alice is a member the bff vouches for: no right of the caller's is asked"
+        );
+        assert!(
+            text_of(INSTANCES_FILE).contains("[spared]\nServerProfile = spared-p\n"),
+            "the member's create landed"
+        );
+        assert_eq!(
+            m.remove_instance(&member, "spared"),
+            Ok(()),
+            "and her own remove"
+        );
+        assert!(
+            !text_of(INSTANCES_FILE).contains("[spared]"),
+            "the instance is gone again, the record's other sections untouched"
+        );
+        assert_eq!(
+            records(&lines)
+                .iter()
+                .map(|l| l.rsplit_once("outcome=").expect("outcome").1.to_string())
+                .collect::<Vec<_>>(),
+            vec!["refused", "refused", "ok", "ok"],
+            "the refusals and the writes, one record each"
+        );
+    }
+
+    // ── A remove: the unit, the assignment, the render, the record last ───
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let mut service = FakeService::new();
+        service.state = UnitState::Inactive;
+        let m = core_with(service, true, FakeGroup::new(), log);
+        let taken = || -> Vec<Call> { m.service().calls.lock().unwrap().clone() };
+        let record = text_of(INSTANCES_FILE);
+        let profile_bytes = bytes_of("server@lan-2.ini");
+        let render_bytes = bytes_of("models@default.ini");
+        assert_eq!(m.remove_instance(&member, "lan-2"), Ok(()));
+
+        let taken = taken();
+        assert_eq!(
+            taken
+                .iter()
+                .filter(|call| **call == Call::Remove("lan-2".into()))
+                .count(),
+            1,
+            "the service manager removes the unit once: {taken:?}"
+        );
+        assert!(
+            matches!(&taken[0], Call::Status(id) if id.as_str() == "lan-2"),
+            "the state is read before the unit goes: {taken:?}"
+        );
+        assert!(
+            !render_of("lan-2").exists(),
+            "the render is gone: the launch reads the record, and there is none"
+        );
+        assert_eq!(
+            pai_core::ini::text::section_text(&text_of(ASSIGNMENTS_FILE), "lan-2"),
+            None,
+            "the assignments section is gone"
+        );
+        assert_eq!(
+            section(&text_of(ASSIGNMENTS_FILE), "newone"),
+            "",
+            "and no other"
+        );
+        let after = text_of(INSTANCES_FILE);
+        assert!(
+            pai_core::ini::text::section_text(&after, "lan-2").is_none(),
+            "the record section is gone"
+        );
+        assert_eq!(
+            section(&after, "lan-3"),
+            section(&record, "lan-3"),
+            "every other section is the file's own bytes"
+        );
+        assert_eq!(
+            bytes_of("server@lan-2.ini"),
+            profile_bytes,
+            "the server profile stays: it is not the instance's file"
+        );
+        assert_eq!(
+            bytes_of("models@default.ini"),
+            render_bytes,
+            "the other instances' renders stay"
+        );
+        assert_eq!(
+            bytes_of("models.ini"),
+            POOL.as_bytes(),
+            "the model profiles stay"
+        );
+        assert_eq!(
+            std::fs::read(state.join("lan-2/keep.llamastate")).expect("snapshot"),
+            b"snapshot".to_vec(),
+            "the state directory stays: a later instance of the id finds its snapshots"
+        );
+        let got = records(&lines);
+        assert_eq!(got.len(), 1, "one record for the remove: {got:?}");
+        assert!(
+            got[0].starts_with(
+                r#"action="remove_instance" target="lan-2" caller=":1.9" principal="alice""#
+            ) && got[0].ends_with("outcome=ok"),
+            "{}`, not the record of the remove",
+            got[0]
+        );
+    }
+
+    // ── A remove of what must stay, or is not there, writes nothing ───────
+    {
+        type RemoveCase = (
+            UnitState,
+            Vec<String>,
+            &'static str,
+            Result<(), ManagerError>,
+            &'static str,
+        );
+        let cases: Vec<RemoveCase> = vec![
+            (
+                UnitState::Inactive,
+                Vec::new(),
+                "default",
+                refused("instance-protected", "default"),
+                "the one protected id, even stopped",
+            ),
+            (
+                UnitState::Active,
+                Vec::new(),
+                "lan-3",
+                refused("instance-running", "lan-3"),
+                "a running instance",
+            ),
+            (
+                UnitState::Activating,
+                Vec::new(),
+                "lan-3",
+                refused("instance-running", "lan-3"),
+                "one coming up",
+            ),
+            (
+                UnitState::Deactivating,
+                Vec::new(),
+                "lan-3",
+                refused("instance-running", "lan-3"),
+                "one coming down",
+            ),
+            (
+                UnitState::Inactive,
+                Vec::new(),
+                "nope",
+                Err(ManagerError::NoInstance),
+                "no section has the id",
+            ),
+            (
+                UnitState::Inactive,
+                Vec::new(),
+                "../x",
+                Err(ManagerError::InvalidId),
+                "the id rule before any path",
+            ),
+            (
+                UnitState::Inactive,
+                Vec::new(),
+                "",
+                Err(ManagerError::InvalidId),
+                "an empty id",
+            ),
+        ];
+        for (state, failing, id, want, why) in cases {
+            let mut service = FakeService::new();
+            service.state = state;
+            service.failing = failing;
+            let m = core_with(service, true, FakeGroup::new(), FakeActionLog::new());
+            let before = snapshot();
+            assert_eq!(m.remove_instance(&member, id), want, "remove({id}): {why}");
+            assert!(
+                m.service()
+                    .calls
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|call| !matches!(call, Call::Remove(_))),
+                "no remove call for {id}: {:?}",
+                m.service().calls.lock().unwrap()
+            );
+            assert_eq!(
+                snapshot(),
+                before,
+                "the refused remove of {id} wrote no file"
+            );
+        }
+        // A state that cannot be read is never a state seen stopped.
+        let mut service = FakeService::new();
+        service.state = UnitState::Inactive;
+        service.failing = vec!["lan-3".into()];
+        let m = core_with(service, true, FakeGroup::new(), FakeActionLog::new());
+        let before = snapshot();
+        assert!(
+            matches!(
+                m.remove_instance(&member, "lan-3"),
+                Err(ManagerError::Service(_))
+            ),
+            "a `Status` failure is the service manager's own failure, never a removal"
+        );
+        assert!(
+            m.service()
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|call| !matches!(call, Call::Remove(_))),
+            "no remove after a state that cannot be read"
+        );
+        assert_eq!(snapshot(), before, "and no file written");
+    }
+
+    // ── A failed remove leaves a listed instance a second call finishes ───
+    {
+        let mut service = FakeService::new();
+        service.state = UnitState::Inactive;
+        service.failing_remove = vec!["lan-3".into()];
+        let m = core_with(service, true, FakeGroup::new(), FakeActionLog::new());
+        let before = snapshot();
+        assert!(
+            matches!(
+                m.remove_instance(&member, "lan-3"),
+                Err(ManagerError::Service(_))
+            ),
+            "the service manager failed to remove the unit"
+        );
+        assert_eq!(
+            snapshot(),
+            before,
+            "the first step failed, so nothing after it ran: the tree is byte for \
+             byte as it was"
+        );
+        assert!(
+            m.instances().iter().any(|r| r.id == "lan-3"),
+            "the instance is still listed, and stopped"
+        );
+        // The next call, with the service manager answering, finishes it: every
+        // step is idempotent. The instance is stopped, as the refusal left it.
+        let mut service = FakeService::new();
+        service.state = UnitState::Inactive;
+        let m = core_with(service, true, FakeGroup::new(), FakeActionLog::new());
+        assert_eq!(m.remove_instance(&member, "lan-3"), Ok(()));
+        assert!(
+            !render_of("lan-3").exists()
+                && pai_core::ini::text::section_text(&text_of(ASSIGNMENTS_FILE), "lan-3").is_none()
+                && pai_core::ini::text::section_text(&text_of(INSTANCES_FILE), "lan-3").is_none(),
+            "the second remove finished it"
+        );
+    }
+
+    // ── The record unreadable is never "absent" ──────────────────────────
+    {
+        let mut service = FakeService::new();
+        service.state = UnitState::Inactive;
+        let m = core_with(service, true, FakeGroup::new(), FakeActionLog::new());
+        std::fs::write(sys.join(INSTANCES_FILE), [0xff, 0xfe, 0x00]).expect("non UTF-8 record");
+        let before = snapshot();
+        assert!(
+            matches!(
+                m.create_instance(&member, ENGINE, "spared", "free"),
+                Err(ManagerError::Io(_))
+            ),
+            "a record that cannot be read is `Io`, never a create"
+        );
+        assert!(
+            matches!(
+                m.remove_instance(&member, "lan-2"),
+                Err(ManagerError::Io(_))
+            ),
+            "and never `NoInstance`"
+        );
+        assert_eq!(snapshot(), before, "neither wrote");
+        // A tree with no record at all: the create writes it, the remove has
+        // nothing to remove.
+        std::fs::remove_file(sys.join(INSTANCES_FILE)).expect("no record");
+        assert_eq!(
+            m.remove_instance(&member, "lan-2"),
+            Err(ManagerError::NoInstance)
+        );
+        assert_eq!(m.create_instance(&member, ENGINE, "spared", "free"), Ok(()));
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            "[spared]\nServerProfile = free\n",
+            "a record written from nothing holds the one section"
+        );
+    }
+}
 /// the node's server profiles (protocol 3, its `As` form and the same name over
 /// the pipe). It writes one key, the `ServerProfile` of the instance's section
 /// of `instances.ini`, and the instance's next launch reads the profile the key
@@ -11137,6 +12323,8 @@ pub(crate) fn manager_existing_id_e2e() {
     // `server@big.ini` is on disk: default is an instance, and its unit is
     // the one named by the id.
     std::fs::write(sys.join("server@big.ini"), ini).expect("server@big.ini");
+    // The render, so a start here is a start: these pins are about the id.
+    write_render(&sys, "default");
     record("[default]\nServerProfile = big\n");
     assert_eq!(
         m.list_instances(),
@@ -12007,6 +13195,15 @@ pub(crate) fn manager_principal_e2e() {
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
     std::fs::write(sys.join("models.ini"), &model_profiles).expect("presets file");
     write_record(&sys, &["default"]);
+    // A start loads the instance's render, which the manager renders from the
+    // pool and the assignment: these pins are about the caller, so `default`
+    // has a model profile assigned and the render that names it.
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\nQwen3.8-27B = on\nQwen3.8-32B = on\nQwen3.8-14B = on\n",
+    )
+    .expect("assignments");
+    write_render(&sys, "default");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // The bff's account (a bus name here, the service SID on Windows) and its
@@ -12388,6 +13585,15 @@ pub(crate) fn manager_action_log_e2e() {
     std::fs::write(sys.join("server@default.ini"), ini).expect("instance file");
     std::fs::write(sys.join("models.ini"), &model_profiles).expect("presets file");
     write_record(&sys, &["default"]);
+    // A start loads the instance's render, which the manager renders from the
+    // pool and the assignment: these pins are about the caller, so `default`
+    // has a model profile assigned and the render that names it.
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\nQwen3.8-27B = on\nQwen3.8-32B = on\nQwen3.8-14B = on\n",
+    )
+    .expect("assignments");
+    write_render(&sys, "default");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     let bff = Caller(":1.9".into());

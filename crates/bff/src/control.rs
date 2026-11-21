@@ -3,7 +3,9 @@
 //! tags at `PUT /api/instances/{id}/tags`. The verbs answer 204
 //! once the manager's job is accepted: the state right after can still be the
 //! previous one, so the web UI polls `GET /api/instances` and the reply carries
-//! no state. The boot flag is read by a signed-in user, as its write is, and
+//! no state. A start or a restart of an instance the manager will not give a
+//! job over (one with no model profile: `instance-no-model-profiles`) is 409
+//! naming the id, and `stop` is never refused, asking for no job. The boot flag is read by a signed-in user, as its write is, and
 //! the tags are written by one.
 //!
 //! The verbs, the boot read, the boot write and the tags write sit behind a
@@ -279,9 +281,12 @@ fn tags_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -
 }
 
 /// The answer to a verb or a boot write that failed: 404 for no such instance
-/// or an id the manager refuses, 503 when there is no manager, 502
-/// `client-service-failed` when the service manager refused the job (its
-/// message stays out of the body) and 502 `client-other` for anything else.
+/// or an id the manager refuses, 409 for a state the manager refuses the job
+/// over (a start of an instance with no model profile: `key` and `args` as the
+/// manager named them, no `field`, the page having no control of this form to
+/// mark), 503 when there is no manager, 502 `client-service-failed` when the
+/// service manager refused the job (its message stays out of the body) and 502
+/// `client-other` for anything else.
 /// The manager refused the signed-in user: 403
 /// `session-not-administrator` (the sign-in's key for the same fact), and the
 /// session that acted ends with the right that authorized it. The other
@@ -293,6 +298,11 @@ fn action_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError)
             sessions.end(session);
             error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
         }
+        ClientError::Invalid(refusal) => (
+            StatusCode::CONFLICT,
+            axum::Json(json!({ "key": refusal.key, "args": refusal.values })),
+        )
+            .into_response(),
         ClientError::NoInstance | ClientError::InvalidId => {
             error(StatusCode::NOT_FOUND, "client-no-instance", &[])
         }

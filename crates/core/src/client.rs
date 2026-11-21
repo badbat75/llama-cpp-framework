@@ -311,6 +311,34 @@ pub trait ManagerClient {
             "this transport of the manager has no Instances".into(),
         ))
     }
+    /// Creates the instance `id` of the engine `engine`, pointing it at the
+    /// server profile `server_profile`. Guarded as a write of a served file is.
+    ///
+    /// STUB (slice 16, tester): the verb exists so the tests compile; the
+    /// manager's rule and every transport's body are the coder's.
+    fn create_instance(
+        &self,
+        engine: &str,
+        id: &str,
+        server_profile: &str,
+    ) -> Result<(), ClientError> {
+        let _ = (engine, id, server_profile);
+        Err(ClientError::Other(
+            "this transport of the manager has no CreateInstance".into(),
+        ))
+    }
+    /// Removes the instance `id`: its unit, its record section, its assignment
+    /// sections and its model-profile render, leaving the server profile, the
+    /// model profiles and the state. Guarded as a write of a served file is.
+    ///
+    /// STUB (slice 16, tester): the verb exists so the tests compile; the
+    /// manager's rule and every transport's body are the coder's.
+    fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
+        let _ = id;
+        Err(ClientError::Other(
+            "this transport of the manager has no RemoveInstance".into(),
+        ))
+    }
     /// Writes the server profile `profile` of the engine `engine`: a new
     /// `server@<profile>.ini` with the server config's defaults and `port`
     /// (`None` leaves the file no `Port`, so the default port answers). An
@@ -427,6 +455,73 @@ mod tests {
         ("client-unavailable", 0),
         ("client-other", 1),
     ];
+
+    // ── The instance verbs (slice 16) ───────────────────────────────────
+
+    /// A client that speaks only the methods with no default body: the shape
+    /// of a transport of an older manager.
+    struct Bare;
+
+    impl ManagerClient for Bare {
+        fn list_instances(&self) -> Result<Vec<String>, ClientError> {
+            Ok(Vec::new())
+        }
+        fn status(&self, _id: &str) -> Result<InstanceState, ClientError> {
+            Ok(InstanceState::Inactive)
+        }
+        fn start(&self, _id: &str) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn stop(&self, _id: &str) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn restart(&self, _id: &str) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn read_file(&self, _name: &str) -> Result<Option<ManagerFile>, ClientError> {
+            Ok(None)
+        }
+        fn write_file(
+            &self,
+            _name: &str,
+            _contents: &str,
+            _keep_api_key: bool,
+        ) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn boot_enabled(&self, _id: &str) -> Result<bool, ClientError> {
+            Ok(false)
+        }
+        fn set_boot_enabled(&self, _id: &str, _enabled: bool) -> Result<(), ClientError> {
+            Ok(())
+        }
+        fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
+            Ok((true, true))
+        }
+    }
+
+    /// `create_instance(engine, id, server_profile)` and `remove_instance(id)`
+    /// are on the trait, each answering the default body that names the verb a
+    /// transport does not speak: a new fake client gains both without writing
+    /// either, as slice 14's `create_server_profile` does. A transport that
+    /// speaks them overrides them.
+    #[test]
+    fn the_instance_verbs_are_on_the_trait_with_the_default_body() {
+        for (verb, answer) in [
+            (
+                "CreateInstance",
+                Bare.create_instance("llama.cpp", "lan-2", "big"),
+            ),
+            ("RemoveInstance", Bare.remove_instance("lan-2")),
+        ] {
+            match answer {
+                Err(ClientError::Other(detail)) => {
+                    assert!(detail.contains(verb), "{verb}: {detail:?}");
+                }
+                other => panic!("{verb}: the default body is not Other: {other:?}"),
+            }
+        }
+    }
 
     // ── States ──────────────────────────────────────────────────────────
 

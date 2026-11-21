@@ -52,6 +52,7 @@ use axum::Router;
 use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
+use pai_core::checks::Refusal;
 use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -106,6 +107,10 @@ fn principals_of(p: &Principals) -> Vec<Option<String>> {
 struct Answer {
     /// `start`, `stop`, `restart`.
     verb: Unit,
+    /// `stop`, when it answers something other than `verb`: the refusal of a
+    /// start that asks for no job (slice 16) lands on `start` and `restart`
+    /// alone, because a stop needs no model profile.
+    stop: Option<Unit>,
     /// `set_boot_enabled`.
     set_boot: Unit,
     /// `boot_enabled`.
@@ -118,6 +123,7 @@ impl Answer {
     fn ok() -> Answer {
         Answer {
             verb: Ok(()),
+            stop: None,
             set_boot: Ok(()),
             boot: Ok(true),
             delay: Duration::ZERO,
@@ -199,7 +205,10 @@ impl ManagerClient for FakeManager {
         self.act(format!("start {id}"), &self.answer.verb)
     }
     fn stop(&self, id: &str) -> Result<(), ClientError> {
-        self.act(format!("stop {id}"), &self.answer.verb)
+        self.act(
+            format!("stop {id}"),
+            self.answer.stop.as_ref().unwrap_or(&self.answer.verb),
+        )
     }
     fn restart(&self, id: &str) -> Result<(), ClientError> {
         self.act(format!("restart {id}"), &self.answer.verb)
@@ -1613,4 +1622,71 @@ async fn a_write_reply_carries_the_framing_and_sniffing_headers() {
         .await;
     missing.assert_error(StatusCode::NOT_FOUND, "client-no-instance");
     missing.assert_security_headers();
+}
+
+// ── A start that asks for no job (slice 16) ──────────────────────────────
+
+/// The manager's refusal of a start of an instance whose render holds no model
+/// profile (one just created): 409 `instance-no-model-profiles` naming the id,
+/// with no `field` (the page has no control to mark: the instance needs a model
+/// profile, which is the Models page). `stop` is not refused: a stop asks for
+/// no job. The session lives on: the refusal is of the request, not of the
+/// signed-in user.
+#[tokio::test]
+async fn a_start_that_asks_for_no_job_is_a_conflict() {
+    let no_job = Err(ClientError::Invalid(Refusal {
+        key: "instance-no-model-profiles",
+        values: vec!["default".to_string()],
+    }));
+    let app = app_for(
+        Answer {
+            verb: no_job,
+            stop: Some(Ok(())),
+            ..Answer::ok()
+        },
+        Ok(()),
+        false,
+        None,
+        Vec::new(),
+    );
+    let cookie = app.sign_in().await;
+    let replies = app.control("default", &cookie).await;
+    for (verb, r) in ["start", "stop", "restart"].iter().zip(replies) {
+        if *verb == "stop" {
+            r.assert_accepted();
+            continue;
+        }
+        assert_eq!(r.status, StatusCode::CONFLICT, "{verb}: {}", r.body);
+        assert_eq!(
+            r.json(),
+            json!({ "key": "instance-no-model-profiles", "args": ["default"] }),
+            "{verb}: {}",
+            r.body
+        );
+    }
+    assert_eq!(
+        app.calls(),
+        [
+            "start default".to_string(),
+            "stop default".into(),
+            "restart default".into()
+        ],
+        "the refusal is the manager's, so each verb is asked"
+    );
+    app.get("/api/instances", Some(&cookie)).await.assert_ok();
+}
+
+/// A visitor is answered by the gate, as on every other verb: 401
+/// `session-required`, the manager not connected to, so a visitor starts
+/// nothing.
+#[tokio::test]
+async fn a_start_of_no_session_is_refused_and_asks_nothing() {
+    let app = app();
+    for verb in ["start", "stop", "restart"] {
+        app.post(&format!("/api/instances/default/{verb}"), None)
+            .await
+            .assert_session_required();
+    }
+    assert!(app.calls().is_empty(), "{:?}", app.calls());
+    assert_eq!(app.connects.load(Ordering::SeqCst), 0, "connected");
 }

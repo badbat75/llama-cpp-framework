@@ -47,6 +47,18 @@ fn core_in(state: UnitState, allow: bool, failing: &[&str]) -> Arc<Core> {
     )
 }
 
+/// A core whose units are seen `state`, except the ids in `running`, seen
+/// active, with the ids in `failing` failing every call.
+fn core_units(state: UnitState, allow: bool, failing: &[&str], running: &[&str]) -> Arc<Core> {
+    let mut service = FakeService::new().running(running);
+    service.state = state;
+    service.failing = failing.iter().map(|s| s.to_string()).collect();
+    Arc::new(
+        Manager::new(service, FakeAuthority::new(allow), FakeResolver::lan())
+            .with_group(crate::manager::service::fakes::FakeGroup::new()),
+    )
+}
+
 fn core(allow: bool, failing: &[&str]) -> Arc<Core> {
     core_in(UnitState::Active, allow, failing)
 }
@@ -96,6 +108,21 @@ pub(crate) fn manager_pipe_client_e2e() {
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
     std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
     std::fs::write(sys.join("instances.ini"), record).expect("write instances");
+    // A start loads the instance's render and refuses one with nothing to run.
+    // The render is the manager's, from the pool and the assignment, so the
+    // fixture assigns the profile and writes the render it renders.
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\nQwen3.8-27B = on\n\n[broken]\nQwen3.8-27B = on\n",
+    )
+    .expect("write assignments");
+    for id in ["default", "broken"] {
+        std::fs::write(
+            sys.join(format!("models@{id}.ini")),
+            "[Qwen3.8-27B]\nmodel = /models/Qwen3.8-27B-Q8_0.gguf\n",
+        )
+        .expect("write render");
+    }
     // Opaque to the core; shaped like the Windows user SIDs the pipe's
     // client token will give.
     let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
@@ -616,13 +643,16 @@ pub(crate) fn manager_pipe_client_e2e() {
     {
         let c = core(true, &[]);
         let (server, client) = connect(&c, &Caller(String::new()));
+        let assignments =
+            std::fs::read_to_string(sys.join("assignments.ini")).expect("assignments");
         assert_eq!(
             client.set_model_profile("default", "Qwen3.8-27B", "on"),
             Err(ClientError::NotAuthorized),
             "no identity, no assignment"
         );
-        assert!(
-            !sys.join("assignments.ini").exists(),
+        assert_eq!(
+            std::fs::read_to_string(sys.join("assignments.ini")).expect("assignments"),
+            assignments,
             "the refused call writes nothing"
         );
         assert_eq!(asked(&c), vec![], "a call with no identity asks nobody");
@@ -1231,6 +1261,307 @@ pub(crate) fn manager_pipe_client_e2e() {
         assert!(
             !sys.join("server@as-r.ini").exists() && sys.join("server@default.ini").is_file(),
             "a caller that is not the bff writes and removes nothing"
+        );
+        hang_up(server, client);
+    }
+
+    // ── Creating and removing an instance, end to end ────────────────────
+    // The two verbs of slice 16 as the client methods, over the frame: the
+    // section and the render a create writes, the answer of every refusal, and
+    // what a remove takes away and leaves.
+    {
+        // The units are seen stopped, so a remove runs, and `lan-2` seen
+        // active: one of the remove's refusals is a running instance.
+        let c = core_units(UnitState::Inactive, true, &[], &["lan-2"]);
+        let (server, client) = connect(&c, &alice);
+        let seed = std::fs::read_to_string(sys.join("instances.ini")).expect("seed");
+        let presets = std::fs::read_to_string(sys.join("models.ini")).expect("presets");
+        let profile = sys.join("server@pipe-i.ini");
+        std::fs::write(&profile, "[Server]\nPort = 8123\nHostname = 127.0.0.1\n")
+            .expect("free profile");
+        let render = sys.join("models@pipe-i.ini");
+        let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
+
+        assert_eq!(
+            client.create_instance("llama.cpp", "pipe-i", "pipe-i"),
+            Ok(()),
+            "a new id of a profile nothing else names"
+        );
+        assert_eq!(
+            *calls(&c),
+            Vec::<Call>::new(),
+            "the create runs no service call: the template serves a new id and \
+             its boot is off"
+        );
+        assert_eq!(
+            &text_of("instances.ini")[seed.len()..],
+            "[pipe-i]\nServerProfile = pipe-i\n",
+            "the section is appended, naming the profile, every byte before it \
+             the seed's"
+        );
+        assert_eq!(
+            text_of("models@pipe-i.ini"),
+            pai_core::assign::render(&presets, "", None),
+            "the render is the pool with the new instance assigned nothing"
+        );
+        assert!(
+            !pai_core::launch::has_model_profiles_in(&render),
+            "the new instance has no model profile"
+        );
+        assert!(
+            !sys.join("models@pipe-i.ini.tmp").exists(),
+            "no temp file is left"
+        );
+        assert_eq!(
+            client.boot_enabled("pipe-i"),
+            Ok(false),
+            "a new instance starts at boot off"
+        );
+        let rows = client.instances().expect("instances");
+        let new = rows.iter().find(|r| r.id == "pipe-i").expect("listed");
+        assert_eq!(
+            (new.engine.as_str(), new.server_profile.as_deref(), new.port),
+            ("llama.cpp", Some("pipe-i"), 8123),
+            "the new instance is listed with the profile and the port it names"
+        );
+
+        // Every refusal, over the frame: the engine, the id, the name taken,
+        // the profile that is not there and the one already in use. Each writes
+        // no record and no render: the record stays as the create left it.
+        let seeded = text_of("instances.ini");
+        for (answer, want) in [
+            (
+                client.create_instance("vllm", "pipe-q", "pipe-i"),
+                Err(ClientError::Invalid(Refusal {
+                    key: "unknown-engine",
+                    values: vec!["vllm".into()],
+                })),
+            ),
+            (
+                client.create_instance("llama.cpp", "pipe-i", "pipe-i"),
+                Err(ClientError::Invalid(Refusal {
+                    key: "instance-exists",
+                    values: vec!["pipe-i".into()],
+                })),
+            ),
+            (
+                client.create_instance("llama.cpp", "pipe-z", "nosuch"),
+                Err(ClientError::NoServerProfile("nosuch".into())),
+            ),
+            (
+                client.create_instance("llama.cpp", "pipe-z", "broken"),
+                Err(ClientError::ServerProfileInUse(
+                    "broken".into(),
+                    "broken".into(),
+                )),
+            ),
+        ] {
+            assert_eq!(answer, want, "{want:?}");
+            assert_eq!(text_of("instances.ini"), seeded, "{want:?}");
+            assert!(!sys.join("models@pipe-z.ini").exists(), "{want:?}");
+        }
+        for id in ["../x", "A", "", "a_b"] {
+            assert_eq!(
+                client.create_instance("llama.cpp", id, "pipe-i"),
+                Err(ClientError::Invalid(Refusal {
+                    key: "instance-bad-id",
+                    values: vec![id.into()],
+                })),
+                "an id the rule refuses"
+            );
+            assert_eq!(text_of("instances.ini"), seeded, "{id}");
+        }
+
+        // The remove: the record's section and the render go, the profile, the
+        // pool, and every other instance stay.
+        let before = calls(&c);
+        assert_eq!(client.remove_instance("pipe-i"), Ok(()));
+        assert_eq!(
+            calls(&c)[before.len()..],
+            [Call::Status("pipe-i".into()), Call::Remove("pipe-i".into())],
+            "the state is read before the unit is removed, once"
+        );
+        assert_eq!(
+            text_of("instances.ini"),
+            seed,
+            "the section is gone and every other byte is the seed's"
+        );
+        assert!(!render.exists(), "the render is gone");
+        assert!(profile.is_file(), "the server profile is the pool's");
+        assert_eq!(
+            text_of("models.ini"),
+            presets,
+            "the model profiles are nobody's to delete here"
+        );
+        assert_eq!(
+            text_of("server@broken.ini"),
+            broken_ini,
+            "another instance's profile is its own"
+        );
+        assert_eq!(
+            client.remove_instance("pipe-i"),
+            Err(ClientError::NoInstance),
+            "a second remove has nothing to remove"
+        );
+
+        // The remove's refusals: the protected id, a running one, an id the
+        // rule refuses, and no such instance. The running one is refused
+        // because its state is read: the status is asked for it, and it alone.
+        for (answer, want) in [
+            (
+                client.remove_instance("default"),
+                Err(ClientError::Invalid(Refusal {
+                    key: "instance-protected",
+                    values: vec!["default".into()],
+                })),
+            ),
+            (
+                client.remove_instance("lan-2"),
+                Err(ClientError::Invalid(Refusal {
+                    key: "instance-running",
+                    values: vec!["lan-2".into()],
+                })),
+            ),
+            (client.remove_instance("../x"), Err(ClientError::InvalidId)),
+            (client.remove_instance("nope"), Err(ClientError::NoInstance)),
+        ] {
+            assert_eq!(answer, want, "{want:?}");
+            assert_eq!(text_of("instances.ini"), seed, "{want:?}");
+        }
+        assert_eq!(
+            calls(&c)[before.len()..],
+            [
+                Call::Status("pipe-i".into()),
+                Call::Remove("pipe-i".into()),
+                Call::Status("lan-2".into()),
+            ],
+            "the refusals remove no unit: the state read is the one of `lan-2`, \
+             the refusal is that it is running"
+        );
+        let _ = std::fs::remove_file(&profile);
+        hang_up(server, client);
+    }
+
+    // ── The `As` names of the instance verbs: the bff vouches for a member ─
+    {
+        let passwords = crate::manager::service::fakes::FakePasswords::new();
+        let asked_admin = passwords.asked_admin.clone();
+        let (c, _) = auth_core(passwords);
+        let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+        let seed = std::fs::read_to_string(sys.join("instances.ini")).expect("seed");
+
+        // The checks are the principal's own: a member's id the rule refuses
+        // answers the check, a principal outside `pai` is refused.
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .create_instance("llama.cpp", "../x", "default"),
+            Err(ClientError::Invalid(Refusal {
+                key: "instance-bad-id",
+                values: vec!["../x".into()],
+            })),
+            "the member's create reaches the core's own check"
+        );
+        assert_eq!(
+            client.acting_for("alice").remove_instance("../x"),
+            Err(ClientError::InvalidId),
+            "and the remove's own answer for an id the rule refuses"
+        );
+        assert_eq!(
+            client
+                .acting_for("bob")
+                .create_instance("llama.cpp", "as-i", "default"),
+            Err(ClientError::NotAuthorized),
+            "bob is no member of the administrators"
+        );
+        assert_eq!(
+            client.acting_for("bob").remove_instance("default"),
+            Err(ClientError::NotAuthorized),
+            "the same for a remove"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec![
+                "alice".to_string(),
+                "alice".into(),
+                "bob".into(),
+                "bob".into()
+            ],
+            "the membership of the vouched name, per call"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).expect("record"),
+            seed,
+            "nothing was written: no create of a bad id, nothing for a principal \
+             outside `pai`"
+        );
+        assert!(!sys.join("models@as-i.ini").exists(), "no render either");
+        hang_up(server, client);
+    }
+
+    // ── A create over a record whose last line has no final newline ──────
+    // The create appends its section after every byte that is there, and the
+    // design says a newline goes FIRST when the text does not end with one:
+    // the section the administrator left as the file's last line keeps its
+    // own keys, and the new instance's header starts a line of its own, so
+    // the list reads it. The CRLF style is the file's own (every other
+    // writer of the record, `pai_core::ini`, keeps the style it finds), so a
+    // record edited on Windows arrives in it.
+    for (style, record) in [
+        (
+            "LF",
+            "[default]\nServerProfile = default\n\n[tail]\nServerProfile = tail",
+        ),
+        (
+            "CRLF",
+            "[default]\r\nServerProfile = default\r\n\r\n[tail]\r\nServerProfile = tail",
+        ),
+    ] {
+        let c = core_units(UnitState::Inactive, true, &[], &[]);
+        let (server, client) = connect(&c, &alice);
+        std::fs::write(
+            sys.join("server@pipe-n.ini"),
+            "[Server]\nPort = 8127\nHostname = 127.0.0.1\n",
+        )
+        .expect("free profile");
+        std::fs::write(sys.join("instances.ini"), record).expect("record with no final newline");
+
+        assert_eq!(
+            client.create_instance("llama.cpp", "pipe-n", "pipe-n"),
+            Ok(()),
+            "{style}: a create over a record whose last line has no final newline"
+        );
+        let text = std::fs::read_to_string(sys.join("instances.ini")).expect("record");
+        assert!(
+            text.starts_with(record),
+            "{style}: every byte of the record is left as it was: {text:?}"
+        );
+        let sections = pai_core::ini::parse_sections(&text);
+        let profile_of = |id: &str| {
+            sections
+                .iter()
+                .find(|section| section.id == id)
+                .and_then(|section| section.keys.get("ServerProfile"))
+                .map(|name| name.trim().to_string())
+        };
+        assert_eq!(
+            profile_of("tail"),
+            Some("tail".to_string()),
+            "{style}: the section that ended the file keeps the profile it names, \
+             the appended header lands on a line of its own: {text:?}"
+        );
+        assert_eq!(
+            profile_of("pipe-n"),
+            Some("pipe-n".to_string()),
+            "{style}: the record has a section of the new instance: {text:?}"
+        );
+        assert!(
+            client
+                .instances()
+                .expect("instances")
+                .iter()
+                .any(|row| row.id == "pipe-n"),
+            "{style}: the new instance is listed: {text:?}"
         );
         hang_up(server, client);
     }

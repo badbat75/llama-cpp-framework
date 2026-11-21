@@ -366,6 +366,29 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         ))
     }
 
+    /// `CreateInstance`: the three names the manager's rule asks for, the
+    /// instance's id sent as the frame's `instance`, the name every verb
+    /// keyed on an instance uses.
+    fn create_instance(
+        &self,
+        engine: &str,
+        id: &str,
+        server_profile: &str,
+    ) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "CreateInstance",
+            &[
+                ("engine", json!(engine)),
+                ("instance", json!(id)),
+                ("server_profile", json!(server_profile)),
+            ],
+        ))
+    }
+
+    fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded("RemoveInstance", &[("instance", json!(id))]))
+    }
+
     fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
         let v = self.call(json!({"method": "Instances"}))?;
         let rows = v

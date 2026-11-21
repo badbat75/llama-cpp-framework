@@ -295,6 +295,27 @@ impl ManagerClient for DbusClient {
         }
         .map(|_| ())
     }
+    fn create_instance(
+        &self,
+        engine: &str,
+        id: &str,
+        server_profile: &str,
+    ) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => {
+                self.call("CreateInstanceAs", &(principal, engine, id, server_profile))
+            }
+            None => self.call("CreateInstance", &(engine, id, server_profile)),
+        }
+        .map(|_| ())
+    }
+    fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("RemoveInstanceAs", &(principal, id)),
+            None => self.call("RemoveInstance", &(id,)),
+        }
+        .map(|_| ())
+    }
     fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
         let rows: Vec<InstanceRow> = body(self.call("Instances", &())?)?;
         Ok(rows

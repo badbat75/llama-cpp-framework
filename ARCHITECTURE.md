@@ -2038,6 +2038,14 @@ each refusal's status, key, `args` and `field`, `CreateInstanceAs`/`RemoveInstan
 principal; start and restart 409 `instance-no-model-profiles`; `removable` false for `default` only.
 Clippy, fmt and the Windows check green per crate; mutants on the security code above.
 
+**As built** (reviewed 2026-11-21 against the uncommitted change; Linux tested, Windows `ScmService::remove`
+type-checked only): every decision above is met. `Manager::start`, `restart` (`has_profiles` after
+`existing_id`, before the service), `create_instance`, `remove_instance` and `append_record` (the
+file's own line ending first when the record ends without one) in `crates/manager/src/manager/service.rs`;
+`SystemdService::remove` in `manager/dbus.rs`, `ScmService::remove` in `manager/windows/scm.rs`; the
+`As` forms on D-Bus and the pipe; the two routes in `crates/bff/src/instances.rs`, the 409 of a start or
+restart in `crates/bff/src/control.rs`, `removable` in `crates/bff/src/lib.rs`.
+
 **Slices** (replacing the old 4 to 14), each test first; Linux, the Windows code type-checked.
 
 4. **The rename** (13a), no behaviour change, across `pai-core`, `pai-manager`, `pai-app`, `pai-cli`,

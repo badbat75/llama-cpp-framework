@@ -1184,7 +1184,7 @@ async fn a_get_route_is_never_refused_for_these_headers() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false}]),
+            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false}]),
             "{}",
             r.body
         );
@@ -1692,7 +1692,7 @@ async fn a_loopback_host_is_answered_as_today() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
+            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false}]),
             "Host: {host}: {}",
             r.body
         );
@@ -1763,7 +1763,7 @@ async fn an_ip_host_off_loopback_is_answered() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
+            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false}]),
             "Host: {host}: {}",
             r.body
         );
@@ -1843,7 +1843,7 @@ async fn a_machine_name_in_the_list_is_answered() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
+            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false}]),
             "Host: {host}: {}",
             r.body
         );
@@ -2015,7 +2015,7 @@ async fn localhost_and_an_ip_are_answered_with_a_name_list() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
+            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false}]),
             "Host: {host}: {}",
             r.body
         );
@@ -2056,7 +2056,7 @@ async fn a_trailing_dot_on_a_machine_name_is_the_same_name() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false}]),
+            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false}]),
             "Host: {host}: {}",
             r.body
         );
@@ -2305,7 +2305,7 @@ async fn a_loopback_host_is_answered_at_a_loopback_listen() {
                 .await;
             assert_eq!(
                 r.json(),
-                json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
+                json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false}]),
                 "Listen {listen}, Host: {host}: {}",
                 r.body
             );
@@ -2469,7 +2469,7 @@ async fn a_lan_only_listen_answers_the_other_addresses() {
             .await;
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
+            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false}]),
             "Listen {LISTEN_LAN}, Host: {host}: {}",
             r.body
         );
@@ -2551,7 +2551,7 @@ async fn a_request_with_no_host_is_answered_as_today() {
     let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
-        json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true}]),
+        json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false}]),
         "{}",
         r.body
     );
@@ -2958,7 +2958,7 @@ impl App {
     fn instances_body(r: &Reply, host: &str, boot: bool) {
         assert_eq!(
             r.json(),
-            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": boot}]),
+            json!([{"id": "default", "engine": ENGINE, "serverProfile": "default", "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": boot, "removable": false}]),
             "Host: {host}: {}",
             r.body
         );

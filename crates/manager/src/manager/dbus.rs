@@ -556,6 +556,62 @@ where
             .await?)
     }
 
+    /// `CreateInstance`: writes the record section, the render and the
+    /// assignment of a new instance, `(sss)`: the engine, the id and the server
+    /// profile it runs. The reply is empty, as every write's: the caller sent
+    /// the id, and the create is answered before the record is written, so the
+    /// id it would name is the one it has.
+    async fn create_instance(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        engine: String,
+        id: String,
+        server_profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.create_instance(&who, &engine, &id, &server_profile))
+            .await?)
+    }
+
+    /// `CreateInstance` for `principal`, the principal first as every `As`
+    /// method has it (`ssss`).
+    async fn create_instance_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        engine: String,
+        id: String,
+        server_profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.create_instance(&who, &engine, &id, &server_profile))
+            .await?)
+    }
+
+    /// `RemoveInstance`: takes an instance away, `(s)`, its id. The id is the
+    /// caller's own, so a create answers no id and a remove asks for none.
+    async fn remove_instance(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        id: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self.core(move |m| m.remove_instance(&who, &id)).await?)
+    }
+
+    /// `RemoveInstance` for `principal`, the principal first (`ss`).
+    async fn remove_instance_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        id: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self.core(move |m| m.remove_instance(&who, &id)).await?)
+    }
+
     /// `ReadFile` for `principal`. The reply has the plain method's shape;
     /// a member of `pai` may configure, so a member's read is never withheld.
     async fn read_file_as(
@@ -718,6 +774,28 @@ impl ServiceControl for SystemdService {
             .call::<_, _, ()>("Reload", &())
             .map_err(service_error)
     }
+
+    /// systemd's own three steps, in this order: the unit's enablement gone
+    /// (`DisableUnitFiles`, the `wants/` links of the next boot included), the
+    /// manager reloaded so the unit is dropped from its runtime set, and the
+    /// unit's failed state reset. A unit systemd has never seen has nothing to
+    /// reset: `ResetFailedUnit` answering an error is not the removal's failure,
+    /// while a refusal of `DisableUnitFiles` is, and nothing after it runs. The
+    /// unit file itself stays on disk: the package owns it, and a later instance
+    /// of the same id starts from it.
+    fn remove(&self, id: &str) -> Result<(), ServiceError> {
+        let unit = format!("llama.cpp@{id}.service");
+        let units: &[&str] = &[unit.as_str()];
+        let manager = self.manager()?;
+        manager
+            .call::<_, _, Vec<(String, String, String)>>("DisableUnitFiles", &(units, false))
+            .map_err(service_error)?;
+        manager
+            .call::<_, _, ()>("Reload", &())
+            .map_err(service_error)?;
+        let _ = manager.call::<_, _, ()>("ResetFailedUnit", &(unit.as_str(),));
+        Ok(())
+    }
 }
 
 /// [`Authority`] over polkit (`org.freedesktop.PolicyKit1.Authority.CheckAuthorization`,
@@ -868,6 +946,15 @@ pub(crate) fn manager_dbus_e2e() {
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
     std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
     std::fs::write(sys.join("instances.ini"), record).expect("write instances");
+    // A start loads the instance's render and refuses one with nothing to run;
+    // these pins are about the transport, so each instance gets a render.
+    for id in ["default", "broken", "lan-2"] {
+        std::fs::write(
+            sys.join(format!("models@{id}.ini")),
+            "[seed]\nmodel = /models/seed.gguf\n",
+        )
+        .expect("render");
+    }
 
     // Serve `core` on one end of a socket pair, the server built on its own
     // thread (both ends handshake at once); the client on the other end,
@@ -1849,6 +1936,12 @@ pub(crate) fn manager_dbus_waits_e2e() {
         "[default]\nServerProfile = default\n",
     )
     .expect("write instances");
+    // ... and a render with a model profile to load, so that Start is a start.
+    std::fs::write(
+        sys.join("models@default.ini"),
+        "[seed]\nmodel = /models/seed.gguf\n",
+    )
+    .expect("write render");
 
     let alice = Caller(":1.42".into());
     let gate = Gate::new();
@@ -2176,6 +2269,19 @@ pub(crate) fn manager_dbus_principal_e2e() {
         "[default]\nServerProfile = default\n",
     )
     .expect("instances.ini");
+    // A start loads the instance's render, which the manager renders from the
+    // pool and the assignment: these pins are about the caller, so `default`
+    // has a model profile assigned and the render that names it.
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\nQwen3.8-27B = on\nQwen3.8-14B = on\n",
+    )
+    .expect("assignments.ini");
+    std::fs::write(
+        sys.join("models@default.ini"),
+        "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
+    )
+    .expect("models@default.ini");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // `core` served on one end of a socket pair (the server built on its own
@@ -3091,13 +3197,405 @@ pub(crate) fn manager_dbus_server_profiles_e2e() {
     }
 }
 
+/// Creating and removing an instance over D-Bus (slice 16):
+/// `CreateInstance(engine, id, serverProfile)` is `(sss)` and its reply the
+/// unit, `RemoveInstance(id)` is `(s)` and its reply the unit, and their
+/// `As` forms carry the principal first: `(ssss)` and `(ss)`. A rule's
+/// refusal crosses as the keyed `Invalid` refusal, decoded to the key and
+/// the id (`instance-bad-id`, `instance-exists`, `instance-protected`,
+/// `instance-running`, `instance-no-model-profiles`); the older names keep
+/// their own wire form (`NoServerProfile`, `ServerProfileInUse` with the
+/// separator, `AddressInUse`, `NoInstance`, `InvalidId`). A body that is
+/// not the signature is zbus's own error and writes nothing, and a caller
+/// with no sender is refused.
+#[cfg(test)]
+pub(crate) fn manager_dbus_instance_crud_e2e() {
+    use super::service::fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use pai_core::checks::Refusal;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    use zbus::blocking::connection::Builder;
+    use zbus::blocking::Connection;
+
+    type Core = Manager<FakeService, FakeAuthority, FakeResolver>;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n",
+    )
+    .expect("record");
+    for (name, port) in [
+        ("default", 8080),
+        ("lan-2", 8081),
+        ("free", 8123),
+        ("dupe", 8081),
+    ] {
+        std::fs::write(
+            sys.join(format!("server@{name}.ini")),
+            format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+        )
+        .expect("profile");
+    }
+    std::fs::write(
+        sys.join("server@badhost.ini"),
+        "[Server]\nPort = 8124\nHostname = nowhere.invalid\n",
+    )
+    .expect("profile");
+    std::fs::write(
+        sys.join("models.ini"),
+        "[*]\non = true\n\n[qwen]\nmodel = qwen.gguf\n",
+    )
+    .expect("pool");
+    for id in ["default", "lan-2"] {
+        std::fs::write(
+            sys.join(format!("models@{id}.ini")),
+            "[*]\non = true\n\n[qwen]\nmodel = qwen.gguf\n",
+        )
+        .expect("render");
+    }
+
+    let connect = |core: &Arc<Core>, sender: Option<&str>| -> (Connection, Connection) {
+        let (s0, s1) = UnixStream::pair().expect("socket pair");
+        let iface = ManagerInterface::new(core.clone());
+        let server = std::thread::spawn(move || {
+            Builder::async_io_unix_stream(s0)
+                .server(zbus::Guid::generate())
+                .expect("server guid")
+                .p2p()
+                .serve_at(OBJECT_PATH, iface)
+                .expect("serve_at")
+                .build()
+                .expect("server connection")
+        });
+        let client = Builder::async_io_unix_stream(s1)
+            .p2p()
+            .method_timeout(Duration::from_secs(10))
+            .build()
+            .expect("client connection");
+        if let Some(name) = sender {
+            client.inner().set_unique_name(name).expect("unique name");
+        }
+        (server.join().expect("server thread"), client)
+    };
+    let core = || -> Arc<Core> {
+        Arc::new(
+            Manager::new(
+                // The units seen stopped: a remove refuses a running instance,
+                // and these phases are about the verbs, not about the state.
+                FakeService::new().stopped(),
+                FakeAuthority::new(true),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new()),
+        )
+    };
+    // The bff's own account, vouching for a member of `pai`.
+    let core_bff = || -> Arc<Core> {
+        Arc::new(
+            Manager::new(
+                FakeService::new().stopped(),
+                FakeAuthority::new(true).bff(&Caller(":1.9".into())),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new())
+            .with_passwords(FakePasswords::new())
+            .with_log(FakeActionLog::new()),
+        )
+    };
+    fn call<B>(conn: &Connection, method: &str, body: &B) -> Result<zbus::Message, (String, String)>
+    where
+        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    {
+        conn.call_method(None::<&str>, OBJECT_PATH, Some(INTERFACE), method, body)
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                zbus::Error::FDO(e) => {
+                    use zbus::DBusError;
+                    (
+                        e.name().to_string(),
+                        e.description().unwrap_or_default().to_string(),
+                    )
+                }
+                other => panic!("{method}: not a method error reply: {other:?}"),
+            })
+    }
+    let err_name = |kind: &str| format!("org.privateai.Manager1.Error.{kind}");
+    let refusal = |key: &'static str, values: &[&str]| Refusal {
+        key,
+        values: values.iter().map(|v| v.to_string()).collect(),
+    };
+    let record = || std::fs::read_to_string(sys.join("instances.ini")).expect("record");
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+
+    // ── A caller with no sender ───────────────────────────────────────
+    {
+        let c = core();
+        let (_server, client) = connect(&c, None);
+        let e = call(&client, "CreateInstance", &("llama.cpp", "db-1", "free"))
+            .expect_err("CreateInstance with no sender");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        let e = call(&client, "RemoveInstance", &("lan-2",)).expect_err("no sender");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        assert!(
+            record().contains("[lan-2]") && !sys.join("models@db-1.ini").exists(),
+            "a caller with no sender wrote and removed nothing"
+        );
+    }
+
+    // ── An authorized caller: the verbs, their answers, their shapes ───
+    {
+        let c = core();
+        let (_server, client) = connect(&c, Some(":1.42"));
+
+        let r = call(&client, "CreateInstance", &("llama.cpp", "db-1", "free"))
+            .expect("CreateInstance of a new id");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            record(),
+            "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\
+             [db-1]\nServerProfile = free\n",
+            "the record gained the section naming the profile"
+        );
+        assert!(
+            sys.join("models@db-1.ini").is_file(),
+            "and the render the launch reads"
+        );
+
+        for (body, kind, want, why) in [
+            (
+                ("vllm", "db-2", "free"),
+                "Invalid",
+                Some(refusal("unknown-engine", &["vllm"])),
+                "an engine the manager does not serve",
+            ),
+            (
+                ("llama.cpp", "lan-2", "free"),
+                "Invalid",
+                Some(refusal("instance-exists", &["lan-2"])),
+                "an id the record has",
+            ),
+            (
+                ("llama.cpp", "../x", "free"),
+                "Invalid",
+                Some(refusal("instance-bad-id", &["../x"])),
+                "an id the rule refuses",
+            ),
+            (
+                ("llama.cpp", "A", "free"),
+                "Invalid",
+                Some(refusal("instance-bad-id", &["A"])),
+                "an upper case id",
+            ),
+            (
+                ("llama.cpp", "db-3", "gone"),
+                "NoServerProfile",
+                None,
+                "no profile of that name",
+            ),
+            (
+                ("llama.cpp", "db-3", "lan-2"),
+                "ServerProfileInUse",
+                None,
+                "the profile an instance runs",
+            ),
+            (
+                ("llama.cpp", "db-3", "dupe"),
+                "AddressInUse",
+                None,
+                "the address of another instance",
+            ),
+            (
+                ("llama.cpp", "db-3", "badhost"),
+                "UnresolvableHost",
+                None,
+                "a host that does not resolve",
+            ),
+        ] {
+            let e = call(&client, "CreateInstance", &body).expect_err(why);
+            assert_eq!(e.0, err_name(kind), "{why}: {e:?}");
+            if let Some(want) = want {
+                assert_eq!(
+                    Refusal::decode(&e.1),
+                    Some(want),
+                    "{why}: the refusal crosses encoded: {:?}",
+                    e.1
+                );
+            }
+        }
+        assert_eq!(
+            record(),
+            "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\
+             [db-1]\nServerProfile = free\n",
+            "every refused create left the record as it was"
+        );
+        assert!(
+            !sys.join("models@db-2.ini").exists() && !sys.join("models@db-3.ini").exists(),
+            "and wrote no render"
+        );
+
+        // The remove, of a unit seen stopped.
+        let r = call(&client, "RemoveInstance", &("db-1",)).expect("RemoveInstance");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert!(
+            !record().contains("[db-1]") && !sys.join("models@db-1.ini").exists(),
+            "the section and the render are gone"
+        );
+        for (id, kind, want, why) in [
+            (
+                "default",
+                "Invalid",
+                Some(refusal("instance-protected", &["default"])),
+                "the protected id",
+            ),
+            ("nope", "NoInstance", None, "an id the record has not"),
+            ("../x", "InvalidId", None, "an id the rule refuses"),
+        ] {
+            let e = call(&client, "RemoveInstance", &(id,)).expect_err(why);
+            assert_eq!(e.0, err_name(kind), "{why}: {e:?}");
+            if let Some(want) = want {
+                assert_eq!(Refusal::decode(&e.1), Some(want), "{why}: {:?}", e.1);
+            }
+        }
+        assert!(
+            record().contains("[default]") && record().contains("[lan-2]"),
+            "a refused remove removed no section"
+        );
+
+        // The `As` forms are there, with the principal first, and gated:
+        // this caller is not the bff's account.
+        let e = call(
+            &client,
+            "CreateInstanceAs",
+            &("alice", "llama.cpp", "db-as", "free"),
+        )
+        .expect_err("CreateInstanceAs from a caller that is not the bff");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        let e = call(&client, "RemoveInstanceAs", &("alice", "lan-2"))
+            .expect_err("RemoveInstanceAs from a caller that is not the bff");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        assert!(
+            !sys.join("models@db-as.ini").exists() && record().contains("[lan-2]"),
+            "a refused `As` form wrote and removed nothing"
+        );
+
+        // The signatures: no less, no more, and of the agreed types.
+        let before = listing();
+        for e in [
+            call(&client, "CreateInstance", &("llama.cpp", "db-9")).expect_err("a body of (ss)"),
+            call(
+                &client,
+                "CreateInstance",
+                &("llama.cpp", "db-9", "free", "more"),
+            )
+            .expect_err("a body of (ssss)"),
+            call(&client, "CreateInstance", &(8080u16, "db-9", "free"))
+                .expect_err("a uint16 where the engine belongs"),
+            call(&client, "RemoveInstance", &()).expect_err("no argument"),
+            call(&client, "RemoveInstance", &("lan-2", "more")).expect_err("a body of (ss)"),
+            call(&client, "CreateInstanceAs", &("alice", "llama.cpp", "db-9"))
+                .expect_err("the profile missing"),
+            call(&client, "RemoveInstanceAs", &("alice",)).expect_err("the id missing"),
+        ] {
+            assert!(
+                !e.0.starts_with("org.privateai.Manager1."),
+                "not the manager's error: {e:?}"
+            );
+        }
+        assert_eq!(listing(), before, "a call of the wrong shape wrote nothing");
+    }
+
+    // ── The state is asked first ──────────────────────────────────────
+    {
+        let mut service = FakeService::new();
+        service.state = super::service::UnitState::Active;
+        let c = Arc::new(
+            Manager::new(service, FakeAuthority::new(true), FakeResolver::lan())
+                .with_group(FakeGroup::new()),
+        );
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let e = call(&client, "RemoveInstance", &("lan-2",)).expect_err("a running instance");
+        assert_eq!(e.0, err_name("Invalid"), "{e:?}");
+        assert_eq!(
+            Refusal::decode(&e.1),
+            Some(refusal("instance-running", &["lan-2"])),
+            "the running instance's refusal: {:?}",
+            e.1
+        );
+        assert!(
+            record().contains("[lan-2]") && sys.join("models@lan-2.ini").is_file(),
+            "nothing removed"
+        );
+    }
+
+    // ── The `As` forms, answered to the bff's account ─────────────────
+    {
+        let c = core_bff();
+        let (_server, client) = connect(&c, Some(":1.9"));
+        call(
+            &client,
+            "CreateInstanceAs",
+            &("alice", "llama.cpp", "db-as", "free"),
+        )
+        .expect("CreateInstanceAs for a member of pai");
+        assert!(
+            record().contains("[db-as]") && sys.join("models@db-as.ini").is_file(),
+            "the create for the principal wrote"
+        );
+        call(&client, "RemoveInstanceAs", &("alice", "db-as"))
+            .expect("RemoveInstanceAs for a member of pai");
+        assert!(
+            !record().contains("[db-as]") && !sys.join("models@db-as.ini").exists(),
+            "and its remove, for the principal, undid it"
+        );
+        let e = call(
+            &client,
+            "CreateInstanceAs",
+            &("bob", "llama.cpp", "db-as", "free"),
+        )
+        .expect_err("a principal outside pai");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        let e = call(&client, "RemoveInstanceAs", &("bob", "lan-2"))
+            .expect_err("a principal outside pai");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        assert!(
+            !sys.join("models@db-as.ini").exists() && record().contains("[lan-2]"),
+            "and nothing was written for them"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::ErrorKind;
 
     const PREFIX: &str = "org.privateai.Manager1.Error.";
-
     #[test]
     fn names_are_the_agreed_ones() {
         assert_eq!(BUS_NAME, "org.privateai.Manager1");
@@ -3224,11 +3722,13 @@ mod tests {
     /// it (org.freedesktop.systemd1(5)): `GetUnitFileState` answers `state`,
     /// `EnableUnitFiles` and `DisableUnitFiles` record their arguments (or
     /// fail with `refuse`, as systemd refuses a caller without the right),
-    /// `Reload` is recorded.
+    /// `Reload` is recorded, and `ResetFailedUnit` is recorded (or fails with
+    /// `refuse_reset`, as systemd answers a unit it does not have).
     struct FakeSystemd {
         log: Log,
         state: String,
         refuse: Option<String>,
+        refuse_reset: Option<String>,
     }
 
     #[zbus::interface(name = "org.freedesktop.systemd1.Manager")]
@@ -3277,12 +3777,32 @@ mod tests {
         fn reload(&self) {
             self.log.lock().unwrap().push("Reload".into());
         }
+
+        fn reset_failed_unit(&self, name: String) -> zbus::fdo::Result<()> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("ResetFailedUnit {name}"));
+            if let Some(m) = &self.refuse_reset {
+                return Err(zbus::fdo::Error::AccessDenied(m.clone()));
+            }
+            Ok(())
+        }
     }
 
     /// A [`SystemdService`] over a peer-to-peer connection to a
     /// [`FakeSystemd`] (never the system bus), the server connection to keep
     /// alive, and the log. Every call has a deadline.
     fn systemd(state: &str, refuse: Option<&str>) -> (Connection, SystemdService, Log) {
+        systemds(state, refuse, None)
+    }
+
+    /// The same, with `ResetFailedUnit` answering `refuse_reset`.
+    fn systemds(
+        state: &str,
+        refuse: Option<&str>,
+        refuse_reset: Option<&str>,
+    ) -> (Connection, SystemdService, Log) {
         use std::os::unix::net::UnixStream;
         use zbus::blocking::connection::Builder;
         let log = Log::default();
@@ -3290,6 +3810,7 @@ mod tests {
             log: log.clone(),
             state: state.to_string(),
             refuse: refuse.map(str::to_string),
+            refuse_reset: refuse_reset.map(str::to_string),
         };
         let (s0, s1) = UnixStream::pair().expect("socket pair");
         let server = std::thread::spawn(move || {
@@ -3378,6 +3899,66 @@ mod tests {
                 r#"DisableUnitFiles ["llama.cpp@default.service"] runtime=false"#,
                 "Reload",
             ]
+        );
+    }
+
+    /// Taking an instance's unit away (`systemctl disable` then a reset,
+    /// systemctl(1), org.freedesktop.systemd1(5)): `DisableUnitFiles` on the
+    /// instance's unit, persistent (runtime false), so a `wants/` symlink left
+    /// by hand for a reused id is gone; `Reload`, as systemd must reread after
+    /// a disable; `ResetFailedUnit` on the unit, so an id used again does not
+    /// read `failed` from the last run.
+    #[test]
+    fn removing_an_instance_disables_its_unit_reloads_and_resets_it() {
+        let (_server, service, log) = systemd("enabled", None);
+        assert_eq!(service.remove("lan-2"), Ok(()));
+        assert_eq!(
+            logged(&log),
+            [
+                r#"DisableUnitFiles ["llama.cpp@lan-2.service"] runtime=false"#,
+                "Reload",
+                "ResetFailedUnit llama.cpp@lan-2.service",
+            ],
+            "the three, in that order, all about the instance's own unit"
+        );
+    }
+
+    /// A unit systemd does not have has nothing to reset: `ResetFailedUnit`
+    /// answering an error is not the remove's failure, and the two steps that
+    /// come before it are done.
+    #[test]
+    fn a_reset_that_fails_is_ignored_and_the_remove_is_done() {
+        let not_loaded = "Unit llama.cpp@gone.service not loaded.";
+        let (_server, service, log) = systemds("disabled", None, Some(not_loaded));
+        assert_eq!(
+            service.remove("gone"),
+            Ok(()),
+            "the reset's error is systemd's 'not loaded', not a refusal of the removal"
+        );
+        assert_eq!(
+            logged(&log),
+            [
+                r#"DisableUnitFiles ["llama.cpp@gone.service"] runtime=false"#,
+                "Reload",
+                "ResetFailedUnit llama.cpp@gone.service",
+            ]
+        );
+    }
+
+    /// A refusal of `DisableUnitFiles` is the service manager's own failure,
+    /// its message kept, and the unit is not reloaded nor reset.
+    #[test]
+    fn a_refused_disable_of_a_removed_unit_fails_the_remove() {
+        let denied = "Access denied";
+        let (_server, service, log) = systemd("enabled", Some(denied));
+        match service.remove("lan-2") {
+            Err(ServiceError(m)) => assert!(m.contains(denied), "{m:?}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            logged(&log),
+            [r#"DisableUnitFiles ["llama.cpp@lan-2.service"] runtime=false"#],
+            "nothing after the step that failed"
         );
     }
 
