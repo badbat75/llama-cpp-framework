@@ -3420,7 +3420,13 @@ manager's `NodeInfo` over the mutual TLS channel, under Part 2's "Who may act on
 answers `GET /api/nodes/{node}` with the same object.
 
 **The bff's routes.**
-- `GET /api/version`, the About read (decision 3): `{"version", "os": {"name", "version", "kernel"}}`.
+- `GET /api/version`, the About read (decision 3): `{"version", "name", "os": {"name", "version", "kernel"}}`.
+  `name` is the host name of the bff's machine (`listen::hostname()`, the value `/api/node` already
+  answers; added 2026-11-22 from brief 18 section 9): the shell reads the navigation's host name here, so
+  it never waits on `/api/node`'s manager call (up to 10 s cold). About still shows only the version
+  and the OS. Exposure unchanged: the same session-gated value `/api/node` gives, and the `Host` guard
+  already accepts it. In step 14 this is the director's machine; a node's name comes from
+  `/api/nodes`.
   The bff reads `os` itself with the same `pai-core` reader (it is the web service's machine, and the
   readers need no privilege: the bff's unit hides `/dev` and `/usr/lib/modules`, not `/etc` or `/sys`,
   systemd.exec(5)). It keeps its rules: no manager, idle deadline unmoved, 401 or 200. In step 14 the
@@ -3469,7 +3475,7 @@ child (refused before the read, as `Devices`). Fails closed: an unreadable or ma
   for a non-member, and `As` from a caller that is not the bff, are refused; `ManagerClient::node_info`
   decodes it.
 - **AN4. The bff's replies.** Done when: `crates/bff/tests` show `/api/version` with `os` from a
-  fixture root and the fake manager never connected; `/api/node` with the unchanged fields plus `os`,
+  fixture root and `name` equal to `/api/node`'s `name`, the fake manager never connected; `/api/node` with the unchanged fields plus `os`,
   `vulkan`, `gpus` from the fake manager, asked `NodeInfoAs` with the session's user; the idle
   deadline unchanged after either read; a fake manager that does not answer within the bound gives
   200 with the bff's fields, `os`/`vulkan`/`gpus` `null` and `nodeInfo` `client-unavailable`; a refusal
@@ -3486,6 +3492,226 @@ read by the manager (the architect had recommended leaving it out). 3. About rea
 with `os` added. The architect's calls within them: a plain method gated as `Devices`, a child
 process for the Vulkan read, a partial 200 for `/api/node` when the manager is down, a 10-minute cache
 of the Vulkan answer.
+
+### Create, clone and delete model profiles from the web (user, 2026-11-22, `PLAN.md` "Create and delete model profiles from the web"): accepted (user, 2026-11-22), the recommendations
+
+The requirement: the web deletes a model profile only when it is switched off (its section in
+`models.ini.disabled`) and assigned to no instance, otherwise the manager refuses with a keyed refusal
+naming the reason (and the instances); the web creates a model profile from an id and its model file
+or Hugging Face repo, born switched off; creating can also clone an existing profile, copying its
+settings (user, 2026-11-22, same day); deleting drops its tags ("Tags on model profiles"). Built with
+slice 17 (fe brief 16).
+
+**What exists (checked 2026-11-22).**
+- No manager method creates, renames or deletes a model profile. The GUI writes the pool files whole
+  through `WriteFile` (`crates/app/src/model_profiles.rs` `delete` 1586, `rename_with` 1641, `save`
+  1393); its delete removes the section from both files, switched on or not, assigned or not, and
+  leaves any key naming it in `assignments.ini` (an orphan key: renders nothing while the pool lacks
+  the id; `assign.rs` `render`).
+- Every pool write goes through `check_and_write` (`service.rs` ~1062): `check_contents` (for
+  `models.ini.disabled`: `checks::models_disabled_file`, `model_profile_ids_free`, the renders, the
+  model files and memory of what renders), `write_served_file`, `render_all_locked`. The section rule
+  (`checks::model_profile_section`, ~907) requires the id rule (`model_profile_id`: not empty, `a-zA-Z0-9.-_`,
+  so `*` fails) and a non-blank **`model`** (`model_profile_model`): a section with only `hf-repo` is
+  refused `model-profile-no-model` today, although llama.cpp downloads it (`FETCH_KEYS`, `service.rs`
+  2428, private to the manager). Ids are one profile in any letter case across both files
+  (`model-profile-name-taken`).
+- Assignment keys are exact case (`assign.rs` `assigned`); `assign::rows` gives per instance and per
+  pool id the explicit `value` and `effective` (the render's one rule).
+- `DeleteServerProfile` (slice 14, `service.rs` 1458) is the precedent: configure, the `writing`
+  lock, `read_record` of `instances.ini` (unreadable is `Io`, never "unused"), a refusal naming the
+  holder, one action record. The bff's model profile routes use `model-profiles-malformed` for a body
+  they cannot read and refuse control characters in values (`crates/bff/src/model_profiles.rs` 1230);
+  the manager does not, because no manager method so far built a line from a value.
+
+**(1) One create method with an optional source, or a separate Clone.**
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. `CreateModelProfile(profile, from, values)`**: `from` a source id or `""`, `values` the file pick | One method, one route, one refusal set | Two shapes in one call: the shape rule must be exact | **Recommended** |
+| B. `CreateModelProfile(profile, values)` and `CloneModelProfile(profile, from)` | Two methods, two `As`, two routes or one route dispatching | None beyond A's; more wire to test | Rejected: the checks, lock and writes are the same |
+| C. No manager method: the bff writes the pool with `WriteFileIf` as the switch does | No manager code | The delete rule (switched off, unassigned) would be the bff's, judged on a stale read and bypassed by any `pai` member's own `WriteFile`; the create's "born off, never overwrites" too | Rejected: the rule belongs where the lock is (playbook: a compare belongs under `writing`) |
+
+**(2) The manager methods** (each with its `As` form for the bff: answered only to the bff's account
+for a current member of `pai`; `configure`; the `writing` lock; one action record,
+`create_model_profile` / `delete_model_profile`, target the profile; a refusal writes nothing unless
+said otherwise). No `engine` argument: model profile methods have none (`SetModelProfile`), one engine
+per node today.
+
+**`CreateModelProfile(profile, from, values)`**, D-Bus `(ssa(ss))`, `As` `(sssa(ss))` (principal first).
+`values` is the file pick, the keys llama.cpp reads: `model`, or `hf-repo` with an optional `hf-file`
+(the `value` object `GET /api/hf/files` already answers). Checks, in order:
+1. Before the lock, no file read: the **shape**. Exactly one of `from` (non-empty) and `values`
+   (non-empty); `values` keys only `model`, `hf-repo`, `hf-file`, each once; `model` xor `hf-repo`;
+   `hf-file` only with `hf-repo`. Otherwise `Invalid(model-profile-bad-source [profile])` (new key).
+   Then each value: not empty after trimming spaces and tabs, **no control character** (a newline
+   would add lines, so a section, to the file the manager builds), no Unicode space at an end, else
+   `Invalid(model-profile-bad-text [key])` (new key); a `;` or `#` is `comment-markers [key]` (the
+   existing rule; `hf-repo` and `hf-file` join `MODEL_PROFILE_TEXT_KEYS`). This is the manager failing
+   closed: the bff checks the same, but a `pai` member may call D-Bus directly.
+2. Under the lock: the **id**, `model_profile_id` (`invalid-model-profile-id [profile]`; `*` and the
+   empty id fall here). Both pool files read (absent is empty, any other failure `Io`).
+3. **Taken**: either file holds the id in any letter case: `model-profile-name-taken [profile]`
+   (existing key). A create never overwrites.
+4. **The source** (clone only): `from` must be a pool id, looked up as the render does (`models.ini`
+   first, then `models.ini.disabled`, any letter case); absent, or `*`, is `no-model-profile-named
+   [from]` (existing key). `[*]` is the pool's global section and is never cloned.
+5. **The section** built: a new one is `[<profile>]` and one `key = value` line per value, sorted by
+   key (`hf-file`, `hf-repo`, `model`), in the ending style of `models.ini.disabled` (`detect_eol`;
+   `\r\n` when the file is absent or empty, as the GUI writes). A clone is the source section's bytes
+   as `ini::text::section_text` gives them (comments, key order, every key, `load-on-startup`
+   included) with its header line replaced by `[<profile>]`, given the file's ending when its last line
+   has none. Appended to `models.ini.disabled` (a newline first when the text does not end with one;
+   a missing file is created holding the section alone). **Born switched off** whatever the source's
+   state.
+6. **Born unassigned**: before the pool write, every key naming the id in any letter case is removed
+   from every section of `assignments.ini` (written only if it changed). These keys are orphans (the
+   pool does not hold the id yet), so removing them changes no render; they exist only after a GUI
+   delete of an assigned profile or a hand edit, and without this step a hand `on` key would serve
+   the new profile at once although it is switched off. A create refused at step 7 keeps this
+   cleanup (dead keys only).
+7. **The pool write**: `check_and_write(ModelsDisabled, new text)`, every existing check included (the
+   section rule, ids free, the renders). A `model` file is not checked for existence here: a switched-
+   off, unassigned profile renders nowhere, and the existing checks judge the file when a switch-on
+   or an assignment makes it render.
+8. **Tags** (once "Tags on model profiles" MT1 is built): the record is set for the new id with
+   `model_tags::set`, the source's tags for a clone (question 2), `[]` for a new profile (which also
+   drops a hand-left orphan section). A failure here is `Io` after the profile landed (a label; the
+   page shows the error), as MT1's prune.
+
+What a clone **never** copies: assignments (step 6 makes sure of it), the switch state (step 5), the
+revision (the new section has its own). What it copies: every line of the section, and the tags
+(question 2). An edge accepted: a source section holding a hand-written `;` or `#` in a free-text
+value (allowed in place by decision c1, which exempts only lines a section of the same id holds) is
+refused at clone as `comment-markers [key]`; the administrator edits the source first.
+
+**`DeleteModelProfile(profile)`**, D-Bus `(s)`, `As` `(ss)`. Checks, under the lock, in order:
+1. The id rule fails, or the id is `*`: `no-model-profile-named [profile]` (no path is built from it
+   anyway; the pool files are fixed names).
+2. Both pool files read (absent empty, other failure `Io`). `models.ini` holds the id in any letter
+   case: **`model-profile-enabled [profile]`** (new key; switch it off first). A twin left in both files
+   by an interrupted switch is this refusal too (switching off clears the twin). Neither file holds
+   it: `no-model-profile-named [profile]`.
+3. `instances.ini` with `read_record` (unreadable `Io`, never "unused") and `assignments.ini` (absent
+   empty, other failure `Io`). For each instance of the record, in record order, the instance
+   **assigns** the profile when its section holds a key naming the id in any letter case with
+   `inherit`, `on` or `off`, or when `assign::rows` gives the id `effective` (a hand `* = on` serves a
+   switched-off profile; `* = inherit` does not, so it does not block). Any such instance:
+   **`model-profile-assigned [profile, "<a>, <b>"]`** (new key; the instance ids joined with `, `,
+   which no instance id contains). An explicit `off` counts: it is a row the admin set, and deleting
+   under it would leave a key that a later profile of the same id inherits.
+4. The new `models.ini.disabled` is the text with every section of that id removed (any letter case,
+   repeated `delete_section`), written with `check_and_write(ModelsDisabled, …)` (renders included,
+   none changes). Tags: MT1's prune after every pool write drops the section in the same call (built
+   with MT1; before it there is no record).
+
+**Errors and keys.** All refusals are keyed `checks::Refusal` (`ManagerError::Invalid`): no new
+`ManagerError` variant, so D-Bus, the pipe and `ClientError` carry them unchanged (playbook). New keys
+in `checks::KEYS`, `Refusal::text` and both strings files: `model-profile-bad-source [id]`,
+`model-profile-bad-text [key]`, `model-profile-enabled [id]`, `model-profile-assigned [id, instances]`.
+Reused: `invalid-model-profile-id`, `model-profile-name-taken`, `no-model-profile-named`,
+`comment-markers`, `model-profile-no-model`.
+
+**The `model` rule loosened** (needed for an `hf-repo` create, question 1): `model_profile_section`
+requires a non-blank `model` **or** one non-blank `FETCH_KEYS` key (`hf-repo`, `model-url`,
+`docker-repo`); `FETCH_KEYS` moves to `pai-core` `checks.rs`, the manager's model file and memory
+checks read it there. It applies to every pool write (the GUI's too); the GUI's own pre-check
+(`model_profiles.rs` 1452) stays strict, and the GUI's `ModelProfile` has no `hf-repo` field, so a GUI
+save of an `hf-repo` profile is refused `model-profile-no-model` before anything is written, never a
+silent drop of the key (fail closed; a GUI field waits for a request).
+
+**Wire.** Pipe: `{"method": "CreateModelProfile", "profile", "from", "values": {<key>: <string>}}`
+(`from` a string, `""` for none; `values` an object of strings, `{}` for none; any other type or a
+missing field `BadRequest`), `{"method": "DeleteModelProfile", "profile"}`, their `As` with
+`principal`. The manager sorts `values` by key before building anything (playbook: JSON object order
+differs per build). `ManagerClient`: `create_model_profile(profile, source: &ModelProfileSource)`, the
+enum `From(id)` / `Model(path)` / `Hf { repo, file: Option }`, and `delete_model_profile(profile)`,
+default body `Other` as their siblings, the `As` name when `acting_for` set a principal. Protocol stays 3
+(additive methods, as slice 14: the bff and the manager ship together).
+
+**Atomicity and the lock.** Each call is one critical section under `writing`: every check, the
+assignment cleanup, the pool write, the renders and the tags write see the same files, and no other
+manager write interleaves. Crash points: create killed after step 6 leaves dead keys removed (no
+render changes); after step 7 and before step 8 a profile with no tags; delete is one file write
+(atomic replace) plus MT1's prune (an orphan section is harmless and the next pool write prunes it).
+
+**Revisions: none** on either route. A create never overwrites (step 3). A delete is judged on the
+state under the lock (switched off, unassigned), which is what makes it safe; a section revision
+would only refuse a delete because someone edited a profile that is about to go, as
+`DeleteServerProfile` takes none. A retried create answers 409, a retried delete 404, so a timeout's
+ambiguity is visible (slice 14's rule).
+
+**(3) The bff routes** (mirroring the server profile pool; each 401 `session-required` with no
+session and nothing asked, `sessions.current`, 403 `session-not-administrator` ending the session,
+503 `client-unavailable`, a write timeout 503, anything else 502 `client-other`; the write timeout of
+`POST /api/profiles/server`):
+- **`POST /api/profiles/model`** `{"id": string, "from": string}` or `{"id": string, "values":
+  {"model": string} | {"hf-repo": string, "hf-file"?: string}}`: 201 `{id}`. 400
+  `model-profiles-malformed` for a body it cannot read (not an object, a non-string, an unknown
+  field, both or neither of `from` and `values`, a `values` key outside the three, a control
+  character, the existing route family's key); 422 `invalid-model-profile-id` `field` `id`; 422
+  `comment-markers` `field` the key; 422 `no-model-profile-named` `field` `from`; 422
+  `model-profile-no-model` / `model-profile-bad-source` (`field` `values`) if one ever reaches the
+  manager; 409 `model-profile-name-taken` `[id]`. Values trimmed of spaces and tabs as the save does.
+- **`DELETE /api/profiles/model/{id}`**: 204; 404 `no-model-profile-named` `[id]`; 409
+  `model-profile-enabled` `[id]`; 409 `model-profile-assigned` `[id, instances]`.
+- The list (`GET /api/profiles/model`) needs nothing new: the new profile is a row with `enabled:
+  false` and no assignments. Whether a row offers Delete is the fe's reading of `enabled` and the
+  row's assignments; the manager's refusal stands for a stale page.
+
+**(4) The GUI and `pai`: unchanged in this step** (`PLAN.md`: "the GUI keeps writing the pool files
+whole"). Moving the GUI's delete to `DeleteModelProfile` would put the web's rule on the desktop (a
+profile switched on, or assigned, could no longer be deleted in one click), and macOS has no manager,
+so `model_profiles.rs` keeps both paths anyway. The asymmetry is accepted and documented: the GUI's
+delete can remove a switched-on or assigned profile and leaves orphan assignment keys, which the web's
+create cleans (step 6). If the user wants one rule everywhere later, the GUI's Linux and Windows
+backend calls the two methods and macOS keeps the file path: a small slice, not designed now.
+
+**Trust boundaries.** Unchanged in kind. Browser to bff: the session and `pai` membership as every
+write route. bff to manager: the `As` rule (only the bff's account, only for a current `pai` member,
+re-checked per call). Local client to manager: `configure` (polkit, the member's own password on
+Linux; `pai` on Windows). The manager builds file lines from caller text for the first time, so it
+judges every byte itself (shape, control characters, comment markers, the id charset) before the
+lock and refuses before writing; ids never build a path (the pool files are fixed names). An attacker
+with a session can create switched-off profiles (nothing runs until an assignment or switch, both
+already `configure`) and delete unused ones (exactly what the rule allows); without a session, nothing.
+
+**(5) Slices (each test first; Linux, the Windows code type-checked).**
+- **MP1. The manager.** The loosened `model` rule and `FETCH_KEYS` in `pai-core`; `CreateModelProfile`,
+  `DeleteModelProfile` and their `As` on D-Bus, the pipe and `ManagerClient`; the four keys. Done when:
+  a create with `model` writes `[x]` / `model = /m/x.gguf` at the end of `models.ini.disabled`, every
+  other byte kept, and nothing in `models.ini`; with `hf-repo` only it is accepted; a clone of a
+  switched-on source lands in the disabled file with the source's lines byte for byte under the new
+  header; an `assignments.ini` holding `X = on` for the new id `x` under an instance loses that key and
+  the render of that instance stays `[*]`-only; a taken id (other case, either file) is
+  `model-profile-name-taken`, `*` and `a b` are `invalid-model-profile-id`, `from` absent or `*` is
+  `no-model-profile-named`, both or neither source and `hf-file` alone are `model-profile-bad-source`,
+  a value with `\n` is `model-profile-bad-text` and no file changed; delete of a switched-on profile
+  is `model-profile-enabled`, of one with an explicit key under two instances is `model-profile-assigned`
+  naming both, of one served only through a hand `* = on` is refused too, under `* = inherit` it
+  is removed; an unreadable `instances.ini` is `Io` and nothing removed; the `As` forms refuse a
+  non-member and a non-bff caller; through D-Bus and the pipe each; each crate's clippy and fmt green.
+- **MP2. The bff.** The two routes. Done when: `crates/bff/tests` show 201 `{id}` and the stub received
+  the call with `from` or sorted `values`; each 400 case above; 422 `field` per key; 409 and 404 relayed
+  with their args; 403 ending the session; 401 asking nothing. `fe/briefs/api-contract.md` gains both
+  routes (docs agent).
+- **MP3. The web UI** (slice 17, the designer's brief 16 first): a create form (id, the model or
+  Hugging Face pick from M2/M3, or "clone from"), Delete offered on a switched-off, unassigned row,
+  the refusals shown in their strings. Done when: the brief's criteria and the UX check.
+- **With MT1** (tags, after slice 17): MT1's done-when gains "a delete through `DeleteModelProfile`
+  leaves the record without its section" and "a clone carries the source's tags; a create of a new id
+  leaves no section for it".
+
+**(6) Decisions for the user (recommendation first).**
+1. **Create from `hf-repo` now**: (a) yes, with the `model` rule loosened as above (recommended: the
+   accepted M4 picker writes `hf-repo` anyway and llama.cpp downloads it; the GUI refuses such a
+   profile at its save rather than dropping the key); (b) `model` only now, `hf-repo` with M4.
+2. **A clone copies the tags**: (a) yes (recommended: tags label the settings being copied, and a
+   clone is born switched off and unassigned, so `tag:` routing cannot reach it until an admin acts);
+   (b) no, a clone starts untagged.
+
+**Decided (user, 2026-11-22):** 1 (a), create from `hf-repo` now with the `model` rule loosened; 2 (a),
+a clone copies the source's tags.
 
 ## Part 2: the director (`PLAN.md` step 14, R13)
 

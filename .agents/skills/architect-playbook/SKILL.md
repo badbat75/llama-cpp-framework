@@ -225,3 +225,11 @@ description: What the architect has learned about this project's components, int
   already load as root in a child; `ash` 0.38 is in `Cargo.lock` through `wgpu-hal` (`loaded`
   feature: run-time loader, no link). A polled read may ask the manager: peek the session and use
   its identity as the `As` principal (`control.rs` `boot_read` precedent).
+- Model profile create/delete facts (checked 2026-11-22): the manager's section rule requires a
+  non-blank `model` (`checks::model_profile_section`), so an `hf-repo`-only section is refused unless
+  the rule is loosened; `FETCH_KEYS` is private to `service.rs`. The control-character check on values
+  lives only in the bff (`model_profiles.rs` `parse_body`): any manager method that BUILDS a line from
+  caller text must judge it itself, or a newline injects a section. The GUI's delete leaves orphan
+  assignment keys, which bind to a later profile of the same id: a create must clear them.
+- A value the web shell needs on every page (the host name) must come from a read that asks the
+  manager nothing (`/api/version`): since AN4, `/api/node` waits on `NodeInfoAs` (10 s cold).

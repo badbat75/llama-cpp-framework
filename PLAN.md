@@ -1086,7 +1086,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     existing profile, copying its settings into the new one (user, 2026-11-22). Deleting drops its tags
     (`model-tags.ini`). Built with slice 17; the architect's design first (new manager methods, since the
     manager has none for create or delete today; the GUI keeps writing the pool files whole), then the
-    designer's brief.
+    designer's brief. Decided (user, 2026-11-22, ARCHITECTURE.md "Create, clone and delete model profiles
+    from the web"): `CreateModelProfile(As)` (from a model file, an `hf-repo`, or a clone of another
+    profile's section and tags, never its assignments) and `DeleteModelProfile(As)`; the manager's
+    "needs `model`" rule loosened to `model` or a download key. Slices MP1 to MP3.
     **About and node info** (user, 2026-11-22): the About page keeps only the framework's version and
     the operating system, with its version, of the machine the service runs on (the node's bff, or the
     director's); everything else it shows today (host name, engine and GPU runtime versions) moves to the
