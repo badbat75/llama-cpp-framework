@@ -1024,7 +1024,11 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     models folder per node, shared by llama.cpp and later Strata, owned by the framework rather than an
     engine's tree; `[Server] ModelsDir` leaves the server profiles. No migration of existing folders
     (pre-release). The architect designs the path per OS, the owner and permissions, what the engines'
-    packages and the model file picker (M3 lists that one folder) change; slices before M3.
+    packages and the model file picker (M3 lists that one folder) change; slices before M3. Decided
+    (user, 2026-11-21, ARCHITECTURE.md "One models folder for every engine"): Linux
+    `/var/lib/private-ai/models` (the service user's home opened just enough to reach it), Windows
+    `%ProgramData%\private-ai\models`, macOS keeps `~/.llama.cpp`; the instances and `pai` members write
+    it. Slices F1 `pai-core` (the path, `ModelsDir` dropped, `LLAMA_CACHE`), F2 the clients, F3 packaging.
     **Choosing the model file on the web model profile page** (user, 2026-11-21: "a quando la selezione
     degli asset nel repo dei modelli? (ora testo libero)"): `hf-repo` offers the GGUF files (quants) of
     the Hugging Face repo, read by the node as the GUI's `crates/app/src/hf.rs` does; `model` offers the
