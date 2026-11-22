@@ -14,3 +14,14 @@ fn the_write_limit_outlasts_the_read_limit() {
     assert_eq!(crate::WRITE_TIMEOUT, Duration::from_secs(15));
     assert!(crate::WRITE_TIMEOUT > crate::MANAGER_TIMEOUT);
 }
+
+/// The node's info read (`GET /api/node`, slice AN4) is given a limit longer
+/// than a plain read's: the manager's Vulkan child has a bound of its own (8 s,
+/// `VULKAN_PROBE_TIMEOUT` in `crates/manager/src/manager/service.rs`) and the
+/// reads around it fill up to this one (`ARCHITECTURE.md` "About and node
+/// info"). The web UI's own deadline for the read sits above it.
+#[test]
+fn the_node_info_limit_outlasts_the_read_limit() {
+    assert_eq!(crate::NODE_INFO_TIMEOUT, Duration::from_secs(10));
+    assert!(crate::NODE_INFO_TIMEOUT > crate::MANAGER_TIMEOUT);
+}

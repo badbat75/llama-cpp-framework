@@ -1,10 +1,13 @@
 //! `GET /api/node`: this host's name, the API's root and the versions the
-//! packages installed (slice 13, `ARCHITECTURE.md`). Behind a session, like
-//! `GET /api/version`: it asks the manager nothing and leaves the session's
-//! idle deadline where it was, so the About page and the navigation can poll
-//! it. The version files are the packages' (`xtask package`), read at each
-//! request through [`pai_core::versions::installed`], so an engine upgrade
-//! shows without a restart of the service.
+//! packages installed (slice 13, `ARCHITECTURE.md`), and the host's own facts
+//! (slice AN4, "About and node info"): the operating system and kernel, what
+//! the node's Vulkan read answered, and one row per GPU with both drivers, all
+//! three from the manager's `NodeInfo` asked as the signed-in user. Behind a
+//! session, like `GET /api/version`, and it leaves the session's idle deadline
+//! where it was, so the node page and the navigation can poll it. The version
+//! files are the packages' (`xtask package`), read at each request through
+//! [`pai_core::versions::installed`], so an engine upgrade shows without a
+//! restart of the service.
 //!
 //! `GET /api/node/devices`: the node's compute devices as the manager's engine
 //! probe read them (G2, `ARCHITECTURE.md`). It is a page read and not a poll:
@@ -31,12 +34,29 @@ pub fn name(host: &str) -> String {
     }
 }
 
-/// The document: `{"name", "api", "version", "engines"}`, `engines` each
-/// `{"engine", "version", "backends"}` and each backend
-/// `{"name", "version"}` (the package's suffix, the display name the web UI's
-/// strings). A version of nothing is `null`; an engine with no runtime has
-/// `backends: []`, and a host with no engine `engines: []`.
-pub fn document(name: &str, engines: &[pai_core::versions::Engine]) -> serde_json::Value {
+/// The document: `{"name", "api", "version", "engines", "os", "vulkan",
+/// "gpus"}`, `engines` each `{"engine", "version", "backends"}` and each
+/// backend `{"name", "version"}` (the package's suffix, the display name the
+/// web UI's strings). A version of nothing is `null`; an engine with no runtime
+/// has `backends: []`, and a host with no engine `engines: []`.
+///
+/// The last three members are the host's facts as the manager answered them
+/// (`host`: [`NodeInfoReply`], the row and text bounds are the manager's, in
+/// `pai-core`'s `host` and `vulkan` readers: at most 32 rows, texts of 256 and
+/// 128 bytes): `os` `{"name", "version", "kernel"}`, `vulkan` the one word the
+/// read answered (`ok`, `none`, `failed`), `gpus` one
+/// `{"pci", "vendor", "name", "driver", "version", "vulkan"}` per GPU in the
+/// manager's order, each text a string or `null` and the row's `vulkan`
+/// `{"driver", "info"}` or `null`. The bff sends every field as it arrived:
+/// nothing is renamed, dropped, sorted, capped or judged, so the manager's
+/// bounds are the only ones and a page reads one shape. With `host` `None` (the
+/// manager answered nothing) all three are `null`, which is the page's "unknown"
+/// and not `gpus: []`, a node with no GPU.
+pub fn document(
+    name: &str,
+    engines: &[pai_core::versions::Engine],
+    host: Option<&pai_core::client::NodeInfoReply>,
+) -> serde_json::Value {
     let engines: Vec<serde_json::Value> = engines
         .iter()
         .map(|engine| {
@@ -56,11 +76,49 @@ pub fn document(name: &str, engines: &[pai_core::versions::Engine]) -> serde_jso
         "api": "/api",
         "version": env!("CARGO_PKG_VERSION"),
         "engines": engines,
+        "os": host
+            .map(|host| {
+                serde_json::json!({
+                    "name": host.os.name,
+                    "version": host.os.version,
+                    "kernel": host.os.kernel,
+                })
+            })
+            .unwrap_or(serde_json::Value::Null),
+        "vulkan": host
+            .map(|host| serde_json::Value::String(pai_core::vulkan::word(host.vulkan).to_string()))
+            .unwrap_or(serde_json::Value::Null),
+        "gpus": host
+            .map(|host| {
+                host.gpus
+                    .iter()
+                    .map(gpu_row)
+                    .collect::<Vec<serde_json::Value>>()
+                    .into()
+            })
+            .unwrap_or(serde_json::Value::Null),
+    })
+}
+
+/// One GPU row of [`document`], every field as the manager answered it.
+fn gpu_row(gpu: &pai_core::vulkan::NodeGpu) -> serde_json::Value {
+    serde_json::json!({
+        "pci": gpu.pci,
+        "vendor": gpu.vendor,
+        "name": gpu.name,
+        "driver": gpu.driver,
+        "version": gpu.version,
+        "vulkan": gpu
+            .vulkan
+            .as_ref()
+            .map(|driver| serde_json::json!({ "driver": driver.driver, "info": driver.info }))
+            .unwrap_or(serde_json::Value::Null),
     })
 }
 
 /// The routes of this module: `GET /api/node`, gated by `sessions` and reading
-/// the version files of `versions_dir` (`None`: the install ships none), and
+/// the version files of `versions_dir` (`None`: the install ships none) beside
+/// the host's facts the manager answers as the signed-in user, and
 /// `GET /api/node/devices`, gated by `sessions` and asking the device list of
 /// the manager as the signed-in user.
 pub(crate) fn routes(
@@ -79,29 +137,70 @@ pub(crate) fn routes(
         .route(
             "/api/node",
             axum::routing::get(move |headers: HeaderMap| {
-                let (sessions, versions_dir) = (sessions.clone(), versions_dir.clone());
-                read(sessions, versions_dir, headers)
+                let (connect, sessions, versions_dir) =
+                    (connect.clone(), sessions.clone(), versions_dir.clone());
+                read(connect, sessions, versions_dir, headers)
             }),
         )
         .route("/api/node/devices", axum::routing::get(devices))
 }
 
 /// The answer to `GET /api/node`: 401 `session-required` with no live session,
-/// the manager not asked, the session's idle deadline unmoved.
+/// the manager not asked at all; the bff's own fields and the host's facts the
+/// manager answered as the session's user, on the node's bound
+/// ([`crate::NODE_INFO_TIMEOUT`]: the manager's Vulkan child has a bound of its
+/// own). The session gates the read and is its principal, and the poll leaves
+/// the idle deadline where it was, so a page that only polls this signs itself
+/// out on time.
+///
+/// A manager that is not there, answers past the bound, or fails, is a partial
+/// 200 and not a 503 (the design's preference: the navigation's host name and
+/// the versions must not vanish with the manager): the bff's own fields stand,
+/// the three facts are `null` and `nodeInfo` carries the key the page has a
+/// text for, `client-unavailable` when the manager is away and `client-other`
+/// for anything else; the manager's words stay out of the body. With no failure
+/// the member is absent. The manager refusing the signed-in user is the refusal
+/// of every read that acts as the user: 403 `session-not-administrator`, and
+/// the session ends.
 async fn read(
+    connect: Connect,
     sessions: Arc<Sessions>,
     versions_dir: Option<PathBuf>,
     headers: HeaderMap,
 ) -> Response<Body> {
     use axum::response::IntoResponse;
-    if sessions.peek(&headers).is_none() {
+    let Some((session, identity)) = sessions.peeked(&headers) else {
         return crate::session::error(StatusCode::UNAUTHORIZED, "session-required", &[]);
-    }
+    };
     let engines = versions_dir
         .as_deref()
         .map(pai_core::versions::installed)
         .unwrap_or_default();
-    axum::Json(document(&name(&crate::listen::hostname()), &engines)).into_response()
+    let name = name(&crate::listen::hostname());
+    let user = identity.user;
+    let ask = tokio::task::spawn_blocking(move || -> Result<_, pai_core::client::ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        client.node_info()
+    });
+    match tokio::time::timeout(crate::NODE_INFO_TIMEOUT, ask).await {
+        Ok(Ok(Ok(host))) => axum::Json(document(&name, &engines, Some(&host))).into_response(),
+        Ok(Ok(Err(pai_core::client::ClientError::NotAuthorized))) => {
+            crate::model_profiles::not_administrator(&sessions, &session)
+        }
+        Ok(Ok(Err(pai_core::client::ClientError::Unavailable))) | Err(_) => {
+            partial(&name, &engines, "client-unavailable")
+        }
+        Ok(Ok(Err(_))) | Ok(Err(_)) => partial(&name, &engines, "client-other"),
+    }
+}
+
+/// The partial 200 of [`read`]: the bff's own fields, no host facts, and
+/// `nodeInfo` naming the failure the page has a text for.
+fn partial(name: &str, engines: &[pai_core::versions::Engine], key: &str) -> Response<Body> {
+    use axum::response::IntoResponse;
+    let mut doc = document(name, engines, None);
+    doc["nodeInfo"] = serde_json::json!({ "key": key, "args": [] });
+    axum::Json(doc).into_response()
 }
 
 /// The answer to `GET /api/node/devices`: 401 `session-required` with no live

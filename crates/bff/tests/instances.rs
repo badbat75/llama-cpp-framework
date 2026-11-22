@@ -340,8 +340,10 @@ impl Reply {
         }
     }
 
-    /// 200 with the framework version, the one the packages are named after
-    /// (`version.workspace`).
+    /// 200 with the framework's version, the machine's name and its operating
+    /// system (AN4). The version is the one the packages are named after
+    /// (`version.workspace`); the two host facts are the machine's own, read
+    /// from `/` (the fixture of a known document is `tests/version.rs`).
     fn assert_version(&self) {
         assert_eq!(self.status, StatusCode::OK, "{}", self.body);
         assert!(
@@ -349,9 +351,18 @@ impl Reply {
             "content-type {:?}",
             self.content_type
         );
+        let os = pai_core::host::os(std::path::Path::new("/"));
         assert_eq!(
             self.json(),
-            json!({ "version": env!("CARGO_PKG_VERSION") }),
+            json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "name": pai_bff::listen::hostname(),
+                "os": {
+                    "name": os.name,
+                    "version": os.version,
+                    "kernel": os.kernel,
+                },
+            }),
             "{}",
             self.body
         );

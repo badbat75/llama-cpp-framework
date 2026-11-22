@@ -309,6 +309,14 @@ pub struct ModelInfoReply {
 /// readers' own types ([`OsInfo`], [`Status`] and [`NodeGpu`]), so the reply is
 /// the host's answer with nothing added to it: a fact the host did not answer
 /// is `None`, and a Vulkan read that gave nothing to trust is [`Status::Failed`].
+///
+/// The bounds are the manager's, read into these types by `pai-core`'s own
+/// readers: at most `MAX_GPU_ROWS` rows (32, `host`, the join in `vulkan`
+/// truncating to the same const) and texts of at most 128 bytes for a sysfs
+/// value (`SYSFS_VALUE_MAX_BYTES`) and `TEXT_MAX_BYTES` (256) for a Vulkan one,
+/// a text over the cap being `None`. A caller of this reply reads the answer it
+/// is given: the bff sends every field as it arrived and caps nothing again, so
+/// one reader's bound is the only one a row ever meets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeInfoReply {
     pub os: OsInfo,

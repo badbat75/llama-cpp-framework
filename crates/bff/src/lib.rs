@@ -54,6 +54,11 @@ pub const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15
 /// while that runs.
 pub const DEVICES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 + 5);
 
+/// The bound of the node's info read (`GET /api/node`), as
+/// `ARCHITECTURE.md` "About and node info" fixes it: the manager's Vulkan child
+/// has 8 s of its own and the reads around it fill up to this.
+pub const NODE_INFO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The bff's HTTP routes: `GET /api/version`, `GET /api/instances` from the
 /// system's manager, `/api/session` through the system's authenticator,
 /// `GET /api/instances/{id}/server` and its `PUT`, the control verbs
@@ -116,6 +121,7 @@ fn system_router(policy: origin::HostPolicy) -> Result<axum::Router, std::io::Er
         key,
         policy,
         pai_core::bff_cfg::versions_dir(),
+        std::path::PathBuf::from("/"),
     ))
 }
 
@@ -126,17 +132,20 @@ fn system_router(policy: origin::HostPolicy) -> Result<axum::Router, std::io::Er
 /// asked. `sessions` is the store of the builder that registers them
 /// ([`router_with_policy`]): these two reads use it as the gate and never move
 /// a session's idle deadline. The manager is reached through `connect`, each
-/// answer that asks it given up after `timeout`.
+/// answer that asks it given up after `timeout`. `os_root` is the root the
+/// operating system of the version read is read from (the machine's own root is
+/// `/`).
 pub(crate) fn router_with(
     connect: Connect,
     timeout: std::time::Duration,
     sessions: std::sync::Arc<session::Sessions>,
+    os_root: std::path::PathBuf,
 ) -> axum::Router {
     use axum::extract::Path;
     use axum::routing::get;
     let version = {
-        let sessions = sessions.clone();
-        move |headers: axum::http::HeaderMap| version(sessions.clone(), headers)
+        let (sessions, os_root) = (sessions.clone(), os_root.clone());
+        move |headers: axum::http::HeaderMap| version(sessions.clone(), os_root.clone(), headers)
     };
     let instances = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
@@ -208,6 +217,30 @@ pub fn router_with_session_and_versions_dir(
     key: [u8; 16],
     versions_dir: Option<std::path::PathBuf>,
 ) -> axum::Router {
+    router_with_session_and_roots(
+        connect,
+        timeout,
+        auth,
+        clock,
+        key,
+        versions_dir,
+        std::path::PathBuf::from("/"),
+    )
+}
+
+/// `router_with_session_and_versions_dir` with the root the operating system is
+/// read from handed in too: the service and every builder read the machine's own
+/// root (`/`), a test hands a fixture of its own so the version read answers
+/// known texts.
+pub fn router_with_session_and_roots(
+    connect: Connect,
+    timeout: std::time::Duration,
+    auth: std::sync::Arc<dyn session::Authenticator>,
+    clock: session::Clock,
+    key: [u8; 16],
+    versions_dir: Option<std::path::PathBuf>,
+    os_root: std::path::PathBuf,
+) -> axum::Router {
     router_with_policy(
         connect,
         timeout,
@@ -217,6 +250,7 @@ pub fn router_with_session_and_versions_dir(
         key,
         origin::HostPolicy::loopback(),
         versions_dir,
+        os_root,
     )
 }
 
@@ -243,6 +277,7 @@ pub fn router_with_session_and_write_timeout(
         key,
         origin::HostPolicy::loopback(),
         pai_core::bff_cfg::versions_dir(),
+        std::path::PathBuf::from("/"),
     )
 }
 
@@ -261,6 +296,7 @@ fn router_with_policy(
     key: [u8; 16],
     policy: origin::HostPolicy,
     versions_dir: Option<std::path::PathBuf>,
+    os_root: std::path::PathBuf,
 ) -> axum::Router {
     use axum::extract::Path;
     let sessions = session::sessions(auth, clock);
@@ -330,7 +366,7 @@ fn router_with_policy(
             )
         }
     };
-    router_with(connect.clone(), timeout, sessions.clone())
+    router_with(connect.clone(), timeout, sessions.clone(), os_root)
         .merge(session::routes(sessions.clone()))
         .route(
             "/api/instances/{id}/server",
@@ -393,6 +429,7 @@ pub fn router_with_session_and_hosts(
         key,
         origin::HostPolicy::new(hosts, listen),
         pai_core::bff_cfg::versions_dir(),
+        std::path::PathBuf::from("/"),
     )
 }
 
@@ -421,6 +458,7 @@ pub fn router_with_session_and_host_source(
         key,
         origin::HostPolicy::with_source(listen, hosts, source),
         pai_core::bff_cfg::versions_dir(),
+        std::path::PathBuf::from("/"),
     )
 }
 
@@ -488,20 +526,38 @@ fn system_connect(principal: Option<&str>) -> Result<Client, ClientError> {
     }
 }
 
-/// `GET /api/version`: `{"version": <framework version>}`, to a signed-in
-/// reader. With no live session the answer is 401 `session-required` and no
-/// `Set-Cookie`; the session gates the read, nothing else. The read asks the
-/// manager nothing, and it leaves the session's idle deadline where it was, so
-/// a page that only polls it signs itself out at the idle timeout.
+/// `GET /api/version`: `{"version", "name", "os": {"name", "version",
+/// "kernel"}}`, to a signed-in reader. `version` is the framework's own (the
+/// packages pin it); `name` is this machine's host name, the same value
+/// `GET /api/node` answers, so the navigation labels the node without waiting
+/// on that read's manager call; `os` is the operating system of the machine the
+/// bff runs on, read here by the `pai-core` host reader from `os_root` (the
+/// service's own root is `/`), every field a string or `null` (a host that
+/// answers no os-release is a name and a version of `null`, the kernel beside
+/// them). The read asks the manager nothing, and it leaves the session's idle
+/// deadline where it was, so a page that only polls it signs itself out at the
+/// idle timeout. With no live session the answer is 401 `session-required` and
+/// no `Set-Cookie`; the session gates the read, nothing else.
 async fn version(
     sessions: std::sync::Arc<session::Sessions>,
+    os_root: std::path::PathBuf,
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     use axum::{http::StatusCode, response::IntoResponse};
     if sessions.peek(&headers).is_none() {
         return session::error(StatusCode::UNAUTHORIZED, "session-required", &[]);
     }
-    axum::Json(serde_json::json!({ "version": env!("CARGO_PKG_VERSION") })).into_response()
+    let os = pai_core::host::os(&os_root);
+    axum::Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "name": node::name(&listen::hostname()),
+        "os": {
+            "name": os.name,
+            "version": os.version,
+            "kernel": os.kernel,
+        },
+    }))
+    .into_response()
 }
 
 /// `GET /api/instances`: `[{"id", "engine", "serverProfile", "state", "port",

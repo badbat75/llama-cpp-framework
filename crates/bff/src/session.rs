@@ -180,6 +180,14 @@ impl Sessions {
     /// still ends at its idle timeout. An expired session is removed, as in
     /// [`Sessions::current`].
     pub(crate) fn peek(&self, headers: &HeaderMap) -> Option<Identity> {
+        self.peeked(headers).map(|(_, identity)| identity)
+    }
+
+    /// [`Sessions::peek`] with the session's own id beside the identity: a
+    /// polled read that acts as the signed-in user and must be able to end the
+    /// session the manager refused ([`Sessions::end`]). The deadline is left
+    /// where it was here too, so reading the id costs a poll nothing.
+    pub(crate) fn peeked(&self, headers: &HeaderMap) -> Option<(String, Identity)> {
         let id = cookie_value(headers)?;
         let now = (self.clock)();
         let mut store = self.store();
@@ -188,7 +196,7 @@ impl Sessions {
             store.sessions.remove(&id);
             return None;
         }
-        Some(identity)
+        Some((id, identity))
     }
 
     /// Ends the session `id`: sign-out's removal, which the manager's

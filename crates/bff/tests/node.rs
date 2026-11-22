@@ -6,10 +6,20 @@
 //!
 //! The contract:
 //! - A session is needed: with none the answer is 401 `session-required`, no
-//!   `Set-Cookie`, and the manager is not connected to. The read asks the
-//!   manager nothing at all, and moves no session's idle deadline, like
-//!   `GET /api/version`: the About page and the navigation poll it.
-//! - 200 `{"name", "api", "version", "engines"}`: `name` is the machine's host
+//!   `Set-Cookie`, and the manager is not connected to at all. The read asks the
+//!   manager nothing with no session, and moves no session's idle deadline, like
+//!   `GET /api/version`: the node page and the navigation poll it.
+//! - The host's facts, `os`, `vulkan` and `gpus` (slice AN4, `ARCHITECTURE.md`
+//!   "About and node info"), are the manager's `NodeInfo` asked as the session's
+//!   user, on the node's bound ([`pai_bff::NODE_INFO_TIMEOUT`]): one connect and
+//!   one call answer the page, and the connect names that user. A manager that
+//!   does not answer within the bound, is not there, or fails, is a partial 200:
+//!   the bff's own fields stand, the three are `null` and `nodeInfo` says which
+//!   (`client-unavailable`, `client-other`); with no failure the member is
+//!   absent. The manager's refusal of the signed-in user is 403
+//!   `session-not-administrator` and ends the session, as every `As` read.
+//! - 200 `{"name", "api", "version", "engines", "os", "vulkan", "gpus"}`: `name`
+//!   is the machine's host
 //!   name, `localhost` when it names itself nothing; `api` is `/api`; `version`
 //!   is the bff's own (the packages pin the framework to one version);
 //!   `engines` is each engine installed under the versions directory,
@@ -31,7 +41,9 @@ use axum::Router;
 use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
-use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile, NodeInfoReply};
+use pai_core::host::OsInfo;
+use pai_core::vulkan::{Driver, NodeGpu, Status};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -63,15 +75,101 @@ const SESSION_REQUIRED: &str = "session-required";
 /// this document carries.
 const FRAMEWORK: &str = env!("CARGO_PKG_VERSION");
 
+/// The host's facts the fake manager answers: the operating system as the
+/// host's reader answers it, the Vulkan loader answering `ok`, and two GPUs,
+/// the second a Vulkan device the kernel's tree does not list (its own row, no
+/// bus id, no kernel driver, and a Vulkan driver that names nothing: a device
+/// below Vulkan 1.2).
+fn host_of_the_node() -> NodeInfoReply {
+    NodeInfoReply {
+        os: OsInfo {
+            name: Some("Ubuntu".into()),
+            version: Some("26.04".into()),
+            kernel: Some("6.14.0-24-generic".into()),
+        },
+        vulkan: Status::Ok,
+        gpus: vec![
+            NodeGpu {
+                pci: Some("0000:03:00.0".into()),
+                vendor: Some("1002".into()),
+                name: Some("AMD Radeon AI PRO R9700".into()),
+                driver: Some("amdgpu".into()),
+                version: Some("7.1.9.31600000".into()),
+                vulkan: Some(Driver {
+                    driver: Some("radv".into()),
+                    info: Some("Mesa 25.2.0".into()),
+                }),
+            },
+            NodeGpu {
+                pci: None,
+                vendor: None,
+                name: Some("Asus Vega".into()),
+                driver: None,
+                version: None,
+                vulkan: Some(Driver {
+                    driver: None,
+                    info: None,
+                }),
+            },
+        ],
+    }
+}
+
+/// The three fields of [`host_of_the_node`], as the document answers them: the
+/// bff sends every text as the manager answered it, and the row's own fields
+/// with it.
+fn host_facts() -> Value {
+    json!({
+        "os": { "name": "Ubuntu", "version": "26.04", "kernel": "6.14.0-24-generic" },
+        "vulkan": "ok",
+        "gpus": [
+            { "pci": "0000:03:00.0", "vendor": "1002", "name": "AMD Radeon AI PRO R9700",
+              "driver": "amdgpu", "version": "7.1.9.31600000",
+              "vulkan": { "driver": "radv", "info": "Mesa 25.2.0" } },
+            { "pci": null, "vendor": null, "name": "Asus Vega",
+              "driver": null, "version": null, "vulkan": { "driver": null, "info": null } },
+        ],
+    })
+}
+
+/// What the fake answers and how slow it is, shared with every manager it hands
+/// out.
+struct Fixture {
+    answer: Arc<Mutex<Result<NodeInfoReply, ClientError>>>,
+    delay: Arc<Mutex<Duration>>,
+}
+
+impl Fixture {
+    /// The host of [`host_of_the_node`], answered at once.
+    fn node() -> Fixture {
+        Fixture {
+            answer: Arc::new(Mutex::new(Ok(host_of_the_node()))),
+            delay: Arc::new(Mutex::new(Duration::ZERO)),
+        }
+    }
+    /// The answer, set by a test (a refusal, a failure).
+    fn set(&self, answer: Result<NodeInfoReply, ClientError>) {
+        *self.answer.lock().unwrap_or_else(|e| e.into_inner()) = answer;
+    }
+    /// How long `node_info` takes.
+    fn set_delay(&self, delay: Duration) {
+        *self.delay.lock().unwrap_or_else(|e| e.into_inner()) = delay;
+    }
+}
+
 type Log = Arc<Mutex<Vec<String>>>;
 
 // ── Fakes ───────────────────────────────────────────────────────────────
 
-/// A manager that records every call and answers what no node test reads. The
-/// node read must never reach it: the tests assert the log stays empty.
-#[derive(Default)]
+/// A manager that records every call, answers the node's host facts (or what the
+/// test set, at [`Fixture`]), and answers what no node test reads for every
+/// other verb.
 struct FakeManager {
     log: Log,
+    /// What `node_info` answers.
+    answer: Arc<Mutex<Result<NodeInfoReply, ClientError>>>,
+    /// How long `node_info` takes before it answers.
+    delay: Arc<Mutex<Duration>>,
 }
 
 impl ManagerClient for FakeManager {
@@ -122,6 +220,14 @@ impl ManagerClient for FakeManager {
     }
     fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
         Err(ClientError::Unavailable)
+    }
+    fn node_info(&self) -> Result<NodeInfoReply, ClientError> {
+        self.record("node_info".into());
+        std::thread::sleep(*self.delay.lock().unwrap_or_else(|e| e.into_inner()));
+        self.answer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -174,6 +280,10 @@ struct App {
     clock: FakeClock,
     log: Log,
     connects: Arc<AtomicUsize>,
+    /// The principal each connect was asked to act for.
+    principals: Arc<Mutex<Vec<Option<String>>>>,
+    /// What the fake manager answers, to set from a test.
+    fixture: Fixture,
     /// The versions directory of the test, kept alive while the app lives, so
     /// a test can write a file into it (`None`: the folder is not there).
     dir: Option<tempfile::TempDir>,
@@ -184,10 +294,20 @@ struct App {
 fn app_at(versions_dir: Option<std::path::PathBuf>) -> App {
     let log = Log::default();
     let connects = Arc::new(AtomicUsize::new(0));
-    let (l, c) = (log.clone(), connects.clone());
-    let connect: Connect = Arc::new(move |_principal: Option<&str>| {
+    let principals = Arc::new(Mutex::new(Vec::new()));
+    let fixture = Fixture::node();
+    let (l, c, p) = (log.clone(), connects.clone(), principals.clone());
+    let (answer, delay) = (fixture.answer.clone(), fixture.delay.clone());
+    let connect: Connect = Arc::new(move |principal: Option<&str>| {
         c.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::new(FakeManager { log: l.clone() }) as Client)
+        p.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(principal.map(str::to_string));
+        Ok(Box::new(FakeManager {
+            log: l.clone(),
+            answer: answer.clone(),
+            delay: delay.clone(),
+        }) as Client)
     });
     let clock = FakeClock::new();
     let router = pai_bff::router_with_session_and_versions_dir(
@@ -203,6 +323,8 @@ fn app_at(versions_dir: Option<std::path::PathBuf>) -> App {
         clock,
         log,
         connects,
+        principals,
+        fixture,
         dir: None,
     }
 }
@@ -255,10 +377,22 @@ impl App {
             .to_path_buf()
     }
 
-    /// Nothing was asked of the manager: no connect, no call.
+    /// The principal each connect was asked to act for, in order.
+    fn principals(&self) -> Vec<Option<String>> {
+        self.principals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Nothing was asked of the manager: no connect, no principal, no call.
     fn assert_asked_nothing(&self, what: &str) {
         assert_eq!(self.connects.load(Ordering::SeqCst), 0, "{what}: connected");
         assert!(self.calls().is_empty(), "{what}: {:?}", self.calls());
+        assert!(
+            self.principals().is_empty(),
+            "{what}: a principal was named"
+        );
     }
 
     /// Sign `alice` in and return the cookie the browser sends back.
@@ -293,18 +427,35 @@ impl App {
     }
 
     async fn get(&self, uri: &str, cookie: Option<&str>) -> Reply {
-        self.ask(Method::GET, uri, cookie).await
+        self.get_within(DEADLINE, uri, cookie).await
+    }
+
+    /// A `GET` answered within `limit`: the node's bound is the manager's read's
+    /// ([`pai_bff::NODE_INFO_TIMEOUT`]), so the test that pins it gives the route
+    /// more than [`DEADLINE`].
+    async fn get_within(&self, limit: Duration, uri: &str, cookie: Option<&str>) -> Reply {
+        self.ask_within(limit, Method::GET, uri, cookie).await
     }
 
     async fn ask(&self, method: Method, uri: &str, cookie: Option<&str>) -> Reply {
+        self.ask_within(DEADLINE, method, uri, cookie).await
+    }
+
+    async fn ask_within(
+        &self,
+        limit: Duration,
+        method: Method,
+        uri: &str,
+        cookie: Option<&str>,
+    ) -> Reply {
         let mut builder = Request::builder().method(method).uri(uri);
         if let Some(c) = cookie {
             builder = builder.header(header::COOKIE, c);
         }
         let request = builder.body(Body::empty()).expect("request");
-        let response = tokio::time::timeout(DEADLINE, self.router.clone().oneshot(request))
+        let response = tokio::time::timeout(limit, self.router.clone().oneshot(request))
             .await
-            .unwrap_or_else(|_| panic!("no answer to {uri} within {DEADLINE:?}"))
+            .unwrap_or_else(|_| panic!("no answer to {uri} within {limit:?}"))
             .expect("infallible");
         let status = response.status();
         let content_type = response
@@ -341,6 +492,16 @@ impl App {
         let cookie = self.sign_in().await;
         self.get("/api/node", Some(&cookie)).await
     }
+
+    /// `GET /api/node` with the session `cookie`.
+    async fn node_as(&self, cookie: &str) -> Reply {
+        self.get("/api/node", Some(cookie)).await
+    }
+
+    /// `GET /api/session`: the state of the session the cookie names.
+    async fn session_of(&self, cookie: &str) -> Reply {
+        self.get("/api/session", Some(cookie)).await
+    }
 }
 
 struct Reply {
@@ -374,6 +535,17 @@ impl Reply {
             self.headers.iter().all(|(n, _)| n != "set-cookie"),
             "a refused read sets a cookie: {:?}",
             self.headers
+        );
+    }
+
+    /// An error answer: its status and `{"key", "args"}`.
+    fn assert_error(&self, status: StatusCode, key: &str, args: &[&str]) {
+        assert_eq!(self.status, status, "{}", self.body);
+        assert_eq!(
+            self.json(),
+            json!({ "key": key, "args": args }),
+            "{}",
+            self.body
         );
     }
 
@@ -436,7 +608,9 @@ async fn node_refuses_another_method() {
 
 /// The document of a host with the engine and its three GPU runtimes, the
 /// versions as the packages render them (the epoch of the engine's, the `+`
-/// suffix of CUDA's), the backends sorted by name.
+/// suffix of CUDA's), the backends sorted by name, and the host's facts the
+/// manager answered (AN4): the operating system, Vulkan `ok`, and the two GPUs
+/// in the manager's order.
 #[tokio::test]
 async fn the_document_of_the_engine_and_its_runtimes() {
     let app = app_with(&[
@@ -461,15 +635,36 @@ async fn the_document_of_the_engine_and_its_runtimes() {
                     { "name": "vulkan", "version": "1.4.363.1" },
                 ],
             }],
+            "os": { "name": "Ubuntu", "version": "26.04", "kernel": "6.14.0-24-generic" },
+            "vulkan": "ok",
+            "gpus": [
+                {
+                    "pci": "0000:03:00.0",
+                    "vendor": "1002",
+                    "name": "AMD Radeon AI PRO R9700",
+                    "driver": "amdgpu",
+                    "version": "7.1.9.31600000",
+                    "vulkan": { "driver": "radv", "info": "Mesa 25.2.0" },
+                },
+                {
+                    "pci": null,
+                    "vendor": null,
+                    "name": "Asus Vega",
+                    "driver": null,
+                    "version": null,
+                    "vulkan": { "driver": null, "info": null },
+                },
+            ],
         }),
         "the whole document"
     );
 }
 
-/// The document has the four members and no other: what the About page and the
-/// navigation read is that list, nothing beside it.
+/// The document has these seven members and no other: what the node page and the
+/// navigation read is that list, nothing beside it. `nodeInfo` is absent when the
+/// manager answered.
 #[tokio::test]
-async fn the_document_has_the_four_members() {
+async fn the_document_has_the_members_of_the_nodes_info() {
     let app = app_with(&[("llama.cpp", "1:1.0.0+pai2\n")]);
     let doc = app.node().await.document();
     let mut members: Vec<&str> = doc
@@ -479,13 +674,186 @@ async fn the_document_has_the_four_members() {
         .map(String::as_str)
         .collect();
     members.sort();
-    assert_eq!(members, ["api", "engines", "name", "version"]);
+    assert_eq!(
+        members,
+        ["api", "engines", "gpus", "name", "os", "version", "vulkan"]
+    );
+    assert!(doc.get("nodeInfo").is_none(), "no failure to tell: {}", doc);
     let engine = doc["engines"].as_array().expect("an array")[0]
         .as_object()
         .expect("an object");
     let mut keys: Vec<&str> = engine.keys().map(String::as_str).collect();
     keys.sort();
     assert_eq!(keys, ["backends", "engine", "version"]);
+}
+
+/// The host's facts are the manager's, sent as it answered them: the bff renames
+/// nothing, drops nothing and sorts nothing, the row that is all `None` beside
+/// the full one.
+#[tokio::test]
+async fn the_host_facts_travel_as_the_manager_answered_them() {
+    let app = app_with(&[("llama.cpp", "1:1.0.0+pai2\n")]);
+    let doc = app.node().await.document();
+    let facts = host_facts();
+    for key in ["os", "vulkan", "gpus"] {
+        assert_eq!(doc[key], facts[key], "{key} as the manager answered it");
+    }
+}
+
+/// The facts are asked as the session's user: one connect naming `alice` and one
+/// `NodeInfoAs` call answer the page.
+#[tokio::test]
+async fn the_host_facts_are_asked_as_the_signed_in_user_once() {
+    let app = app_with(&[("llama.cpp", "1:1.0.0+pai2\n")]);
+    let doc = app.node().await.document();
+    assert_eq!(doc["os"]["name"], json!("Ubuntu"), "{doc}");
+    assert_eq!(app.calls(), vec!["node_info".to_string()], "one call");
+    assert_eq!(app.connects.load(Ordering::SeqCst), 1, "one connect");
+    assert_eq!(
+        app.principals(),
+        vec![Some("alice".to_string())],
+        "the session's user is the principal"
+    );
+}
+
+// ── The manager does not answer ─────────────────────────────────────────
+
+/// A manager that does not answer within the node's bound is a partial 200, not
+/// a 503: the bff's own fields stand (the navigation's host name and the
+/// versions must not vanish with the manager), the three facts are `null`, and
+/// `nodeInfo` says the manager is not there.
+#[tokio::test]
+async fn a_manager_that_does_not_answer_is_a_partial_document() {
+    let app = app_with(&[("llama.cpp", "1:1.0.0+pai2")]);
+    app.fixture
+        .set_delay(pai_bff::NODE_INFO_TIMEOUT + Duration::from_secs(5));
+    let cookie = app.sign_in().await;
+    let doc = app
+        .get_within(
+            pai_bff::NODE_INFO_TIMEOUT + Duration::from_secs(20),
+            "/api/node",
+            Some(&cookie),
+        )
+        .await
+        .document();
+    assert_eq!(
+        doc["os"],
+        Value::Null,
+        "the operating system is unknown: {doc}"
+    );
+    assert_eq!(doc["vulkan"], Value::Null, "Vulkan is unknown: {doc}");
+    assert_eq!(
+        doc["gpus"],
+        Value::Null,
+        "no GPU list, not an empty one: {doc}"
+    );
+    assert_eq!(
+        doc["nodeInfo"],
+        json!({ "key": "client-unavailable", "args": [] }),
+        "{doc}"
+    );
+    assert_eq!(doc["name"], json!(pai_bff::listen::hostname()), "{doc}");
+    assert_eq!(doc["version"], json!(FRAMEWORK), "{doc}");
+    assert_eq!(
+        doc["engines"],
+        json!([{ "engine": "llama.cpp", "version": "1:1.0.0+pai2", "backends": [] }]),
+        "{doc}"
+    );
+}
+
+/// The moment of that partial answer: the node's bound ([`pai_bff::NODE_INFO_
+/// TIMEOUT`]), not the manager's. The fake answers the full host 5 s past the
+/// bound, so a read that waits for the manager reports late, and one that gives
+/// up before the bound reports the manager away while it is only slow. Both
+/// halves are pinned: this is the read of a cold Vulkan probe, the one a page
+/// must not cut off at a read's 5 s.
+#[tokio::test]
+async fn the_partial_answer_comes_at_the_bound_not_at_the_manager() {
+    let app = app_with(&[("llama.cpp", "1:1.0.0+pai2")]);
+    let late = pai_bff::NODE_INFO_TIMEOUT + Duration::from_secs(5);
+    app.fixture.set_delay(late);
+    let cookie = app.sign_in().await;
+    let started = Instant::now();
+    let doc = app
+        .get_within(
+            pai_bff::NODE_INFO_TIMEOUT + Duration::from_secs(20),
+            "/api/node",
+            Some(&cookie),
+        )
+        .await
+        .document();
+    let waited = started.elapsed();
+    assert_eq!(
+        doc["nodeInfo"],
+        json!({ "key": "client-unavailable", "args": [] }),
+        "{doc}"
+    );
+    assert!(
+        waited >= pai_bff::NODE_INFO_TIMEOUT,
+        "the read gave up before its bound: {waited:?}"
+    );
+    assert!(
+        waited < late,
+        "the answer is at the bound, not at the manager: {waited:?}"
+    );
+}
+
+/// No manager at all is the same partial 200 with the same key.
+#[tokio::test]
+async fn no_manager_is_a_partial_document() {
+    let app = app_with(&[("llama.cpp", "1:1.0.0+pai2")]);
+    app.fixture.set(Err(ClientError::Unavailable));
+    let doc = app.node().await.document();
+    assert_eq!(doc["os"], Value::Null, "{doc}");
+    assert_eq!(doc["vulkan"], Value::Null, "{doc}");
+    assert_eq!(doc["gpus"], Value::Null, "{doc}");
+    assert_eq!(
+        doc["nodeInfo"],
+        json!({ "key": "client-unavailable", "args": [] }),
+        "{doc}"
+    );
+}
+
+/// Anything else the manager failed with is `client-other`, never the manager's
+/// own words: the page has a general text for it and the log keeps the detail.
+#[tokio::test]
+async fn a_manager_that_failed_is_a_partial_document_with_client_other() {
+    let app = app_with(&[("llama.cpp", "1:1.0.0+pai2")]);
+    app.fixture.set(Err(ClientError::Other(
+        "vulkan-probe: cannot spawn /usr/libexec/private-ai-manager".into(),
+    )));
+    let doc = app.node().await.document();
+    assert_eq!(doc["os"], Value::Null, "{doc}");
+    assert_eq!(doc["vulkan"], Value::Null, "{doc}");
+    assert_eq!(doc["gpus"], Value::Null, "{doc}");
+    assert_eq!(
+        doc["nodeInfo"],
+        json!({ "key": "client-other", "args": [] }),
+        "{doc}"
+    );
+}
+
+/// The manager refusing the signed-in user is 403 `session-not-administrator`,
+/// and the session ends: the node page goes back to the sign-in page, as every
+/// read that acts as the user.
+#[tokio::test]
+async fn a_refusal_of_the_signed_in_user_ends_the_session() {
+    let app = app_with(&[("llama.cpp", "1:1.0.0+pai2")]);
+    app.fixture.set(Err(ClientError::NotAuthorized));
+    let cookie = app.sign_in().await;
+    app.node_as(&cookie).await.assert_error(
+        StatusCode::FORBIDDEN,
+        "session-not-administrator",
+        &[],
+    );
+    app.session_of(&cookie)
+        .await
+        .assert_error(StatusCode::UNAUTHORIZED, SESSION_REQUIRED, &[]);
+    assert_eq!(
+        app.principals(),
+        vec![Some("alice".to_string())],
+        "the refusal is the read's own"
+    );
 }
 
 /// The name is the machine's host name: the navigation lists this host under

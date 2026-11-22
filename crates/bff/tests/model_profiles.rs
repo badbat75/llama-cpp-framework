@@ -1159,14 +1159,23 @@ async fn files_with_no_sections_answer_an_empty_list() {
 }
 
 /// The other routes are unchanged beside the new one: `GET /api/version`
-/// answers the framework version to a signed-in reader.
+/// answers the framework's version, the machine's name and its operating system
+/// to a signed-in reader.
 #[tokio::test]
 async fn version_is_still_served_beside_the_model_profiles() {
     let app = app_no_manager();
     let cookie = app.sign_in().await;
     let r = app.get("/api/version", Some(&cookie)).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
-    assert_eq!(r.json(), json!({ "version": env!("CARGO_PKG_VERSION") }));
+    let os = pai_core::host::os(std::path::Path::new("/"));
+    assert_eq!(
+        r.json(),
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "name": pai_bff::listen::hostname(),
+            "os": { "name": os.name, "version": os.version, "kernel": os.kernel },
+        })
+    );
 }
 
 // ── `assignments`: what the records say about each profile ──────────────
