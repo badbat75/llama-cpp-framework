@@ -1736,3 +1736,25 @@ before you report.
   parameter of a `test.each` callback (`async (vector, _why)`) is `@typescript-eslint/no-unused-vars`
   (the `after-used` default spares `_what` when a later parameter is used). Drop the parameter, it loses
   no assertion: the title's `%s` comes from the tuple, not from the callback's list.
+
+## Slice 19 LS2a (2026-11-23): the field slider, and the four card inventories
+
+- A styled control that a brief gives NO class name for is selected structurally, not by a new class:
+  the field slider is `.field-control input[type='range']`, which keeps `Reflow.test.ts` R1.8 (the frozen
+  class list) untouched. `HearthTokens.test.ts` H1a.12 names the selector AS THE SHEET WRITES IT, quotes
+  included: `.field-control input[type='range']: min-height: 24px` in single quotes in the JS list.
+  `Reflow.test.ts`'s R1.8 list does not name it, so one file carries the selector, the other the freeze.
+- When a locked Hardware row becomes editable, four suites that inventory "every control of the card"
+  redden at once, and each reads one shared default profile: `ModelProfileSave1` (its `BASE` plus
+  `EDITABLE_FIELDS` and `LABEL_TO_KEY`), `ModelProfileSave3` (the values of the 2h.150 table's read),
+  `ModelProfileSave13` (its `AS_LOADED`, the "every key of the card present" read) and `ModelProfileSave16`
+  (its `BASE`, the 194 greyed-out list). Adding the key to that one default per file turns all four green:
+  a locked control in a "present" read is a defect in the read, not in the code. `n-cpu-moe` joins
+  `NO_INPUT_MODE_KEYS`'s exception list for the same reason (0 to 4096, so `inputmode="numeric"`).
+- Verify a one-line test fix without touching the tester's file: copy each red file to
+  `fe/src/Zz<name>.test.tsx`, patch the copy with python exact-string replace, run the copies, `rm` them.
+  Green copies plus the green `typecheck`/`lint`/`format:check` is the report.
+- Two shapes of red test in brief 19's `ModelProfileLayers1.test.tsx`, both unfixable in production: a
+  helper called as `form({})` whose body asserts the values of `form()`'s OWN default (`{...AS_LOADED}`),
+  and a 422 test that types a value outside the range the same brief requires the client to check, so
+  `save-invalid` refuses it and no PUT is ever sent (typing a value the client accepts reaches the 422).

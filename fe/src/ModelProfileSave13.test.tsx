@@ -39,7 +39,6 @@ const PUT = `/api/profiles/model/${ID}`
 const HEADING = en('model-profile-hardware-config')
 const NEXT = en('model-profile-resource-context')
 const GPU_LAYERS = en('model-profile-gpu-layers')
-const MOE = en('model-profile-moe-cpu-layers')
 const MOE_CACHE = en('model-profile-moe-cache')
 const FFN = en('model-profile-dense-ffn-cpu-layers')
 const OP = en('model-profile-op-offload')
@@ -59,7 +58,7 @@ const WHOLE = en('field-error-whole-number')
 const DRAFT_OFF_TEXT =
   'Draft device and Draft GPU layers apply only to a Draft model file, and this model profile has none (Assets).'
 const MOE_LATER_TEXT =
-  'MoE CPU layers and MoE cache stay as the file has them: this page cannot yet read whether the model has experts. Change them in pai-config on the server machine.'
+  "MoE cache stays as the file has it: its floor needs the model's tensors, which this page does not read yet. Change it in pai-config on the server machine."
 /** The number past the full-value line's 8 characters of a number (119). */
 const NUM_9 = '172032000'
 
@@ -67,6 +66,7 @@ const NUM_9 = '172032000'
  * configurator itself would write (so no written-as line). */
 const AS_LOADED: Record<string, string> = {
   'n-gpu-layers': '99',
+  'n-cpu-moe': '20',
   'n-cpu-ffn': '4',
   'op-offload': 'true',
   repack: 'false',
@@ -584,48 +584,53 @@ test('2h.177, 2h.179, 2h.133: model-draft present: no note, Draft device is a de
   })
 })
 
-// ── 178, 182: the MoE rows, always disabled ──────────────────────────
+// ── 178, 182: MoE cache, always disabled ──────────────────────────
 
-test('2h.178, 2h.182, 2h.157: MoE CPU layers and MoE cache are always disabled with the note model-profile-moe-later before MoE CPU layers; a bad file value in them does not block a save, their values show and are never sent', async () => {
+test('2h.178, 2h.182, 2h.157: MoE cache is always disabled with the note model-profile-moe-later right before it; a bad file value in it does not block a save, its value shows and is never sent', async () => {
   const { bff, main } = await form({
     ...AS_LOADED,
-    'n-cpu-moe': 'abc',
     'moe-cache-mib': 'x',
   })
-  for (const label of [MOE, MOE_CACHE]) {
-    expect(
-      checkBox(main, label).disabled,
-      `${label}: box always disabled`,
-    ).toBe(true)
-    expect(box(main, label).disabled, `${label}: input always disabled`).toBe(
-      true,
-    )
-  }
-  expect(box(main, MOE).value, 'the locked field keeps the file value').toBe(
-    'abc',
-  )
+  expect(
+    checkBox(main, MOE_CACHE).disabled,
+    'MoE cache: box always disabled',
+  ).toBe(true)
+  expect(
+    box(main, MOE_CACHE).disabled,
+    'MoE cache: input always disabled',
+  ).toBe(true)
+  expect(
+    box(main, MOE_CACHE).value,
+    'the locked field keeps the file value',
+  ).toBe('x')
   const line = within(main).getByText(MOE_LATER_TEXT)
   expect(isHidden(line), 'the note is shown').toBe(false)
   expect(line.textContent, '182: the string as the brief words it').toBe(
     MOE_LATER_TEXT,
   )
   expect(before(headingOf(main, HEADING), line), 'after the card h3').toBe(true)
-  expect(before(line, field(main, MOE)), '178: before MoE CPU layers').toBe(
-    true,
-  )
+  expect(
+    before(line, field(main, MOE_CACHE)),
+    '19 G.14: before MoE cache',
+  ).toBe(true)
   expect(before(line, headingOf(main, NEXT)), 'inside the Hardware card').toBe(
     true,
   )
   pick(main, NO_HOST, 'false')
   await save(main, bff)
-  expect(sentValues(bff), 'the change is sent, the MoE values never').toEqual({
+  expect(
+    sentValues(bff),
+    'the change is sent, the MoE cache value never',
+  ).toEqual({
     'no-host': null,
   })
   expect(
     within(main).queryByText(en('save-invalid')),
     'the bar does not complain about a field nobody can edit (157)',
   ).toBeNull()
-  expect(box(main, MOE).getAttribute('aria-invalid'), 'not marked').toBe(null)
+  expect(box(main, MOE_CACHE).getAttribute('aria-invalid'), 'not marked').toBe(
+    null,
+  )
 })
 
 // ── 181: the two notes are plain paragraphs ──────────────────────────
@@ -660,12 +665,14 @@ test('2h.182: the new strings model-profile-draft-file-off and model-profile-moe
 
 // ── 178 with 2h.8's 183, 186: what the card leaves disabled ───────────
 
-test('2h.178, 2h.130, 2h.183, 2h.186: with every key of the card present, MoE CPU layers and MoE cache are the only controls of the Hardware card left natively disabled, and the Fit trio is not one of them', async () => {
+test('2h.178, 2h.130, 2h.183, 2h.186, 19 G.14: with every key of the card present, MoE cache is the only row of the Hardware card left natively disabled, and the Fit trio is not one of them', async () => {
   // Every key present: every default box unticked (156), the draft pair
   // enabled by 177 and the Fit dependents enabled by 186. So the card's only
-  // disabled controls are the two MoE rows of 178, each its default box and
-  // its input. 2h.8's 183 took `fit`, `fit-ctx` and `fit-target` out of this
-  // list (their editing and their enable rule are 2h.14's, in
+  // disabled controls are MoE cache's box and input of 178. Brief 19's
+  // 19 G.14 took MoE CPU layers out (its state follows the model facts, and
+  // the fake answers a reason, which leaves it enabled). 2h.8's 183 took
+  // `fit`, `fit-ctx` and `fit-target` out of this list (their editing and
+  // their enable rule are 2h.14's, in
   // ModelProfileSave14.test.tsx), and 134 gives a long value under a control a rule
   // disables the full-value line (ModelProfileSave1.test.tsx and
   // ModelProfileFullValue.test.tsx).
@@ -680,15 +687,9 @@ test('2h.178, 2h.130, 2h.183, 2h.186: with every key of the card present, MoE CP
     .filter((el) => (el as HTMLInputElement).disabled)
     .map((el) => el.getAttribute('id') ?? el.tagName)
     .sort()
-  expect(
-    disabled,
-    'the two MoE rows, and nothing else, are natively disabled',
-  ).toEqual([
-    'model-profile-moe-cache-mib-box',
-    'model-profile-moe-cache-mib-control',
-    'model-profile-n-cpu-moe-box',
-    'model-profile-n-cpu-moe-control',
-  ])
+  expect(disabled, 'MoE cache, and nothing else, is natively disabled').toEqual(
+    ['model-profile-moe-cache-mib-box', 'model-profile-moe-cache-mib-control'],
+  )
   for (const el of controls)
     expect(
       el.getAttribute('aria-disabled'),

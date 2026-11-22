@@ -72,6 +72,9 @@ const VALUES = {
   'model-draft':
     '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-draft-MTP.gguf',
   'n-gpu-layers': '99',
+  // 19 G.14: MoE CPU layers is editable while the model facts answer a reason
+  // (the fake's default), and the key leaves its default box unticked (156).
+  'n-cpu-moe': '20',
 }
 
 /** 2h.9's 189 to 191: the Speculative decoding card's fields, taken from the
@@ -175,10 +178,12 @@ const EDITABLE_BY_ID: Record<string, Field> = {
   'model-profile-image-max-tokens': 'model-profile-max-image-tokens',
   // 2h.7's 175: the Hardware card, its seven always-on rows and the draft
   // pair (177's rule). 2h.8's 183 and 186: the Fit trio, `fit` always enabled
-  // and its two dependents while its box reads checked. Only the two MoE rows
-  // (178) stay out of the list, so the test demands them disabled;
-  // `n-cpu-ffn`, `n-gpu-layers` and `fit-ctx` are boxed (156).
+  // and its two dependents while its box reads checked. Brief 19's 19 G.14
+  // moved MoE CPU layers into the editable rows; only MoE cache (178) stays
+  // out of the list, so the test demands it disabled; `n-cpu-ffn`,
+  // `n-gpu-layers`, `n-cpu-moe` and `fit-ctx` are boxed (156).
   'model-profile-n-gpu-layers': 'model-profile-gpu-layers',
+  'model-profile-n-cpu-moe': 'model-profile-moe-cpu-layers',
   'model-profile-n-cpu-ffn': 'model-profile-dense-ffn-cpu-layers',
   'model-profile-op-offload': 'model-profile-op-offload',
   'model-profile-repack': 'model-profile-repack',
@@ -358,7 +363,7 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 186, 2h.9 189, 190, 191): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card, the Hardware card, its Fit trio included and its two MoE rows excepted, and the Speculative decoding card, its draft group open on this read and its four n-gram groups locked, are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled (H11b.1: the Engine select is off the page)', async () => {
+test('2h.130, 19 G.14 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 186, 2h.9 189, 190, 191): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card, the Hardware card, its Fit trio included and its MoE cache row excepted (19 G.14 made MoE CPU layers editable), and the Speculative decoding card, its draft group open on this read and its four n-gram groups locked, are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled (H11b.1: the Engine select is off the page)', async () => {
   const { main } = await page(VALUES)
   const controls = [
     ...main.querySelectorAll<HTMLElement>('input, select, textarea'),

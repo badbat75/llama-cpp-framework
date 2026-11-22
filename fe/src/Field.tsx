@@ -221,9 +221,46 @@ function Check({
   )
 }
 
+/** The range of the slider a number field takes beside its text input (brief 19,
+ * 19 G.13), as the caller's key takes it: the model file's layer count is the
+ * top, and the key's own words say the top too. */
+export type FieldRange = {
+  /** The slider's `max`: every layer of the model file. */
+  max: number
+  /** What the slider reads while the default box is ticked, and the value it
+   * sits at before it has read a number: the top for a key whose default is
+   * every layer, 0 for one whose default is none. */
+  atDefault: number
+  /** The words the key's text takes for the top of the range (`auto`, `all`). A
+   * negative number says the same, so it reads as the top with them; a key
+   * without words reads one as 0. */
+  words?: string[]
+}
+
+/** The number the slider reads from the field's text (19 G.13): the ticked box
+ * is `atDefault`; one of the key's words, and a negative number with them, is
+ * the top of the range; a whole number is clamped into it; any other text
+ * (empty, `x`) leaves the slider at `last`, the number it read last. */
+function rangeValue(
+  text: string,
+  ticked: boolean,
+  range: FieldRange,
+  last: number,
+): number {
+  if (ticked) return range.atDefault
+  const s = text.trim()
+  if (range.words?.includes(s)) return range.max
+  if (!/^[+-]?\d+$/.test(s)) return last
+  const n = Number(s)
+  if (n < 0) return range.words === undefined ? 0 : range.max
+  return Math.min(n, range.max)
+}
+
 /**
  * A default box (`default`, `auto`) before a text input: ticked, the input is
- * disabled and shows `text`, the default the API gave or nothing.
+ * disabled and shows `text`, the default the API gave or nothing. With `range`,
+ * a slider of that range sits after the input, in the same control row: it reads
+ * the text and, moved, writes its value as the text (19 G.13).
  */
 export function DefaultBoxField({
   id,
@@ -236,6 +273,7 @@ export function DefaultBoxField({
   text,
   numeric = false,
   unit,
+  range,
   disabled,
   onTick,
   onText,
@@ -245,12 +283,20 @@ export function DefaultBoxField({
   text: string
   numeric?: boolean
   unit?: string
+  /** Omitted: the field has no slider. */
+  range?: FieldRange
   /** Omitted: the box is enabled and the input follows it. */
   disabled?: boolean
   onTick: (ticked: boolean) => void
   onText: (text: string) => void
 }) {
   const unitId = unit === undefined ? undefined : `${id}-unit`
+  // 19 G.13: the number the slider read last, so a text that is no number
+  // leaves it where it stands. Kept as the field renders, the way the GPU row
+  // keeps what is typed (19 G.7): the slider never moves on its own.
+  const [last, setLast] = useState(range?.atDefault ?? 0)
+  const value = range === undefined ? 0 : rangeValue(text, ticked, range, last)
+  if (range !== undefined && value !== last) setLast(value)
   return (
     <GroupField id={id} label={label} hint={hint} error={error} full={full}>
       <Check
@@ -271,6 +317,24 @@ export function DefaultBoxField({
         onChange={(e) => onText(e.target.value)}
         {...describes(id, error, unitId)}
       />
+      {range === undefined ? null : (
+        <input
+          type="range"
+          id={`${id}-slider`}
+          aria-labelledby={`${id}-label`}
+          min={0}
+          max={range.max}
+          step={1}
+          value={value}
+          disabled={disabled || ticked}
+          aria-valuetext={t(
+            'model-profile-layers-value',
+            `${value}`,
+            `${range.max}`,
+          )}
+          onChange={(e) => onText(e.target.value)}
+        />
+      )}
       {unit !== undefined && (
         <span id={unitId} className="unit">
           {unit}

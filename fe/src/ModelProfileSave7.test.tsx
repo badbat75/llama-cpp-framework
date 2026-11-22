@@ -271,16 +271,22 @@ test('2h.158: a read-only number field whose range starts at 0 or above keeps in
   }
 })
 
+test('2h.158, 19 G.14: MoE CPU layers, editable with the range 0 to 4096, takes inputmode="numeric"', async () => {
+  await form()
+  const el = boxOfKey('n-cpu-moe')
+  expect(el.getAttribute('inputmode'), `${el.id}: input mode`).toBe('numeric')
+})
+
 /** The any-whole-number keys (157's first row) and the layer counts of its
  * last: a phone's numeric keyboard may have no minus key, so they get no
- * input mode. All are read-only rows today. */
+ * input mode. All are read-only rows today. Brief 19's 19 G.14 gave
+ * `n-cpu-moe` the range 0 to 4096, so it is not one of them. */
 const FREE = [
   'cache-ram',
   'top-k',
   'n-predict',
   'reasoning-budget',
   'n-gpu-layers',
-  'n-cpu-moe',
   'n-cpu-ffn',
   'n-gpu-layers-draft',
 ]

@@ -440,3 +440,40 @@ blocks line in column 2, the list is under it in column 2 (430 or 462 px wide), 
 on the row after it, 40 px high. The tensor state is as before. `0x0,0e1` shows only the malformed line.
 No sideways scroll. `npm --prefix fe/ux run check` (132 states per browser): only the 8 known
 `instance-server` target-size findings (Chromium, Firefox); `model-profile-blocks` clean in all three.
+
+## LS2a review (designer, 2026-11-22)
+
+19 G.13 to G.15 only (G.16 to G.19 are LS2b). Read the LS2a diff (`Field.tsx`, `ModelProfileCards.tsx`,
+`ModelProfilePage.tsx`, `GpuSplit.tsx`, `index.css`, `en_US.json`); driven in Chromium, Firefox and
+WebKit with the `fe/ux` stub and Playwright routes (`build/ux-review/ls2a.js states|act|layout`, shots
+`build/ux-review/ls1/ls2a-*.png`).
+
+**The key gap both agents flagged.** No such gap: section 2 of this brief never listed
+`field-slider-label` (`grep` finds it nowhere in the brief or the strings file). The LS2 keys are the
+ones the coder used: the slider is named by the field's legend (`aria-labelledby`, 19 G.13) and speaks
+`model-profile-layers-value` (`{0} of {1}`). Nothing to add or drop.
+
+- 19 G.13 met: a range after the text input in the control row (`Field.tsx` 320-337), min 0, max
+  `blockCount`, step 1, named "GPU layers" / "MoE CPU layers" beside the textbox of the same name,
+  value text "15 of 64". Typed `1`, `10` move it at each keystroke; `auto`, `all`, `-1` read as 64; `100`
+  clamps to 64; `x` and empty leave it where it was; the ticked box reads 64 (GPU layers) and 0 (MoE),
+  slider disabled. Arrows, Home, End and a track click write the number as the text; GPU layers 0 from
+  the slider leaves blocks mode and 64 brings it back. No slider while the read is pending, failed or a
+  reason.
+- 19 G.14 met: pending, disabled with `model-profile-moe-reading` right before it; MoE (with or without
+  expert counts) enabled with the slider; dense, disabled with `model-profile-moe-dense`, the file's `12`
+  shown and kept; reason or failed, enabled with no slider; `model-profile-moe-later` now right before
+  MoE cache (`ModelProfileCards.tsx` 422-450, 1906).
+- 19 G.15 met: `5000` is refused by the fe with "Enter a whole number from 0 to 4096.", focus on the
+  field, nothing sent; `7` sends only `{"n-cpu-moe": "7"}` (`ModelProfileCards.tsx` 1551).
+- Keyboard: Tab goes About, default box, text input, slider (the ticked box skips the disabled pair).
+  Sliders 24 px high, accent colour, native track (`index.css` 1761). No sideways scroll at 1280 and
+  320 px, 100 % and 200 % text, light and dark, in all three engines.
+- Note, no defect (preference): at 1280 px GPU layers' text input is the wide `mono` one (it takes
+  words), so its slider wraps under it, while MoE CPU layers' slider sits beside its narrow input. Both
+  are in the control row as 19 G.13 says.
+- `npm --prefix fe/ux run check` (132 states per browser): only the 8 known `instance-server`
+  target-size findings; `model-profile` and `model-profile-blocks` (both now with the two layer sliders)
+  clean in all three engines.
+
+**Verdict: LS2a accepted.**

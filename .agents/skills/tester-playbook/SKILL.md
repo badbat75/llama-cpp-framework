@@ -298,6 +298,34 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   `en_US.json`, so putting a brief's new strings in `EN` (which `en()` needs to name them) reds that
   test naming exactly the keys the sheet lacks. Report it as the strings criterion's red, never as
   collateral, and never work around it by writing the English inline in the new file.
+- A brief that makes one read-only field editable fans out through the SHARED cards helper
+  (`test/modelProfileCards.ts`: `EDITABLE_FIELDS`, `BOXED_FIELDS`, `NO_INPUT_MODE_KEYS`): every Cards4
+  enable, tab-stop and inputmode test DERIVES from those lists, so its red lands on the list, not on the
+  field. Add the field once there, and state in a comment the shared assumption it bakes in: the cards'
+  tests never read the model facts, so the fake's reason answer is what "editable" means to them, and the
+  answer-dependent states (pending, dense) belong in the new file.
+- Retargeting an old pin onto another field (198a's "nothing to focus" refusal, moved off `n-cpu-moe` to
+  `moe-cache-mib`): pick a row the new slice leaves disabled, and prove the path stays covered by finding
+  a sibling row of the same table that already pins it; a retarget that lands on a row the slice also
+  changes silently drops the rule.
+- An ORDER pin of a note is `note.nextElementSibling === field`, not `before(note, field)`: the sibling
+  red names the element that IS next ("the element after it is …"), the `before` red names nothing. Pair it
+  with a "shows once" count on the card's `p.note` list, and read that list with the generic
+  (`querySelectorAll<HTMLElement>('p.note')`), else the spread is `Element[]` and `tsc` answers TS2322.
+- A red of a field that is not editable yet reads `expected [] to have a length of 1` on
+  `bff.to('PUT', ..)`: a disabled input swallows the typed value, so the form stays clean and no save
+  goes out. That is the shape of a "the row is read-only today" red, not a broken fake.
+  The same swallowing kills the coder's fix that types an accepted value "into a file that has no
+  `n-cpu-moe` so it is a change": an absent key TICKS the box, the ticked box disables the input, the
+  type is swallowed, no PUT goes out, the test hangs. Pin a 422 mapping (server range == client range,
+  so no typed value can ever reach the wire refusal) by typing a client-accepted value into a fixture
+  that CARRIES the key, and let the fake's canned 422 args name the refused value (02h 142).
+- When a slice makes a read-only key editable (19 G.14's `n-cpu-moe`), every OLD pin that asserts
+  "the file value shows", "the only row left disabled" or "the only controls not disabled" against a
+  fixture WITHOUT the key reddens test-side: the absent key ticks the default box, which disables the
+  input, and the value shown is empty. The fix is the key into that file's `BASE` / `AS_LOADED` /
+  refused-read, the `model-profile-<key>` entry into its id→label enable map, and the "two MoE rows
+  excepted" title into one row; a test asserting `'20'` from `form({})` is a fixture bug, not a defect.
 - A fixture constant a test looks up by accessible name (`getByRole(r, { name: FIXTURE.name })`) must not
   carry the option type of the API body it rides in: `{ name?: string | null }` makes it
   `string | null | undefined` and every one of those locators is `TS2769` / `TS2345`, which reads as a

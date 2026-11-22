@@ -246,14 +246,15 @@ export function cardHeadingKeys(): string[] {
 /** The integer keys that get NO input mode (2h.158): the any-whole-number
  * keys of 157's first row and the layer counts of its last row. A phone's
  * numeric keyboard may have no minus key (MDN, `inputmode`), so the fe adds
- * none: every other integer key keeps `inputmode="numeric"`. */
+ * none: every other integer key keeps `inputmode="numeric"`. Brief 19's
+ * 19 G.14 gives `n-cpu-moe` the range 0 to 4096, so it is no longer one of
+ * them. */
 export const NO_INPUT_MODE_KEYS: string[] = [
   'cache-ram',
   'top-k',
   'n-predict',
   'reasoning-budget',
   'n-gpu-layers',
-  'n-cpu-moe',
   'n-cpu-ffn',
   'n-gpu-layers-draft',
 ]
@@ -343,6 +344,12 @@ const EDITABLE_FIELDS: Label[] = [
   'model-profile-min-image-tokens',
   'model-profile-max-image-tokens',
   'model-profile-gpu-layers',
+  // Brief 19 (19 G.14): MoE CPU layers joins the editable fields. Its state
+  // follows the model file's facts (pending and a dense model disable it),
+  // which the cards' tests never read: the bff fake answers a reason, and a
+  // reason leaves the field enabled. 19 G.14 is pinned in
+  // ModelProfileLayers1.test.tsx.
+  'model-profile-moe-cpu-layers',
   'model-profile-dense-ffn-cpu-layers',
   'model-profile-op-offload',
   'model-profile-repack',
@@ -394,6 +401,7 @@ const BOXED_FIELDS: Record<string, string> = {
   'model-profile-min-image-tokens': 'image-min-tokens',
   'model-profile-max-image-tokens': 'image-max-tokens',
   'model-profile-gpu-layers': 'n-gpu-layers',
+  'model-profile-moe-cpu-layers': 'n-cpu-moe',
   'model-profile-dense-ffn-cpu-layers': 'n-cpu-ffn',
   'model-profile-fit-min-context': 'fit-ctx',
   'model-profile-draft-gpu-layers': 'n-gpu-layers-draft',

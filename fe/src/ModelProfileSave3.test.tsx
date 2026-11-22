@@ -78,7 +78,9 @@ async function loaded(
  * `n-gpu-layers` and `fit-ctx` are in the read so the Hardware card's 157 row
  * has an enabled control to mark and focus (2h.7's 175 made GPU layers
  * editable and 2h.8's 183 the Fit min context, and the keys leave their default
- * boxes unticked, 156). `fit-ctx` is the value the `min-above-max` row below
+ * boxes unticked, 156). `n-cpu-moe` is in for the same reason on 19 G.14's
+ * row: the facts answer a reason, so the field is editable and the key leaves
+ * its box unticked. `fit-ctx` is the value the `min-above-max` row below
  * names in its args, the number the manager refused. */
 async function refused(body: Record<string, unknown>) {
   const { bff, main } = await loaded(
@@ -86,6 +88,7 @@ async function refused(body: Record<string, unknown>) {
       embeddings: 'true',
       pooling: 'weird',
       'n-gpu-layers': '99',
+      'n-cpu-moe': '20',
       'fit-ctx': '8192',
     },
     () => reply(422, body),
@@ -324,10 +327,11 @@ const TABLE_150: [
     { key: 'not-a-number', args: ['n-cpu-moe', 'many'] },
     'text',
     en('model-profile-moe-cpu-layers'),
-    // 178: MoE CPU layers is never editable in 2h, so its control and its
-    // default box are both disabled: 198a's where.
-    false,
-    en('model-profile-hardware-config'),
+    // Brief 19's 19 G.14: MoE CPU layers is editable when the model facts read
+    // answers a reason, which is what the fake answers, so the input is
+    // enabled and takes the focus (144).
+    true,
+    '',
   ],
   [
     'not-json-object: args[0]',

@@ -279,7 +279,7 @@ function gpuLayersCount(layers: string | null): number {
 /** The model file's layer facts, when the read answered them (brief 19,
  * 19 G.4): `null` while it runs and for a read that answered a reason, the two
  * states that leave the rows as brief 14 built them. */
-function gpuFacts(read: ModelInfoRead | undefined): ModelFacts | null {
+export function gpuFacts(read: ModelInfoRead | undefined): ModelFacts | null {
   if (read === undefined || read === null) return null
   return 'reason' in read ? null : read.facts
 }
@@ -465,6 +465,19 @@ function factsReason(reason: ApiError): string {
     default:
       return t('model-profile-model-facts-failed')
   }
+}
+
+/** What the model file's facts read is at (brief 19, 19 G.13, 19 G.14), as the
+ * layer rows follow it: `reading` while it runs, `failed` for a read that
+ * answered nothing, `reason` for one that answered why there are no counts, and
+ * the file's own `moe` or `dense` once it answered them. */
+export type FactsState = 'reading' | 'failed' | 'reason' | 'moe' | 'dense'
+
+export function factsRead(read: ModelInfoRead | undefined): FactsState {
+  if (read === undefined) return 'reading'
+  if (read === null) return 'failed'
+  if ('reason' in read) return 'reason'
+  return read.facts.moe ? 'moe' : 'dense'
 }
 
 /** What the GPU card's facts line says for `read` (brief 19, 19 G.2): the file

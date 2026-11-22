@@ -1750,6 +1750,21 @@ ul.check-list {
   accent-color: var(--accent);
 }
 
+/* The layer slider of a number field (brief 19, 19 G.13, 19 G.14): an item of
+   the wrapping control row, after the text input, taking the free width and
+   shrinking to the row, so the box, the input and the slider wrap inside 320 px
+   and at 200 % text. Like the block slider it is at least 24 px high (2.5.8) and
+   keeps the native track and thumb, coloured by the accent, so a forced-colours
+   palette keeps its drawing. No class of its own: the brief 10 R1.8 class freeze
+   (Reflow.test.ts) keeps the sheet's classes to the ones a brief names, and this
+   is the only range input a field row holds. */
+.field-control input[type='range'] {
+  flex: 1 1 12rem;
+  min-height: 24px;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
 .check-list-actions {
   display: flex;
   flex-wrap: wrap;

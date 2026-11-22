@@ -69,6 +69,7 @@ import ModelProfileCards, {
   unlockControl,
 } from './ModelProfileCards.tsx'
 import {
+  factsRead,
   gpuComposeDevice,
   gpuComposeSplit,
   gpuFileIds,
@@ -1083,7 +1084,8 @@ function Content({
     const failures = checkRows()
       .filter(
         (row) =>
-          !ruleLocked(row, draft, loaded.values, boxed) || row.key in changes,
+          !ruleLocked(row, draft, loaded.values, boxed, factsRead(modelInfo)) ||
+          row.key in changes,
       )
       .map(
         (row) =>
@@ -1126,7 +1128,13 @@ function Content({
       else
         focusFailure(
           first[0],
-          ruleLocked(first[0], draft, loaded.values, boxed),
+          ruleLocked(
+            first[0],
+            draft,
+            loaded.values,
+            boxed,
+            factsRead(modelInfo),
+          ),
         )
       return
     }

@@ -516,14 +516,14 @@ export const EN: Record<string, string> = {
   'model-profile-draft-file-off':
     'Draft device and Draft GPU layers apply only to a Draft model file, and this model profile has none (Assets).',
   'model-profile-moe-later':
-    'MoE CPU layers and MoE cache stay as the file has them: this page cannot yet read whether the model has experts. Change them in pai-config on the server machine.',
+    "MoE cache stays as the file has it: its floor needs the model's tensors, which this page does not read yet. Change it in pai-config on the server machine.",
   'model-profile-hardware-config': 'Hardware config',
   'model-profile-gpu-layers': 'GPU layers',
   'model-profile-gpu-layers-hint':
-    "How many of the model's layers run on the GPU. The rest stay on the CPU: less VRAM, slower.\nDefault: all layers on the GPU. A model too big for it fails to load, unless Fit to VRAM is on.\nFlag: --n-gpu-layers",
+    "How many of the model's layers run on the GPU. The rest stay on the CPU: less VRAM, slower.\nSlider maximum = all layers, once the model file is read.\nDefault: all layers on the GPU. A model too big for it fails to load, unless Fit to VRAM is on.\nFlag: --n-gpu-layers",
   'model-profile-moe-cpu-layers': 'MoE CPU layers',
   'model-profile-moe-cpu-layers-hint':
-    "Frees VRAM by keeping the experts of this many layers on the CPU; generation gets slower. Only for MoE models: on a dense model use 'Dense FFN CPU layers' below.\nDefault: 0, every expert stays on the GPU with its layer.\nFlag: --n-cpu-moe",
+    "Frees VRAM by keeping the experts of this many layers on the CPU; generation gets slower. Only for MoE models: on a dense model use 'Dense FFN CPU layers' below.\nSlider maximum = the model's layer count, once the model file is read.\nDefault: 0, every expert stays on the GPU with its layer.\nFlag: --n-cpu-moe",
   'model-profile-moe-cache': 'MoE cache',
   'model-profile-moe-cache-hint':
     "VRAM set aside for recently used experts kept in RAM, so a token that needs them reads them from the card instead of over PCIe. Experimental.\nIt only acts on layers whose experts are ALL in RAM (MoE CPU layers above, or an exps=CPU Tensor placement rule); with none, llama.cpp runs without a cache.\nWith several GPUs the budget is split like the layers: by Tensor split, or by free VRAM when that is blank.\nThe model FAILS TO LOAD under Split mode tensor, and below the experts of one token.\nThe draft model never uses it, and the synthetic benchmark cannot measure it.\nDefault: 0, no cache (llama.cpp's own).\nFlag: --moe-cache-mib",
@@ -651,6 +651,15 @@ export const EN: Record<string, string> = {
   'model-profile-gpu-block-plus-output': 'block {0} + output',
   'model-profile-gpu-blocks-plus-output': 'blocks {0}-{1} + output',
   'model-profile-gpu-output-layer': 'output layer',
+  // LS2a (19 G.13, 19 G.14): the layer sliders' value text, and the two reason
+  // paragraphs of MoE CPU layers. The three changed rows of section 2 are
+  // amended above, at their own keys. The keys of 19 G.16 to G.18 (the device
+  // lists and their refusal) are the next slice, so they are not here.
+  'model-profile-layers-value': '{0} of {1}',
+  'model-profile-moe-reading':
+    'Reading the model file to see whether it has experts…',
+  'model-profile-moe-dense':
+    'This model has no experts (a dense model), so MoE CPU layers does nothing for it. Use Dense FFN CPU layers below.',
   // Slice 2e.5 (fe/briefs/02e-model-profile-cards.md, criterion 116): the Speculative
   // decoding card. Every English is the en_US.toml line the criterion names
   // (367 to 397), unchanged.

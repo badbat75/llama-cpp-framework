@@ -13,7 +13,8 @@
 // Hardware card. 2h.7's 175 to 180 retarget what 2e left read-only: the seven
 // `always` rows and the draft pair (behind `model-draft`, 177) are enabled, the
 // Fit trio is enabled by 2h.8 (the box always, its two dependents while the box
-// is checked, 183 and 186), the two MoE rows (178) stay natively disabled, the
+// is checked, 183 and 186), MoE cache (178) stays natively disabled (brief 19's
+// 19 G.14 made MoE CPU layers an `always` row), the
 // card holds the two note rows of 177 and 178, and load-mode is matched exactly
 // (180): `MLOCK` is the extra option `MLOCK`. The editing itself (the draft,
 // what a save sends, the checks) is ModelProfileSave13.test.tsx, and for the Fit trio
@@ -131,8 +132,9 @@ type Row = {
   /** The table's last column (107), as 2h.7's 175 to 178 and 2h.8's 183 to 186
    * retarget it: `always` is editable; `model-draft` is enabled while the read's
    * `model-draft` is present and not empty (177); `fit-checked` is enabled while
-   * the Fit to VRAM box reads checked (186); `read-only` stays disabled (the two
-   * MoE rows, until 2g, 178). */
+   * the Fit to VRAM box reads checked (186); `read-only` stays disabled (MoE
+   * cache, whose floor needs the model's tensors, 178). Brief 19's 19 G.14
+   * moved MoE CPU layers to `always`. */
   enable: Enable
   /** The label as the page shows it: the strings text of 110. */
   label: string
@@ -176,7 +178,7 @@ const FIELDS: Row[] = [
   {
     key: 'n-cpu-moe',
     label: en('model-profile-moe-cpu-layers'),
-    enable: 'read-only',
+    enable: 'always',
     hint: 'model-profile-moe-cpu-layers-hint',
     kind: 'number',
     integer: true,
@@ -639,8 +641,10 @@ function fitShows(
  * controls enabled on a read that holds `values`: the seven `always` rows
  * (175), the Fit to VRAM box (183), the two Fit dependents while the box
  * reads checked (186), and the draft pair while the read's `model-draft` is
- * present and not empty (177). The two MoE rows (kept read-only until 2g,
- * 178) are never enabled. The box of an editable number is enabled too
+ * present and not empty (177). MoE cache (kept read-only until 2g, 178) is
+ * never enabled; brief 19's 19 G.14 made MoE CPU layers an `always` row (its
+ * state by the model facts is 19 G.14, in ModelProfileLayers1.test.tsx).
+ * The box of an editable number is enabled too
  * (156); whether its input is, follows the box, which is `controlEnabled`.
  * A number's box is ticked (the value at default, so the input disabled)
  * exactly when the file lacks the key. */
@@ -1275,7 +1279,7 @@ test('2e.87, 2h.158: the six number keys of 107 are all integer keys: the numeri
   }
 })
 
-test('2e.85, 2h.175, 2h.177, 2h.178: the controls of the Hardware card are natively disabled exactly where 2h.7 leaves the row read-only (the two MoE rows, and the draft pair while the read holds no model-draft), the Fit trio enabled per 183 and 186, never with aria-disabled or readonly, and every About toggle of the card stays enabled', async () => {
+test('2e.85, 2h.175, 2h.177, 2h.178: the controls of the Hardware card are natively disabled exactly where 2h.7 leaves the row read-only (MoE cache, and the draft pair while the read holds no model-draft), the Fit trio enabled per 183 and 186, never with aria-disabled or readonly, and every About toggle of the card stays enabled', async () => {
   const doc = docOf(SET)
   const { main } = await loaded({ modelProfile: () => reply(200, doc) })
   const controls = [
@@ -1353,7 +1357,7 @@ test('2e.83: the Hardware card is a D5.2 Card inside the section of the h2, afte
   ).toEqual(cardHeadings())
 })
 
-test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the only paragraphs outside a Field are the two note rows of 2h.7 (this read has no model-draft): model-profile-moe-later before MoE CPU layers, model-profile-draft-file-off before Draft device', async () => {
+test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the only paragraphs outside a Field are the two note rows of 2h.7 (this read has no model-draft): model-profile-moe-later before MoE cache (brief 19, 19 G.14), model-profile-draft-file-off before Draft device', async () => {
   const doc = docOf(SET)
   const { main } = await loaded({ modelProfile: () => reply(200, doc) })
   const card = cardOf(main, CARD)
@@ -1367,8 +1371,8 @@ test('2e.90, 2h.177, 2h.178: the Hardware card holds no group and no h4, and the
   const h3 = card.querySelector('h3')!
   expect(before(h3, notes[0]!), '181: after the card h3').toBe(true)
   expect(
-    before(notes[0]!, fieldOf(main, en('model-profile-moe-cpu-layers'))),
-    '178: the MoE note before MoE CPU layers',
+    before(notes[0]!, fieldOf(main, en('model-profile-moe-cache'))),
+    '19 G.14: the MoE note before MoE cache',
   ).toBe(true)
   expect(
     before(notes[1]!, fieldOf(main, en('model-profile-draft-device'))),
@@ -1465,7 +1469,7 @@ test('2e.110: the card, every label, hint, toggle, option and the empty device o
   ).toBe(en('model-profile-device-same-as-model'))
 })
 
-test('2e.111, 2e.87: no field of 2e.4 shows a placeholder, and the card shows no text of 111: the embedded-MTP note, the slider maxima, the CPU/GPU switch, a probed device list', async () => {
+test('2e.111, 2e.87: no field of 2e.4 shows a placeholder, and the card shows no text of 111: the embedded-MTP note, the CPU/GPU switch, a probed device list', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const inputs = [
     ...cardOf(main, CARD).querySelectorAll<HTMLInputElement>('input'),
@@ -1483,8 +1487,8 @@ test('2e.111, 2e.87: no field of 2e.4 shows a placeholder, and the card shows no
     // The embedded-MTP note of MP 620-625 (2g, it needs the model read).
     'apply only to a separate draft model file',
     'so they stay disabled',
-    // The slider maxima and the blockless drafter's switch (2g).
-    'slider',
+    // The CPU/GPU switch and the blockless drafter (2g, 111). Brief 19's
+    // 19 G.13 put the slider maxima in, so 'slider' is no longer one.
     'cpu/gpu switch',
     // The probed device list (2f): the card lists no device of its own.
     'rocm0',

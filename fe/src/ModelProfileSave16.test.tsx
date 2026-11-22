@@ -65,11 +65,14 @@ const MOE_SPLIT = en('api-moe-cache-with-tensor-split')
  * (Unified KV, 155), no `mmproj` (the four Vision controls, 176), no
  * `model-draft` (the draft pair, 177, and the draft group, 190), `spec-type`
  * `none` (every n-gram group, 191), `fit` off (the two Fit dependents, 186),
- * and the two MoE rows, never editable in 2h (178). `moe-cache-mib` and
- * `split-mode` are 198a's example. */
+ * and MoE cache, never editable in 2h (178). `n-cpu-moe` is in with a value:
+ * brief 19's 19 G.14 made MoE CPU layers editable on this read, whose facts
+ * answer a reason, and the key leaves its box unticked (156).
+ * `moe-cache-mib` and `split-mode` are 198a's example. */
 const BASE: Record<string, string> = {
   'ctx-size': '172032',
   'moe-cache-mib': '512',
+  'n-cpu-moe': '20',
   'split-mode': 'tensor',
   fit: 'off',
   'spec-type': 'none',
@@ -303,7 +306,7 @@ test('2h.194: the paragraph model-profile-partly-editable is gone from the page,
   ).toBe('model-profile-read-only')
 })
 
-test('2h.194: this sub-slice enables nothing new: every control 194 lists as greyed out is disabled on a read that locks it, and a ticked default box still disables its input', async () => {
+test("2h.194: every control 194 lists as greyed out is disabled on a read that locks it (brief 19's 19 G.14 added MoE CPU layers, the row 194 left out), and a ticked default box still disables its input", async () => {
   await form()
   const locked = [
     'kv-unified',
@@ -313,7 +316,6 @@ test('2h.194: this sub-slice enables nothing new: every control 194 lists as gre
     'image-max-tokens',
     'device-draft',
     'n-gpu-layers-draft',
-    'n-cpu-moe',
     'moe-cache-mib',
     'fit-ctx',
     'fit-target',
@@ -323,6 +325,9 @@ test('2h.194: this sub-slice enables nothing new: every control 194 lists as gre
   ]
   for (const key of locked)
     expect(control(key).disabled, `${key}: greyed out (194)`).toBe(true)
+  // Brief 19's 19 G.14: MoE CPU layers is editable on this read, whose model
+  // facts answer a reason.
+  expect(control('n-cpu-moe').disabled, '19 G.14: MoE CPU layers').toBe(false)
   // A field with its own default box: the box enabled, the input disabled
   // while the box is ticked (156).
   const box = boxOf('ctx-size')

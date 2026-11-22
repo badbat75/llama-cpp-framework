@@ -46,7 +46,14 @@ import {
   SelectField,
   TextField,
 } from './Field.tsx'
-import { GpuFieldset, factsLine, type GpuCardProps } from './GpuSplit.tsx'
+import {
+  GpuFieldset,
+  factsLine,
+  factsRead,
+  gpuFacts,
+  type FactsState,
+  type GpuCardProps,
+} from './GpuSplit.tsx'
 import { t } from './strings.ts'
 
 /** A select's option: the value the file holds, the text the user reads. */
@@ -115,6 +122,17 @@ type NumberRow = RowBase & {
   kind: 'number'
   integer: boolean
   unit?: string
+  /** Brief 19, 19 G.13, 19 G.14: the row takes a slider beside its input, once
+   * the model file's facts are read. `blocks`: a layer count whose top is every
+   * block of the file, which is also what the field's default box reads; `moe`:
+   * the layers kept on the CPU, whose top is the file's block count and whose
+   * default box reads none. Absent: no slider (the draft's layer count). */
+  slider?: 'blocks' | 'moe'
+  /** Brief 19, 19 G.14: the row's state follows the model file's facts, read
+   * beside the GPU card: a dense model has no experts for the key to keep on
+   * the CPU, and a read that has not answered has not said. Every other state
+   * opens the row; the reason paragraph right before it says which. */
+  moeFacts?: true
 }
 
 /** A select: its options in the table's order, and the option an absent key
@@ -194,6 +212,9 @@ type NoteRow = {
   key: string
   text: string
   shownWithout?: string
+  /** Brief 19, 19 G.14: the note shows in this state of the model file's facts
+   * read and in no other. Absent: every state. */
+  shownFacts?: FactsState
 }
 
 /** The drafter that switches a group of the Speculative decoding card on (2h.9's
@@ -389,12 +410,26 @@ const CARDS: CardFields[] = [
         label: t('model-profile-gpu-layers'),
         hint: t('model-profile-gpu-layers-hint'),
         editable: true,
+        // 19 G.13: the slider reaches every block of the model file.
+        slider: 'blocks',
       },
-      // 178: the note of the two rows that stay disabled until 2g.
+      // 178: MoE cache stays disabled, and its note sits right before it.
+      // 19 G.14: MoE CPU layers became editable, and its state follows the
+      // model file's facts, so the reason a read gives for closing it sits
+      // right before the field: while the read runs, and for a dense file,
+      // which has no experts for the key to keep on the CPU. A read that
+      // answered a reason or nothing leaves the field open and says nothing.
       {
         kind: 'note',
-        key: 'moe-later-note',
-        text: t('model-profile-moe-later'),
+        key: 'moe-reading-note',
+        text: t('model-profile-moe-reading'),
+        shownFacts: 'reading',
+      },
+      {
+        kind: 'note',
+        key: 'moe-dense-note',
+        text: t('model-profile-moe-dense'),
+        shownFacts: 'dense',
       },
       {
         kind: 'number',
@@ -402,6 +437,16 @@ const CARDS: CardFields[] = [
         key: 'n-cpu-moe',
         label: t('model-profile-moe-cpu-layers'),
         hint: t('model-profile-moe-cpu-layers-hint'),
+        editable: true,
+        moeFacts: true,
+        // 19 G.14: the slider only for a file the read answered experts of.
+        slider: 'moe',
+      },
+      // 178: the note of the row that stays disabled, right before it.
+      {
+        kind: 'note',
+        key: 'moe-later-note',
+        text: t('model-profile-moe-later'),
       },
       {
         kind: 'number',
@@ -1453,7 +1498,6 @@ const INT_KEYS: Record<string, { min: number | null; max: number | null }> = {
       'n-predict',
       'top-k',
       'n-gpu-layers',
-      'n-cpu-moe',
       'n-cpu-ffn',
       'n-gpu-layers-draft',
     ],
@@ -1502,6 +1546,9 @@ const INT_KEYS: Record<string, { min: number | null; max: number | null }> = {
   ),
   ...bounded(['spec-ngram-mod-n-min', 'spec-ngram-mod-n-max'], 0, 1024),
   'spec-ngram-map-k4v-min-hits': { min: 1, max: 65535 },
+  // Brief 19's 19 G.14: MoE CPU layers joined the editable keys, with the
+  // range the manager's `checks.rs` gives it.
+  'n-cpu-moe': { min: 0, max: 4096 },
 }
 
 /** 2h.5's 165: the model profile float keys, the ones the decimal check of 165
@@ -1846,11 +1893,18 @@ function specGroupRule(key: string): SpecGroup | undefined {
  * loaded value (the save sends it) and skipped when it is the loaded value
  * (176, 2026-11-18). */
 export function ruleLocked(
-  row: RowBase,
+  row: RowBase & { moeFacts?: true },
   draft: Record<string, string>,
   loaded: Record<string, string>,
   boxed: Record<string, Boxed>,
+  facts: FactsState,
 ): boolean {
+  // 19 G.14: a row whose key only means something for a model with experts is
+  // closed while the read has not answered, and while it answered a dense file.
+  // The note right before the field is the reason. A read that answered a
+  // reason, or nothing at all, leaves the row open: it said no model.
+  if (row.moeFacts === true && (facts === 'reading' || facts === 'dense'))
+    return true
   const group = specGroupRule(row.key)
   if (group !== undefined) return !specGroupOn(group, loaded)
   return (row.enabledWhen ?? []).some((one) => {
@@ -1911,6 +1965,13 @@ function ModelProfileField({
       held(loaded, row.shownWithout) !== undefined
     )
       return null
+    // 19 G.14: a note that speaks for a state of the model file's facts sits
+    // only while the read is at it.
+    if (
+      row.shownFacts !== undefined &&
+      (gpu === undefined || factsRead(gpu.modelInfo) !== row.shownFacts)
+    )
+      return null
     // 181: a plain paragraph in reading order, never a live region and never a
     // control's description.
     return <p className="note">{row.text}</p>
@@ -1959,9 +2020,12 @@ function ModelProfileField({
   // handler does nothing: the page sends nothing for it. An editable row's
   // control is enabled and its handler writes the draft (130, 164).
   const editable = row.editable === true
+  // 19 G.13, 19 G.14: where the model file's facts read is, for the rows that
+  // follow it.
+  const factsState = gpu === undefined ? 'reading' : factsRead(gpu.modelInfo)
   // 2h.7's 176: a row the rules of 155 and 176 disable is natively disabled
   // and keeps the state it holds.
-  const locked = ruleLocked(row, values, loaded, boxed)
+  const locked = ruleLocked(row, values, loaded, boxed, factsState)
   const common = {
     id: fieldId(row.key),
     label: row.label,
@@ -1988,6 +2052,20 @@ function ModelProfileField({
       // control that is disabled now (134).
       const disabled = !editable || locked
       const text = boxText(b)
+      // 19 G.13, 19 G.14: a layer row's slider reaches every block of the model
+      // file, so it sits only where the read answered the counts, and for MoE
+      // only where it answered experts. Its words are the key's own (157).
+      const facts = gpu === undefined ? null : gpuFacts(gpu.modelInfo)
+      const range =
+        row.slider === undefined || facts === null
+          ? undefined
+          : row.slider === 'moe' && !facts.moe
+            ? undefined
+            : {
+                max: facts.blockCount,
+                atDefault: row.slider === 'blocks' ? facts.blockCount : 0,
+                words: WORD_VALUES[row.key],
+              }
       return (
         <DefaultBoxField
           {...common}
@@ -1995,6 +2073,7 @@ function ModelProfileField({
           box={t('field-default')}
           numeric={numericMode(row)}
           unit={row.unit}
+          range={range}
           ticked={b.ticked}
           text={text}
           full={disabled ? fullValue(row, text) : undefined}

@@ -82,10 +82,15 @@ const PORT_DIRTY = '8081'
 const POOLING_ARGS = ['pooling', 'mean', 'default, none, mean, cls, last, rank']
 const POOLING_REFUSAL = { key: 'not-one-of', args: POOLING_ARGS }
 const POOLING_TEXT = en('api-not-one-of', ...POOLING_ARGS)
-const MOE = en('model-profile-moe-cpu-layers')
+/** 198a's field with nothing to focus: MoE cache, the Hardware card row brief
+ * 19's 19 G.14 leaves disabled (its floor needs the model's tensors). */
+const MOE_CACHE = en('model-profile-moe-cache')
 const HW_CARD = en('model-profile-hardware-config')
-const MOE_REFUSAL = { key: 'not-a-number', args: ['n-cpu-moe', 'many'] }
-const MOE_TEXT = en('api-not-a-number', 'n-cpu-moe', 'many')
+const MOE_CACHE_REFUSAL = {
+  key: 'not-a-number',
+  args: ['moe-cache-mib', 'many'],
+}
+const MOE_CACHE_TEXT = en('api-not-a-number', 'moe-cache-mib', 'many')
 /** 198h's Server row: a refused comment marker in ModelsDir (144). */
 const FOLDER = en('server-models-folder')
 const MARKERS_TEXT = en('api-comment-markers', 'ModelsDir')
@@ -349,9 +354,14 @@ const PROFILE_ROWS: Row[] = [
     control: { label: MODE, kind: 'select' },
     from: AS_LOADED['embeddings'],
     to: MODE_DIRTY,
-    answer: () => reply(422, MOE_REFUSAL),
-    alert: en('save-refused-at', MOE_TEXT, MOE, HW_CARD),
-    mark: { label: MOE, kind: 'box', text: MOE_TEXT, keeps: true },
+    answer: () => reply(422, MOE_CACHE_REFUSAL),
+    alert: en('save-refused-at', MOE_CACHE_TEXT, MOE_CACHE, HW_CARD),
+    mark: {
+      label: MOE_CACHE,
+      kind: 'box',
+      text: MOE_CACHE_TEXT,
+      keeps: true,
+    },
   },
   {
     // 198h's model profile scenario: the 404, cleaned by the edit put back.
