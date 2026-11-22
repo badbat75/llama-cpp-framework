@@ -1174,17 +1174,15 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     page"): the sliders read the saved `model` (manager `ModelInfoAs`, `GET
     /api/profiles/model/{id}/model-info`); an `hf-repo` not yet downloaded gives no layer facts for now;
     the manager refuses `override-tensor`, `device-draft` or `mmproj-device` naming a GPU outside the
-    instance's server profile `Devices`; `moe-cache-mib` stays off the web until its floor rule. Slices
-    L1 to L4, 2g (brief 19, `fe/briefs/19-layer-sliders.md`, written 2026-11-22: runs LS1 and LS2; LS1 built 2026-11-22 (the model-info read and facts line, a Blocks field and range per GPU), LS2a built 2026-11-22 (19 G.13 to G.15: a range beside GPU layers and MoE CPU layers, MoE CPU layers editable), LS2b built 2026-11-22 (19 G.16 to G.19: Draft device and Vision GPU options from the probe, the device-outside refusal on its field), so 2g is built; the warning before Save for a Draft device or Vision GPU outside Devices is deferred to R4/R5, the save refusal names the GPU), J1, 2j (designer first). Built: L1, the manager's `ModelInfo`/`ModelInfoAs`
-    (2026-11-22); L2, the bff route `GET /api/profiles/model/{id}/model-info` (2026-11-22). L3 (`n-cpu-moe` on the web, 0..4096) and L4 (the device bound for `device-draft` and `mmproj-device`) (2026-11-22). J1, the model's tensor list in `ModelInfo` (bounded at 20 000 rows and 896 KiB of JSON under the pipe's 1 MiB frame, `truncated` set past either) with `-ot` buffer types judged as devices (2026-11-22). N1, the side menu as Nodes and Profiles (brief 20), built 2026-11-22. Next: 2j, brief 21 (`fe/briefs/21-tensor-placement.md`, written 2026-11-22: a Tensor placement card of rule rows, tensor kind, layers, device, with the raw rules editable as text; parts TP1 T.1 to T.9, TP2 T.10 to T.13, TP3 T.14 to T.17; the brief's two questions, a tensor picker and Move up/down for rules, taken as recommended: not now). Next: LS2, then the nav slice N1 below, then 2j.
-    **N1, the side menu as Nodes and Profiles** (user, 2026-11-22; designer's brief first): the manager's
-    web UI and the director's are one interface, the director's showing more and the manager's hiding
-    what does not apply. The menu has two groups even with one host: "Nodes", one entry per host (here
-    `aorus`), and under each host its instances, each named by its id with the name of its assigned
-    server profile beside it, then that host's Node info; and "Profiles", with Server profiles and Model
-    profiles. This replaces the one-host rule of `fe/DESIGN.md` 5 (no disclosure with one host, Node info
-    beside About) and brings the hub-mode grouping of brief 18 section 8 forward; About stays one, for the
-    framework. After LS2, before 2j and slice 17 (which redoes the profile pages on this menu). Brief 20, `fe/briefs/20-nodes-menu.md` (2026-11-22): one host is a plain label, no disclosure; Overview first, then Nodes, Profiles, About; routes `#/node` and `#/instances/<id>` kept; Server profiles enters the menu with its page in 17a; the profile shows even when it equals the id.
+    instance's server profile `Devices`; `moe-cache-mib` stays off the web until its floor rule.
+    Built (2026-11-22, `git log` holds each): L1 to L4, J1 (the tensor list in `ModelInfo`), 2g (brief
+    19, LS1, LS2a, LS2b) and N1 (brief 20, the side menu as Nodes and Profiles). Left from them: the
+    warning before Save for a Draft device or Vision GPU outside `Devices` (with R4/R5; the save refusal
+    already names the GPU), and Server profiles entering the menu with its page (slice 17a).
+    In progress: 2j, brief 21 (`fe/briefs/21-tensor-placement.md`, 2026-11-22: a Tensor placement card
+    of rule rows, tensor kind, layers, device, the raw rules editable as text; parts TP1 T.1 to T.9, in
+    progress since 2026-11-22, then TP2 T.10 to T.13 and TP3 T.14 to T.17; the brief's two questions, a
+    tensor picker and Move up/down for rules, taken as recommended: not now). Then slice 17.
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.
