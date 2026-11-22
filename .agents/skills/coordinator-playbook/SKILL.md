@@ -113,7 +113,7 @@ package or file goes into the architecture pages (the `architect` updates them, 
 new capability goes into the flyer (the `docs` agent). Say in the commit which of them changed, or none.
 Their published previews (private), republished from the repo file after each change: flyer
 https://claude.ai/artifact/YWeQJxnxL67EqBDb1jdnYp, infrastructure https://claude.ai/artifact/3CoviYjx7ToXCnaAxACzm9,
-system https://claude.ai/artifact/E964mpfjYWoU5jToTUprJ3 (from a new session: publish with `url`).
+system https://claude.ai/artifact/E964mpfjYWoU5jToTUprJ3 (from a new session: publish with `url`). These previews are the only rendered copy the user reads (the docs site publishes only `docs/*.md`: `architecture/*.html` is 404 there), so republish them in the same turn as the commit that changes the file; a commit alone left them stale on 2026-11-22.
 
 ## Every new requirement updates the plan and the architecture at once (user, 2026-11-21)
 
