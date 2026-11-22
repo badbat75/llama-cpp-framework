@@ -44,6 +44,7 @@ table { border-collapse: collapse; width: 100%; font-size: .9rem; margin: .5rem 
 th, td { border: 1px solid var(--box2); padding: 4px 6px; text-align: left; vertical-align: top; }
 th { background: var(--box); }
 .planned { color: var(--planned); font-weight: 600; }
+.built { font-size: .9rem; border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; margin: .4rem 0 1rem; }
 /* SVG classes: every colour from the tokens, so dark mode and print both work */
 svg text { fill: var(--fg); font: 12px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
 svg .t-title { font-weight: 700; font-size: 13px; }
@@ -65,10 +66,12 @@ svg .ah-plan { fill: var(--planned); }
 </head>
 <body>
 <h1>Infrastructure view</h1>
-<p class="sub">Private AI Framework: where each service runs, under which account, what it reads and
-writes, and how the pieces talk. Source: <code>ARCHITECTURE.md</code>, <code>AGENTS.md</code> and the
-code (<code>xtask/src/linux/system_files.rs</code>, the two <code>.wxs</code> files,
-<code>crates/manager</code>, <code>crates/bff</code>), 2026-11-21 (the planned parts 2026-11-22). When this page and those disagree,
+<p class="sub">Private AI Framework, <b>target architecture</b>: every design accepted in
+<code>ARCHITECTURE.md</code> drawn as the system, with a short "Built today" note under each figure
+saying what of it runs now. Where each service runs, under which account, what it reads and writes,
+and how the pieces talk. Source: <code>ARCHITECTURE.md</code>, <code>AGENTS.md</code> and the code
+(<code>xtask/src/linux/system_files.rs</code>, the two <code>.wxs</code> files,
+<code>crates/manager</code>, <code>crates/bff</code>), 2026-11-22. When this page and those disagree,
 they win.</p>
 
 <figure>
@@ -77,296 +80,371 @@ they win.</p>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
     <marker id="arrow-plan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-plan" d="M0,0 L10,5 L0,10 z"/></marker>
   </defs>
-  <rect class="svc" x="4" y="12" width="26" height="18" rx="3"/><text x="36" y="25">service (built)</text>
-  <rect class="usr" x="150" y="12" width="26" height="18" rx="3"/><text x="182" y="25">user program</text>
-  <rect class="file" x="290" y="12" width="26" height="18"/><text x="322" y="25">files</text>
-  <rect class="plan" x="380" y="12" width="26" height="18" rx="3"/><text x="412" y="25" class="t-planned">planned</text>
-  <line class="edge" x1="490" y1="21" x2="530" y2="21"/><text x="536" y="25">call / transport</text>
-  <line class="trust" x1="660" y1="21" x2="700" y2="21"/><text x="706" y="25" class="t-trust">trust boundary</text>
+  <rect class="svc" x="4" y="12" width="26" height="18" rx="3"/><text x="36" y="25">service</text>
+  <rect class="usr" x="110" y="12" width="26" height="18" rx="3"/><text x="142" y="25">user program</text>
+  <rect class="file" x="250" y="12" width="26" height="18"/><text x="282" y="25">files</text>
+  <rect class="plan" x="330" y="12" width="26" height="18" rx="3"/><text x="362" y="25" class="t-planned">proposed, not yet accepted</text>
+  <line class="edge" x1="560" y1="21" x2="600" y2="21"/><text x="606" y="25">call / transport</text>
+  <line class="trust" x1="730" y1="21" x2="770" y2="21"/><text x="776" y="25" class="t-trust">trust boundary</text>
 </svg>
 </figure>
 
 <h2>A Linux node</h2>
 <figure>
-<svg viewBox="0 0 900 520" role="img" aria-label="Linux node deployment">
-  <rect class="node" x="10" y="10" width="880" height="500" rx="8"/>
+<svg viewBox="0 0 960 750" role="img" aria-label="Linux node deployment, target">
+  <rect class="node" x="10" y="10" width="940" height="730" rx="8"/>
   <text x="24" y="32" class="t-title">Linux node (.deb / .rpm)</text>
 
-  <!-- browser outside -->
-  <rect class="usr" x="30" y="60" width="150" height="54" rx="5"/>
-  <text x="42" y="80" class="t-title">Browser</text>
-  <text x="42" y="98" class="t-small">a pai member, local or LAN</text>
+  <!-- column A: people and the outside -->
+  <rect class="usr" x="20" y="60" width="190" height="54" rx="5"/>
+  <text x="32" y="80" class="t-title">Browser</text>
+  <text x="32" y="98" class="t-small">a pai member, local or LAN</text>
 
-  <!-- desktop user -->
-  <rect class="usr" x="30" y="300" width="150" height="80" rx="5"/>
-  <text x="42" y="320" class="t-title">Desktop user</text>
-  <text x="42" y="338">pai-config (GUI)</text>
-  <text x="42" y="354">pai (CLI)</text>
-  <text x="42" y="372" class="t-small">~/.config/private-ai/</text>
+  <rect class="node" x="20" y="150" width="190" height="66" rx="5"/>
+  <text x="32" y="168" class="t-mono">huggingface.co:443</text>
+  <text x="32" y="184" class="t-small">outbound, from the bff only</text>
+  <text x="32" y="198" class="t-small">HTTPS, no redirects</text>
+  <text x="32" y="210" class="t-small">repo file lists (curl)</text>
 
-  <!-- bff -->
-  <rect class="svc" x="250" y="50" width="220" height="80" rx="5"/>
-  <text x="262" y="70" class="t-title">private-ai-bff.service</text>
-  <text x="262" y="88">pai-bff + embedded web UI</text>
-  <text x="262" y="104" class="t-small">user private-ai-bff, sandboxed</text>
-  <text x="262" y="120" class="t-mono">[Bff] Listen 127.0.0.1:8590</text>
-  <line class="edge" x1="180" y1="87" x2="248" y2="87"/>
-  <text x="186" y="80" class="t-small">HTTP</text>
-  <rect class="plan" x="30" y="160" width="170" height="56" rx="5"/>
-  <text x="42" y="180" class="t-small t-planned">outbound (accepted):</text>
-  <text x="42" y="196" class="t-mono">huggingface.co:443</text>
-  <text x="42" y="210" class="t-small">repo file lists, curl</text>
-  <line class="edge-plan" x1="250" y1="120" x2="202" y2="170"/>
+  <rect class="usr" x="20" y="300" width="190" height="84" rx="5"/>
+  <text x="32" y="320" class="t-title">Desktop user</text>
+  <text x="32" y="338">pai-config (GUI)</text>
+  <text x="32" y="354">pai (CLI)</text>
+  <text x="32" y="372" class="t-small">~/.config/private-ai/</text>
+  <text x="32" y="402" class="t-small">D-Bus to the manager,</text>
+  <text x="32" y="416" class="t-small">polkit decides per call</text>
 
-  <!-- manager -->
-  <rect class="svc" x="250" y="230" width="220" height="130" rx="5"/>
-  <text x="262" y="250" class="t-title">private-ai-manager.service</text>
-  <text x="262" y="266" class="t-small t-planned">accepted: user private-ai-manager,</text>
-  <text x="262" y="280" class="t-small t-planned">+ a root helper (P1-P3)</text>
-  <text x="262" y="296" class="t-small">today: pai-manager as root</text>
-  <text x="262" y="312" class="t-small">checks every write, decides who</text>
-  <text x="262" y="326" class="t-small">may do what, writes the records</text>
-  <text x="262" y="346" class="t-mono">org.privateai.Manager1</text>
+  <!-- column B: bff, manager, polkit, helper -->
+  <rect class="svc" x="245" y="50" width="280" height="96" rx="5"/>
+  <text x="257" y="70" class="t-title">private-ai-bff.service</text>
+  <text x="257" y="88">pai-bff + embedded web UI</text>
+  <text x="257" y="104" class="t-small">user private-ai-bff, sandboxed</text>
+  <text x="257" y="120" class="t-mono">[Bff] Listen 127.0.0.1:8590</text>
+  <text x="257" y="136" class="t-small">hub mode: [Bff] Director = true</text>
+  <line class="edge" x1="210" y1="87" x2="243" y2="87"/>
+  <text x="213" y="80" class="t-small">HTTP</text>
+  <line class="edge" x1="245" y1="128" x2="212" y2="168"/>
 
-  <line class="edge" x1="360" y1="130" x2="360" y2="228"/>
-  <text x="368" y="170" class="t-small">D-Bus system bus</text>
-  <text x="368" y="184" class="t-small">Authenticate, &lt;Method&gt;As</text>
-  <line class="edge" x1="180" y1="330" x2="248" y2="300"/>
-  <text x="186" y="300" class="t-small">D-Bus</text>
-  <text x="186" y="352" class="t-small">+ polkit</text>
+  <rect class="svc" x="245" y="200" width="280" height="200" rx="5"/>
+  <text x="257" y="220" class="t-title">private-ai-manager.service</text>
+  <text x="257" y="238">pai-manager serve</text>
+  <text x="257" y="254" class="t-small">user private-ai-manager, no capabilities</text>
+  <text x="257" y="268" class="t-small">groups private-ai, render, video</text>
+  <text x="257" y="284" class="t-small">every content check, who may do what,</text>
+  <text x="257" y="298" class="t-small">the records; ModelFiles, NodeInfo</text>
+  <text x="257" y="314" class="t-small">sampler, metrics store, ReadLog (13d)</text>
+  <text x="257" y="328" class="t-small">start and stop llama.cpp@* via polkit</text>
+  <text x="257" y="344" class="t-small">node listener :8592, off until enabled</text>
+  <text x="257" y="360" class="t-small">store pull client (step 14)</text>
+  <text x="257" y="384" class="t-mono">org.privateai.Manager1</text>
+  <line class="edge" x1="385" y1="146" x2="385" y2="198"/>
+  <text x="393" y="168" class="t-small">D-Bus system bus</text>
+  <text x="393" y="182" class="t-small">Authenticate, &lt;Method&gt;As</text>
+  <line class="edge" x1="210" y1="340" x2="243" y2="325"/>
 
-  <!-- polkit -->
-  <rect class="file" x="250" y="390" width="220" height="70"/>
-  <text x="262" y="408" class="t-title">polkit + group pai</text>
-  <text x="262" y="426" class="t-small">control: active session, no password</text>
-  <text x="262" y="440" class="t-small">configure: pai member, own password</text>
-  <text x="262" y="454" class="t-small">50-private-ai.rules, auth_self_keep</text>
-  <line class="edge" x1="360" y1="360" x2="360" y2="388"/>
+  <rect class="file" x="300" y="425" width="225" height="82"/>
+  <text x="312" y="443" class="t-title">polkit + group pai</text>
+  <text x="312" y="461" class="t-small">control: session, no password</text>
+  <text x="312" y="475" class="t-small">configure: pai, own password</text>
+  <text x="312" y="489" class="t-small">rule: llama.cpp@* start, stop</text>
+  <text x="312" y="501" class="t-small">for the manager's account only</text>
+  <line class="edge" x1="420" y1="400" x2="420" y2="423"/>
 
-  <!-- systemd + instances -->
-  <rect class="svc" x="560" y="230" width="150" height="50" rx="5"/>
-  <text x="572" y="250" class="t-title">systemd</text>
-  <text x="572" y="268" class="t-small">units, boot (enabled)</text>
-  <line class="edge" x1="470" y1="255" x2="558" y2="255"/>
+  <line class="edge" x1="270" y1="400" x2="270" y2="558"/>
+  <text x="280" y="526" class="t-small">Unix socket, peer uid checked</text>
 
-  <rect class="svc" x="560" y="60" width="310" height="110" rx="5"/>
-  <text x="572" y="80" class="t-title">llama.cpp@&lt;id&gt;.service (one per instance)</text>
-  <text x="572" y="98">pai-manager run-instance &lt;id&gt; execs llama-server</text>
-  <text x="572" y="114" class="t-small">user private-ai, groups render video</text>
-  <text x="572" y="130" class="t-mono">port from its server profile (9931 by default)</text>
-  <text x="572" y="146" class="t-small">ExecStop: save-slots; log: the journal</text>
-  <text x="572" y="162" class="t-small">OpenAI-compatible HTTP, its own API key</text>
-  <line class="edge" x1="635" y1="230" x2="635" y2="172"/>
+  <rect class="svc" x="245" y="560" width="280" height="146" rx="5"/>
+  <text x="257" y="580" class="t-title">private-ai-helper@.service</text>
+  <text x="257" y="598">pai-manager helper, root</text>
+  <text x="257" y="614" class="t-small">one process per connection, no network</text>
+  <text x="257" y="632" class="t-mono">/run/private-ai-helper.sock</text>
+  <text x="257" y="648" class="t-small">0660 root:private-ai-manager, SO_PEERCRED</text>
+  <text x="257" y="666" class="t-small">verbs: Authenticate (PAM),</text>
+  <text x="257" y="680" class="t-small">SetBoot{id}, SetDirector{on}</text>
+  <text x="257" y="696" class="t-small">no path or unit name passes through</text>
 
-  <!-- files -->
-  <rect class="file" x="560" y="310" width="310" height="172"/>
-  <text x="572" y="330" class="t-title">Files</text>
-  <text x="572" y="348" class="t-mono">/etc/llama.cpp/</text>
-  <text x="680" y="348" class="t-small">profiles, instances.ini, assignments.ini</text>
-  <text x="572" y="364" class="t-small">written by the manager only, read by private-ai</text>
-  <text x="572" y="384" class="t-mono">/etc/private-ai/bff.ini</text>
-  <text x="572" y="404" class="t-mono">/var/lib/private-ai/</text>
-  <text x="712" y="404" class="t-small">home 0751; state 0750</text>
-  <text x="572" y="420" class="t-small">models/ 2775 private-ai:pai, default ACL pai rwx</text>
-  <text x="572" y="434" class="t-small">(accepted 2026-11-21; every engine reads it)</text>
-  <text x="572" y="450" class="t-small">journal: root, systemd-journal, adm, wheel</text>
-  <rect class="plan" x="572" y="456" width="286" height="20" rx="3"/>
-  <text x="580" y="470" class="t-small t-planned">13d: /var/lib/private-ai-manager/metrics.db</text>
-  <line class="edge" x1="470" y1="300" x2="558" y2="350"/>
+  <!-- column C: instances, systemd, director, files -->
+  <rect class="svc" x="590" y="50" width="350" height="120" rx="5"/>
+  <text x="602" y="70" class="t-title">llama.cpp@&lt;id&gt;.service (one per instance)</text>
+  <text x="602" y="88">run-instance &lt;id&gt; execs llama-server</text>
+  <text x="602" y="104" class="t-small">user private-ai, groups render video</text>
+  <text x="602" y="120" class="t-mono">port from its server profile (9931 default)</text>
+  <text x="602" y="136" class="t-small">ExecStop: save-slots; log: the journal</text>
+  <text x="602" y="152" class="t-small">OpenAI-compatible HTTP, its own API key</text>
+
+  <rect class="svc" x="590" y="205" width="160" height="50" rx="5"/>
+  <text x="602" y="225" class="t-title">systemd</text>
+  <text x="602" y="243" class="t-small">units; boot = enabled</text>
+  <line class="edge" x1="525" y1="230" x2="588" y2="230"/>
+  <line class="edge" x1="670" y1="205" x2="670" y2="172"/>
+
+  <rect class="svc" x="590" y="275" width="350" height="152" rx="5"/>
+  <text x="602" y="295" class="t-title">private-ai-director.service</text>
+  <text x="602" y="313">pai-manager director, off until promote</text>
+  <text x="602" y="329" class="t-small">user private-ai-director; refuses to run as root</text>
+  <text x="602" y="343" class="t-small">CA key 0600, registry, deny list, model store</text>
+  <text x="602" y="359" class="t-mono">/run/private-ai-director/director.sock</text>
+  <text x="602" y="373" class="t-small">0660, group private-ai-bff; the bff and the manager</text>
+  <text x="602" y="389" class="t-small">:8593 store pulls and renewals, mutual TLS</text>
+  <text x="602" y="405" class="t-small">joins this node's manager over loopback TLS</text>
+  <text x="602" y="419" class="t-small">shipped disabled in -core</text>
+  <line class="edge" x1="525" y1="140" x2="588" y2="300"/>
+  <line class="edge" x1="588" y1="395" x2="527" y2="375"/>
+
+  <rect class="file" x="590" y="460" width="350" height="268"/>
+  <text x="602" y="480" class="t-title">Files</text>
+  <text x="602" y="498" class="t-mono">/etc/llama.cpp/</text>
+  <text x="602" y="512" class="t-small">profiles; instances, assignments, model-tags</text>
+  <text x="602" y="526" class="t-small">owner private-ai-manager, group private-ai, 0755</text>
+  <text x="602" y="544" class="t-mono">/etc/private-ai/</text>
+  <text x="720" y="544" class="t-small">bff.ini; node/ key 0600</text>
+  <text x="602" y="562" class="t-mono">/var/lib/private-ai/</text>
+  <text x="740" y="562" class="t-small">home 0751; state 0750</text>
+  <text x="602" y="578" class="t-small">models/ 2775 private-ai:pai, default ACL pai rwx:</text>
+  <text x="602" y="592" class="t-small">the one models folder, every engine reads it</text>
+  <text x="602" y="610" class="t-mono">/var/lib/private-ai-manager/metrics.db</text>
+  <text x="602" y="624" class="t-small">fixed-size history tiers, about 1 MB (13d)</text>
+  <text x="602" y="642" class="t-mono">/var/lib/private-ai-director/</text>
+  <text x="602" y="656" class="t-small">CA, registry, store; 0700, the director only</text>
+  <text x="602" y="674" class="t-small">journal: root, systemd-journal, adm, wheel;</text>
+  <text x="602" y="688" class="t-small">instance logs read by the manager for pai</text>
+  <text x="602" y="706" class="t-small">engine and GPU runtime versions files</text>
+  <line class="edge" x1="525" y1="392" x2="588" y2="520"/>
 
   <!-- trust boundaries -->
-  <line class="trust" x1="215" y1="40" x2="215" y2="490"/>
-  <text x="200" y="500" class="t-trust">OS identity</text>
-  <path class="trust" d="M230 190 H540 V490"/>
-  <text x="440" y="206" class="t-trust">root: helper</text>
-  <text x="440" y="220" class="t-small">(today: manager)</text>
-  <line class="trust" x1="540" y1="40" x2="540" y2="190"/>
-  <text x="548" y="52" class="t-trust">engine account</text>
+  <line class="trust" x1="225" y1="40" x2="225" y2="735"/>
+  <text x="140" y="732" class="t-trust">OS identity</text>
+  <rect class="trust" x="235" y="545" width="300" height="172" rx="4"/>
+  <text x="500" y="558" class="t-trust">root</text>
+  <rect class="trust" x="582" y="42" width="366" height="136" rx="4"/>
+  <text x="770" y="194" class="t-trust">engine account</text>
+  <rect class="trust" x="582" y="267" width="366" height="166" rx="4"/>
+  <text x="770" y="449" class="t-trust">director account</text>
 </svg>
 <figcaption>Every call into the manager is identified by the OS (the bus name's uid), never by what it
-sends. The browser is the only path from outside the machine, and only on a LAN address the
-administrator chose (plain HTTP, accepted 2026-11-17). Accepted on 2026-11-21, not built: one models
-folder per node for every engine, <code>/var/lib/private-ai/models</code>, which opens the service
-user's home to 0751 (traverse only; its data root and snapshots stay 0750). Also accepted on 2026-11-21, not built: the bff calls
-huggingface.co (HTTPS, fixed endpoint, no redirects) to list a repo's files, and the manager lists the
-models folders for the bff (<code>ModelFilesAs</code>), which the bff's account cannot read.</figcaption>
+sends; the manager is unprivileged and the only root code is the helper, three fixed verbs, one
+process per connection. The browser is the only path in from outside the machine until the node
+listener (8592) and the director's listener (8593) are switched on, both mutual TLS under the
+director's CA; the bff reaches out only to huggingface.co.</figcaption>
+<p class="built"><b>Built today:</b> the bff, the instances, polkit and the files under
+<code>/etc</code>; the manager still runs as root with <code>ConfigurationDirectory=</code> and checks
+passwords itself (until slices P1 to P3). Not built: the helper, the director, the node listener, the
+metrics store, <code>/var/lib/private-ai/models</code> (instances use <code>/var/lib/llama.cpp/models</code>),
+<code>ModelFiles</code> and the Hugging Face listing.</p>
 </figure>
 
 <h2>A Windows node</h2>
 <figure>
-<svg viewBox="0 0 900 400" role="img" aria-label="Windows node deployment">
-  <rect class="node" x="10" y="10" width="880" height="380" rx="8"/>
-  <text x="24" y="32" class="t-title">Windows node (two MSIs; type-checked, CI install only)</text>
+<svg viewBox="0 0 960 610" role="img" aria-label="Windows node deployment, target">
+  <rect class="node" x="10" y="10" width="940" height="590" rx="8"/>
+  <text x="24" y="32" class="t-title">Windows node (two MSIs)</text>
 
-  <rect class="usr" x="30" y="60" width="150" height="50" rx="5"/>
-  <text x="42" y="80" class="t-title">Browser</text>
-  <text x="42" y="98" class="t-small">a pai member</text>
+  <rect class="usr" x="20" y="60" width="190" height="50" rx="5"/>
+  <text x="32" y="80" class="t-title">Browser</text>
+  <text x="32" y="98" class="t-small">a pai member</text>
 
-  <rect class="usr" x="30" y="230" width="150" height="70" rx="5"/>
-  <text x="42" y="250" class="t-title">Desktop user</text>
-  <text x="42" y="268">pai-config, pai</text>
-  <text x="42" y="286" class="t-small">%LOCALAPPDATA%\private-ai</text>
+  <rect class="node" x="20" y="140" width="190" height="62" rx="5"/>
+  <text x="32" y="158" class="t-mono">huggingface.co:443</text>
+  <text x="32" y="174" class="t-small">outbound, from the bff only</text>
+  <text x="32" y="190" class="t-small">System32 curl, HTTPS</text>
 
-  <rect class="svc" x="250" y="50" width="220" height="74" rx="5"/>
-  <text x="262" y="70" class="t-title">private-ai-bff (service)</text>
-  <text x="262" y="88" class="t-small">NT SERVICE\private-ai-bff</text>
-  <text x="262" y="108" class="t-mono">[Bff] Listen 127.0.0.1:8590</text>
-  <line class="edge" x1="180" y1="85" x2="248" y2="85"/>
-  <text x="186" y="78" class="t-small">HTTP</text>
-  <rect class="plan" x="30" y="130" width="170" height="56" rx="5"/>
-  <text x="42" y="150" class="t-small t-planned">outbound (accepted):</text>
-  <text x="42" y="166" class="t-mono">huggingface.co:443</text>
-  <text x="42" y="180" class="t-small">System32 curl</text>
-  <line class="edge-plan" x1="250" y1="115" x2="202" y2="140"/>
+  <rect class="usr" x="20" y="250" width="190" height="70" rx="5"/>
+  <text x="32" y="270" class="t-title">Desktop user</text>
+  <text x="32" y="288">pai-config, pai</text>
+  <text x="32" y="306" class="t-small">%LOCALAPPDATA%\private-ai</text>
+  <text x="32" y="338" class="t-small">pipe, at identification level</text>
 
-  <rect class="svc" x="250" y="190" width="220" height="122" rx="5"/>
-  <text x="262" y="208" class="t-title">private-ai-manager</text>
-  <text x="262" y="222" class="t-small t-planned">accepted (P4-P6): virtual account</text>
-  <text x="262" y="235" class="t-mono t-planned">NT SERVICE\private-ai-manager</text>
-  <text x="262" y="248" class="t-small t-planned">+ LocalSystem helper (create, boot)</text>
-  <text x="262" y="261" class="t-small">today: LocalSystem, automatic start</text>
-  <text x="262" y="276" class="t-mono">\\.\pipe\private-ai-manager</text>
-  <text x="262" y="290" class="t-small">u32 length + JSON, at most 1 MiB</text>
-  <text x="262" y="304" class="t-small">SDDL: no remote, no network logon</text>
-  <line class="edge" x1="360" y1="124" x2="360" y2="188"/>
-  <text x="368" y="142" class="t-small">named pipe, service SID</text>
-  <line class="edge" x1="180" y1="265" x2="248" y2="250"/>
-  <text x="186" y="244" class="t-small">pipe</text>
+  <rect class="svc" x="245" y="50" width="280" height="80" rx="5"/>
+  <text x="257" y="70" class="t-title">private-ai-bff (service)</text>
+  <text x="257" y="88" class="t-small">NT SERVICE\private-ai-bff</text>
+  <text x="257" y="108" class="t-mono">[Bff] Listen 127.0.0.1:8590</text>
+  <line class="edge" x1="210" y1="85" x2="243" y2="85"/>
+  <text x="213" y="78" class="t-small">HTTP</text>
+  <line class="edge" x1="245" y1="118" x2="212" y2="155"/>
 
-  <rect class="file" x="250" y="320" width="220" height="64"/>
-  <text x="262" y="338" class="t-title">Local group pai</text>
-  <text x="262" y="356" class="t-small">configure: pai or SYSTEM</text>
-  <text x="262" y="372" class="t-small">control: interactive, Administrators, pai</text>
+  <rect class="svc" x="245" y="180" width="280" height="160" rx="5"/>
+  <text x="257" y="200" class="t-title">private-ai-manager (service)</text>
+  <text x="257" y="216" class="t-mono">NT SERVICE\private-ai-manager</text>
+  <text x="257" y="232" class="t-small">no privilege beyond SeChangeNotify</text>
+  <text x="257" y="250" class="t-mono">\\.\pipe\private-ai-manager</text>
+  <text x="257" y="266" class="t-small">u32 length + JSON, at most 1 MiB</text>
+  <text x="257" y="280" class="t-small">SDDL: no remote, no network logon</text>
+  <text x="257" y="294" class="t-small">clients at identification level only</text>
+  <text x="257" y="310" class="t-small">sign-in: LogonUserW, no privilege</text>
+  <text x="257" y="326" class="t-small">sampler, metrics store, logs (13d)</text>
+  <line class="edge" x1="385" y1="130" x2="385" y2="178"/>
+  <text x="393" y="152" class="t-small">named pipe, service SID</text>
+  <line class="edge" x1="210" y1="285" x2="243" y2="275"/>
 
-  <rect class="svc" x="560" y="190" width="150" height="50" rx="5"/>
-  <text x="572" y="210" class="t-title">SCM</text>
-  <text x="572" y="228" class="t-small">start type = boot</text>
-  <line class="edge" x1="470" y1="215" x2="558" y2="215"/>
+  <rect class="file" x="300" y="360" width="225" height="64"/>
+  <text x="312" y="378" class="t-title">Local group pai</text>
+  <text x="312" y="396" class="t-small">configure: pai or SYSTEM</text>
+  <text x="312" y="412" class="t-small">control: interactive, Admins, pai</text>
+  <line class="edge" x1="420" y1="340" x2="420" y2="358"/>
 
-  <rect class="svc" x="560" y="50" width="310" height="100" rx="5"/>
-  <text x="572" y="70" class="t-title">llama.cpp_&lt;id&gt; (one service per instance)</text>
-  <text x="572" y="88">pai-manager run-instance &lt;id&gt;, parent of llama-server</text>
-  <text x="572" y="104" class="t-small">NT SERVICE\llama.cpp_&lt;id&gt;</text>
-  <text x="572" y="120" class="t-mono">logs\llama-server@&lt;id&gt;.log (+ .previous.log)</text>
-  <text x="572" y="138" class="t-small">llama-server from HKLM\Software\llama.cpp InstallDir</text>
-  <line class="edge" x1="635" y1="190" x2="635" y2="152"/>
+  <line class="edge" x1="270" y1="340" x2="270" y2="468"/>
+  <text x="280" y="444" class="t-small">pipe, the manager's SID only</text>
 
-  <rect class="file" x="560" y="260" width="310" height="124"/>
-  <text x="572" y="280" class="t-title">Files</text>
-  <text x="572" y="298" class="t-mono">%ProgramData%\llama.cpp\config\</text>
-  <text x="572" y="312" class="t-small">the manager's only; users have no access</text>
-  <text x="572" y="330" class="t-mono">%ProgramData%\llama.cpp\logs, state</text>
-  <text x="572" y="344" class="t-small">users read logs</text>
-  <text x="572" y="362" class="t-mono">%ProgramData%\private-ai\config, models</text>
-  <text x="572" y="378" class="t-small">models (accepted): services and pai modify, users read</text>
-  <line class="edge" x1="470" y1="270" x2="558" y2="300"/>
+  <rect class="svc" x="245" y="470" width="280" height="112" rx="5"/>
+  <text x="257" y="490" class="t-title">private-ai-helper (service)</text>
+  <text x="257" y="508">pai-manager helper, LocalSystem</text>
+  <text x="257" y="524" class="t-small">auto start, idle on its pipe</text>
+  <text x="257" y="540" class="t-small">verbs: Ensure{id}, Delete{id}, SetBoot{id}</text>
+  <text x="257" y="556" class="t-small">builds each service spec itself:</text>
+  <text x="257" y="570" class="t-small">binary, account, run-instance &lt;id&gt;</text>
+  <path class="edge" d="M525 520 H560 V232 H588"/>
 
-  <line class="trust" x1="215" y1="40" x2="215" y2="380"/>
-  <path class="trust" d="M230 150 H540 V380"/>
-  <text x="440" y="164" class="t-trust">SYSTEM: helper</text>
-  <text x="440" y="177" class="t-small">(today: manager)</text>
-  <line class="trust" x1="540" y1="40" x2="540" y2="150"/>
+  <rect class="svc" x="590" y="50" width="350" height="104" rx="5"/>
+  <text x="602" y="70" class="t-title">llama.cpp_&lt;id&gt; (one service per instance)</text>
+  <text x="602" y="88">run-instance &lt;id&gt;, parent of llama-server</text>
+  <text x="602" y="104" class="t-small">NT SERVICE\llama.cpp_&lt;id&gt;</text>
+  <text x="602" y="120" class="t-mono">logs\llama-server@&lt;id&gt;.log (+ .previous.log)</text>
+  <text x="602" y="138" class="t-small">llama-server from HKLM\Software\llama.cpp InstallDir</text>
+
+  <rect class="svc" x="590" y="190" width="200" height="56" rx="5"/>
+  <text x="602" y="210" class="t-title">SCM</text>
+  <text x="602" y="226" class="t-small">per-service DACL: the manager</text>
+  <text x="602" y="240" class="t-small">starts, stops, queries</text>
+  <line class="edge" x1="525" y1="205" x2="588" y2="205"/>
+  <line class="edge" x1="670" y1="190" x2="670" y2="164"/>
+
+  <rect class="file" x="590" y="280" width="350" height="190"/>
+  <text x="602" y="300" class="t-title">Files</text>
+  <text x="602" y="318" class="t-mono">%ProgramData%\llama.cpp\config\</text>
+  <text x="602" y="332" class="t-small">the manager's SID modify; users no access</text>
+  <text x="602" y="350" class="t-mono">%ProgramData%\llama.cpp\logs, state</text>
+  <text x="602" y="364" class="t-small">users read logs</text>
+  <text x="602" y="382" class="t-mono">%ProgramData%\private-ai\config\</text>
+  <text x="602" y="396" class="t-small">bff.ini; the manager's SID modify</text>
+  <text x="602" y="414" class="t-mono">%ProgramData%\private-ai\node\</text>
+  <text x="602" y="428" class="t-small">SYSTEM and the manager's SID only</text>
+  <text x="602" y="446" class="t-mono">%ProgramData%\private-ai\models</text>
+  <text x="602" y="460" class="t-small">services and pai modify, users read</text>
+  <line class="edge" x1="525" y1="320" x2="588" y2="340"/>
+
+  <line class="trust" x1="225" y1="40" x2="225" y2="595"/>
+  <text x="140" y="592" class="t-trust">OS identity</text>
+  <rect class="trust" x="235" y="455" width="300" height="137" rx="4"/>
+  <text x="440" y="466" class="t-trust">LocalSystem</text>
+  <rect class="trust" x="582" y="42" width="366" height="120" rx="4"/>
+  <text x="800" y="178" class="t-trust">engine account</text>
 </svg>
+<figcaption>The Linux design's twin: an unprivileged manager under its virtual account, the helper
+keeping only what the SCM reserves to administrators (creating, repairing and deleting instance
+services, the start type). No director role on Windows yet: the director is Linux only at first.</figcaption>
+<p class="built"><b>Built today</b> (type-checked, CI install only): both services and the instance
+services; the manager runs as LocalSystem, creates the instance services itself and reads clients at
+impersonation level (until slices P4 to P6). Not built: the helper, the folders' grants to the
+manager's SID, <code>node\</code>, <code>models</code> and the metrics store.</p>
 </figure>
 
 <h2>Packages and what each installs</h2>
 <table>
-<tr><th>Package</th><th>Installs</th></tr>
-<tr><td><code>llama.cpp</code> (own version)</td><td>llama-server and tools, the template unit <code>llama.cpp@.service</code>, the default <code>server@default.ini</code>, <code>models.ini</code>, <code>instances.ini</code>, <code>assignments.ini</code> in <code>/etc/llama.cpp/</code></td></tr>
-<tr><td><code>llama.cpp-rocm</code>, <code>-cuda</code>, <code>-vulkan</code></td><td>the GPU runtimes, at the SDK's version</td></tr>
-<tr><td><code>private-ai-framework-core</code></td><td><code>pai-manager</code>, its unit, the D-Bus and polkit policies, the rules file, sysusers (<code>private-ai</code>, group <code>pai</code>); <span class="planned">accepted, not built:</span> the director's unit, disabled, and its user <code>private-ai-director</code>; the manager's user <code>private-ai-manager</code> and the root helper's socket</td></tr>
-<tr><td><code>-bff</code>, <code>-cli</code>, <code>-config</code></td><td><code>pai-bff</code> and its unit and user; <code>pai</code>; <code>pai-config</code></td></tr>
-<tr><td>Windows: llama.cpp MSI</td><td>the engine with its runtimes, <code>%ProgramData%\llama.cpp\</code>, removes the instance services at uninstall</td></tr>
-<tr><td>Windows: private-ai-framework MSI</td><td>the manager and bff services, the four binaries, <code>%ProgramData%\private-ai\config\</code>, the group <code>pai</code> (never removed)</td></tr>
-<tr><td>macOS: split <code>.pkg</code></td><td>no manager, no bff: <code>pai-config</code> runs llama-server itself</td></tr>
+<tr><th>Package</th><th>Installs</th><th>Built today</th></tr>
+<tr><td><code>llama.cpp</code> (own version)</td><td>llama-server and tools, the template unit <code>llama.cpp@.service</code>, the default <code>server@default.ini</code>, <code>models.ini</code>, <code>instances.ini</code>, <code>assignments.ini</code> in <code>/etc/llama.cpp/</code></td><td>yes</td></tr>
+<tr><td><code>llama.cpp-rocm</code>, <code>-cuda</code>, <code>-vulkan</code></td><td>the GPU runtimes, at the SDK's version</td><td>yes</td></tr>
+<tr><td><code>private-ai-framework-core</code></td><td><code>pai-manager</code> and its unit (user <code>private-ai-manager</code>), the helper's socket and unit, the D-Bus and polkit policies, the rules files (<code>pai</code>, and the manager's <code>manage-units</code> rule), tmpfiles and sysusers (<code>private-ai</code>, <code>private-ai-manager</code>, <code>private-ai-director</code>, group <code>pai</code>), the director's unit, disabled</td><td>the manager (as root), its policies and <code>private-ai</code>, <code>pai</code>; not the helper, the director or their accounts</td></tr>
+<tr><td><code>-bff</code>, <code>-cli</code>, <code>-config</code></td><td><code>pai-bff</code> and its unit and user; <code>pai</code>; <code>pai-config</code></td><td>yes</td></tr>
+<tr><td>Windows: llama.cpp MSI</td><td>the engine with its runtimes, <code>%ProgramData%\llama.cpp\</code> (the manager's SID modify on <code>config\</code>), removes the instance services at uninstall</td><td>yes, without the manager's grant</td></tr>
+<tr><td>Windows: private-ai-framework MSI</td><td>the manager (virtual account), helper and bff services, the four binaries, <code>%ProgramData%\private-ai\config\</code>, the group <code>pai</code> (never removed)</td><td>yes, the manager as LocalSystem, no helper</td></tr>
+<tr><td>macOS: split <code>.pkg</code></td><td>no manager, no bff: <code>pai-config</code> runs llama-server itself</td><td>yes</td></tr>
 </table>
 
-<h2>The director <span class="planned">(planned, PLAN step 14)</span></h2>
+<h2>The director</h2>
 <figure>
-<svg viewBox="0 0 900 260" role="img" aria-label="Director deployment, planned">
-  <rect class="plan" x="10" y="20" width="360" height="220" rx="8"/>
-  <text x="24" y="42" class="t-title t-planned">Hub server (Linux first)</text>
-  <rect class="svc" x="30" y="60" width="150" height="60" rx="5"/>
+<svg viewBox="0 0 960 300" role="img" aria-label="Director deployment, target">
+  <rect class="node" x="10" y="20" width="420" height="270" rx="8"/>
+  <text x="24" y="42" class="t-title">Director machine (Linux first)</text>
+  <rect class="svc" x="30" y="60" width="170" height="70" rx="5"/>
   <text x="42" y="80" class="t-title">pai-bff, hub mode</text>
   <text x="42" y="98" class="t-small">[Bff] Director = true</text>
-  <rect class="plan" x="200" y="60" width="150" height="110" rx="5"/>
-  <text x="212" y="80" class="t-title t-planned">director role</text>
-  <text x="212" y="98" class="t-small">pai-manager director</text>
-  <text x="212" y="114" class="t-small">user private-ai-director</text>
-  <text x="212" y="130" class="t-small">CA key 0600, no engine</text>
-  <text x="212" y="148" class="t-small t-planned">model store, sha256</text>
-  <text x="212" y="162" class="t-small t-planned">manifest, one cap</text>
-  <line class="edge-plan" x1="548" y1="215" x2="352" y2="160"/>
-  <text x="372" y="196" class="t-small t-planned">nodes pull models: HTTPS,</text>
-  <text x="372" y="210" class="t-small t-planned">mutual TLS, port 8593, Range</text>
-  <line class="edge-plan" x1="180" y1="90" x2="198" y2="90"/>
-  <text x="40" y="150" class="t-small">Unix socket, SO_PEERCRED: bff, root</text>
-  <rect class="svc" x="30" y="170" width="150" height="50" rx="5"/>
-  <text x="42" y="190" class="t-title">pai-manager</text>
-  <text x="42" y="206" class="t-small">sign-in, loopback node</text>
-  <line class="edge" x1="100" y1="120" x2="100" y2="168"/>
+  <text x="42" y="114" class="t-small">Nodes page, + Add node</text>
+  <rect class="svc" x="230" y="60" width="180" height="138" rx="5"/>
+  <text x="242" y="80" class="t-title">pai-manager director</text>
+  <text x="242" y="98" class="t-small">private-ai-director.service</text>
+  <text x="242" y="112" class="t-small">user private-ai-director</text>
+  <text x="242" y="126" class="t-small">CA key 0600, state 0700</text>
+  <text x="242" y="140" class="t-small">registry, deny list (CRL)</text>
+  <text x="242" y="154" class="t-small">model store: GGUF files</text>
+  <text x="242" y="168" class="t-small">with a sha256 manifest</text>
+  <text x="242" y="186" class="t-small">fan-out, per-node timeouts</text>
+  <line class="edge" x1="200" y1="95" x2="228" y2="95"/>
+  <line class="edge" x1="60" y1="130" x2="60" y2="198"/>
+  <text x="70" y="152" class="t-small">director.sock, SO_PEERCRED:</text>
+  <text x="70" y="166" class="t-small">the bff and the manager</text>
+  <text x="70" y="188" class="t-small">sign-in</text>
+  <rect class="svc" x="30" y="200" width="170" height="70" rx="5"/>
+  <text x="42" y="220" class="t-title">pai-manager serve</text>
+  <text x="42" y="238" class="t-small">this machine as a node,</text>
+  <text x="42" y="252" class="t-small">joined over loopback TLS</text>
+  <line class="edge" x1="230" y1="190" x2="202" y2="220"/>
+  <rect class="trust" x="222" y="52" width="196" height="154" rx="4"/>
+  <text x="300" y="222" class="t-trust">director account</text>
 
-  <line class="edge-plan" x1="350" y1="100" x2="548" y2="70"/>
-  <line class="edge-plan" x1="350" y1="110" x2="548" y2="190"/>
-  <text x="380" y="120" class="t-small t-planned">TLS 1.3, mutual, director&#39;s CA</text>
-  <text x="380" y="136" class="t-small t-planned">ALPN pai-manager/1, port 8592</text>
-  <text x="380" y="152" class="t-small t-planned">the manager protocol unchanged</text>
-  <line class="trust" x1="460" y1="20" x2="460" y2="240"/>
-  <text x="466" y="236" class="t-trust">network</text>
+  <line class="trust" x1="450" y1="20" x2="450" y2="290"/>
+  <text x="456" y="40" class="t-trust">network</text>
 
-  <rect class="node" x="550" y="30" width="330" height="90" rx="6"/>
-  <text x="562" y="52" class="t-title">Node A (Linux or Windows)</text>
-  <text x="562" y="72">pai-manager, listener off until joined</text>
-  <text x="562" y="90" class="t-small">one-time code, CSR: 90-day cert, auto-renewed</text>
-  <text x="562" y="108" class="t-small">only -core and the engine needed</text>
-  <rect class="node" x="550" y="150" width="330" height="80" rx="6"/>
-  <text x="562" y="172" class="t-title">Node B</text>
-  <text x="562" y="192">pai-manager</text>
-  <text x="562" y="210" class="t-small">runs on with the hub down</text>
+  <line class="edge" x1="410" y1="90" x2="618" y2="85"/>
+  <line class="edge" x1="410" y1="170" x2="618" y2="210"/>
+  <text x="462" y="118" class="t-small">mutual TLS 1.3, its CA</text>
+  <text x="462" y="132" class="t-small">8592: manager protocol</text>
+  <text x="462" y="146" class="t-small">8593: store, renewal</text>
+
+  <rect class="node" x="470" y="230" width="140" height="54" rx="5"/>
+  <text x="482" y="250" class="t-title">huggingface.co</text>
+  <text x="482" y="268" class="t-small">store ingestion</text>
+  <line class="edge" x1="412" y1="196" x2="468" y2="240"/>
+
+  <rect class="node" x="620" y="40" width="320" height="100" rx="6"/>
+  <text x="632" y="62" class="t-title">Node A (Linux or Windows)</text>
+  <text x="632" y="80">pai-manager, listener :8592 when joined</text>
+  <text x="632" y="98" class="t-small">one-time code, CSR: 90-day cert, auto-renewed</text>
+  <text x="632" y="114" class="t-small">pulls models from the store, checks sha256</text>
+  <text x="632" y="130" class="t-small">only -core and the engine needed</text>
+  <rect class="node" x="620" y="170" width="320" height="80" rx="6"/>
+  <text x="632" y="192" class="t-title">Node B</text>
+  <text x="632" y="210">pai-manager</text>
+  <text x="632" y="228" class="t-small">runs on with the director down</text>
 </svg>
-<figcaption>Accepted by the user on 2026-11-15, revised 2026-11-21 and 2026-11-22, not built. Each node's manager stays the authority over
-its machine; the hub never holds a node's files as truth. The director is a role of the one <code>pai-manager</code>
-binary (accepted 2026-11-22): <code>pai-manager director</code> as its own unit <code>private-ai-director.service</code>, under the
-unprivileged account <code>private-ai-director</code> (it refuses to start as root), its state in a 0700 folder; <code>-core</code>
-ships that unit disabled and no <code>-director</code> package exists. <code>pai node promote</code> enables it, joins this machine's
-own manager over loopback TLS like any node and switches the bff to hub mode; <code>pai node demote</code> undoes it and
-keeps the CA. Its socket admits the bff and root (for promote; the manager's account instead once the manager
-drops root, accepted). A dedicated director, a small machine that runs no models, is the recommended setup;
-promoting a node that runs instances stays allowed (a fully compromised machine gives away the CA with it). The
-web UI adds a Nodes page with <b>+ Add node</b> (planned). The director's CA (accepted 2026-11-21): ECDSA P-256, 5 years; its key a plain file,
-<code>/var/lib/private-ai-director/ca/ca.key</code> 0600 in a 0700 folder, carried by every backup of the
-director's disk; node and director certificates 90 days, renewed automatically from 30 days before expiry. The model store (accepted 2026-11-21): the
-hub keeps GGUF files with a sha256 manifest (from Hugging Face, checked against its tree, or uploaded);
-a joined node's manager pulls one when an administrator asks, verifies it and renames it into its
-models folder.</figcaption>
+<figcaption>Each node's manager stays the authority over its machine; the director never holds a node's
+files as truth. The director is a role of the one <code>pai-manager</code> binary under its own unit and
+unprivileged account; <code>-core</code> ships the unit disabled. <code>pai node promote</code> enables it
+(through the helper's <code>SetDirector</code>), joins this machine's own manager over loopback TLS like any
+node and switches the bff to hub mode; <code>pai node demote</code> undoes it and keeps the CA. A dedicated
+director, a small machine that runs no models, is the recommended setup. The CA: ECDSA P-256, 5 years,
+its key <code>/var/lib/private-ai-director/ca/ca.key</code> 0600 in a 0700 folder; node certificates 90 days,
+renewed from 30 days before expiry. The model store keeps GGUF files with a sha256 manifest (from
+Hugging Face, checked against its tree, or uploaded); a node's manager pulls one when an administrator
+asks, verifies it and renames it into its models folder.</figcaption>
+<p class="built"><b>Built today:</b> none of it (<code>PLAN.md</code> step 14). The bff serves one
+machine, its own.</p>
 </figure>
 
 <h2>Ports and transports</h2>
 <table>
-<tr><th>What</th><th>Where</th><th>Who may reach it</th></tr>
-<tr><td>Web UI and API, plain HTTP</td><td><code>[Bff] Listen</code>, <code>127.0.0.1:8590</code> by default; any ip:port the administrator sets, under a <code>Host</code> guard</td><td>anyone who reaches the address; everything but <code>/</code>, <code>/assets/*</code> and the session routes needs a session of a <code>pai</code> member</td></tr>
-<tr><td>Manager, Linux</td><td>D-Bus system bus, <code>org.privateai.Manager1</code></td><td>any local process may send; polkit and the manager decide per call</td></tr>
-<tr><td>Manager, Windows</td><td><code>\\.\pipe\private-ai-manager</code></td><td>SYSTEM, Administrators, interactive users, the bff's service SID; no remote client</td></tr>
-<tr><td>llama-server</td><td>each instance's <code>Port</code> (default profile 9931)</td><td>its server profile's address and API key</td></tr>
-<tr><td class="planned">Node listener (step 14)</td><td>8592, off by default</td><td>the director only (its CA, its name; no fallback)</td></tr>
-<tr><td class="planned">Outbound to huggingface.co (accepted)</td><td>443, HTTPS, from the bff only</td><td>a signed-in <code>pai</code> member's request, a repo id only</td></tr>
-<tr><td class="planned">Model store (step 14, accepted)</td><td>8593 on the director (a proposal)</td><td>joined nodes (CA certificate, not denied)</td></tr>
-<tr><td class="planned">Router (step 10 item 14)</td><td>one OpenAI-compatible endpoint in the bff</td><td>authenticated clients</td></tr>
+<tr><th>What</th><th>Where</th><th>Who may reach it</th><th>Built today</th></tr>
+<tr><td>Web UI and API, plain HTTP</td><td><code>[Bff] Listen</code>, <code>127.0.0.1:8590</code> by default; any ip:port the administrator sets, under a <code>Host</code> guard</td><td>anyone who reaches the address; everything but <code>/</code>, <code>/assets/*</code> and the session routes needs a session of a <code>pai</code> member</td><td>yes</td></tr>
+<tr><td>Manager, Linux</td><td>D-Bus system bus, <code>org.privateai.Manager1</code></td><td>any local process may send; polkit and the manager decide per call</td><td>yes</td></tr>
+<tr><td>Manager, Windows</td><td><code>\\.\pipe\private-ai-manager</code></td><td>SYSTEM, Administrators, interactive users, the bff's service SID; no remote client</td><td>yes</td></tr>
+<tr><td>Helper, Linux</td><td><code>/run/private-ai-helper.sock</code>, socket-activated per connection</td><td>the manager's account only (<code>SO_PEERCRED</code>)</td><td>no</td></tr>
+<tr><td>Helper, Windows</td><td>the helper service's pipe</td><td>the manager's service SID only</td><td>no</td></tr>
+<tr><td>Director, local</td><td><code>/run/private-ai-director/director.sock</code></td><td>the bff and the manager (<code>SO_PEERCRED</code>)</td><td>no</td></tr>
+<tr><td>llama-server</td><td>each instance's <code>Port</code> (default profile 9931)</td><td>its server profile's address and API key</td><td>yes</td></tr>
+<tr><td>Node listener</td><td>8592, off by default</td><td>the director only (its CA, its name; no fallback)</td><td>no</td></tr>
+<tr><td>Model store and renewal</td><td>8593 on the director</td><td>joined nodes (CA certificate, not denied)</td><td>no</td></tr>
+<tr><td>Outbound to huggingface.co</td><td>443, HTTPS, from the bff (and the director's store)</td><td>a signed-in <code>pai</code> member's request, a repo id only</td><td>no</td></tr>
+<tr><td class="planned">Router (step 10 item 14, proposed)</td><td>one OpenAI-compatible endpoint in the bff</td><td>authenticated clients</td><td>no</td></tr>
 </table>
 
-<h2>Planned on a node</h2>
+<h2>Not yet accepted</h2>
 <ul>
-<li><span class="planned">The manager without root or LocalSystem (accepted 2026-11-22, slices P1 to P6 at the head of
-step 14):</span> the manager runs as <code>private-ai-manager</code> (Windows: <code>NT SERVICE\private-ai-manager</code>); a small
-privileged helper, <code>pai-manager helper</code>, keeps the verbs that cannot be scoped (Linux: the password check, boot
-on/off, director on/off; Windows: creating, repairing and deleting instance services, boot on/off).</li>
-<li><span class="planned">Step 15 (planned, last):</span> a minimal install image with only the manager, which then
-installs the engines; a Docker image is kept pending.</li>
 <li><span class="planned">13c Strata:</span> a second engine, its own run config and profile written and
 launched by the manager beside the llama.cpp instances.</li>
-<li><span class="planned">13d monitoring (proposed):</span> a sampler thread in the manager with a fixed-size
-history store, streamed to the web UI through the bff; logs read on demand from the journal or the log
-files, for <code>pai</code> members only.</li>
+<li><span class="planned">Item 14, the router:</span> one OpenAI-compatible endpoint in the bff.</li>
+<li><span class="planned">M5, the Hugging Face token (proposed 2026-11-21):</span> the manager's
+<code>hf.ini</code>, the bff's device flow, <code>HF_TOKEN</code> for the instances.</li>
+<li><span class="planned">Step 15 (planned, last):</span> a minimal install image with only the manager, which then
+installs the engines; a Docker image is kept pending.</li>
 </ul>
 </body>
 </html>

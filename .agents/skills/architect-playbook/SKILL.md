@@ -166,7 +166,10 @@ description: What the architect has learned about this project's components, int
   `PrivateDevices=yes` (no `/dev/nvidia*`) and a step 14 node has no bff: node-side collection
   belongs in `-core`.
 - Drawn views live in `docs/architecture/{infrastructure,system}.html` (hand SVG, colours from CSS
-  tokens, A4 `@page`): update them when a component, account, port or route group changes.
+  tokens, A4 `@page`): update them when a component, account, port or route group changes. They always
+  draw the TARGET architecture (user, 2026-11-22): every accepted design as plain boxes, no "today" or
+  "not built" labels inside an SVG, dashed only for designs still proposed; what runs now goes in the
+  "Built today" note under each figure and the tables' status column.
 - Placement facts (llama.cpp v1.0.0, checked 2026-11-21): the router overlays its own argv on every
   model's preset after the `[*]` cascade (`server-models.cpp` 791-795, `merge` overwrites), so a
   server-profile flag beats any model profile key (only `unset_reserved_args` ones are dropped);

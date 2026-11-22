@@ -107,7 +107,7 @@ update the page in the same turn as the slice's commit, not later.
 
 Beside the roadmap page: `docs/flyer/product-sheet.html` (the product vision for prospects: change it only
 when a capability is added or dropped, it keeps the generic "in development" footnote) and
-`docs/architecture/infrastructure.html` and `system.html` (what is built, planned parts labelled). At a
+`docs/architecture/infrastructure.html` and `system.html` (the TARGET architecture: every accepted design drawn as the system, a short "Built today" note under each figure, only proposed designs dashed; user, 2026-11-22). At a
 slice close, check whether the slice changed any of them: a new service, account, port, route, method,
 package or file goes into the architecture pages (the `architect` updates them, with ARCHITECTURE.md); a
 new capability goes into the flyer (the `docs` agent). Say in the commit which of them changed, or none.
