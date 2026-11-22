@@ -572,3 +572,7 @@ Lessons only: the rules are in `AGENTS.md`.
 - "The README" for a manager fact is `crates/config/README.md` (its "Through the manager" bullets per
   method, its source map per file): there is no `crates/manager/README.md`. A manager piece no method
   calls yet goes in the source map row, saying which slice will call it.
+- `docs/architecture/*.html` are hand-drawn SVG: `.t-small` is 10.5px (about 5.5 px a character),
+  `.t-title` 13px bold (about 7.5); fit a new label to its `rect` width before writing it. Their
+  "Source: ... <date>" line is when the built parts were checked: an edit of planned items only says
+  "(the planned parts <date>)" instead of moving the date.

@@ -1,7 +1,7 @@
 ---
 title: Packaging and install
 type: reference
-updated: 2026-11-15
+updated: 2026-11-22
 ---
 
 # Packaging and install
@@ -293,6 +293,11 @@ RUNPATH described below.
 The runtimes' sizes are of the v1.0.0 build (framework 2.4.0), as `xtask package` printed them, rounded
 up to the MiB: they hold the same files as then. The framework's packages and `llama.cpp` divide 2.4's
 `config` (18 / 21 MiB) and `llama` (190 / 229 MiB) another way and have not been measured.
+
+Designed for `PLAN.md` step 14, not built ([ARCHITECTURE.md](../ARCHITECTURE.md) part 2): `-core` will also ship
+the director's unit `private-ai-director.service`, disabled, and its user `private-ai-director`, the director
+being a role of `pai-manager` with no package of its own (accepted 2026-11-22); and, proposed, the manager's own
+user `private-ai-manager` and a privileged helper `pai-manager helper` with its socket.
 
 **The engine carries its own version, the framework packages only the framework's.** `llama.cpp` is
 `1:<release>+pai<N>`: the epoch `1:` because Ubuntu 26.04 ships its own `llama.cpp` at `8681+dfsg-1`,

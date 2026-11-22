@@ -70,7 +70,7 @@ svg .ah-plan { fill: var(--planned); }
 <h1>System view</h1>
 <p class="sub">Private AI Framework: the crates and binaries, the manager's API, the bff's routes, and
 how sign-in, a profile save and a start or stop travel through them. Source: <code>ARCHITECTURE.md</code>,
-<code>AGENTS.md</code>, <code>crates/bff/README.md</code> and the code, 2026-11-21. When this page and
+<code>AGENTS.md</code>, <code>crates/bff/README.md</code> and the code, 2026-11-21 (the planned items 2026-11-22). When this page and
 those disagree, they win.</p>
 
 <figure>
@@ -142,9 +142,9 @@ those disagree, they win.</p>
   <text x="752" y="240" class="t-small">second engine</text>
 
   <rect class="plan" x="560" y="20" width="200" height="70" rx="5"/>
-  <text x="572" y="42" class="t-title t-planned">pai-director (step 14)</text>
-  <text x="572" y="60" class="t-small">nodes over mutual TLS, its</text>
-  <text x="572" y="74" class="t-small">private CA; manager protocol</text>
+  <text x="572" y="42" class="t-title t-planned">director (step 14)</text>
+  <text x="572" y="60" class="t-small">pai-manager director, own unit;</text>
+  <text x="572" y="74" class="t-small">mutual TLS, its private CA</text>
   <line class="edge-plan" x1="480" y1="70" x2="558" y2="60"/>
   <line class="edge-plan" x1="640" y1="90" x2="480" y2="215"/>
   <rect class="plan" x="780" y="110" width="110" height="56" rx="5"/>
@@ -364,7 +364,20 @@ log reads, through new manager methods and bff routes.</li>
 <li><span class="planned">Item 14, the router</span>: one OpenAI-compatible endpoint in the bff that sends
 each request to the instance serving the model, logging every request.</li>
 <li><span class="planned">Step 14, the director</span>: formerly the super-manager; nodes governed over mutual TLS (certificates from its private CA) with the
-manager protocol unchanged; the bff in hub mode; a model store the nodes pull from (accepted 2026-11-21).</li>
+manager protocol unchanged; the bff in hub mode; a model store the nodes pull from (accepted 2026-11-21). Since 2026-11-22
+(accepted) a role of the one <code>pai-manager</code> binary, not a crate or binary of its own: <code>pai-manager director</code>,
+its own unit <code>private-ai-director.service</code> under the unprivileged account <code>private-ai-director</code>, its state 0700;
+<code>pai node promote</code> turns a node into the director (its own manager joins it over loopback like any node) and
+<code>pai node demote</code> undoes it, keeping the CA. A dedicated director, a small machine that runs no models, is the
+recommended setup; promoting a node that runs instances stays allowed. The web UI gets a Nodes page with
+<b>+ Add node</b> (planned).</li>
+<li><span class="planned">The node's manager without root or LocalSystem</span> (proposed 2026-11-22, slices P1 to P6 at
+the head of step 14): the manager runs as <code>private-ai-manager</code> (Windows: <code>NT SERVICE\private-ai-manager</code>),
+a small privileged helper, <code>pai-manager helper</code>, keeping the few verbs that cannot be scoped.</li>
+<li><span class="planned">N1, the side menu as Nodes and Profiles</span> (planned, <code>fe/briefs/20-nodes-menu.md</code>):
+two groups even with one host, Nodes (each host, its instances, its Node info) and Profiles.</li>
+<li><span class="planned">Step 15</span> (planned, last): a minimal install image with only the manager, which then
+installs the engines; a Docker image is kept pending.</li>
 <li><span class="planned">The model file pickers</span> (accepted 2026-11-21): the bff lists a Hugging Face
 repo itself, the manager lists the node's one models folder.</li>
 </ul>
