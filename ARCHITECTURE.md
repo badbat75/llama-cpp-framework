@@ -3378,6 +3378,29 @@ driver's and the Vulkan driver's, per GPU.
 | Kernel driver, one row per GPU | each `/sys/bus/pci/devices/*` whose `class` is `0x03xxxx` (VGA and 3D controllers, so a compute card, or NVIDIA without `nvidia-drm`, is listed): the bus id, `vendor`, the bound driver (the `driver` link's name) and `/sys/module/<driver>/version`, present only when the module sets `MODULE_VERSION` (kernel ABI `sysfs-module`): ROCm's DKMS amdgpu (`7.1.9.31600000` on this machine) and NVIDIA's `nvidia` (`kernel-open/nvidia/nv.c` 126) do, an in-tree amdgpu, i915 or xe does not, so `version` is `null` and the fe shows the kernel | each present device of the display class, through `CM_Get_DevNode_PropertyW`: `DEVPKEY_Device_DriverVersion` (the INF `DriverVer`, such as `32.0.15.6094`; Microsoft Learn, DEVPKEY_Device_DriverVersion), `DEVPKEY_Device_DriverProvider`, `DEVPKEY_NAME`, and the bus id from `DEVPKEY_Device_BusNumber` and `DEVPKEY_Device_Address` (domain taken as 0; unverified on hardware) |
 | Vulkan driver, per GPU | a child process `pai-manager vulkan-probe` (below): per physical device not of type CPU, `vkGetPhysicalDeviceProperties2` with `VkPhysicalDeviceDriverProperties` (`driverName`, `driverInfo`, `driverID`; core in Vulkan 1.2, else `VK_KHR_driver_properties`) and `VkPhysicalDevicePCIBusInfoPropertiesEXT` (`VK_EXT_pci_bus_info`) for the bus id (docs.vulkan.org refpages of both) | the same child; the loader `vulkan-1.dll` comes with the GPU driver |
 
+**Recorded at the AN1 review (2026-11-22).**
+- **A row's `driver` and `version` are each OS's own driver identity, not one meaning.** Linux: the
+  kernel module bound (`amdgpu`) and its `MODULE_VERSION`. Windows: `DEVPKEY_Device_DriverProvider`
+  (the INF's provider, a company name such as `Advanced Micro Devices, Inc.`) and
+  `DEVPKEY_Device_DriverVersion` (the INF `DriverVer`). Accepted: Windows exposes no kernel module
+  name a user would recognise, the service name (`DEVPKEY_Device_Service`, `amdkmdag`) says less than
+  the provider, and `DriverVer` is the version the vendor's installer and Device Manager show
+  (Microsoft Learn, DEVPKEY_Device_DriverProvider, DEVPKEY_Device_DriverVersion). The fe labels the
+  pair "driver" and "version", never "kernel module". `GpuDriver`'s field doc says "kernel driver
+  bound", which is the Linux reading only (`crates/core/src/host.rs` the struct): a doc fix, no
+  behaviour change.
+- **The Windows bus id assumes domain 0** and splits `DEVPKEY_Device_Address` as device in the high
+  word, function in the low word, the PCI bus driver's encoding (Microsoft Learn, DEVPKEY_Device_Address).
+  Unverified on hardware: a host with a second PCI segment would show a wrong id and its Vulkan row
+  would not join, which degrades to an unmatched row (the join's fallback), never a wrong driver on
+  another GPU unless two segments carry the same bus, device and function. Check on the first Windows
+  machine with a GPU (step 1's run).
+- **The sysfs `driver` link** points at `../../../bus/pci/drivers/<name>`, not at `module/`
+  (kernel ABI `sysfs-bus-pci`); the reader takes the link's last component only, so it is right. That
+  driver name is taken as the module name for `/sys/module/<name>/version`, which holds for amdgpu
+  and nvidia; a driver whose module is named otherwise gives `version: null`, a fact, never a wrong
+  version. The doc comment and the test fixture in `host.rs` that write `module/<name>` are a doc fix.
+
 **The Vulkan reader.**
 - **Options.** (a) **A hidden subcommand `pai-manager vulkan-probe`, run as a child** with
   `run_hidden_probe_within` under an 8 s bound, printing one JSON document on stdout that the manager
