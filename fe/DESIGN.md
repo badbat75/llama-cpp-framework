@@ -36,11 +36,11 @@ only an administrator can be (section 3). Since slice S1a (`fe/briefs/09-signin-
 | Nav entry | Route | What it holds | `pai-config` equivalent | Who | Slice |
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances as tiles under the host name (id as a link, state badge, engine when two or more; Port, Tags, Start at boot); New instance (create form in place, 17c) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`); T1 (`fe/briefs/12-instance-tags.md`); 13 (`fe/briefs/13-node-about.md`) |
-| Instances > *instance* | `#/instances/<id>` | Header: name, engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Then **Server profile** (the one it runs, a link, and the switch), **Model profiles** (one "Served here" switch per profile of the pool), **Remove instance** (not for `default`, only when stopped). The Server form is no longer here (slice 17a). **Logs** later | Server tab's target, run controls, Settings' "start at boot", View logs | administrator | 1a, 1b, 1c; T1 (port, tags); 17a to 17e (`fe/briefs/16-server-profiles-and-instances.md`); Logs later |
+| Nodes > *host* > *instance* (shown as `<id> · <server profile>`, brief 20) | `#/instances/<id>` | Header: name, engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Then **Server profile** (the one it runs, a link, and the switch), **Model profiles** (one "Served here" switch per profile of the pool), **Remove instance** (not for `default`, only when stopped). The Server form is no longer here (slice 17a). **Logs** later | Server tab's target, run controls, Settings' "start at boot", View logs | administrator | 1a, 1b, 1c; T1 (port, tags); 17a to 17e (`fe/briefs/16-server-profiles-and-instances.md`); Logs later |
 | Profiles > Server profiles | `#/profiles/server`, `#/profiles/server/<id>` | The pool: id, port, tags, used by; New server profile (create form in place). A profile's page: Used by, Delete while unused, the whole Server form and save | Server tab (of `default` only) | administrator | 17a, 17b (`fe/briefs/16-server-profiles-and-instances.md`) |
 | Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its engine the first row of the Assets card (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); GD1, GD2 (GPU distribution: `fe/briefs/14-gpu-distribution.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
-| Node info | `#/node` (hub mode: `#/nodes/<node>`) | The node: host name, OS, kernel, framework version; each installed engine and its GPU backend packages; per GPU (numbered `h3`) vendor, PCI address, driver and Vulkan driver (`GET /api/node`) | (none) | administrator | AN5 (`fe/briefs/18-about-node-info.md`) |
-| About (last entry) | `#/about` | The web service's machine: the framework's version and the operating system with its version (`GET /api/version`) | (none; the window title's version) | administrator | 13; AN5 (`fe/briefs/18-about-node-info.md`) |
+| Nodes > *host* > Node info (after the host's instances, brief 20) | `#/node` (hub mode: `#/nodes/<node>`, `#/node` rewritten to the local node) | The node: host name, OS, kernel, framework version; each installed engine and its GPU backend packages; per GPU (numbered `h3`) vendor, PCI address, driver and Vulkan driver (`GET /api/node`) | (none) | administrator | AN5 (`fe/briefs/18-about-node-info.md`) |
+| About (last entry, alone in its list) | `#/about` | The web service's machine: the framework's version and the operating system with its version (`GET /api/version`) | (none; the window title's version) | administrator | 13; AN5 (`fe/briefs/18-about-node-info.md`) |
 | Downloads | `#/downloads` | Hugging Face search, candidates, running downloads | HF dialog, Downloads window | administrator | later, **open** (below) |
 | Benchmarks | `#/benchmarks` | Run a benchmark, saved runs, reports | Benchmark tab | administrator | later, **open** (below) |
 | Results | `#/results` | The benchmark portal: published campaigns from `bench.db`, read-only | (none) | anyone (to decide) | later |
@@ -108,17 +108,29 @@ Decided with the user on 2026-11-14.
 
 - Hash routes (`#/...`): the bff serves only `/` and `/assets/*`, so the fe routes on the fragment
   and the bff needs no fallback route.
-- The nav lists only pages that exist. Under the host's name one link per instance, from
-  `GET /api/instances`, in the manager's order: the group label is the `name` of `GET /api/node`, read
-  once per session by the shell, and "Instances" while that read is pending or after it failed (the
-  shell's read never signs out); the Overview's `h2` over the tiles follows the same rule. Hub mode
-  (step 14) repeats the group per node, each label then a disclosure button; with one host there is
-  no disclosure (principle 4; `fe/briefs/13-node-about.md` decisions 1 to 3). Signed in, after it (or right after Overview when the
-  instances read is loading, failed or empty), the "Profiles" group: a `p.nav-label` and a `ul`
-  labelled by it, with "Server profiles" (`server` icon) then "Model profiles" (slice 17a; an
-  instance has one server profile and many model profiles). Last, in a `ul` of its own with no label, **Node info** (`cpu` icon) then **About** (`info` icon; briefs 13 and 18); in hub mode Node info moves into each node's group. Each group label is text, not a link. Signed out, or while the session is read, there
-  is no nav and no Menu button, and `main` spans the whole `.layout` row from 960 px up
-  (`.layout > main:only-child`; `fe/briefs/09-signin-only.md` S1a.4, S1a.12).
+- The nav lists only pages that exist (brief 20, user 2026-11-22: the manager's and the director's
+  web UI are one interface, the director showing more). Signed in, in order: **Overview** (`house`
+  icon) in a `ul` of its own with no label, outside every group (the landing page; in hub mode the
+  view of every node). Then **Nodes**: a `p.nav-label` "Nodes" and a `ul` labelled by it with one
+  `li` per host; each `li` holds the host's label and a `ul` labelled by it with one link per
+  instance, from `GET /api/instances`, in the manager's order, then **Node info** (`cpu` icon). The
+  host label is the `name` of `GET /api/version`, read once per session by the shell, and "This
+  node" while that read is pending or after it failed (the shell's read never signs out); the
+  Overview's `h2` over the tiles reads the host name or "Instances". With one host the host label is
+  a `p.nav-label`, text with no link, icon or button; hub mode (step 14) makes each a disclosure
+  button (`aria-expanded`, controlling its host's list) and changes nothing else (principle 4).
+  The host group is always shown, so Node info never vanishes; its instance links appear once a list
+  read gave instances and keep the last success through a failed read. An instance link is its id
+  then its server profile (`serverProfile` of the list), seen as `default · qwen-27b` and heard as
+  "default, server profile qwen-27b" (the `·` and the visible profile `aria-hidden`, a visually
+  hidden phrase in their place: brief 20 decision 5); no profile, the id alone; no icon (ids are
+  data). Then the **Profiles** group: a `p.nav-label` and a `ul` labelled by it, with "Server
+  profiles" (`server` icon, from slice 17a, which builds its page) then "Model profiles" (`layers`).
+  Last, in a `ul` of its own with no label, **About** (`info` icon), one for the framework. Each
+  group label is text, not a link; nested labelled lists take the same indent and rule, one level
+  deeper. Routes stay `#/instances/<id>` and `#/node` with one host. Signed out, or while the
+  session is read, there is no nav and no Menu button, and `main` spans the whole `.layout` row
+  from 960 px up (`.layout > main:only-child`; `fe/briefs/09-signin-only.md` S1a.4, S1a.12).
 - The current page's nav link has `aria-current="page"`. On a page below a nav entry that has no
   link of its own (a model profile's page under Model profiles), that entry keeps the current-page style with
   `aria-current="true"`: it leads elsewhere, but the page belongs to it

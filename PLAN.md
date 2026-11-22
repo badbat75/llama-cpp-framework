@@ -1164,7 +1164,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     server profile beside it, then that host's Node info; and "Profiles", with Server profiles and Model
     profiles. This replaces the one-host rule of `fe/DESIGN.md` 5 (no disclosure with one host, Node info
     beside About) and brings the hub-mode grouping of brief 18 section 8 forward; About stays one, for the
-    framework. After LS2, before 2j and slice 17 (which redoes the profile pages on this menu).
+    framework. After LS2, before 2j and slice 17 (which redoes the profile pages on this menu). Brief 20, `fe/briefs/20-nodes-menu.md` (2026-11-22): one host is a plain label, no disclosure; Overview first, then Nodes, Profiles, About; routes `#/node` and `#/instances/<id>` kept; Server profiles enters the menu with its page in 17a; the profile shows even when it equals the id.
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.
