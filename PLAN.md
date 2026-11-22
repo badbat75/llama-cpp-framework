@@ -515,6 +515,14 @@ ngram and MoE keys are pruned); GUI and CLI defaults of the benchmark differ; de
 Covers: R13. Asked by the user on 2026-11-15: a component above the managers, on a different server,
 that governs several of them; a bff connected to it is offered node management as well.
 
+Revised by the user on 2026-11-22: the director is a role of the one `pai-manager` binary
+(`pai-manager director`, its own unit and unprivileged account: `ARCHITECTURE.md` part 2, f3c7cde), and
+the web UI is one interface for manager and director (N1's Nodes and Profiles menu). Promoting and
+adding nodes from the web: a **Nodes page** (an overview of the nodes: name, state, version, instances)
+with a **+ Add node** button; on a single node the + explains that this machine becomes the director,
+asks to confirm, promotes it (`pai node promote`, which also stays on the command line for headless
+nodes and scripts), then asks for the one-time code made on the other node. Designer's brief first.
+
 Design accepted by the user on 2026-11-15: `ARCHITECTURE.md` part 2 (a separate unprivileged
 `pai-supermanager`; the manager protocol over mutual TLS 1.3 with pinned fingerprints, off on a node
 until its administrator enables it; join by a one-time code; every `pai` member of the super-manager's
