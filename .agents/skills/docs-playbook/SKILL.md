@@ -579,3 +579,8 @@ Lessons only: the rules are in `AGENTS.md`.
 - A new manager refusal reaching the model profile save gets its 422 `field` from `field_of` in
   `crates/bff/src/model_profiles.rs`, which falls back to `args[0]`: check that a new key has a case
   there before writing which field it marks.
+- The UX check's duration and its states repeat in `AGENTS.md` "Commands", `fe/ux/README.md` (the
+  states paragraph, already behind `STATES` in `fe/ux/check.js`: count them there, never from prose)
+  and the tester, coder and designer playbooks (not ours: report their stale figures). The nav's
+  shape lives in `crates/bff/README.md` ("A shell with hash routes"); read `fe/src/App.tsx` (`NavHost`)
+  before writing it: a brief can name an entry the code does not have yet (brief 20: Server profiles).

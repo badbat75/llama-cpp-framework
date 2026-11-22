@@ -1123,11 +1123,13 @@ kept by the `designer`; the slice briefs and the API contract the fe is built ag
 
 **A shell with hash routes** (`fe/src/App.tsx`, `fe/src/route.ts`), since the bff serves only `/`
 and `/assets/`: a skip link, a banner (Sign in, or the user and Sign out, no role word: fe slice R4,
-1827023), a nav (behind a Menu button below 960px; the instances listed once signed in, under a heading
-named by the host, fe slice N: `nav-instances`; under a **Profiles** heading the **Model profiles**
-entry, fe slice 05b: `nav-profiles`, `nav-model-profiles`; the **Server** entry waits on the server
-profile page, `fe/briefs/05b-profiles-nav.md`; and last, in a list of their own, **Node info**, the cpu icon, `nav-node`, then **About**, the info icon, `nav-about`,
-fe slices N and AN5) and the route's page, whose heading takes the focus and names the document title on a
+1827023), a nav (behind a Menu button below 960px; fe slice N1, `fe/briefs/20-nodes-menu.md`: **Overview** first;
+then a **Nodes** group, `nav-nodes`, holding the host as a plain label named by the host, the computer
+icon, and under it its instances as links named `id · server profile`, the box icon, the id alone when
+the record names no server profile, then **Node info**, the cpu icon, `nav-node`; then a **Profiles**
+group, `nav-profiles`, holding **Model profiles**, `nav-model-profiles` (a **Server profiles** entry waits
+on the server profile page, which the fe does not have yet); and last, in a list of its own, **About**,
+the info icon, `nav-about`) and the route's page, whose heading takes the focus and names the document title on a
 change. Each page reads
 its data once when it opens and never shows a reply's text. The shell reads `GET /api/version` once per
 session (`readVersionInfo` in `fe/src/version.ts`, since fe slice AN5): the host name it answers names the nav's instance group and the

@@ -8,7 +8,8 @@ states: the sign-in page at the home address, a protected address that shows
 the sign-in form with the notice saying why, the sign-in route, Overview signed
 in, the Overview and the boot screen while their first read is still open (the
 two `load=` states of brief 17 U17a, the skeleton pages), Overview with the
-tiles of four instances, the instance page with the Server
+tiles of four instances, the menu opened at 320 px (`nav-open`: the Nodes
+group's instance links with their server profiles and a 40-character id), the instance page with the Server
 form, the Model profiles list, a model profile page that is there, the same page
 with its jump list and its Assets card opened, a model profile page that is not.
 Each state names an `expect`: the selectors, with the text they carry, only that
