@@ -57,7 +57,7 @@ test('H5b.7: one nav landmark named Main, each group named by a .nav-label above
   const groups = Array.from(nav.querySelectorAll(':scope > ul'))
   expect(
     groups.length,
-    'four groups: Overview, the instances, the model profiles, About (13 N.6)',
+    'four groups: Overview, the instances, the model profiles, and the last one with Node info and About (13 N.6, 18 AN.6)',
   ).toBe(4)
   expect(
     groups[0].hasAttribute('aria-labelledby'),
@@ -92,12 +92,13 @@ test('H5b.7: one nav landmark named Main, each group named by a .nav-label above
   const links = navLinks(nav)
   expect(
     links.map((a) => a.textContent),
-    'the tab order follows the list: Overview, the instances, the model profiles, About (13 N.11)',
+    'the tab order follows the list: Overview, the instances, the model profiles, Node info, About (13 N.11, 18 AN.6)',
   ).toEqual([
     'Overview',
     'default',
     'coder',
     EN['nav-model-profiles'],
+    EN['nav-node'],
     EN['nav-about'],
   ])
 })

@@ -258,11 +258,13 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
     expect(await bootRows(await tiles())).toEqual(
       INSTANCES.map((i) => `${i.id}: ${en('instances-boot-off')}`),
     )
+    // The tiles, not the whole body: the nav carries "Node info", whose "No" is
+    // no state word.
+    const onTiles = (await tiles()).textContent ?? ''
     for (const word of ['Yes', 'No', 'True', 'False', 'Enabled', 'Disabled'])
-      expect(
-        document.body.textContent,
-        `the row says the state word, not ${word}`,
-      ).not.toContain(word)
+      expect(onTiles, `the row says the state word, not ${word}`).not.toContain(
+        word,
+      )
   })
 
   // The row is the tile's last child, inside the tile: the head with the id

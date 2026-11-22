@@ -196,6 +196,10 @@ pai-bff` fails "the web UI is not built" until `xtask build framework` has run. 
   0..1800 ms (the 10 ms bound of the token probe) under load. Run them alone, then judge:
   `cargo test -p pai-manager --lib -- --test-threads=1 data_root_e2e` (`dbus_client` is a module of that
   test).
+- `pai-manager`'s `tests::gpu_probe::an_exe_flooding_its_pipe_past_the_buffer_is_not_stopped_by_it` is the
+  other load-sensitive one: seen once red in six full runs (`left: None` at `gpu_probe.rs`, the block lost),
+  green solo x3 and in the other five full runs. A run of the whole crate next to a compiling one is the
+  loaded case; judge it as the D-Bus tests (solos + the full-run map), never by editing the probe.
 - A `tokio::time::sleep` in an async test on a current-thread runtime is real wall clock, not advanced by
   the test's manual runtime pumps: it burns the whole budget (1200 ms of sleeps, 2.6 s) and greens
   nothing. Drive the timeout with `tokio::time::pause()`, and use
@@ -339,6 +343,15 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
 - Recompute every expected list in a brief from ITS OWN fixture sections and the stated rule: a brief's
   worked example can drop a source the rule unions (15 C2.7 omitted the instances' `fast`, which its own
   section 5 and C2.6 carry). The rule wins over the example; report the brief's arithmetic gap.
+- When a later sub-slice adds a section to the SAME page (18 AN5b's GPU blocks under AN5a's engine `h2`s),
+  every AN5a count over the whole `main` inflates: a section test's helpers must scope to the elements
+  between its own two `h2`s (`enginePart`: siblings from `firstElementChild` to the next section's `h2`),
+  and a test that lists ALL headings by design must gain the new section's headings in its expected array.
+  An expected text naming a fixture ROW (`xe`) is the tell the test renders the wrong row: a
+  field-override helper (`gpu({...})`) always copies row 0, so render the named row directly
+  (`{ ...GPUS[2]! }`). And a joined-value rule (AN.11's `<driver> <version>`) makes a single-value
+  expectation unachievable once the fixture sets BOTH fields long: align the expectation with the join,
+  checking the fixture against the UX stub's own constant (`stub.py`'s `LONG_GPUS`).
 - React 19 builds `onMouseEnter`/`onMouseLeave` from pointerover/pointerout and mouseover/mouseout
   (react-dom registers `onPointerEnter` on `["pointerout", "pointerover"]`), so
   `fireEvent.mouseEnter(el)`, a non-bubbling `mouseenter`, reaches NO React handler: fire pointerOver +
@@ -546,7 +559,27 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   body and eyeball it, else a broken regex greens vacuously. A test that asserts "extracted X" on a stub
   body of the same shape proves the extractor finds the real thing.
 - A helper's name is a contract: grep every use before renaming a test helper (one rename broke 34 call
-  sites in 8 files), and say in the report that the rename is the coder's, not yours.
+  sites in 8 files), and say in the report that the rename is the coder's, not yours. The same trap is
+  LOCAL: a harness fn `probe(..)` plus a test's `let probe = ..` is E0618 "expected function, found Arc"
+  at every call site, so name the harness for what it does (`call`), not for the type it drives.
+- A scripted-child test file (the `pai-manager/src/tests/gpu_probe.rs` shape: a temp-dir shell script as
+  the exe, a counter file that counts runs and carries the argv, `/proc/<pid>/stat` to show the kill):
+  gate EVERYTHING the scripts need, constants and imports included, with `#[cfg(unix)]`. A `QUICK`,
+  `HARNESS` or harness fn used only by `#[cfg(unix)]` tests is dead code on the Windows target, and the
+  coder runs `cargo clippy -p <crate> --all-targets --target x86_64-pc-windows-gnu -- -D warnings`:
+  the red lands on the slice's harness, not on the production code.
+- A cap fixture must be measured, not estimated: the fixed text around the pad of a JSON fixture is
+  79 bytes, so "a document at the cap" is `CAP - 200` of filler and an over-cap fixture is
+  `CAP` of filler. A fixture that overshoots its own bound fails on its own `assert!` inside a test whose
+  subject is the parser, which reads as the parser's red. Print the length in the assert's message.
+- A cache window (10 minutes) is pinned with the clock as a parameter of the seam (`probe(now)`, whole
+  epoch seconds, the unit the answer's own `probed_at` uses): the pins are `now = WINDOW - 1` (no child
+  run, the cached answer answers) and `now = WINDOW` (the child runs again), at zero wall clock. The
+  "callers that arrive together share one run" rule is pinned by COUNTING the script's runs (the script
+  sleeps, the second call joins), never by asserting the order two threads took.
+- Before pinning a key of the strings files, grep which file carries it: every `manager-*` key is in
+  `cli.toml` (16 of them) and `en_US.toml` has none, so a loop over both files reds "key in en_US.toml",
+  which is a fixture bug and not a criterion.
 - bff connects are per ROUTE, not per manager call: a write and its read-back are ONE connect. Count
   routes in the connect assert; the read-back belongs to the calls log. A fake that returns
   `self.act(..)?` on a failed write logs no read, so the calls log also pins "no read-back after a
@@ -1413,6 +1446,13 @@ but got 2`), a new CSS class reds the class allowlist of `Reflow.test.ts` and th
 - A suite-load flake to expect: `HearthTheme` H4.7's `document.title` lags the page's h1 by a tick, so it
   reds in a full-suite run and passes solo. Prove it with three solo runs plus a second full suite before
   naming it; report it as a flake, not as a red.
+- Suite-load flakes to expect (each reds in a full run, green on three solo runs): `ModelProfilePage`
+  2d.63 (the red names the document title, `'<id> | Private AI Framework'`, lagging the page's h1),
+  `NodeNav` N.3, `SignInOnly` S1a.10.
+- The whole-suite per-file map, from the repo root, goes through the npm script so vitest reads `fe`'s own
+  config: `npm --prefix fe test -- --reporter=default --reporter=json --outputFile=<f>`. `npx vitest run
+  --root fe --reporter=json` is the broken form: it writes a report with `numTotalTests: 0` and exits 1,
+  its log a single `JSON report written to` line, and the empty map reads as "no tests".
 - One line per red, with the reason, for a file that does NOT mount:
   `npx vitest run src/<file> --reporter=json --outputFile=/tmp/opencode/<name>.json` (vitest 5 accepts
   `--outputFile` for the json reporter), then read the file with node: each
@@ -1992,3 +2032,77 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
   `data_start` equals the file length, `tensor_bytes` answers an empty list) with the architecture kv in
   the first shard only, `local_shape` reads them in one pass. It is GREEN today (no cap in `pai-core`):
   report it as the boundary guard beside the over-cap red.
+
+## A reader over a fixture root (slice AN1, the host readers, 2026-11-22)
+
+- The sysfs fixture is sysfs's own shape: the `driver` entry is a SYMLINK with the relative target sysfs
+  writes (`../../../bus/pci/drivers/<driver>`, from `sys/bus/pci/devices/<bdf>`: the real string, which
+  resolves in the kernel only because the real device dir sits under `/sys/devices`, so INSIDE a temp tree
+  it resolves nowhere, and that is fine: the code reads `read_link().file_name()` and never follows it, so
+  a fixture that also creates the target folder proves nothing extra). Create the module dir (a `uevent`
+  file) BEFORE the link and its `version` file after: a
+  module dir with no `version` (an in-tree i915, xe, amdgpu) is then one flag of one helper. A DANGLING
+  link (module dir absent) is a second fixture, and its own red: it pins the driver name comes from the
+  LINK, not from reading `module/`, with `version: null`.
+- A byte bound with two readings (the file's length including the newline sysfs writes, vs the value's
+  chars) has no safe exact boundary: pin the exact one ONLY where the repo already fixed a reading
+  (`versions.rs` pins the FILE's length, so os-release 4096 read / 4097 null is a contract); for a sysfs
+  value, 128 chars is 129 bytes on disk, so pin well-over (4000 to `null`) and well-under (64 read) and
+  say the boundary is pinned nowhere.
+- A fact the fixture root cannot carry (the kernel, `uname(2)`): pin its SHAPE (non-empty, printable
+  ASCII, the same value across two calls) and an `assert_ne!` against the value the tree OFFERS
+  (`<root>/proc/sys/kernel/osrelease`, a `KERNEL=` line in the os-release fixture), so a reader that reads
+  a file is the red; never name the machine's release.
+- A row cap ("at most 32 rows") is two pins: the COUNT, and WHICH half survives. The design fixes the
+  order (bus id) and not the truncation side, so pin the 32 lowest ids as the list and report the
+  assumption, never just `len() == 32` (a reader keeping the last 32 passes that).
+- A shared reader signature whose Windows half is a real API: name the stub's parameter `_root` (clippy
+  `-D warnings` hates an unused one), gate the fixture module `#[cfg(all(test, unix))]` (os-release and
+  sysfs are Linux's layout), and report that
+  `cargo check -p pai-core --all-targets --target x86_64-pc-windows-gnu` proves only that it compiles.
+- An `unimplemented!("AN1: ..")` stub body gives every test of the slice one red line naming the reader
+  (the right reason), and a struct the tests build as a literal (a `row(..)` helper, ONE per file) keeps
+  the red list short.
+
+## One reply read by two readers (slice AN5, fe/, 2026-11-22)
+
+- A `Response` body is good once, and at `#/` TWO readers ask `GET /api/version`: the shell (its nav label)
+  and the Overview's version line (13 N.10, 18 AN.15). React runs the child's effect first, so the page
+  reads first and the shell is left with a consumed body: its label sticks at "Instances" and the test
+  times out looking for the name. The fake's rule: an option that IS a `Response` is handed out whole, so
+  any test with two readers passes a function (`version: () => reply(...)`). `test/bff.ts`'s `held()` now
+  clones the reply once per reader registered before `resolve`, so a held gate is safe for two readers too.
+- Read-count pins in a nav test must add the page's own read (18 AN.15: a page that shows the host reads
+  it at every arrival): `#/` owes 2, `#/about` owes 2, `#/node` owes 0 (the node page reads `/api/node`
+  only), an instance or profiles page owes 0. A sign-in on the sign-in page LANDS on `#/` (09 S1a.9), so
+  it brings the shell's read AND the Overview's: "one more" is two. A page-read count beside a 401/403
+  ("once, no retry") is 2 for the same reason; say the shell's one in the message.
+- Scope a text scan to the region the criterion is about: a `document.body.textContent` scan for the
+  word "No" breaks the day the nav gains "Node info". The tiles list, the card, `main` are the scopes.
+- A locator helper for a block that does not exist yet should assert its own emptiness
+  (`expect(on.length, 'the GPUs heading has a list under it').toBeGreaterThan(0)`): every red of the slice
+  reads as the missing block instead of `Cannot read properties of undefined`.
+- `strings.test.ts`'s "values no code uses" is the red that says a strings key is in the file and no page
+  shows it: for a slice that adds strings before the code, it belongs to the slice, it is not a defect.
+- Pin a "the sheet gains no rule" criterion by reading `index.css` in the test (the pattern of
+  AboutPage/NodePage: comments stripped, rules matched, the declaration's value read): assert the value
+  the new blocks ride on (`.assets dd` `overflow-wrap: anywhere`, `h2`/`h3` declaring none, `.mono` and
+  `.muted` carrying no `display`) and the exact list of selectors naming the feature. Match a selector by
+  its comma separated parts, not the whole string: the sheet writes `.mono,\ninput.mono`.
+
+## A decision pinned as a pure function (slice AN2 review, `vulkan_child::chain_plan`, 2026-11-22)
+
+- A defect in code no test can run (the Vulkan child opens a loader, touches a GPU): pin the DECISION as a
+  pure fn the coder extracts, and name the signature in the report. The stub body is
+  `panic!("`name` is not implemented: ..")`, NOT `unimplemented!()`: clippy's `style` lints are on and
+  `-D warnings` fails on `unimplemented!()`; and `#[allow(dead_code)]` on the stub and its plan struct (an
+  item only tests call is dead in the lib build, and dead code fails clippy). Every case then reds on one
+  line naming the stub.
+- A pure plan greens without the caller acting on it, so pair the cases with TWO source lints over the
+  caller: the call the fix requires (`enumerate_device_extension_properties`) and the plan field the code
+  must pass (`api_version` and `instance_api`). Verify the extractor with a throwaway that prints `LEN` and
+  the TAIL of the extracted body (a free function's body ends at `\n}\n` at column 0, a method's at
+  `\n    }`), then delete the probe and prove the delete.
+- Pin the registry's facts as the bindings' own constants (`ash`'s `vk::EXT_PCI_BUS_INFO_NAME`,
+  `vk::make_api_version(0, 1, 1, 0)`), and check the extension TYPE in the Khronos page: device vs instance
+  is the whole defect, and the page states it in its header table.

@@ -22,7 +22,14 @@ import { createElement, type ReactElement } from 'react'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
-import { en, fakeBff, isHidden, startAt, type BffOptions } from './test/bff.ts'
+import {
+  before,
+  en,
+  fakeBff,
+  isHidden,
+  startAt,
+  type BffOptions,
+} from './test/bff.ts'
 
 // ── The shapes of the brief's list, as data ───────────────────────────────
 // Each entry is the children of the `svg`, in order: the tag and every
@@ -33,6 +40,24 @@ import { en, fakeBff, isHidden, startAt, type BffOptions } from './test/bff.ts'
 type Shape = [tag: string, attrs: Record<string, string>]
 
 const SHAPES: Record<string, Shape[]> = {
+  // 18 AN.6: the Node info entry. The path data is lucide-static 1.74.0
+  // icons/cpu.svg, as the brief names it.
+  cpu: [
+    ['path', { d: 'M12 20v2' }],
+    ['path', { d: 'M12 2v2' }],
+    ['path', { d: 'M17 20v2' }],
+    ['path', { d: 'M17 2v2' }],
+    ['path', { d: 'M2 12h2' }],
+    ['path', { d: 'M2 17h2' }],
+    ['path', { d: 'M2 7h2' }],
+    ['path', { d: 'M20 12h2' }],
+    ['path', { d: 'M20 17h2' }],
+    ['path', { d: 'M20 7h2' }],
+    ['path', { d: 'M7 20v2' }],
+    ['path', { d: 'M7 2v2' }],
+    ['rect', { x: '4', y: '4', width: '16', height: '16', rx: '2' }],
+    ['rect', { x: '8', y: '8', width: '8', height: '8', rx: '1' }],
+  ],
   house: [
     ['path', { d: 'M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8' }],
     [
@@ -280,7 +305,7 @@ test.each(NAMES)(
 
 // ── H8a.2: the nav ────────────────────────────────────────────────────────
 
-test('H8a.2: the Overview link holds Icon house then its text, the Model profiles link Icon layers, the About link Icon info, the instance links hold no icon, and the names by role are unchanged', async () => {
+test('H8a.2: the Overview link holds Icon house then its text, the Model profiles link Icon layers, the Node info link Icon cpu, the About link Icon info, the instance links hold no icon, and the names by role are unchanged', async () => {
   openApp()
   const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'default' })
@@ -295,9 +320,16 @@ test('H8a.2: the Overview link holds Icon house then its text, the Model profile
   })
   expectIcon(profiles, 'layers', 'the Model profiles link')
   expect(text(profiles), 'and its name').toBe(en('nav-model-profiles'))
+  const node = within(nav).getByRole('link', { name: en('nav-node') })
+  expectIcon(node, 'cpu', 'the Node info link (18 AN.6)')
+  expect(text(node), 'and its name').toBe(en('nav-node'))
   const about = within(nav).getByRole('link', { name: en('nav-about') })
   expectIcon(about, 'info', 'the About link (13 N.6)')
   expect(text(about), 'and its name').toBe(en('nav-about'))
+  expect(
+    before(node, about),
+    'Node info comes before About, as the brief orders the last group',
+  ).toBe(true)
   for (const id of ['default', 'coder']) {
     const link = within(nav).getByRole('link', { name: id })
     expect(text(link), `the instance link ${id} keeps its id as its text`).toBe(
@@ -310,8 +342,8 @@ test('H8a.2: the Overview link holds Icon house then its text, the Model profile
   }
   expect(
     nav.querySelectorAll('svg.icon').length,
-    'three icons in the nav: the three named entries (Overview, Model profiles, About 13 N.6), no icon on an instance id',
-  ).toBe(3)
+    'four icons in the nav: the four named entries (Overview, Model profiles, Node info 18 AN.6, About 13 N.6), no icon on an instance id',
+  ).toBe(4)
 })
 
 // ── H8a.3: the banner ─────────────────────────────────────────────────────
@@ -436,7 +468,7 @@ test('H8a.3: ThemeSwitch.tsx renders Icon and holds no drawing of its own (comme
 // ── H8a.8: the sweep, and the mark of H8a.9 ───────────────────────────────
 
 test.each([
-  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 3 },
+  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 4 },
   // 09 S1a.4: signed out there is no nav, so the nav has no icon to sweep and
   // the banner has the theme icon only.
   {

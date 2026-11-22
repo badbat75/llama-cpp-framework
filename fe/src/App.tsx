@@ -26,7 +26,7 @@ import NotFound from './NotFound.tsx'
 import Overview from './Overview.tsx'
 import { FocusRequest } from './PageHeading.tsx'
 import ModelProfilePage from './ModelProfilePage.tsx'
-import { readNode } from './node.ts'
+import NodePage from './NodePage.tsx'
 import { instanceHref, legacyHref, parseRoute, type Route } from './route.ts'
 import {
   readSession,
@@ -38,6 +38,7 @@ import SignIn from './SignIn.tsx'
 import { Box, Line, Loading } from './Skeleton.tsx'
 import { ThemeSwitch } from './ThemeSwitch.tsx'
 import { t } from './strings.ts'
+import { readVersionInfo } from './version.ts'
 
 /**
  * The old `#/models` bookmark of 05b (fe/briefs/05b-profiles-nav.md, 5b.8 and
@@ -157,6 +158,9 @@ export default function App() {
    * carries the user it was read for, so a session that is not that one reads
    * the fallback words; Sign out takes the name with the session, so the next
    * one, of the same user or not, reads the words of today until it answers.
+   * The read is GET /api/version (18 AN.15), which answers with no manager:
+   * the label stops waiting for it. A reply with no name, of any kind, signs
+   * nobody out and leaves the words of today.
    */
   const [hostFor, setHostFor] = useState<{ user: string; name: string } | null>(
     null,
@@ -173,9 +177,11 @@ export default function App() {
     }
     if (hostSeen.current === user) return
     hostSeen.current = user
-    readNode().then(({ node }) => {
+    readVersionInfo().then(({ info }) => {
       if (hostNow.current !== user) return
-      setHostFor(node === null ? null : { user, name: node.name })
+      setHostFor(
+        info === null || info.name === null ? null : { user, name: info.name },
+      )
     })
   }, [session])
   const host = hostFor && session?.user === hostFor.user ? hostFor.name : null
@@ -494,9 +500,19 @@ export default function App() {
                 </a>
               </li>
             </ul>
-            {/* About is the nav's last entry, in a list of its own with no
-                label of its own: one place, not a group of many (13 N.6). */}
+            {/* The nav's last entries, in a list of its own with no label of
+                its own: one place, not a group of many (13 N.6). The Node info
+                page comes first, About last (18 AN.6). */}
             <ul>
+              <li>
+                <a
+                  href="#/node"
+                  aria-current={route.page === 'node' ? 'page' : undefined}
+                >
+                  <Icon name="cpu" />
+                  {t('nav-node')}
+                </a>
+              </li>
               <li>
                 <a
                   href="#/about"
@@ -694,6 +710,10 @@ function Page({
         onDirty={onDirty}
       />
     )
+  }
+  if (route.page === 'node') {
+    // What is installed on this host, read again at every arrival (18 AN.5).
+    return <NodePage onSignedOut={onSignedOut} />
   }
   if (route.page === 'about') {
     // The versions of this host, read again at every arrival (13 N.7).

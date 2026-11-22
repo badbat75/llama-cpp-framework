@@ -697,6 +697,38 @@ export const EN: Record<string, string> = {
   'backend-cuda': 'CUDA',
   'backend-rocm': 'ROCm/HIP',
   'backend-vulkan': 'Vulkan',
+  // Slice 18 AN5a (fe/briefs/18-about-node-info.md, section 2): the Node info
+  // page, its nav entry, and the joined OS, driver and Vulkan rows.
+  'nav-node': 'Node info',
+  'node-title': 'Node info',
+  'node-loading': "Loading the node's information…",
+  'node-failed': "The node's information could not be read.",
+  'node-host': 'Host name',
+  'system-os': 'Operating system',
+  'system-kernel': 'Kernel',
+  'node-engines': 'Engines',
+  'node-gpus': 'GPUs',
+  'node-gpus-none': 'No GPU was found on this node.',
+  'node-info-unavailable':
+    'The manager did not answer, so the operating system, the kernel and the GPUs are not shown. Reload the page to try again.',
+  'node-info-failed':
+    'The manager could not read the operating system, the kernel and the GPUs.',
+  'node-gpu-title': 'GPU {0}: {1}',
+  'node-gpu-title-unnamed': 'GPU {0}',
+  'node-gpu-vendor': 'Vendor',
+  'node-gpu-pci': 'PCI address',
+  'node-gpu-driver': 'Driver',
+  'node-driver-in-kernel':
+    "(part of the kernel, so its version is the kernel's)",
+  'node-driver-none': 'No driver in use',
+  'node-gpu-vulkan': 'Vulkan driver',
+  'node-vulkan-unreported': 'Not reported by the device',
+  'node-vulkan-not-seen': 'Not seen by Vulkan',
+  'node-vulkan-none': 'No Vulkan driver installed',
+  'node-vulkan-failed': 'Could not be read',
+  'vendor-amd': 'AMD',
+  'vendor-nvidia': 'NVIDIA',
+  'vendor-intel': 'Intel',
 }
 
 /** The brief's English of `key`, `{N}` filled by position; a typo throws. */
@@ -745,6 +777,12 @@ export function held(): {
   signals: (AbortSignal | undefined)[]
 } {
   const signals: (AbortSignal | undefined)[] = []
+  // One Response per reader: a body is good once, and the same held read is
+  // answered to every reader of it (the shell reads the host and so does the
+  // page on screen, 18 AN.15). The clones are taken as the reply is handed
+  // over, before anybody reads the body.
+  const twins: Response[] = []
+  let readers = 0
   let settle: (r: Response) => void = () => {}
   const replied = new Promise<Response>((r) => {
     settle = r
@@ -754,6 +792,7 @@ export function held(): {
     answer(init?: RequestInit) {
       const signal = init?.signal ?? undefined
       signals.push(signal)
+      readers += 1
       return new Promise<Response>((resolve, reject) => {
         if (signal?.aborted) {
           reject(signal.reason)
@@ -762,10 +801,13 @@ export function held(): {
         signal?.addEventListener('abort', () => reject(signal.reason), {
           once: true,
         })
-        void replied.then(resolve)
+        void replied.then((r) => resolve(twins.pop() ?? r))
       })
     },
-    resolve: (r) => settle(r),
+    resolve: (r) => {
+      for (let i = 1; i < readers; i++) twins.push(r.clone())
+      settle(r)
+    },
   }
 }
 
@@ -815,8 +857,75 @@ export type NodeInfo = {
   engines: NodeEngine[]
 }
 
-/** The reply of fe/briefs/13-node-about.md section 0, the one the brief shows. */
-export const NODE: NodeInfo = {
+/** The operating system as brief 18 section 0 sends it: three texts, each a
+ * string or null. */
+export type NodeOs = {
+  name: string | null
+  version: string | null
+  kernel: string | null
+}
+
+/** A GPU row's Vulkan driver: its driver and its info, each a string or null. */
+export type NodeGpuVulkan = { driver: string | null; info: string | null }
+
+/** One GPU row of brief 18 section 0, in the bus order of the reply. */
+export type NodeGpu = {
+  pci: string | null
+  vendor: string | null
+  name: string | null
+  driver: string | null
+  version: string | null
+  vulkan: NodeGpuVulkan | null
+}
+
+/** What brief 18 (AN4, not built yet) adds to today's reply: the operating
+ * system, the Vulkan answer, the GPUs, and the `nodeInfo` key the bff sends
+ * when the manager did not answer. */
+export type NodeExtra = {
+  os?: NodeOs | null
+  vulkan?: 'ok' | 'none' | 'failed' | null
+  gpus?: NodeGpu[] | null
+  nodeInfo?: { key: string; args: unknown[] } | null
+}
+
+/** The three GPUs of brief 18 section 7, the same rows `fe/ux/stub.py` sends. */
+export const GPUS: NodeGpu[] = [
+  {
+    pci: '0000:03:00.0',
+    vendor: '1002',
+    name: 'AMD Radeon AI PRO R9700',
+    driver: 'amdgpu',
+    version: '7.1.9.31600000',
+    vulkan: { driver: 'radv', info: 'Mesa 25.2.0' },
+  },
+  {
+    pci: '0000:0a:00.0',
+    vendor: '10de',
+    name: 'NVIDIA GeForce RTX 5090',
+    driver: 'nvidia',
+    version: '580.95.05',
+    vulkan: { driver: 'NVIDIA', info: '580.95.05' },
+  },
+  {
+    pci: '0000:0f:00.0',
+    vendor: '8086',
+    name: 'Intel Arc B580',
+    driver: 'xe',
+    version: null,
+    vulkan: null,
+  },
+]
+
+/** The operating system of brief 18 section 0. */
+export const OS: NodeOs = {
+  name: 'Ubuntu',
+  version: '26.04',
+  kernel: '7.0.0-43-generic',
+}
+
+/** The reply of fe/briefs/13-node-about.md section 0, with brief 18's `os`,
+ * `vulkan` and three `gpus`: the whole host, as the Node info page reads it. */
+export const NODE: NodeInfo & NodeExtra = {
   name: 'gpu-box',
   api: '/api',
   version: '2.99.1',
@@ -831,6 +940,31 @@ export const NODE: NodeInfo = {
       ],
     },
   ],
+  os: OS,
+  vulkan: 'ok',
+  gpus: GPUS,
+}
+
+/** What GET /api/version answers (brief 18 section 0, as amended after its
+ * section 9): the framework's version, the host name the bff reads for the
+ * shell (AN.15), and the operating system. */
+export type VersionBody = {
+  version: string | null
+  name?: string | null
+  os?: NodeOs | null
+}
+
+/** The reply of brief 18 section 0, without `name`: the fake's default answers
+ * no host name, so every test that finds the nav's fallback label "Instances"
+ * (13 N.4) stays green. A test that wants the host writes
+ * `{ ...VERSION, name: NODE.name }`. */
+export const VERSION: VersionBody = { version: '2.99.1', os: OS }
+
+/** The same reply carrying the host: what the shell reads (AN.15). Its name is
+ *  a plain string, so a test can look for it by name. */
+export const VERSION_HOST: VersionBody & { name: string } = {
+  ...VERSION,
+  name: NODE.name,
 }
 
 /**
@@ -1014,8 +1148,15 @@ export type BffOptions = {
   signIn?: Answer
   /** DELETE /api/session: the reply. Default 204. */
   signOut?: Answer
-  /** GET /api/version: the reply. Default 200 "2.99.0". */
-  version?: Answer
+  /**
+   * GET /api/version (brief 18 section 0): the body to answer 200 with, or the
+   * reply. Default 200 `{"version": "2.99.0", "os": {...}}`: the Overview's
+   * version line, and the operating system About shows (AN.3). It carries no
+   * `name` on purpose: a default host name would red every test that finds the
+   * nav's label at its fallback "Instances" (13 N.4), so a test that wants the
+   * host names one (`VERSION_HOST`).
+   */
+  version?: VersionBody | Record<string, unknown> | Answer
   /**
    * GET /api/node (fe/briefs/13-node-about.md section 0): the node to answer
    * 200 with, or the reply. A test names one (`NODE`, the brief's reply, is
@@ -1173,11 +1314,16 @@ export function fakeBff(options: BffOptions = {}) {
       )
     if (route === 'DELETE /api/session')
       return answer(options.signOut ?? (() => reply(204)), init)
-    if (route === 'GET /api/version')
-      return answer(
-        options.version ?? (() => reply(200, { version: '2.99.0' })),
-        init,
-      )
+    if (route === 'GET /api/version') {
+      const v = options.version
+      // An object is the body of the 200, as the instances array and the node
+      // are; the default carries no host name (see `version` above).
+      if (v === undefined)
+        return Promise.resolve(reply(200, { version: '2.99.0', os: OS }))
+      if (typeof v === 'function' || v instanceof Response)
+        return answer(v, init)
+      return Promise.resolve(reply(200, v))
+    }
     if (route === 'GET /api/node') {
       const n = options.node
       // A test that never asked about the host gets the rejection of an unknown

@@ -1,11 +1,13 @@
 // Slice 13, the host in the navigation (fe/briefs/13-node-about.md, 13 N.3,
-// 13 N.4, 13 N.6, 13 N.11): the shell reads GET /api/node once per session and
-// the host name becomes the label over the instance links; About is the nav's
-// last entry, in a list of its own, with the info icon; the tab order and the
-// closed menu hold. "13 N.3" is the brief's criterion 3.
+// 13 N.4, 13 N.6, 13 N.11), as slice 18 reads it (fe/briefs/18-about-node-info.md,
+// 18 AN.6, 18 AN.15): the shell reads GET /api/version once per session and the
+// host name becomes the label over the instance links; Node info joins the
+// nav's last list, before About which stays last; the tab order and the closed
+// menu hold. "13 N.3" and "18 AN.6" are the briefs' criteria.
 //
-// The fake answers GET /api/node only when a test asks for it (brief section 6),
-// so every other suite keeps the fallback label "Instances".
+// The shell's read moved off GET /api/node (AN.15), and the fake answers
+// GET /api/node only when a test asks for it (brief section 6), so every other
+// suite keeps the fallback label "Instances".
 import {
   cleanup,
   fireEvent,
@@ -18,7 +20,8 @@ import { StrictMode } from 'react'
 import App from './App.tsx'
 import {
   MODEL_PROFILES,
-  NODE,
+  VERSION,
+  VERSION_HOST,
   en,
   fakeBff,
   held,
@@ -60,9 +63,9 @@ const navLinks = (nav: HTMLElement): HTMLAnchorElement[] =>
 const menuButton = (): HTMLElement =>
   screen.getByRole('button', { name: en('nav-menu') })
 
-/** How many times the shell read the host. */
-const nodeReads = (bff: ReturnType<typeof fakeBff>): number =>
-  bff.to('GET', '/api/node').length
+/** How many times the shell read the host (18 AN.15: GET /api/version). */
+const hostReads = (bff: ReturnType<typeof fakeBff>): number =>
+  bff.to('GET', '/api/version').length
 
 /** The app, signed in, with the nav and its instance links on screen. */
 async function open(options: BffOptions = {}) {
@@ -157,17 +160,25 @@ function nameOf(el: HTMLElement): string {
   return (text ?? '').replace(/\s+/g, ' ').trim()
 }
 
-// ── 13 N.3: one read of the host per session ────────────────────────────────
+// ── 13 N.3 (18 AN.15): one read of the host per session ─────────────────────
 
-test('13 N.3: a session at the start sends exactly one GET /api/node, and moving through the Overview, an instance, Model profiles, About and back sends no other from the shell', async () => {
-  const { bff } = await open({ node: NODE })
-  expect(nodeReads(bff), 'the session brings one read').toBe(1)
-  // The reads the shell owes, counting the About page's own read of every
-  // arrival at `#/about` (13 N.7): the shell adds nothing at any page (13 N.3).
-  let owed = 1
+test('13 N.3: a session at the start sends exactly one GET /api/version, and moving through the Overview, an instance, Model profiles, Node info, About and back sends no other from the shell', async () => {
+  const { bff } = await open({ version: VERSION_HOST })
+  // The shell's read of the host is GET /api/version (18 AN.15), and the
+  // Overview's version line of 13 N.10 keeps its own read beside it (AN.15).
+  expect(
+    hostReads(bff),
+    'the session brings the shell one and the page one',
+  ).toBe(2)
+  // The reads owed at each address: the shell adds nothing at any page (13 N.3),
+  // and the pages that show the host read it of their own on every arrival (the
+  // Overview's version line 13 N.10, About 13 N.7 and 18 AN.2). The Node info
+  // page reads the manager, never the host (18 AN.8, AN.15), so it adds none.
+  let owed = 2
   for (const hash of [
     '#/instances/default',
     '#/profiles/model',
+    '#/node',
     '#/about',
     '#/',
     '#/instances/coder',
@@ -175,40 +186,54 @@ test('13 N.3: a session at the start sends exactly one GET /api/node, and moving
   ]) {
     navigate(hash)
     await screen.findByRole('main')
-    if (hash === '#/about') owed += 1
+    if (hash === '#/about' || hash === '#/') owed += 1
     expect(
-      nodeReads(bff),
-      `no shell read for ${hash}: About's page reads once of its own`,
+      hostReads(bff),
+      `no shell read for ${hash}: a page that shows the host reads once of its own`,
     ).toBe(owed)
   }
 })
 
 test('13 N.3: signed out nothing is read about the host; a sign-in on the sign-in page sends exactly one', async () => {
-  const bff = fakeBff({ node: NODE, session: 'signed-out', signIn: asPosted })
+  // The model profiles page reads nothing about the host, so every
+  // GET /api/version here is the shell's.
+  startAt('#/profiles/model')
+  const bff = fakeBff({
+    version: VERSION_HOST,
+    session: 'signed-out',
+    signIn: asPosted,
+  })
   render(<App />)
   const main = await signInPage(screen.getByRole('main'))
-  expect(nodeReads(bff), 'nothing about the host signed out').toBe(0)
+  expect(hostReads(bff), 'nothing about the host signed out').toBe(0)
   await signIn(main, 'alice')
   const nav = await navOf()
   await within(nav).findByRole('link', { name: 'default' })
-  expect(nodeReads(bff), 'the sign-in starts a session: one read').toBe(1)
+  expect(hostReads(bff), 'the sign-in starts a session: one read').toBe(1)
 })
 
 test('13 N.3: a sign-out and a sign-in as another user send one more', async () => {
-  const bff = fakeBff({ node: NODE, session: 'signed-out', signIn: asPosted })
+  startAt('#/profiles/model')
+  const bff = fakeBff({
+    version: VERSION_HOST,
+    session: 'signed-out',
+    signIn: asPosted,
+  })
   render(<App />)
   await signIn(await signInPage(screen.getByRole('main')), 'alice')
   const nav = await navOf()
   await within(nav).findByRole('link', { name: 'default' })
-  expect(nodeReads(bff), "alice's session reads once").toBe(1)
+  expect(hostReads(bff), "alice's session reads once").toBe(1)
   fireEvent.click(
     await screen.findByRole('button', { name: en('session-sign-out') }),
   )
   await signInPage(screen.getByRole('main'))
-  expect(nodeReads(bff), 'the sign-out reads nothing about the host').toBe(1)
+  expect(hostReads(bff), 'the sign-out reads nothing about the host').toBe(1)
   await signIn(screen.getByRole('main'), 'bob')
   await navOf()
-  expect(nodeReads(bff), "bob's session reads again").toBe(2)
+  // A sign-in lands on the Overview (09 S1a.9), so bob's session brings the
+  // shell's read and the Overview's own one (13 N.10, 18 AN.15).
+  expect(hostReads(bff), "bob's session reads again").toBe(3)
 })
 
 test('13 N.3: a sign-in in a page dialog as the same user sends no shell read; as another user it sends one', async () => {
@@ -221,7 +246,7 @@ test('13 N.3: a sign-in in a page dialog as the same user sends no shell read; a
   ] as Array<[string, number]>) {
     startAt('#/profiles/model')
     const bff = fakeBff({
-      node: NODE,
+      version: VERSION_HOST,
       signIn: asPosted,
       modelProfileSwitch: () =>
         reply(401, { key: 'session-required', args: [] }),
@@ -233,7 +258,7 @@ test('13 N.3: a sign-in in a page dialog as the same user sends no shell read; a
     const box = await within(main).findByRole('switch', {
       name: MODEL_PROFILES[0]!.id,
     })
-    expect(nodeReads(bff), `${user}: the session read`).toBe(1)
+    expect(hostReads(bff), `${user}: the session read`).toBe(1)
     fireEvent.click(box)
     const ask = await within(main).findByRole('button', {
       name: en('session-sign-in'),
@@ -243,7 +268,7 @@ test('13 N.3: a sign-in in a page dialog as the same user sends no shell read; a
     await signIn(dialog, user)
     await within(main).findByRole('switch', { name: MODEL_PROFILES[0]!.id })
     expect(
-      nodeReads(bff),
+      hostReads(bff),
       `${user}: a dialog sign-in as ${user} ${want === 1 ? 'keeps the one read' : 'is a new session'}`,
     ).toBe(want)
     cleanup()
@@ -258,8 +283,11 @@ test('13 N.3: a sign-in in a page dialog as the same user sends no shell read; a
 // read is still open, which costs no read and must not drop the answer of the
 // read already on its way.
 
-test('13 N.3: under StrictMode, the tree main.tsx renders, the shell sends exactly one GET /api/node and both labels show the host', async () => {
-  const bff = fakeBff({ node: NODE })
+test('13 N.3: under StrictMode, the tree main.tsx renders, the shell sends exactly one GET /api/version and the nav label shows the host', async () => {
+  // The instance page reads nothing about the host, so the count here is the
+  // shell's alone. The name on the Overview's h2 is 13 N.5's (OverviewHost).
+  startAt('#/instances/default')
+  const bff = fakeBff({ version: VERSION_HOST })
   render(
     <StrictMode>
       <App />
@@ -267,46 +295,47 @@ test('13 N.3: under StrictMode, the tree main.tsx renders, the shell sends exact
   )
   const nav = await navOf()
   await within(nav).findByRole('link', { name: 'default' })
-  expect(await hostLabel(nav), 'the nav label carries the name').toBe(NODE.name)
-  expect(
-    (await screen.findByRole('heading', { level: 2, name: NODE.name }))
-      .textContent,
-    'the Overview h2 carries it too',
-  ).toBe(NODE.name)
-  expect(nodeReads(bff), 'the double invoke costs no second read').toBe(1)
+  expect(await hostLabel(nav), 'the nav label carries the name').toBe(
+    VERSION_HOST.name,
+  )
+  expect(hostReads(bff), 'the double invoke costs no second read').toBe(1)
 })
 
 test('13 N.3: a sign-out then a sign-in as the same user is a new session: one more read, the labels at their fallback until it answers, the host after', async () => {
+  startAt('#/profiles/model')
   let read = 0
   const second = held()
   const bff = fakeBff({
     session: 'signed-out',
     signIn: asPosted,
-    node: (init) => (++read === 1 ? reply(200, NODE) : second.answer(init)),
+    version: (init) =>
+      ++read === 1 ? reply(200, VERSION_HOST) : second.answer(init),
   })
   render(<App />)
   await signIn(await signInPage(screen.getByRole('main')), 'alice')
   let nav = await navOf()
   expect(await hostLabel(nav), "alice's first session reads the host").toBe(
-    NODE.name,
+    VERSION_HOST.name,
   )
   fireEvent.click(
     await screen.findByRole('button', { name: en('session-sign-out') }),
   )
   await signInPage(screen.getByRole('main'))
-  expect(nodeReads(bff), 'the sign-out reads nothing about the host').toBe(1)
+  expect(hostReads(bff), 'the sign-out reads nothing about the host').toBe(1)
   await signIn(screen.getByRole('main'), 'alice')
   nav = await navOf()
   expect(
-    nodeReads(bff),
-    'the same user signing back in starts a session: one more read',
-  ).toBe(2)
+    hostReads(bff),
+    'the same user signing back in starts a session: the shell one and the Overview line one (13 N.10, 18 AN.15)',
+  ).toBe(3)
   expect(
     await hostLabel(nav),
     "the old session's name does not carry over: the fallback while the new read is open",
   ).toBe(en('nav-instances'))
-  second.resolve(reply(200, NODE))
-  expect(await hostLabel(nav), 'and the host once it answers').toBe(NODE.name)
+  second.resolve(reply(200, VERSION_HOST))
+  expect(await hostLabel(nav), 'and the host once it answers').toBe(
+    VERSION_HOST.name,
+  )
 })
 
 test('13 N.3: a sign-in in a page dialog as the same user while the host read is open sends no second read, and the name of the read already on its way arrives', async () => {
@@ -315,7 +344,7 @@ test('13 N.3: a sign-in in a page dialog as the same user while the host read is
   startAt('#/profiles/model')
   const h = held()
   const bff = fakeBff({
-    node: h.answer,
+    version: h.answer,
     signIn: asPosted,
     modelProfileSwitch: () => reply(401, { key: 'session-required', args: [] }),
   })
@@ -337,18 +366,19 @@ test('13 N.3: a sign-in in a page dialog as the same user while the host read is
     'alice',
   )
   await within(main).findByRole('switch', { name: MODEL_PROFILES[0]!.id })
-  expect(nodeReads(bff), 'the same user in a dialog is not a new session').toBe(
+  expect(hostReads(bff), 'the same user in a dialog is not a new session').toBe(
     1,
   )
-  h.resolve(reply(200, NODE))
+  h.resolve(reply(200, VERSION_HOST))
   expect(
     await hostLabel(nav),
     'the read that was already on its way names the nav: the sign-in drops nothing',
-  ).toBe(NODE.name)
+  ).toBe(VERSION_HOST.name)
 })
 
-// Every way the host read can go wrong. None of them ends the session.
-const NODE_FAILURES: Array<[string, () => Response | Promise<Response>]> = [
+// Every way the host read can go wrong. None of them ends the session, and
+// none of them moves the labels off their fallback (13 N.3, 18 AN.15).
+const HOST_FAILURES: Array<[string, () => Response | Promise<Response>]> = [
   [
     '401 session-required',
     () => reply(401, { key: 'session-required', args: [] }),
@@ -365,15 +395,22 @@ const NODE_FAILURES: Array<[string, () => Response | Promise<Response>]> = [
   ['a network failure', () => Promise.reject(new TypeError('failed to fetch'))],
   ['a body that is not json', () => reply(200, 'not json')],
   ['a body that is not an object', () => reply(200, [])],
-  ['a name that is not a string', () => reply(200, { name: 7, engines: [] })],
-  ['a name that is empty', () => reply(200, { name: '', engines: [] })],
-  ['engines that is not an array', () => reply(200, { name: 'gpu-box' })],
+  ['the reply of 13 N.10, with no name', () => reply(200, VERSION)],
+  ['a name that is not a string', () => reply(200, { ...VERSION, name: 7 })],
+  ['a name that is empty', () => reply(200, { ...VERSION, name: '' })],
 ]
 
-test.each(NODE_FAILURES)(
+test.each(HOST_FAILURES)(
   '13 N.3: a host read answering %s signs nobody out, keeps the page, and leaves the labels at their fallback',
-  async (what, node) => {
-    const { bff, nav } = await open({ node })
+  async (what, version) => {
+    // The model profiles page reads nothing about the host of its own (and has
+    // no version line), so the one GET /api/version here is the shell's
+    // (18 AN.15), and a 401 on it ends no session.
+    startAt('#/profiles/model')
+    const bff = fakeBff({ version })
+    render(<App />)
+    const nav = await navOf()
+    await within(nav).findByRole('link', { name: 'default' })
     expect(
       await screen.findByRole('button', { name: en('session-sign-out') }),
       `${what}: the session lives, the banner offers Sign out`,
@@ -387,24 +424,46 @@ test.each(NODE_FAILURES)(
     expect(await hostLabel(nav), `${what}: the nav label`).toBe(
       en('nav-instances'),
     )
+    expect(hostReads(bff), `${what}: one read, no retry`).toBe(1)
     expect(
-      (
-        await screen.findByRole('heading', {
-          level: 2,
-          name: en('instances-title'),
-        })
-      ).textContent,
-      `${what}: the Overview h2 keeps its fallback`,
-    ).toBe(en('instances-title'))
-    expect(nodeReads(bff), `${what}: one read, no retry`).toBe(1)
+      bff.to('GET', '/api/node').length,
+      `${what}: the shell sends no GET /api/node (18 AN.15)`,
+    ).toBe(0)
+    cleanup()
+    vi.unstubAllGlobals()
   },
 )
+
+// The Overview side of 18 AN.15: the name rides the same read, and the shell
+// sends no GET /api/node anywhere. The h2 itself is 13 N.5's (OverviewHost).
+test('18 AN.15: the shell reads the host from GET /api/version, the Overview h2 and the nav label carry its name, and no page of the shell sends GET /api/node', async () => {
+  const { bff, nav } = await open({ version: VERSION_HOST })
+  expect(await hostLabel(nav), 'the nav label').toBe(VERSION_HOST.name)
+  expect(
+    (await screen.findByRole('heading', { level: 2, name: VERSION_HOST.name }))
+      .textContent,
+    'the Overview h2 over the tiles',
+  ).toBe(VERSION_HOST.name)
+  for (const hash of [
+    '#/instances/default',
+    '#/profiles/model',
+    '#/about',
+    '#/',
+  ]) {
+    navigate(hash)
+    await screen.findByRole('main')
+  }
+  expect(
+    bff.to('GET', '/api/node').length,
+    'the shell and the pages beside Node info send no GET /api/node',
+  ).toBe(0)
+})
 
 // ── 13 N.4: the host names the instance group ───────────────────────────────
 
 test('13 N.4: once the read answered, the label over the instance links is the host and the list accessible name is it, the links and their order unchanged', async () => {
-  const { nav } = await open({ node: NODE })
-  expect(await hostLabel(nav), 'the name as sent').toBe(NODE.name)
+  const { nav } = await open({ version: VERSION_HOST })
+  expect(await hostLabel(nav), 'the name as sent').toBe(VERSION_HOST.name)
   const { list, label } = await instanceList(nav)
   expect(label?.classList.contains('nav-label'), 'a p.nav-label').toBe(true)
   expect(label?.tagName, 'the label stays a paragraph, not a heading').toBe('P')
@@ -421,13 +480,13 @@ test('13 N.4: once the read answered, the label over the instance links is the h
     'their addresses are the instance pages',
   ).toEqual(['#/instances/default', '#/instances/coder'])
   expect(
-    within(nav).getAllByRole('list', { name: NODE.name }).length,
+    within(nav).getAllByRole('list', { name: VERSION_HOST.name }).length,
     'one list carries the host name: the instance group',
   ).toBe(1)
 })
 
 test('13 N.4: the label is text, no link, no icon, no button, and the nav holds no disclosure of its own', async () => {
-  const { nav } = await open({ node: NODE })
+  const { nav } = await open({ version: VERSION_HOST })
   const { label } = await instanceList(nav)
   expect(label?.querySelector('a'), 'the host is not a link').toBeNull()
   expect(label?.querySelector('button'), 'not a button').toBeNull()
@@ -443,16 +502,16 @@ test('13 N.4: the label is text, no link, no icon, no button, and the nav holds 
 
 test('13 N.4: before the answer the label is "Instances", and the same list and links carry it; when the answer arrives the label moves', async () => {
   const h = held()
-  const { nav } = await open({ node: h.answer })
+  const { nav } = await open({ version: h.answer })
   const before = await instanceList(nav)
   expect(
     (before.label?.textContent ?? '').trim(),
     'the fallback while the read is open',
   ).toBe(en('nav-instances'))
-  h.resolve(reply(200, NODE))
+  h.resolve(reply(200, VERSION_HOST))
   // The host name lands in the nav label and, on the Overview, in the h2 over
   // the tiles: the nav is the place this test watches.
-  await within(nav).findByText(NODE.name, {}, { timeout: 2_000 })
+  await within(nav).findByText(VERSION_HOST.name, {}, { timeout: 2_000 })
   const after = await instanceList(nav)
   expect(after.list, 'the same list element').toBe(before.list)
   expect(
@@ -465,13 +524,13 @@ test('13 N.4: before the answer the label is "Instances", and the same list and 
   expect(
     (after.label?.textContent ?? '').trim(),
     'the words moved to the host',
-  ).toBe(NODE.name)
+  ).toBe(VERSION_HOST.name)
 })
 
 test('13 N.4: no instances, no label and no instance list, host name or not', async () => {
   // `open` waits for an instance link, and there is none here: the nav arrives
   // with the session, and the Overview with its own read.
-  fakeBff({ node: NODE, instances: [] })
+  fakeBff({ version: VERSION_HOST, instances: [] })
   render(<App />)
   const nav = await navOf()
   await screen.findByRole('heading', {
@@ -479,7 +538,7 @@ test('13 N.4: no instances, no label and no instance list, host name or not', as
     name: en('overview-title'),
   })
   expect(
-    within(nav).queryByText(NODE.name),
+    within(nav).queryByText(VERSION_HOST.name),
     'no host label over an empty list',
   ).toBeNull()
   expect(
@@ -488,44 +547,64 @@ test('13 N.4: no instances, no label and no instance list, host name or not', as
   ).toBeNull()
   expect(
     navLinks(nav).map((a) => a.textContent?.trim()),
-    'Overview, the model profiles, About',
-  ).toEqual([en('nav-overview'), en('nav-model-profiles'), en('nav-about')])
+    'Overview, the model profiles, Node info, About',
+  ).toEqual([
+    en('nav-overview'),
+    en('nav-model-profiles'),
+    en('nav-node'),
+    en('nav-about'),
+  ])
 })
 
-// ── 13 N.6: the About entry ─────────────────────────────────────────────────
+// ── 13 N.6 (18 AN.6): the last list of the nav ──────────────────────────────
 
-test('13 N.6: signed in, the nav last item is the About link to #/about, in a list of its own after the Profiles list, with the info icon first', async () => {
-  const { nav } = await open({ node: NODE })
+test('13 N.6: signed in, the nav last list holds the Node info link then the About link, after the Profiles list, each with its icon first, About still last', async () => {
+  const { nav } = await open({ version: VERSION_HOST })
   const groups = Array.from(nav.querySelectorAll(':scope > ul'))
-  const about = groups[groups.length - 1]
-  expect(about, 'About sits in a list of its own').not.toBeNull()
+  const last = groups[groups.length - 1]
+  expect(last, 'Node info and About sit in the last list').not.toBeNull()
   expect(
-    about.hasAttribute('aria-labelledby'),
-    'and the list has no label: About is not a group of many',
+    last.hasAttribute('aria-labelledby'),
+    'and the list has no label: these are not a group of many',
   ).toBe(false)
-  const links = Array.from(about.querySelectorAll('a'))
+  const links = Array.from(last.querySelectorAll('a'))
   expect(
     links.map((a) => a.textContent?.trim()),
-    'one link, named About',
-  ).toEqual([en('nav-about')])
-  expect(links[0]?.getAttribute('href'), 'its address').toBe('#/about')
-  const icon = links[0]?.firstElementChild
-  expect(icon?.tagName, 'the info icon is the first thing in the link').toBe(
-    'svg',
-  )
-  expect(icon?.classList.contains('icon'), 'the icon the sheet sizes').toBe(
-    true,
-  )
-  expect(icon?.getAttribute('aria-hidden'), 'the icon is decorative').toBe(
-    'true',
-  )
-  expect(links[0]?.getAttribute('aria-label'), 'named by its text').toBeNull()
+    'Node info first, About last (18 AN.6)',
+  ).toEqual([en('nav-node'), en('nav-about')])
+  expect(
+    links.map((a) => a.getAttribute('href')),
+    'their addresses',
+  ).toEqual(['#/node', '#/about'])
+  const pairs: [HTMLAnchorElement, string][] = [
+    [links[0], en('nav-node')],
+    [links[1], en('nav-about')],
+  ]
+  for (const [link, name] of pairs) {
+    const icon = link?.firstElementChild
+    expect(
+      icon?.tagName,
+      `${name}: the icon is the first thing in the link`,
+    ).toBe('svg')
+    expect(
+      icon?.classList.contains('icon'),
+      `${name}: the icon the sheet sizes`,
+    ).toBe(true)
+    expect(
+      icon?.getAttribute('aria-hidden'),
+      `${name}: the icon is decorative`,
+    ).toBe('true')
+    expect(
+      link?.getAttribute('aria-label'),
+      `${name}: named by its text`,
+    ).toBeNull()
+  }
   const profiles = await within(nav).findByRole('list', {
     name: en('nav-profiles'),
   })
   expect(
-    profiles.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING,
-    'the About list comes after the Profiles group',
+    profiles.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING,
+    'the list comes after the Profiles group',
   ).toBeTruthy()
   expect(
     navLinks(nav).at(-1)?.textContent?.trim(),
@@ -533,8 +612,27 @@ test('13 N.6: signed in, the nav last item is the About link to #/about, in a li
   ).toBe(en('nav-about'))
 })
 
+test('18 AN.6: the Node info link carries aria-current="page" on #/node and none on the other pages, and the About link keeps its own', async () => {
+  const { nav } = await open({ version: VERSION_HOST })
+  const node = () => within(nav).getByRole('link', { name: en('nav-node') })
+  const about = () => within(nav).getByRole('link', { name: en('nav-about') })
+  expect(node().hasAttribute('aria-current'), 'not on the Overview').toBe(false)
+  for (const hash of ['#/instances/default', '#/profiles/model', '#/about']) {
+    navigate(hash)
+    await screen.findByRole('main')
+    expect(node().hasAttribute('aria-current'), `not on ${hash}`).toBe(false)
+    expect(
+      about().getAttribute('aria-current'),
+      `About has it on #/about, nowhere else: ${hash}`,
+    ).toBe(hash === '#/about' ? 'page' : null)
+  }
+  navigate('#/node')
+  await screen.findByRole('heading', { level: 1, name: en('node-title') })
+  expect(node().getAttribute('aria-current'), 'on its own page').toBe('page')
+})
+
 test('13 N.6: the About link has aria-current="page" on #/about and none on the other pages', async () => {
-  const { nav } = await open({ node: NODE })
+  const { nav } = await open({ version: VERSION_HOST })
   const link = () => within(nav).getByRole('link', { name: en('nav-about') })
   expect(link().hasAttribute('aria-current'), 'not on the Overview').toBe(false)
   for (const hash of ['#/instances/default', '#/profiles/model']) {
@@ -549,7 +647,7 @@ test('13 N.6: the About link has aria-current="page" on #/about and none on the 
 
 test('13 N.6: signed out at #/about there is no nav, so no About entry', async () => {
   startAt('#/about')
-  const bff = fakeBff({ node: NODE, session: 'signed-out' })
+  const bff = fakeBff({ version: VERSION_HOST, session: 'signed-out' })
   render(<App />)
   const main = await signInPage(screen.getByRole('main'))
   expect(
@@ -557,13 +655,13 @@ test('13 N.6: signed out at #/about there is no nav, so no About entry', async (
     'the notice',
   ).toBeTruthy()
   expect(screen.queryByRole('navigation'), 'no nav signed out').toBeNull()
-  expect(nodeReads(bff), 'and no read signed out').toBe(0)
+  expect(hostReads(bff), 'and no read signed out').toBe(0)
 })
 
 // ── 13 N.11: the order, and the menu ────────────────────────────────────────
 
 test('13 N.11: at #/about the Tab path is the shell and its links with About last, and the page adds no stop of its own', async () => {
-  const { nav } = await open({ node: NODE })
+  const { nav } = await open({ version: VERSION_HOST })
   navigate('#/about')
   const h1 = await screen.findByRole('heading', {
     level: 1,
@@ -572,7 +670,7 @@ test('13 N.11: at #/about the Tab path is the shell and its links with About las
   expect(document.activeElement, 'the page takes the focus on its h1').toBe(h1)
   expect(
     tabbable().map(nameOf),
-    'the shell order, About the last stop',
+    'the shell order, About the last stop (18 AN.6: Node info precedes it)',
   ).toEqual([
     en('skip-to-content'),
     en('app-name'),
@@ -583,6 +681,7 @@ test('13 N.11: at #/about the Tab path is the shell and its links with About las
     'default',
     'coder',
     en('nav-model-profiles'),
+    en('nav-node'),
     en('nav-about'),
   ])
   expect(
@@ -596,7 +695,7 @@ test('13 N.11: at #/about the Tab path is the shell and its links with About las
 })
 
 test('13 N.11: the Menu button opens the nav, its links read in the same order with About last, and a click on About closes it', async () => {
-  const { nav } = await open({ node: NODE })
+  const { nav } = await open({ version: VERSION_HOST })
   const button = menuButton()
   expect(button.getAttribute('aria-expanded'), 'closed at first').toBe('false')
   fireEvent.click(button)
@@ -609,12 +708,13 @@ test('13 N.11: the Menu button opens the nav, its links read in the same order w
   ).toBe(true)
   expect(
     navLinks(nav).map((a) => a.textContent?.trim()),
-    'the same links, in the same order, About last',
+    'the same links, in the same order, Node info before About, About last (18 AN.6)',
   ).toEqual([
     en('nav-overview'),
     'default',
     'coder',
     en('nav-model-profiles'),
+    en('nav-node'),
     en('nav-about'),
   ])
   const about = navLinks(nav).at(-1)!

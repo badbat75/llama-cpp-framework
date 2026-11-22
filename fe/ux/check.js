@@ -268,15 +268,69 @@ const STATES = [
   },
   {
     name: 'about',
-    // 13 N.7 to N.9: the versions installed on the host, read again at every
-    // arrival. The stub's node has one engine with three backend packages, so
-    // the page shows the framework's list and the engine's: two `dl.assets`,
-    // the engine's `h3` under the first with the gap of 13 N.12.
+    // 18 AN.2 and AN.3: the framework's version and the operating system, read
+    // again at every arrival, in one list of two rows. The host's engines and
+    // GPUs are the node page's now (18 AN.8), not this page's.
     set: 'session=admin',
     hash: '#/about',
     expect: [
       { selector: '#page-heading', text: S['about-title'] },
+      { selector: 'dl.assets', count: 1 },
+    ],
+  },
+  {
+    name: 'node',
+    // 18 AN.8: the host's top list, then the `node-engines` heading with one
+    // list per engine, then the `node-gpus` heading with one block per GPU.
+    // The stub's node has one engine and three GPUs: five `dl.assets`.
+    set: 'session=admin&node=ok',
+    hash: '#/node',
+    expect: [
+      { selector: '#page-heading', text: S['node-title'] },
+      { selector: 'h2', text: S['node-engines'] },
+      { selector: 'h2', text: S['node-gpus'] },
+      { selector: 'dl.assets', count: 5 },
+    ],
+  },
+  {
+    name: 'node-down',
+    // 18 AN.13: the manager did not answer, so `os`, `vulkan` and `gpus` are
+    // null: the top and the engine lists stay (2) and the notice says why.
+    set: 'session=admin&node=down',
+    hash: '#/node',
+    expect: [
+      { selector: '#page-heading', text: S['node-title'] },
       { selector: 'dl.assets', count: 2 },
+      { selector: 'p', text: S['node-info-unavailable'] },
+    ],
+  },
+  {
+    name: 'node-long',
+    // 18 AN.14: the widest the page takes, 32 GPUs of 256 unbroken characters
+    // and a host name of 253. Every text has to break inside its block: the
+    // check's own scrollWidth read, and the 200 % text pass, prove no sideways
+    // scroll at 320 px.
+    set: 'session=admin&node=long',
+    hash: '#/node',
+    expect: [
+      { selector: '#page-heading', text: S['node-title'] },
+      { selector: 'h2', text: S['node-gpus'] },
+      { selector: 'h3', count: 32, message: 'one heading per GPU row' },
+    ],
+  },
+  {
+    name: 'loading-node',
+    // 18 AN.9 (17a): the node read held, the session answering, so the page is
+    // the skeleton of its first read: six lines, the loading text in the DOM
+    // and out of sight.
+    set: 'session=admin&load=slow',
+    hash: '#/node',
+    hold: true,
+    expect: [
+      { selector: '#page-heading', text: S['node-title'] },
+      { selector: 'main .skeleton', count: 6 },
+      { selector: '[role="status"]' },
+      { selector: '.visually-hidden' },
     ],
   },
 ]
@@ -418,14 +472,15 @@ async function hovered(page, state) {
 
 /** The state on the page: the stub's set, then the route. The stub keeps every
  *  key a /__set did not carry, so the state's own set goes after a reset to
- *  the default list of instances, the default tags and the fast reads: the two
- *  tile states ask for list=many themselves, the tags state for tags=long and
- *  the loading ones for load=session or load=slow, and a state that ran before
- *  them leaves none of them behind for the pages after it. A hash change does
+ *  the default list of instances, the default tags, the fast reads and the
+ *  answering node: the two tile states ask for list=many themselves, the tags
+ *  state for tags=long, the loading ones for load=session or load=slow and the
+ *  node states for node=down or node=long, and a state that ran before them
+ *  leaves none of them behind for the pages after it. A hash change does
  *  not reload the app, so every state starts from a blank page. */
 async function load(page, state) {
   const found = []
-  for (const q of ['list=one&tags=few&load=fast', state.set]) {
+  for (const q of ['list=one&tags=few&load=fast&node=ok', state.set]) {
     const res = await fetch(`${BASE}/__set?${q}`)
     if (!res.ok) {
       found.push(`set request: ${res.status} ${res.statusText}`)

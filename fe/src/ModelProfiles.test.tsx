@@ -563,6 +563,8 @@ test('2a.1: signed in, the nav holds Overview, the instance links, then Model pr
     'default',
     'coder',
     en('nav-model-profiles'),
+    // 18 AN.6: Node info, then About.
+    en('nav-node'),
     en('nav-about'),
   ])
   expect(list.contains(models)).toBe(false)
@@ -580,6 +582,7 @@ test('2a.1: a failed instances read leaves out the Instances group, not Model pr
   expect(navLinks()).toEqual([
     en('nav-overview'),
     en('nav-model-profiles'),
+    en('nav-node'),
     en('nav-about'),
   ])
 })
@@ -891,6 +894,8 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
     'default',
     'coder',
     en('nav-model-profiles'),
+    // 18 AN.6: Node info, then About, both before the page.
+    en('nav-node'),
     en('nav-about'),
     en('model-profiles-filter-label'),
     en('model-profiles-column-name'),

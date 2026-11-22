@@ -92,7 +92,8 @@ test('09 S1a.3 (1a.2): until the session answers, main shows loading and there i
     'default',
     'coder',
     en('nav-model-profiles'),
-    // Slice 13: About is the last entry of the nav.
+    // Slice 18 (18 AN.6): Node info joins the last group, and About stays last.
+    en('nav-node'),
     en('nav-about'),
   ])
   expect(bff.to('GET', '/api/session')).toHaveLength(1)
@@ -115,6 +116,7 @@ test('1a.4: a failed instances read leaves the list out of the nav, the Overview
   expect(navLinks()).toEqual([
     en('nav-overview'),
     en('nav-model-profiles'),
+    en('nav-node'),
     en('nav-about'),
   ])
 })
@@ -309,6 +311,8 @@ test('1a.4: signed in, the nav holds Overview then an Instances list with one li
     'big-model',
     // After the Instances group (fe/briefs/02-models.md, 2a criterion 1).
     en('nav-model-profiles'),
+    // Slice 18 (18 AN.6): Node info, then About last.
+    en('nav-node'),
     en('nav-about'),
   ])
   const overview = within(nav).getByRole('link', { name: en('nav-overview') })

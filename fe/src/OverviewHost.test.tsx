@@ -4,6 +4,9 @@
 // words when the shell has no name, and comes with no new class. "13 N.5" is
 // the brief's criterion 5.
 //
+// Slice 18 moved where the shell reads the host (fe/briefs/18-about-node-info.md,
+// 18 AN.15: GET /api/version); what the page shows stays 13 N.5's.
+//
 // The sheet's class freeze and its overflow-wrap rules are pinned by
 // Reflow.test.ts (10 R1.8, 10 R1.1, and 12 T1 layout for the tile's facts).
 // What is pinned here is the shape of the name in the DOM: plain text in a
@@ -17,7 +20,14 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
-import { en, fakeBff, NODE, reply, startAt } from './test/bff.ts'
+import {
+  VERSION,
+  VERSION_HOST,
+  en,
+  fakeBff,
+  reply,
+  startAt,
+} from './test/bff.ts'
 
 beforeEach(() => startAt('#/'))
 
@@ -30,9 +40,12 @@ afterEach(() => {
 /** The words of today, the fallback of the nav label and of this h2. */
 const FALLBACK = en('instances-title')
 
-/** The signed-in app on the Overview, the shell's node read answered by `node`. */
+/**
+ * The signed-in app on the Overview. The shell's host read is GET /api/version
+ * (18 AN.15), answered by `version`.
+ */
 async function open(over: Parameters<typeof fakeBff>[0] = {}) {
-  const bff = fakeBff({ node: NODE, ...over })
+  const bff = fakeBff({ version: VERSION_HOST, ...over })
   render(<App />)
   const main = screen.getByRole('main')
   await screen.findByRole('button', { name: en('session-sign-out') })
@@ -57,13 +70,13 @@ function h2s(): string[] {
 
 test("13 N.5: with the shell having read the host, the Overview's h2 over the tiles is the host name alone, with no extra element and no class", async () => {
   const { main } = await open()
-  const h2 = await heading(main, NODE.name)
+  const h2 = await heading(main, VERSION_HOST.name)
   expect(h2.children.length, 'plain text: no span, no icon').toBe(0)
   expect(h2.className, 'no class, so no new look').toBe('')
   expect(
     h2s(),
     'the instances section is the only h2 of the page, today and after',
-  ).toEqual([NODE.name])
+  ).toEqual([VERSION_HOST.name])
   expect(
     within(main).queryByText(FALLBACK),
     'the words of today are gone once the name is read',
@@ -77,8 +90,10 @@ test("13 N.5: with the shell having read the host, the Overview's h2 over the ti
 })
 
 test('13 N.5: the name shown is the one of the reply the shell read', async () => {
+  // A fresh reply per read: the Overview's version line (13 N.10) reads the host
+  // too (18 AN.15), and a Response body is good once (test/bff.ts).
   const { main } = await open({
-    node: reply(200, { ...NODE, name: 'router-3' }),
+    version: () => reply(200, { ...VERSION, name: 'router-3' }),
   })
   const h2 = await heading(main, 'router-3')
   expect(h2.textContent?.trim(), 'the host of this reply').toBe('router-3')
@@ -86,7 +101,7 @@ test('13 N.5: the name shown is the one of the reply the shell read', async () =
 
 test("13 N.5: with the name read failed, the same h2 reads Instances, today's words, and the tiles are there", async () => {
   const { main } = await open({
-    node: () => reply(503, { key: 'client-unavailable', args: [] }),
+    version: () => reply(503, { key: 'client-unavailable', args: [] }),
   })
   const h2 = await heading(main, FALLBACK)
   expect(h2.className, 'the fallback carries no class').toBe('')
@@ -106,7 +121,9 @@ test('13 N.5: an empty name, a null name and a name that is not a string all sho
   ] as Array<[string, unknown]>) {
     cleanup()
     vi.unstubAllGlobals()
-    const { main } = await open({ node: reply(200, { ...NODE, name }) })
+    const { main } = await open({
+      version: () => reply(200, { ...VERSION, name }),
+    })
     const h2 = await heading(main, FALLBACK)
     expect(
       (h2.textContent ?? '').trim(),
@@ -122,12 +139,15 @@ test('13 N.5: an empty name, a null name and a name that is not a string all sho
   }
 })
 
-test('13 N.5: the Overview sends no read of its own for the name, and nothing on it asks again', async () => {
+test('13 N.5: the Overview adds no read for the name: the shell one (18 AN.15) and the version line of 13 N.10 are the only GET /api/version, and nothing on the name asks again', async () => {
   const { bff, main } = await open()
-  await heading(main, NODE.name)
-  expect(bff.to('GET', '/api/node').length, 'the shell read, once').toBe(1)
+  await heading(main, VERSION_HOST.name)
+  expect(
+    bff.to('GET', '/api/version').length,
+    'the shell read of the host, plus the version line of 13 N.10: the h2 asks for nothing of its own',
+  ).toBe(2)
   fireEvent.click(screen.getByRole('button', { name: en('session-sign-out') }))
-  expect(bff.to('GET', '/api/node').length, 'sign-out reads nothing').toBe(1)
+  expect(bff.to('GET', '/api/version').length, 'sign-out reads nothing').toBe(2)
 })
 
 // ── 13 N.12: nothing else changed ───────────────────────────────────────────
@@ -135,7 +155,11 @@ test('13 N.5: the Overview sends no read of its own for the name, and nothing on
 test('13 N.12: a name with no break point is plain text in the h2, with no class of its own for the sheet to grow', async () => {
   const long = 'a-host-name-with-no-break-point'.repeat(9)
   expect(long.length, 'the 253 characters of the brief').toBeGreaterThan(250)
-  const { main } = await open({ node: reply(200, { ...NODE, name: long }) })
+  const { main } = await open({
+    // A fresh reply per read: the shell and the Overview's version line both
+    // read the host (18 AN.15), and a body is good once.
+    version: () => reply(200, { ...VERSION, name: long }),
+  })
   const h2 = await heading(main, long)
   expect(h2.className, 'no class of its own').toBe('')
   expect(h2.children.length, 'no element inside it').toBe(0)

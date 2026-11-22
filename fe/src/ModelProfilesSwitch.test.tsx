@@ -985,6 +985,8 @@ test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops):
     'default',
     'coder',
     en('nav-model-profiles'),
+    // 18 AN.6: Node info, then About, both before the page.
+    en('nav-node'),
     en('nav-about'),
     en('model-profiles-filter-label'),
   ]

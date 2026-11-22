@@ -233,3 +233,7 @@ description: What the architect has learned about this project's components, int
   assignment keys, which bind to a later profile of the same id: a create must clear them.
 - A value the web shell needs on every page (the host name) must come from a read that asks the
   manager nothing (`/api/version`): since AN4, `/api/node` waits on `NodeInfoAs` (10 s cold).
+- Vulkan (checked 2026-11-22, docs.vulkan.org refpages): `VK_EXT_pci_bus_info` and
+  `VK_KHR_driver_properties` are DEVICE extensions; a probe that looks for them in the instance
+  extension list never finds them. Script-driven tests of a child cannot catch this: review the
+  child's Vulkan calls by hand and make the first real run show `pci` on every row.

@@ -667,6 +667,8 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
     'default',
     'coder',
     en('nav-model-profiles'),
+    // 18 AN.6: Node info, then About, both before the page.
+    en('nav-node'),
     en('nav-about'),
     ...pageStartTabStops(),
     ...CARD_TAB_STOPS,

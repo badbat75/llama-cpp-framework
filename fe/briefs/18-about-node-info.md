@@ -301,3 +301,36 @@ That is 10 criteria in AN5a (AN.1 to AN.9 and AN.15) and 5 in AN5b (AN.10 to AN.
 The shell's once-per-session `GET /api/node` would have asked the manager and waited up to 10 s
 cold. Settled by the architect (2026-11-22): `GET /api/version` carries `name`, and the shell reads
 it there (AN.15).
+
+## AN5 review (designer, 2026-11-22): accepted
+
+Read against the code and tests, and checked in Chromium, Firefox and WebKit with `fe/ux/stub.py`
+(`build/ux-review/an5.js`, shots in `build/ux-review/an5/`): About, Node info with `node=ok`, `down`
+and `long`, and three replies routed in Playwright for the muted words (driver `null`, in-kernel,
+unknown vendor id, PCI `null`, Vulkan `none`, `failed`, unreported, driver only, `gpus: []`); 1280
+and 320 px, 100 % and 200 % text, light and dark: 168 states, sideways scroll 0 in every one.
+
+- AN.1 met: `fe/src/strings/en_US.json` 468 to 494, the 27 keys and their English.
+- AN.2, AN.3 met: `fe/src/About.tsx` 23 to 59, one `GET /api/version` per arrival, a two-line
+  skeleton, one `dl.assets` of two rows; the OS joins by `Value.tsx` `joined`. Seen: "3.0.0",
+  "Ubuntu 26.04", no host, no kernel.
+- AN.4 met, with one refinement: a 403 `session-not-administrator` signs out as revoked
+  (`About.tsx` 29, `AboutPage.test.tsx` 320), as every read does under 09 S1b.1; the brief's "any
+  other status" is read as excluding it.
+- AN.5 met: `route.ts` 18; title "Node info | Private AI Framework"; after a click the focus is on
+  the `h1` in all three engines.
+- AN.6 met: `App.tsx` 503 to 525; `cpu` path data of lucide-static 1.74.0 (`Icon.tsx` 95 to 112);
+  Tab order seen in all three engines: Skip to content, home, theme, Sign out, Overview, default,
+  Model profiles, Node info, About; at 320 px a click on Node info closes the menu.
+- AN.7 met: `node.ts` 65 to 203.
+- AN.8, AN.9 met: `NodePage.tsx` 238 to 270; with `/api/node` held 6 s the page shows the hidden
+  status `node-loading` and six skeleton lines.
+- AN.10 to AN.13 met: `NodePage.tsx` 81 to 211; every muted word seen in the right row, the
+  vendor names in the body font, an unknown id in mono; `node=down` keeps host, framework and
+  engines and shows the `node-info-unavailable` paragraph with no role.
+- AN.14 met: 32 blocks with 256-character values and a 253-character host wrap at 320 px and 200 %;
+  the spacing of `h2` after a list and of `.assets + h3` reads as sections, so no rule is needed.
+- AN.15 met: `App.tsx` 180; with `/api/node` held, the nav group label reads "gpu-box" at once.
+- Screen reader view (Playwright aria snapshot): h1 Node info, the terms and definitions of the
+  host list, h2 Engines, h3 llama.cpp, h2 GPUs, h3 "GPU 1: AMD Radeon AI PRO R9700" ..., in reading
+  order; the in-kernel driver reads as one definition "xe (part of the kernel, ...)".

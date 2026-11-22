@@ -24,6 +24,7 @@ import {
   fakeBff,
   reply,
   startAt,
+  VERSION_HOST,
   type BffOptions,
 } from './test/bff.ts'
 
@@ -316,15 +317,36 @@ test('17a.4 model profile page: the read pending shows its kept text hidden, the
   gate.resolve(reply(200, {}))
 })
 
-test('17a.4 About: the read pending shows its kept text hidden, then four lines', async () => {
+test('17a.4 About: the read pending shows its kept text hidden, then two lines', async () => {
   const gate = deferred()
-  const { main } = await open({ node: () => gate.promise }, '#/about')
+  const { main } = await open({ version: () => gate.promise }, '#/about')
   expectStatus(main, en('about-loading'))
 
   await advance(299)
   expect(blocks(main).length, 'no skeleton at 299 ms').toBe(0)
   await advance(1)
-  expect(lines(main).length, 'four lines of versions to come').toBe(4)
+  expect(
+    lines(main).length,
+    'two lines to come: the framework and the operating system (18 AN.2)',
+  ).toBe(2)
+  expect(main.querySelectorAll('dl').length, 'no list yet').toBe(0)
+  for (const el of blocks(main))
+    expect(el.closest('[aria-hidden="true"]'), 'aria-hidden').not.toBeNull()
+  gate.resolve(reply(200, VERSION_HOST))
+})
+
+test('17a.4 Node info: the read pending shows its kept text hidden, then six lines', async () => {
+  const gate = deferred()
+  const { main } = await open({ node: () => gate.promise }, '#/node')
+  expectStatus(main, en('node-loading'))
+
+  await advance(299)
+  expect(blocks(main).length, 'no skeleton at 299 ms').toBe(0)
+  await advance(1)
+  expect(
+    lines(main).length,
+    'six lines to come: the four of the top list and the engine (18 AN.9)',
+  ).toBe(6)
   expect(main.querySelectorAll('dl').length, 'no list yet').toBe(0)
   for (const el of blocks(main))
     expect(el.closest('[aria-hidden="true"]'), 'aria-hidden').not.toBeNull()
@@ -375,11 +397,11 @@ for (const { name, answer } of answers) {
 }
 
 for (const [name, answer] of [
-  ['the versions', () => reply(200, NODE)],
+  ['the versions', () => reply(200, VERSION_HOST)],
   ['the failure', () => reply(503, { key: 'client-unavailable', args: [] })],
 ] as [string, () => Response][]) {
   test(`17a.5 About, ${name}: the status and the skeleton go in the same render, and the focus stays`, async () => {
-    const { main } = await open({ node: late(answer) }, '#/about')
+    const { main } = await open({ version: late(answer) }, '#/about')
     await advance(300)
     expect(blocks(main).length, 'the skeleton is up').toBeGreaterThan(0)
     expectStatus(main, en('about-loading'))

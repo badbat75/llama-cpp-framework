@@ -50,11 +50,12 @@ const ENDED = () => reply(401, { key: 'session-required', args: [] })
 const REVOKED = () => reply(403, { key: 'session-not-administrator', args: [] })
 
 /** The Overview's page reads (S1b.1), as `route` spells them. The tile's own
- *  boot read is gone (13 N.1), and the shell's node read ends no session
- *  (13 N.3): it is one of NOT_AN_END. */
+ *  boot read is gone (13 N.1). The shell's host read is GET /api/version too
+ *  (18 AN.15) and ends no session: as the same route, the Overview cannot tell
+ *  it from the version line's read, so that row is in NodeNav.test.tsx, on a
+ *  page with no version line. */
 const VERSION = 'GET /api/version'
 const LIST = 'GET /api/instances'
-const NODE_READ = 'GET /api/node'
 /** The boot read of the instance page's field, which stays (13 N.1). */
 const BOOT = 'GET /api/instances/default/boot'
 
@@ -527,22 +528,9 @@ const NOT_AN_END: [string, string, BffOptions, string][] = [
     en('version-unavailable'),
   ],
   [
-    '404 client-no-instance',
-    NODE_READ,
-    {
-      node: () => reply(404, { key: 'client-no-instance', args: [] }),
-    },
-    en('instance-state-active'),
-  ],
-  [
-    // The shell's own read: a 401 there leaves the labels at their fallback
-    // and signs nobody out (13 N.3); the page reads say the session ended.
-    '401 session-required',
-    NODE_READ,
-    { node: ENDED },
-    en('instances-title'),
-  ],
-  [
+    // The shell's host read is GET /api/version as well (18 AN.15): its 401
+    // signs nobody out, pinned in NodeNav.test.tsx on a page with no version
+    // line, where the one read of that route is the shell's.
     'a malformed body',
     LIST,
     { instances: () => reply(200, 'secret-detail') },

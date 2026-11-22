@@ -1,8 +1,9 @@
 // fe/src/AboutPage.test.tsx
-// Slice 13's About page (fe/briefs/13-node-about.md, 13 N.7, 13 N.8, 13 N.9,
-// 13 N.10): the page at #/about, its one read per arrival, the versions as a
-// description list per engine, the unknown and empty answers, and the failures.
-// "13 N.8" is the brief's criterion 8.
+// Slice 18 AN5a (fe/briefs/18-about-node-info.md, 18 AN.2, 18 AN.3, 18 AN.4,
+// with 13 N.7's one read per arrival and 13 N.12's class rules): the About page
+// at #/about is two lines, the framework's name and version and the operating
+// system, read from GET /api/version. The engines and the GPUs live on the Node
+// info page now (NodePage.test.tsx). "18 AN.2" is the brief's criterion 2.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -21,10 +22,12 @@ import {
   held,
   navigate,
   NODE,
+  OS,
   reply,
   startAt,
-  type NodeEngine,
-  type NodeInfo,
+  VERSION_HOST,
+  type BffOptions,
+  type VersionBody,
 } from './test/bff.ts'
 
 // The page is reached by a navigation, as a visitor reaches it: the app moves
@@ -38,14 +41,15 @@ afterEach(() => {
   startAt('')
 })
 
-/** The host of the brief, with these engines. */
-function nodeWith(engines: unknown[], over: Partial<NodeInfo> = {}): Response {
-  return reply(200, { ...NODE, ...over, engines })
+/** GET /api/version with these fields over the reply of brief 18 section 0. */
+function versionWith(over: Partial<VersionBody>): Response {
+  return reply(200, { ...VERSION_HOST, ...over })
 }
 
-/** The app at `#/about`, its page read answered by `node`. */
-async function open(over: Parameters<typeof fakeBff>[0] = {}) {
-  const bff = fakeBff({ node: NODE, ...over })
+/** The app at `#/about`. The default answers the host, the version and the
+ * operating system, so the shell's label and the page's lines both land. */
+async function open(over: BffOptions = {}) {
+  const bff = fakeBff({ version: VERSION_HOST, node: NODE, ...over })
   render(<App />)
   navigate('#/about')
   const main = screen.getByRole('main')
@@ -57,19 +61,12 @@ async function open(over: Parameters<typeof fakeBff>[0] = {}) {
 }
 
 /**
- * The page's read has landed: its reply's host `h2` is on screen. The h1 is
- * there while the read is open, so a test that reads the lists has to wait for
+ * The page's read has landed: a value of the list is on screen. The h1 is
+ * there while the read is open, so a test that reads the rows has to wait for
  * the reply, the way a visitor waits for the words.
  */
 async function settled(main: HTMLElement): Promise<void> {
-  await within(main).findByRole('heading', { level: 2 })
-}
-
-/** The h2s of main, in order, as text. */
-function hostHeadings(main: HTMLElement): string[] {
-  return within(main)
-    .getAllByRole('heading', { level: 2 })
-    .map((h) => (h.textContent ?? '').trim())
+  await within(main).findByText(VERSION_HOST.version as string)
 }
 
 /** The description lists of main, in document order. */
@@ -121,7 +118,7 @@ test('13 N.7: at #/about the document title is About with the app name, the h1 r
 
 test('13 N.7: while the read is open the page shows the loading text in a status paragraph and no list', async () => {
   const h = held()
-  const { main } = await open({ node: h.answer })
+  const { main } = await open({ version: h.answer })
   const status = await within(main).findByRole('status')
   expect(status.tagName, 'a paragraph').toBe('P')
   expect(status.textContent?.trim(), 'the loading words').toBe(
@@ -135,137 +132,157 @@ test('13 N.7: while the read is open the page shows the loading text in a status
     within(main).queryByText(en('about-failed')),
     'not the failure words',
   ).toBeNull()
+  h.resolve(versionWith({}))
 })
 
-test('13 N.7: arriving at #/about sends one GET /api/node of the page own, beside the shell one; leaving and coming back sends another, staying sends none', async () => {
-  const { bff } = await open()
-  expect(
-    bff.to('GET', '/api/node').length,
-    'the session read, and the page read of this arrival',
-  ).toBe(2)
-  navigate('#/')
+test('18 AN.2: arriving at #/about sends one GET /api/version of the page own, beside the shell one; leaving and coming back sends another, staying sends none', async () => {
+  startAt('#/')
+  const bff = fakeBff({ version: VERSION_HOST, node: NODE })
+  render(<App />)
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
-  expect(bff.to('GET', '/api/node').length, 'the Overview reads nothing').toBe(
+  // What the app read before the page ever appeared: the shell's read (AN.15)
+  // and the Overview's own version line.
+  const reads = () => bff.to('GET', '/api/version').length
+  const start = reads()
+  expect(start, 'the shell reads once, and the Overview has its own line').toBe(
     2,
   )
   navigate('#/about')
   await screen.findByRole('heading', { level: 1, name: en('about-title') })
-  expect(
-    bff.to('GET', '/api/node').length,
-    'the page reads again on the next arrival',
-  ).toBe(3)
-  // Staying on it: nothing re-reads.
+  expect(reads(), 'the page reads once on arrival').toBe(start + 1)
+  navigate('#/')
+  await screen.findByRole('heading', { level: 1, name: en('overview-title') })
+  expect(reads(), 'the Overview sends its own one, the About page none').toBe(
+    start + 2,
+  )
+  navigate('#/about')
+  await screen.findByRole('heading', { level: 1, name: en('about-title') })
+  expect(reads(), 'the page reads again').toBe(start + 3)
   fireEvent.click(
     screen.getByRole('heading', { level: 1, name: en('about-title') }),
   )
-  expect(bff.to('GET', '/api/node').length, 'no read for a click').toBe(3)
+  expect(reads(), 'no read for a click').toBe(start + 3)
 })
 
-test('13 N.7: signed out at #/about the sign-in page shows with the notice, and no GET /api/node is sent', async () => {
-  startAt('#/about')
-  const bff = fakeBff({ node: NODE, session: 'signed-out' })
-  render(<App />)
-  const main = screen.getByRole('main')
-  await within(main).findByRole('heading', {
-    level: 1,
-    name: en('signin-title'),
-  })
-  expect(
-    within(main).getByText(en('signin-required')),
-    'the notice',
-  ).toBeTruthy()
-  expect(bff.to('GET', '/api/node').length, 'nothing read signed out').toBe(0)
-})
+// ── 18 AN.2 and AN.3: the two lines, read off GET /api/version ──────────────
 
-// ── 13 N.8: the versions ────────────────────────────────────────────────────
-
-test('13 N.8: the reply of the brief shows the host as a h2, the framework row, then the engine as a h3 with its version and its backends', async () => {
+test('18 AN.2: the reply of section 0 shows one list, class assets, of exactly two rows: the app name with the version, and the operating system joined', async () => {
   const { main } = await open()
   await settled(main)
-  expect(hostHeadings(main), 'one host section, named by the host').toEqual([
-    NODE.name,
-  ])
   const on = lists(main)
-  expect(on.length, 'the framework list and the engine list').toBe(2)
+  expect(on.length, 'one list, alone').toBe(1)
   expect(
-    on.map((dl) => dl.classList.contains('assets')),
-    'both are the Value list, class assets, no new class',
-  ).toEqual([true, true])
-  expect(
-    rows(on[0]),
-    'the framework row: the app name, and its version',
-  ).toEqual([[en('app-name'), NODE.version as string]])
-  expect(
-    within(main)
-      .getAllByRole('heading', { level: 3 })
-      .map((h) => (h.textContent ?? '').trim()),
-    'one engine, named by its id as sent, in the reply order',
-  ).toEqual(['llama.cpp'])
-  expect(
-    rows(on[1]),
-    'the engine rows, in order: Version, then the backends by display name',
-  ).toEqual([
-    [en('about-version'), '1:1.0.0+pai2'],
-    [en('backend-cuda'), '13.5.0+nccl.2.32.3'],
-    [en('backend-rocm'), '10.1.0'],
-    [en('backend-vulkan'), '1.4.363.1'],
+    on[0]!.classList.contains('assets'),
+    'the Value list, class assets, no new class',
+  ).toBe(true)
+  expect(rows(on[0]!), 'the two rows, in this order').toEqual([
+    [en('app-name'), VERSION_HOST.version as string],
+    [en('system-os'), `${OS.name} ${OS.version}`],
   ])
   expect(
-    ddClasses(on[1]).map(([muted, mono]) => [muted, mono]),
-    'every version is a mono value, not a muted one',
-  ).toEqual([
-    [false, true],
-    [false, true],
-    [false, true],
-    [false, true],
-  ])
+    ddClasses(on[0]!)[0],
+    'the version a mono value, not a muted one (13 N.8)',
+  ).toEqual([false, true])
+  expect(
+    within(main).queryAllByRole('heading', { level: 2 }).length,
+    'no section heading: the engines and the GPUs are the node page',
+  ).toBe(0)
+  expect(
+    within(main).queryAllByRole('heading', { level: 3 }).length,
+    'no engine heading',
+  ).toBe(0)
 })
 
-test('13 N.8: two engines give two h3 and two lists, in the reply order; a backend the strings do not know shows the name it was sent with', async () => {
-  const engines: NodeEngine[] = [
-    {
-      engine: 'llama.cpp',
-      version: '1:1.0.0+pai2',
-      backends: [{ name: 'cuda', version: '13.5.0' }],
-    },
-    {
-      engine: 'other.cpp',
-      version: '0.9.0',
-      backends: [{ name: 'opencl', version: '7.7' }],
-    },
-  ]
-  const { main } = await open({ node: nodeWith(engines) })
-  await settled(main)
-  expect(
-    within(main)
-      .getAllByRole('heading', { level: 3 })
-      .map((h) => (h.textContent ?? '').trim()),
-    'the engines in the reply order',
-  ).toEqual(['llama.cpp', 'other.cpp'])
-  const on = lists(main)
-  expect(on.length, 'one list per engine').toBe(3)
-  expect(rows(on[1]), 'the first engine').toEqual([
-    [en('about-version'), '1:1.0.0+pai2'],
-    [en('backend-cuda'), '13.5.0'],
-  ])
-  expect(rows(on[2]), 'the second, its unknown backend named as it is').toEqual(
-    [
-      [en('about-version'), '0.9.0'],
-      ['opencl', '7.7'],
-    ],
-  )
-})
+/** The operating system answers of AN.3, and the text the row must show. */
+const OS_ANSWERS: Array<[string, VersionBody['os'], string]> = [
+  [
+    'os Ubuntu and version 26.04',
+    { name: 'Ubuntu', version: '26.04', kernel: 'x' },
+    'Ubuntu 26.04',
+  ],
+  [
+    'os Ubuntu and version null',
+    { name: 'Ubuntu', version: null, kernel: 'x' },
+    'Ubuntu',
+  ],
+  [
+    'os null and version 26.04',
+    { name: null, version: '26.04', kernel: 'x' },
+    '26.04',
+  ],
+  [
+    'os and version null',
+    { name: null, version: null, kernel: 'x' },
+    en('about-version-unknown'),
+  ],
+  ['the whole os block null', null, en('about-version-unknown')],
+]
 
-test('13 N.8: the page is text: its only focusable element is the h1 the page took the focus on', async () => {
+test.each(OS_ANSWERS)(
+  '18 AN.3: the operating system row of %s',
+  async (what, os, shown) => {
+    const { main } = await open({ version: versionWith({ os }) })
+    const p = await within(main).findByText(shown)
+    expect(p.tagName, `the row of ${what} shows "${shown}" as one text`).toBe(
+      'DD',
+    )
+    const on = lists(main)[0]!
+    expect(rows(on).length, 'the two rows stay').toBe(2)
+    expect(rows(on)[1], 'the operating system row').toEqual([
+      en('system-os'),
+      shown,
+    ])
+    expect(
+      ddClasses(on)[1],
+      shown === en('about-version-unknown')
+        ? 'Unknown is muted, not mono'
+        : 'a value, not muted',
+    ).toEqual(
+      shown === en('about-version-unknown') ? [true, false] : [false, true],
+    )
+  },
+)
+
+// The unknown version answers of 13 N.9, on the framework line.
+const UNKNOWN_VERSIONS: Array<[string, unknown]> = [
+  ['null', null],
+  ['the empty string', ''],
+  ['a number', 7],
+]
+
+test.each(UNKNOWN_VERSIONS)(
+  '18 AN.4: the version of %s shows the framework line reading Unknown, muted, the operating system line kept',
+  async (_what, version) => {
+    const { main } = await open({
+      version: versionWith({ version: version as string | null }),
+    })
+    await within(main).findByText(en('about-version-unknown'))
+    const on = lists(main)[0]!
+    expect(rows(on), 'the framework line reads Unknown').toEqual([
+      [en('app-name'), en('about-version-unknown')],
+      [en('system-os'), `${OS.name} ${OS.version}`],
+    ])
+    expect(
+      ddClasses(on),
+      'Unknown muted and not mono, the operating system kept mono',
+    ).toEqual([
+      [true, false],
+      [false, true],
+    ])
+  },
+)
+
+test('18 AN.2: the page is text: its only focusable element is the h1 the page took the focus on', async () => {
   const { main, h1 } = await open()
   await settled(main)
   await waitFor(() =>
     expect(document.activeElement, 'the h1 keeps it').toBe(h1),
   )
-  fireEvent.click(within(main).getByText(NODE.name))
-  expect(document.activeElement, 'a click on the host name takes nothing').toBe(
-    h1,
-  )
+  fireEvent.click(within(main).getByText(`${OS.name} ${OS.version}`))
+  expect(
+    document.activeElement,
+    'a click on the operating system line takes nothing',
+  ).toBe(h1)
   const focusable = Array.from(
     main.querySelectorAll('a, button, input, select, textarea, [tabindex]'),
   )
@@ -275,106 +292,16 @@ test('13 N.8: the page is text: its only focusable element is the h1 the page to
   ).toEqual(['H1'])
 })
 
-// ── 13 N.9: unknown and empty ───────────────────────────────────────────────
+// ── 18 AN.4: the failures ───────────────────────────────────────────────────
 
-const UNKNOWN_VERSIONS: Array<[string, unknown]> = [
-  ['null', null],
-  ['the empty string', ''],
-  ['a number', 7],
-]
-
-test.each(UNKNOWN_VERSIONS)(
-  '13 N.9: a framework, engine or backend version of %s reads Unknown in a muted dd, not a mono one',
-  async (_what, version) => {
-    const { main } = await open({
-      node: nodeWith(
-        [
-          {
-            engine: 'llama.cpp',
-            version,
-            backends: [{ name: 'cuda', version }],
-          },
-        ],
-        // The framework's own version, the same.
-        { version: version as string | null },
-      ),
-    })
-    await settled(main)
-    const on = lists(main)
-    expect(rows(on[0]), 'the framework row reads Unknown').toEqual([
-      [en('app-name'), en('about-version-unknown')],
-    ])
-    expect(ddClasses(on[0]), 'muted, and not mono').toEqual([[true, false]])
-    expect(
-      rows(on[1]),
-      'the engine version, and the backend, the same way',
-    ).toEqual([
-      [en('about-version'), en('about-version-unknown')],
-      [en('backend-cuda'), en('about-version-unknown')],
-    ])
-    expect(ddClasses(on[1]), 'both muted, neither mono').toEqual([
-      [true, false],
-      [true, false],
-    ])
-  },
-)
-
-test('13 N.9: engines [] shows the framework list, one paragraph saying no engine was found, and no h3', async () => {
-  const { main } = await open({ node: nodeWith([]) })
-  await settled(main)
-  expect(lists(main).length, 'the framework list only').toBe(1)
-  expect(rows(lists(main)[0]), 'the framework row').toEqual([
-    [en('app-name'), NODE.version as string],
-  ])
-  expect(
-    within(main).queryAllByRole('heading', { level: 3 }).length,
-    'no engine heading',
-  ).toBe(0)
-  const p = within(main).getByText(en('about-no-engine'))
-  expect(p.tagName, 'a paragraph').toBe('P')
-  expect(
-    within(main).getAllByRole('paragraph').length,
-    'the words are there once, alone',
-  ).toBe(1)
-})
-
-test('13 N.9: an engine with no backends, sent as [] or left out, shows the GPU backends row reading None, CPU only, in a muted dd', async () => {
-  for (const [what, engine] of [
-    [
-      'backends []',
-      { engine: 'llama.cpp', version: '1:1.0.0+pai2', backends: [] },
-    ],
-    ['no backends field', { engine: 'llama.cpp', version: '1:1.0.0+pai2' }],
-  ] as Array<[string, NodeEngine]>) {
-    const { main } = await open({ node: nodeWith([engine]) })
-    await settled(main)
-    const on = lists(main)
-    expect(
-      rows(on[1]),
-      `${what}: the Version row, then the backends row`,
-    ).toEqual([
-      [en('about-version'), '1:1.0.0+pai2'],
-      [en('about-backends'), en('about-backends-none')],
-    ])
-    expect(
-      ddClasses(on[1]),
-      `${what}: the version mono, the backends value muted and not mono`,
-    ).toEqual([
-      [false, true],
-      [true, false],
-    ])
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
-
-// ── 13 N.10: the failures ───────────────────────────────────────────────────
-
-test('13 N.10: a page read answering 401 signs the app out: the sign-in page at #/about, its notice, the focus on its h1', async () => {
+test('18 AN.4: a version read answering 401 signs the app out: the sign-in page at #/about, its notice, the focus on its h1', async () => {
   const { bff } = await open({
-    node: () => reply(401, { key: 'session-required', args: [] }),
+    version: () => reply(401, { key: 'session-required', args: [] }),
   })
-  expect(bff.to('GET', '/api/node').length, 'one page read, no retry').toBe(2)
+  expect(
+    bff.to('GET', '/api/version').length,
+    'the page read once, beside the shell one of the session (18 AN.15), and it does not retry a 401',
+  ).toBe(2)
   const main = screen.getByRole('main')
   const h1 = await within(main).findByRole('heading', {
     level: 1,
@@ -390,11 +317,26 @@ test('13 N.10: a page read answering 401 signs the app out: the sign-in page at 
   expect(window.location.hash, 'the place is kept').toBe('#/about')
 })
 
-const ABOUT_FAILURES: Array<[string, () => Response | Promise<Response>]> = [
-  [
-    '403 session-not-administrator',
-    () => reply(403, { key: 'session-not-administrator', args: [] }),
-  ],
+test('18 AN.4: a version read answering 403 session-not-administrator ends the session as every read does: the sign-in page with the revoked notice', async () => {
+  const { bff } = await open({
+    version: () => reply(403, { key: 'session-not-administrator', args: [] }),
+  })
+  expect(
+    bff.to('GET', '/api/version').length,
+    'the page read once, beside the shell one of the session (18 AN.15), and it does not retry a 403',
+  ).toBe(2)
+  const main = screen.getByRole('main')
+  await within(main).findByRole('heading', {
+    level: 1,
+    name: en('signin-title'),
+  })
+  expect(
+    within(main).getByText(en('session-revoked')),
+    'the notice of a session the manager refused',
+  ).toBeTruthy()
+})
+
+const VERSION_FAILURES: Array<[string, () => Response | Promise<Response>]> = [
   ['500', () => reply(500, 'a manager detail')],
   [
     '503 client-unavailable',
@@ -403,28 +345,17 @@ const ABOUT_FAILURES: Array<[string, () => Response | Promise<Response>]> = [
   ['a network failure', () => Promise.reject(new TypeError('failed to fetch'))],
   ['a body that is not json', () => reply(200, 'not json')],
   ['a body that is not an object', () => reply(200, [])],
-  ['a name that is not a string', () => reply(200, { ...NODE, name: 7 })],
-  ['a name that is empty', () => reply(200, { ...NODE, name: '' })],
-  ['a name that is null', () => reply(200, { ...NODE, name: null })],
-  [
-    'engines that is not an array',
-    () => reply(200, { ...NODE, engines: 'no' }),
-  ],
 ]
 
-test.each(ABOUT_FAILURES)(
-  '13 N.10: a page read answering %s shows the failure words as a plain paragraph in place of the lists, and keeps the h1',
-  async (_what, node) => {
-    const { main, h1 } = await open({ node })
+test.each(VERSION_FAILURES)(
+  '18 AN.4: a version read answering %s shows the failure words as a plain paragraph in place of both lines, and keeps the h1',
+  async (_what, version) => {
+    const { main, h1 } = await open({ version })
     const p = await within(main).findByText(en('about-failed'))
     expect(p.tagName, 'a paragraph').toBe('P')
     expect(p.closest('[role="alert"]'), 'not an alert: nobody acted').toBeNull()
     expect(p.getAttribute('role'), 'no role at all').toBeNull()
-    expect(lists(main).length, 'no list in place of the versions').toBe(0)
-    expect(
-      within(main).queryAllByRole('heading', { level: 2 }).length,
-      'no host section',
-    ).toBe(0)
+    expect(lists(main).length, 'no list in place of the lines').toBe(0)
     expect(
       within(main).queryByText(en('about-loading')),
       'the loading text is gone',
@@ -436,47 +367,7 @@ test.each(ABOUT_FAILURES)(
   },
 )
 
-test('13 N.10: inside a good reply an engine without a name, and a backend without a name, are left out; the rest of the page shows', async () => {
-  const engines = [
-    { engine: '', version: '1', backends: [{ name: 'cuda', version: '1' }] },
-    {
-      engine: 'llama.cpp',
-      version: '1:1.0.0+pai2',
-      backends: [
-        { name: '', version: '1' },
-        { name: 'cuda', version: '13.5.0' },
-      ],
-    },
-    { engine: 'other.cpp', version: '0.9.0', backends: [] },
-  ]
-  const { main } = await open({ node: nodeWith(engines) })
-  await settled(main)
-  expect(
-    within(main)
-      .getAllByRole('heading', { level: 3 })
-      .map((h) => (h.textContent ?? '').trim()),
-    'the engine with no name is gone, the two others stay in order',
-  ).toEqual(['llama.cpp', 'other.cpp'])
-  const on = lists(main)
-  expect(rows(on[1]), 'the backend with no name is gone').toEqual([
-    [en('about-version'), '1:1.0.0+pai2'],
-    [en('backend-cuda'), '13.5.0'],
-  ])
-  expect(
-    rows(on[2]),
-    'the engine with no backends shows its backends row',
-  ).toEqual([
-    [en('about-version'), '0.9.0'],
-    [en('about-backends'), en('about-backends-none')],
-  ])
-  expect(
-    hostHeadings(main),
-    'the host section is there, with the framework row',
-  ).toEqual([NODE.name])
-  expect(rows(on[0]), 'the framework row is untouched').toEqual([
-    [en('app-name'), NODE.version as string],
-  ])
-})
+// ── 13 N.12: the classes, and the one rule the sheet gains ──────────────────
 
 test('13 N.12: the About page uses no class beside the ones of the lists: assets, mono and muted', async () => {
   const { main } = await open()
@@ -490,7 +381,6 @@ test('13 N.12: the About page uses no class beside the ones of the lists: assets
   ).toEqual(['assets', 'mono', 'muted'].filter((c) => classes.has(c)).sort())
 })
 
-// ── 13 N.12, the one rule the sheet gains ───────────────────────────────────
 //
 // jsdom applies no CSS, so the rule the brief names is read off index.css as
 // text, the way HearthTilesBoot.test.tsx and Reflow.test.ts read it (comments

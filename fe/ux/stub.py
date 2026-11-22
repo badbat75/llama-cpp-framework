@@ -28,7 +28,11 @@ PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 # 8 tags of 32 characters of brief 15 section 7); load: "fast" (every read
 # answers at once, every state beside the two loading ones), "slow" (the page's
 # reads are held, the session answering: the page shows the skeleton of its
-# first read) or "session" (only the session read is held: the boot skeleton).
+# first read) or "session" (only the session read is held: the boot skeleton);
+# node: "ok" (the host reply of brief 18 section 0), "down" (the manager did not
+# answer: `os`, `vulkan` and `gpus` are null and `nodeInfo` says
+# client-unavailable) or "long" (32 GPUs of 256 unbroken characters, a host name
+# of 253, the widest the node page takes).
 STATE = {
     "session": "admin",
     "inst": "active",
@@ -36,6 +40,7 @@ STATE = {
     "list": "one",
     "tags": "few",
     "load": "fast",
+    "node": "ok",
 }
 
 # How long a held read stays open, for the loading states of brief 17 U17a:
@@ -170,10 +175,51 @@ SERVER_DOC = {
 }
 
 
-# GET /api/node (brief 13, 13 N.3): the host's name, the framework's version,
-# and the engines with their backends, the reply of the brief's section 0. The
-# name goes in the nav's instance group and in the Overview's h2 (13 N.4,
-# 13 N.5), the versions in the About page's lists (13 N.8).
+# The host's operating system (brief 18 section 0), the same block in both
+# replies: the About page's row (18 AN.3) and the node page's top (18 AN.8).
+OS = {"name": "Ubuntu", "version": "26.04", "kernel": "7.0.0-43-generic"}
+
+# GET /api/version (brief 18, AN4 and AN.15): the framework's version, the
+# host's name (the nav group's label and the Overview's h2) and the operating
+# system. No manager: 401 or 200.
+VERSION = {"version": "3.0.0", "name": "gpu-box", "os": OS}
+
+# The three GPUs of brief 18 section 7: the AMD card with its Vulkan driver,
+# the NVIDIA card with its proprietary driver, and the Intel Arc whose
+# in-kernel `xe` driver sets no module version (`version` null, so its version
+# is the kernel's) and which Vulkan does not see (`vulkan` null with the node
+# answering "ok").
+GPUS = [
+    {
+        "pci": "0000:03:00.0",
+        "vendor": "1002",
+        "name": "AMD Radeon AI PRO R9700",
+        "driver": "amdgpu",
+        "version": "7.1.9.31600000",
+        "vulkan": {"driver": "radv", "info": "Mesa 25.2.0"},
+    },
+    {
+        "pci": "0000:0a:00.0",
+        "vendor": "10de",
+        "name": "NVIDIA GeForce RTX 5090",
+        "driver": "nvidia",
+        "version": "580.95.05",
+        "vulkan": {"driver": "NVIDIA", "info": "580.95.05"},
+    },
+    {
+        "pci": "0000:0f:00.0",
+        "vendor": "8086",
+        "name": "Intel Arc B580",
+        "driver": "xe",
+        "version": None,
+        "vulkan": None,
+    },
+]
+
+# GET /api/node (brief 13, 13 N.3, and brief 18 section 0): the host's name,
+# the framework's version, the engines with their backends, the operating
+# system, the Vulkan answer and the GPUs. The node page reads this one (18
+# AN.8); the shell and the About page read GET /api/version (18 AN.15, AN.2).
 NODE = {
     "name": "gpu-box",
     "api": "/api",
@@ -189,7 +235,42 @@ NODE = {
             ],
         },
     ],
+    "os": OS,
+    "vulkan": "ok",
+    "gpus": GPUS,
 }
+
+# node=down: the manager did not answer within 10 s. The reply is still 200,
+# `os`, `vulkan` and `gpus` are null and `nodeInfo` says why (brief 18 section
+# 0), so the node page shows its host and engines and AN.13's notice.
+NODE_DOWN = {
+    **NODE,
+    "os": None,
+    "vulkan": None,
+    "gpus": None,
+    "nodeInfo": {"key": "client-unavailable", "args": []},
+}
+
+# node=long: the widest the page takes, 32 GPU rows, every text of a row 256
+# unbroken characters (no break point), and a host name of 253, the length
+# brief 10 R1.8 measures. The ids stay real, so the rows are 32 separate
+# blocks of text that has to wrap inside them.
+HEX = "0123456789abcdef"
+LONG_TEXT = HEX * 16  # 256 characters, none of them a space
+LONG_GPUS = [
+    {
+        "pci": f"0000:{index:02x}:00.0",
+        "vendor": HEX * 16,
+        "name": LONG_TEXT,
+        "driver": LONG_TEXT,
+        "version": LONG_TEXT,
+        "vulkan": {"driver": LONG_TEXT, "info": LONG_TEXT},
+    }
+    for index in range(32)
+]
+NODE_LONG = {**NODE, "name": LONG_TEXT[:253], "gpus": LONG_GPUS}
+
+NODE_BY_STATE = {"down": NODE_DOWN, "long": NODE_LONG}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -231,11 +312,11 @@ class Handler(SimpleHTTPRequestHandler):
         if p.startswith("/api/") and p != "/api/session" and STATE["session"] == "out":
             return self.json(401, {"key": "session-required", "args": []})
         if p == "/api/version":
-            return self.json(200, {"version": "3.0.0"})
-        # The host and its versions (brief 13): the nav's label, the Overview's
-        # h2 and the About page all read this one.
+            return self.json(200, VERSION)
+        # The host and its GPUs (brief 13 and brief 18): only the node page
+        # reads this one (18 AN.15), and `node=` sets its shape.
         if p == "/api/node":
-            return self.json(200, NODE)
+            return self.json(200, NODE_BY_STATE.get(STATE["node"], NODE))
         # The host's GPUs, for the model profile page's GPU distribution card
         # (brief 14): the probe the manager caches, with the moment it ran.
         if p == "/api/node/devices":

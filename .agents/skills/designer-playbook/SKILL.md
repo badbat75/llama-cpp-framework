@@ -121,3 +121,7 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   (the version `Icon.tsx` copies from). Adding a nav entry ripples into every test that lists the nav's
   links in order (`App`, `ModelProfiles`, `ProfilesNav`, `HearthNav`, `NodeNav`, `HearthIcons`): name
   them in the brief (brief 18 section 6).
+- Reply shapes the stub lacks need no new stub: `page.route('**/api/node', (r) => r.fulfill({ json }))`
+  in Playwright (`build/ux-review/an5.js`: About, Node info, muted words, held read, Tab order,
+  320 menu, 3 engines x 1280/320 x themes x 200 %, about 9 minutes: run it in the foreground with a
+  generous timeout, or it is moved to the background and must be waited on).

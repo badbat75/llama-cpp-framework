@@ -191,8 +191,95 @@ Lessons only: the rules are in `AGENTS.md`.
 - Flakes to state in the report, not chase: xtask's script-sandbox tests share ONE temp dir per process
   (keyed by `std::process::id()`, the same in every thread), so a full `cargo test -p xtask` can fail one
   `linux::system_files` script test that passes in isolation and on a rerun; the bff's `tests/session.rs`
-  is a wall of timing tests and loses one occasionally; `fe`'s `NodeNav.test.tsx` "bob's session reads
-  again" counts `/api/node` reads and loses one in a full `npm --prefix fe test`, green alone and rerun.
+  is a wall of timing tests and loses one occasionally.
+
+## Slice 18 AN2 (2026-11-22): the Vulkan child
+
+- A source-text pin reads code with whole-line comments left out and stops a method at the first brace
+  at column 4 (`code` / `impl_text` / `method_text` in `crates/manager/src/tests/vulkan_probe.rs`): the
+  needle must be a call in that method's own body. AN2's wanted `run_hidden_probe_within` inside
+  `VulkanProbe::probe`, so the spawn cannot live in a free helper beside the impl, and no comment can
+  ever satisfy it.
+- `ash` with `default-features = false, features = ["loaded"]` opens the loader at run time
+  (`unsafe { ash::Entry::load() }`): the manager links no Vulkan and starts on a node that has none, and
+  a hung ICD dies in the child. ash 0.38 is already in the local registry cache and in `Cargo.lock` (via
+  `gpu-allocator`), so add it with `cargo --offline`; it compiles for windows-gnu. 0.38 has no builders:
+  `vk::X::default().push_next(&mut y)`, and the extension names are consts
+  (`vk::EXT_PCI_BUS_INFO_NAME`). `serde_json::Map` is not `Display` (wrap it in `Value::Object`), and
+  `.map(CStr::as_ptr)` over an `iter()` of `Vec<&CStr>` is a `&&CStr` arity error: write the closure.
+- A child that answers in words has no exit code to read: every reading that ends with no device list
+  prints one of `ok` / `none` / `failed` as one JSON line, so "no loader", "driver refused", "killed at
+  the bound", "flood past the cap" and "junk text" are all facts the parent parses. A hidden subcommand
+  of the manager returns from `manager::run` before the SCM dispatcher arm, so the child on Windows never
+  touches the service machinery.
+- A cache window over a caller's clock is `now.saturating_sub(ran_at) < WINDOW`, read twice: once before
+  the serial lock (a polled page inside the window never reaches a child) and once with the lock held (the
+  callers that queued behind one child take its answer). That is `ProbedGpus`' pattern.
+- The same pin for a FREE function (`free_fn` in `tests/vulkan_chain.rs`: signature to the first
+  column-0 `}`) is why the child's device work cannot move into a helper: the needles
+  `enumerate_device_extension_properties` and `instance_api` / `api_version` must sit in
+  `read_devices`' own body.
+- ash's loaded mode loads the CORE 1.1 calls through `get_instance_proc_addr` and its wrapper calls
+  the pointer whatever it is: a 1.0 loader answers NULL for `vkGetPhysicalDeviceProperties2`, so a
+  1.0 node is read only through the extension's own struct,
+  `ash::khr::get_physical_device_properties2::Instance::new(&entry, &instance)` (`new` is safe, the
+  call unsafe). A chained `vk::PhysicalDeviceProperties2::default().push_next(&mut x)` is the same
+  for both routes, so one small enum over the two calls feeds `bus_id` and `driver_texts`.
+- Destroy the instance on EVERY path with a `Drop` guard owning it, declared after the entry: locals
+  drop in reverse order, so the instance dies before the loaded entry closes (ash's rule), and every
+  `?` of the read destroys it. The one arm that returns early (no properties2) needs no destroy.
+- A module `fn names` is shadowed by a local `let names` of the same fn: `names(&listed)` is E0618
+  "expected function, found Vec" pointing at the far-away fn. Give the helper a distinct name.
+- `&unsafe { call() }?` as an argument is E0716 (temporary freed at the statement's end) and
+  `.map(|v| helper(&v))` over an owned `Vec` is E0515: bind the `Vec` in a `let`, then pass `&binding`.
+- Two lints of new code: `iter().any(|x| *x == y)` is `clippy::manual_contains` (write
+  `list.contains(&y)`), and an enum variant left unbuilt because its arm became an early `return` is
+  `dead_code` under `-D warnings` (drop the variant).
+- The node's GPU row cap is ONE const: `host::MAX_GPU_ROWS` (made `pub(crate)` for this), truncated in
+  `gpu_drivers` AND at the end of `vulkan::join` (after the appended rows, so the kernel's rows, which
+  come first, always survive and a device past 32 falls off). A test module that names the cap only in
+  prose (`host::MAX_GPU_ROWS` in a doc comment) writes `const ROW_CAP: usize = 32` of its own, so the
+  prose is no needle: only a `truncate` in `join`'s body turns it green.
+- A Vulkan device with no `VK_EXT_pci_bus_info` is printed by the child (no `pci` key) and the join
+  APPENDS it as an unjoined row (`a_device_with_no_bus_id_is_its_own_row`), so the child's module
+  comment must not say "no bus id answers no device" (the one node answering no device is a node with
+  no properties2 route at all: `read_devices` returns an empty list). The join is AN2's, not AN4's; the
+  comment at `crates/manager/src/tests/vulkan_chain.rs:13` still says AN4, and a test file is not mine.
+
+## Slice 18 AN5a (2026-11-22): one endpoint, several readers
+
+- A count over one endpoint counts every reader of it. 18 AN.15 keeps the Overview's version line
+  reading `GET /api/version` (13 N.10) beside the shell's new one, so a test that counts that route
+  owes both: at `#/` the total is 2, and a sign-out and sign-in started at a page address ends at
+  `#/` (09 S1a.9: the sign-in page's bar is `#/sign-in`, and `signedIn` moves it to `#/`), so the
+  Overview mounts and its line reads again. Proof is the dumped sequence (`bff.calls.map`), which
+  shows the route twice and `window.location.hash` as `#/`; it is not a race, so do not chase it.
+- React runs a child's effect before its parent's. A fixture that hands ONE `Response` to every call
+  of a route read by the Overview's line and by App (`version: reply(200, ..)`, `version: h.answer`)
+  serves the body to the child; the shell's read then rejects and keeps its fallback label. The DOM
+  dump proves both: `<p>Version 2.99.1</p>` and the `h2` still "Instances" from one reply. A fixture
+  body as an OBJECT answers every call fresh, and both readers are served.
+- Two tests in one file, same fixture, can pin incompatible DOM: `NodePage.test.tsx` 243 wants the
+  first `dl` to be the host's four rows, 305 wants `querySelectorAll('h2, h3, dl')` to be exactly the
+  four nodes from `H2 Engines` to `H2 GPUs`, so no top `dl` exists. Report the pair, keep the brief's
+  page (AN.8).
+- A "no other word" loop over `document.body.textContent` meets a new nav label: the brief's
+  `nav-node` "Node info" contains the forbidden `No` (`HearthTilesBoot.test.tsx` 264 to 269 vs 18
+  AN.6). And `strings.test.ts` 78 to 91 ("every value is used") pins the WHOLE brief's key table, so
+  a slice that defines a later slice's keys (AN.1's 18 GPU keys) cannot pass it; `fe/ux/check.js`
+  reads the same way, its `node` / `node-down` / `node-long` states pin AN5b's GPU blocks (five
+  `dl.assets`, 32 `h3`, the manager-down paragraph). Check which slice a check's states belong to
+  before promising it green.
+- The web UI's `format:check` writes nothing: fix the files it names with
+  `npx --prefix fe prettier --write fe/src/<f>.tsx` from the repo root, then rerun the check.
+- Mid-slice, an earlier sub-slice's new files are UNTRACKED (`?? fe/src/Value.tsx`, `version.ts`), so
+  `git diff <path>` prints nothing for them and proves nothing about your edit: check `git status
+  --porcelain` and grep the file. And "X is imported nowhere" is a grep over production AND tests: the
+  local `const textOf = (el) => ...` of five `Hearth*.test.tsx` files is not the export of `Value.tsx`.
+- The fe readers point one way: `version.ts` imports `osIn`/`textIn` from `node.ts`, never the reverse
+  (a cycle). So a shared reply-text reader lives in `node.ts` and is exported from there; note `node.ts`'s
+  private `versionIn` keeps the OTHER rule (`value !== ''`, no trim), and `textIn` trims, so the two are
+  not one function.
 - A name a source lint matches is the lint's data. `crates/config/src/tests/control_lint.rs`'s
   `CONFIG_PATHS` names the config paths the GUI may read by the path fn's name: a `paths.rs` rename
   silently emptied the list and the lint passed with no bite. Update the lint's data in the same slice and
@@ -254,6 +341,25 @@ Lessons only: the rules are in `AGENTS.md`.
   `clippy::type_complexity` under `--all-targets`; the repo's fix, used in core's `checks.rs` and
   `server_cfg.rs` test modules, is a bare `#[allow(clippy::type_complexity)]` above the item (no assertion
   moves).
+
+## Slice 18 AN5b (2026-11-22): the GPU blocks, and an earlier sub-slice's helpers
+
+- A sub-slice's test helpers are page-wide, so the NEXT sub-slice reddens them. AN5a's `h3s(main)`,
+  `engineLists(main)` (`dl` whose previous sibling is an `H3`) and `lists(main).length` counted the whole
+  `main`; AN.10 adds an `h3` + `dl.assets` per GPU, so four AN.8 tests went red on counts, not on the
+  engine block they mean to pin. The tester's edit: scope the helper to the section (a `compareDocumentPosition`
+  against the `h2` GPUs answers it).
+- Three pins in that file are red by construction, proved in a tree copy where only the literal moved:
+  the in-kernel driver test builds its row with `gpu()` = `GPUS[0]` (driver `amdgpu`) and expects `xe`
+  (that is `GPUS[2]`), and compares `el.tagName` (HTML reports `SPAN`) with the literal `'span'`; the
+  32-GPU test sets `driver: long, version: long` and expects the driver row as ONE `long`, which
+  contradicts AN.11 and the same file's own joined-text test.
+- `pgrep -af stub.py` matches the shell whose command text names it (the `pkill` lesson again). To prove
+  no stub survives the UX check, use a pattern a shell line cannot carry: `pgrep -af 'python3? .*stub.py'`.
+- `fe/ux/check.js` is the built-page proof of the GPU blocks: the `node` state wants `dl.assets` count 5
+  (top, one engine, three GPUs), `node-down` the `node-info-unavailable` paragraph, `node-long` 32 `h3`
+  at 320 px and 200 % text. Its `stub.py` stderr (`BrokenPipeError` in `do_GET`) is a browser closing,
+  not a finding: only the `summary:` line's findings count.
 
 ## The bff
 
@@ -449,6 +555,28 @@ Lessons only: the rules are in `AGENTS.md`.
   (`save_no_changes_with_no_record_restarts_nothing_and_asks_no_state`). The earlier
   `None if !changed => client.list_instances()` arm is ruled out (slice 15 "As built"): the save's limit is
   never spent on the state of an instance the record never named.
+
+## Reading the host (core `host.rs`, `versions.rs`)
+
+- `nix` 0.31 `sys::utsname::uname` needs the `feature` feature (not `sys`, not `fs`): the module is
+  `feature! { #![feature = "feature"] pub mod utsname; }`. `uname()` answers `UtsName`, whose
+  `release()` is an `&OsStr` (`to_string_lossy`).
+- The Windows version read is `RtlGetVersion` (ntdll): features `Wdk_System_SystemServices` +
+  `Win32_System_SystemInformation` + `Win32_Foundation`; it takes `OSVERSIONINFOW` and refuses the call
+  unless `dwOSVersionInfoSize` carries `size_of::<OSVERSIONINFOW>()`, answering `STATUS_SUCCESS`.
+  `GetVersionExW` is in the same module and is the one the manifest gates, so it is not the read.
+- Configuration Manager as `crates/app/src/hwmon/windows.rs` does it: `CM_Get_Device_ID_ListW` with
+  `CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT` fills a `vec![0u16; len]` with a
+  NUL-terminated list of ids closed by a second NUL, so split on EVERY 0 and drop the empties, then
+  `CM_Locate_DevNodeW` each id. A `DEVPROP_TYPE_STRING` property is read into a `[u16; N]` passed as
+  `*mut u8` with its size in BYTES, and the out `DEVPROPTYPE` must equal the type asked for, else the
+  bytes are no string.
+- Chaining onto a temporary in a `?`-terminated statement is E0716 (`id.to_ascii_uppercase()
+  .strip_prefix("PCI\\")?`): `let upper = id.to_ascii_uppercase();` first, then the chain.
+- A script that moves a block and re-inserts it at an anchor can drop the item header that sat between
+  them (the `mod tests {` of the module it left: `unexpected closing delimiter`). Anchor with the
+  boundary lines in the asserted text, and prove nothing was lost with
+  `git diff <file> | grep -c "^-[^-]"` answering 0 (every pre-existing line survives in order).
 
 ## INI, config, the manager
 
