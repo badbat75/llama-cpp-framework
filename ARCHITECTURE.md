@@ -3775,7 +3775,7 @@ The user's words (2026-11-15): "Ci potrebbe essere un componente super partes ti
 installato su un server differente che può governare differenti manager. Se il bff si connette a questo
 gli viene offerta anche la gestione dei nodi." Status: **accepted** by the user on 2026-11-15, who
 answered the four questions at the end with the recommended option each. Renamed **the director**
-formerly the super-manager (user, 2026-11-21); the links were revised the same day to a private CA
+(user, 2026-11-21); the links were revised the same day to a private CA
 ("Identity and joining"). Revised again on 2026-11-22 (user): one codebase and one binary, the director
 being **a separate instance of `pai-manager` with another role**, not a crate or binary of its own:
 "intendo tenere unito il codice ma il director è un'istanza separata del manager con un ruolo diverso",
@@ -3810,7 +3810,7 @@ binary, two roles").
    disabled; `pai node promote` on a node enables it, joins that machine's own manager to it over
    loopback TLS like any other node, and switches the local bff to hub mode; `pai node demote` undoes
    the switch and stops the director, keeping its state.
-8. **No node manager runs as root or LocalSystem** (user, 2026-11-22; proposed): its own account on
+8. **No node manager runs as root or LocalSystem** (user, 2026-11-22; accepted the same day): its own account on
    each OS, polkit or per-service DACLs scoped to the instances, and a small privileged helper keeping
    only what cannot be delegated (a password check on Linux, boot on and off, service creation on
    Windows), all before the manager listens on the network.
@@ -3819,7 +3819,7 @@ binary, two roles").
 
 | | Manager (on each node) | Director | bff |
 | --- | --- | --- | --- |
-| Runs as | `pai-manager serve`, unit `private-ai-manager.service`, root today, `private-ai-manager` as proposed (Windows: the service `private-ai-manager`, LocalSystem today, `NT SERVICE\private-ai-manager` as proposed) | `pai-manager director`, unit `private-ai-director.service`, the system user `private-ai-director` (Windows: later) | `pai-bff`, unit `private-ai-bff.service`, the system user `private-ai-bff` |
+| Runs as | `pai-manager serve`, unit `private-ai-manager.service`, root today, `private-ai-manager` as accepted (Windows: the service `private-ai-manager`, LocalSystem today, `NT SERVICE\private-ai-manager` as accepted) | `pai-manager director`, unit `private-ai-director.service`, the system user `private-ai-director` (Windows: later) | `pai-bff`, unit `private-ai-bff.service`, the system user `private-ai-bff` |
 | Owns | The instances, their files, the checks, local authorization | The node registry (name, address, certificate serial and expiry), the CA and its keys, the deny list, the join and renewals, fan-out with per-node timeouts | Web sessions, the HTTP API, the web UI |
 | Never | Knows the director's users; accepts a password from off the machine | Caches a node's files as truth; runs checks; starts engines; sees passwords | Holds the node key; reaches a node directly |
 | Talks to | systemd / SCM; local callers; the enrolled director over TLS | Nodes over TLS; its local bff over a local socket | The local manager (local mode) or the director (hub mode) |
@@ -3913,11 +3913,11 @@ Cost of one binary, accepted: the node's binary carries the director's code and 
 issuing half, the store's HTTP server), a larger binary on every node; its security effect is nil, since
 code a process never runs grants nothing, and the keys stay where the accounts put them.
 
-### The node's manager without root or LocalSystem (user, 2026-11-22): proposed
+### The node's manager without root or LocalSystem (user, 2026-11-22): accepted (user, 2026-11-22)
 
 The user's words (2026-11-22): the node's manager should not run as root nor as LocalSystem, "lo farei
 sia per Linux che per Windows", before the manager opens to the network (slice 2 below). Status:
-**proposed**, the defaults taken; no migration (pre-release: the packages are installed fresh).
+**accepted** by the user on 2026-11-22, the defaults taken; no migration (pre-release: the packages are installed fresh).
 
 **Why it runs privileged today, and what each reason becomes.** The reasons are the unit's
 (`xtask/src/linux/system_files.rs` `manager_unit` and its test) and the calls the code makes
