@@ -26,7 +26,7 @@ as the column says. A requirement still open must be covered by a step.
 | R10 | The GUI and the CLI are two executables over one shared library: GUI `pai-config`, CLI `pai`, the shared logic in a new crate without Slint (decided with the user on 2026-11-13) | Open: step 3 |
 | R11 | A backend-for-frontend (`bff`) running as a local service beside `private-ai-manager`, in the same packages: the web UI of the configurator (a `fe` it serves), a gateway in front of the llama-server instances (one OpenAI-compatible endpoint, authentication, routing across instances and later engines), and the benchmark portal over `bench.db` (decided with the user on 2026-11-14) | Open: step 10 |
 | R12 | The framework is built and versioned apart from its engines: each engine (llama.cpp today, Strata later) is named explicitly and has its own package at the engine's version, the framework's packages carry only the framework's version and a minimum-version dependency on the engine (decided with the user on 2026-11-14) | Open: step 11 |
-| R13 | The director (formerly the super-manager): an optional component, installed on its own server, that governs several `private-ai-manager`s on other machines (nodes) and hosts the models they download (user, 2026-11-21); a bff connected to it also offers the management of the nodes (user, 2026-11-15) | Open: step 14 |
+| R13 | The director: an optional component, installed on its own server, that governs several `private-ai-manager`s on other machines (nodes) and hosts the models they download (user, 2026-11-21); a bff connected to it also offers the management of the nodes (user, 2026-11-15) | Open: step 14 |
 | R14 | A minimal install image (like the appliance images hypervisors ship) with only the node's `private-ai-manager` installed; that manager then installs the packages the node needs (the engines: llama.cpp, Strata). Asked by the user on 2026-11-22, last in the order. | Not started: step 15. |
 
 ### How we work
@@ -511,7 +511,7 @@ ngram and MoE keys are pruned); GUI and CLI defaults of the benchmark differ; de
 - Done when: each check above is enforced below the GUI, with a test through `pai-app` (and the
   manager where it applies), and the docs say what is checked where.
 
-### 14. The director (super-manager) governing several managers
+### 14. The director governing several managers
 
 Covers: R13. Asked by the user on 2026-11-15: a component above the managers, on a different server,
 that governs several of them; a bff connected to it is offered node management as well.
@@ -528,7 +528,7 @@ says so, with the reason, before promoting a node that runs instances (a fully c
 gives away the CA with it), and the install docs present it first; promoting such a node stays allowed.
 
 The node's manager without root or LocalSystem (user, 2026-11-22: "sia per Linux che per Windows";
-`ARCHITECTURE.md` part 2, "The node's manager without root or LocalSystem", proposed): the manager runs
+`ARCHITECTURE.md` part 2, "The node's manager without root or LocalSystem", accepted by the user on 2026-11-22): the manager runs
 as `private-ai-manager` (Linux) and `NT SERVICE\private-ai-manager` (Windows); a small privileged
 helper keeps the few verbs that cannot be scoped (Linux: password check, boot on/off, director on/off;
 Windows: create/repair, delete, boot on/off of instance services). Slices P1 to P6 at the head of this
@@ -536,27 +536,27 @@ step, before slice 1, which would otherwise create the node key as root. Models 
 where the instances can read them (`/var/lib/private-ai/models`, or a folder readable by `private-ai`).
 
 Design accepted by the user on 2026-11-15: `ARCHITECTURE.md` part 2 (a separate unprivileged
-process, first `pai-supermanager`, now the `director` role of `pai-manager`; the manager protocol over mutual TLS 1.3 with pinned fingerprints, off on a node
-until its administrator enables it; join by a one-time code; every `pai` member of the super-manager's
-machine administers every joined node; Linux super-manager first, Linux and Windows nodes). The
+process, the `director` role of `pai-manager`; the manager protocol over mutual TLS 1.3 with pinned fingerprints, off on a node
+until its administrator enables it; join by a one-time code; every `pai` member of the director's
+machine administers every joined node; Linux director first, Linux and Windows nodes). The
 slices, each test first, with the outcome each shows, are in `ARCHITECTURE.md` "Slices":
 
 1. Node identity (`pai node show|enable`). 2. The TLS listener with pinned fingerprints. 3. The join
    (code, `Join`, `leave`). 4. Delegated rights and per-change logging of who acted. 5. The
-   super-manager: its key, the node list, adding a node. 6. Its local socket, open only to the bff's
-   account. 7. The bff's hub mode against a fake super-manager, local mode unchanged. 8. The web UI
+   director: its key, the node list, adding a node. 6. Its local socket, open only to the bff's
+   account. 7. The bff's hub mode against a fake director, local mode unchanged. 8. The web UI
    (designer's brief first). 9. Linux packaging, then the user's run on two machines.
 
 - Done when: a bff in hub mode lists two joined nodes and starts and stops an instance on each, on
   the user's two machines, and every local-mode test still passes.
 
-Added (user, 2026-11-21): **the super-manager hosts the models for every node** and offers the joined
+Added (user, 2026-11-21): **the director hosts the models for every node** and offers the joined
 nodes an endpoint to download them into their local models folder. To design with the architect (who
 may download, over which channel and identity, integrity checks, storage and quotas on the
-super-manager, resumable transfers, how it relates to a node's own Hugging Face downloads), then a
-slice after 9; the done-when gains: a node downloads a model from the super-manager into its models
+director, resumable transfers, how it relates to a node's own Hugging Face downloads), then a
+slice after 9; the done-when gains: a node downloads a model from the director into its models
 folder and an instance serves it.
-Decided (user, 2026-11-21): **the super-manager is named the director** (since 2026-11-22 a role of `pai-manager`, `pai-manager director`, not a binary of its own: above); **its links
+Decided (user, 2026-11-21): **the director is the name** (since 2026-11-22 a role of `pai-manager`, `pai-manager director`, not a binary of its own: above); **its links
 with the nodes are secured by a private CA in the director**: at the join (one-time code) a node sends a
 CSR and gets a short-lived certificate (about 30 days) renewed by itself over the mutual TLS channel;
 the director's own certificate comes from the same CA; revocation is a refused renewal plus a deny list.
@@ -573,7 +573,7 @@ joining" (slices 1 to 5, 3b, 10, 11). Renewal (user, 2026-11-21): node and direc
 days and renewal starts 30 days before expiry; while the node is connected it retries every 5 minutes
 (fixed, no backoff); a node that was disconnected tries at once when it reconnects.
 Decided (user, 2026-11-21, ARCHITECTURE.md "The model store", slice 10): nodes pull from the
-super-manager over the step's mTLS channel; the store is filled from Hugging Face (checksum checked)
+director over the step's mTLS channel; the store is filled from Hugging Face (checksum checked)
 and by upload; one size cap on the store.
 
 ### 4. Decide whether to bring back patches 0002 to 0004
@@ -1031,7 +1031,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     cause is not established.
 13. **Nodes and instances** (user, 2026-11-17, after the preset cards and LAN access). The web UI's top
     level is the node: this machine under its host name, its instances inside (`default`: llama.cpp);
-    the same page takes more nodes when the super-manager comes (R13, step 14). Each instance is
+    the same page takes more nodes when the director comes (R13, step 14). Each instance is
     collapsible; collapsed it shows, for now, only its engine, its port and its tags (user, 2026-11-20: the
     Overview tile is the collapsed view and the instance page the open one, no fold control; the engine
     shows on a tile only when the instances run two or more engines), one or more
@@ -1242,7 +1242,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     which also carries logs). First the architect's design: options (OpenTelemetry collector and SDK,
     Prometheus-style exporters and a time-series store, or the manager's own sampler with a small
     history store), what runs on each node, retention, the trust boundary (who reads logs, the group
-    `pai`), how it reaches the super-manager (step 14) later, packaging on Linux and Windows; then a
+    `pai`), how it reaches the director (step 14) later, packaging on Linux and Windows; then a
     designer brief for the live view and the chart.
     Decided (user, 2026-11-21): the manager's own sampler in a new crate `pai-hwmon` (shared with
     pai-config's HW window), an in-memory 1 s ring and RRD-style history tiers in SQLite (5s:1h, 20s:4h,
@@ -1250,7 +1250,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     member reads instance logs; the disk card follows the default models folder only; an OTLP export
     later. Slices: 1 pai-hwmon with measured sample cost, 2 live stream, 3 history, 4 log consultation.
     A future central log collector (not now): OTLP, Fluent Bit on the nodes, VictoriaLogs behind the
-    super-manager (ARCHITECTURE.md 13d).
+    director (ARCHITECTURE.md 13d).
 14. **The router**: R11's gateway, one OpenAI-compatible endpoint in the bff with authentication that
     sends each request to the instance serving the model asked for, across instances and later engines
     (user, 2026-11-17: after nodes and instances). It logs every request (user, 2026-11-18): the
