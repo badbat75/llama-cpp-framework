@@ -3771,7 +3771,8 @@ binary, two roles").
    `private-ai-director.service` under its own unprivileged account `private-ai-director`, holding the
    node registry and the one key the nodes trust in its own state directory. It runs no engine and
    checks no content: each node's manager stays the authority over its machine. It never runs inside
-   the node's manager process (root, LocalSystem): the role is the subcommand the unit starts, and a
+   the node's manager process (root or LocalSystem today, its own unprivileged account once "The node's
+   manager without root or LocalSystem" is built): the role is the subcommand the unit starts, and a
    director started as root refuses to run.
 2. **Nodes are managers.** The director speaks to each node's `pai-manager` with **the existing
    manager protocol over TLS 1.3 with mutual authentication**, every certificate issued by **a
@@ -3792,12 +3793,16 @@ binary, two roles").
    disabled; `pai node promote` on a node enables it, joins that machine's own manager to it over
    loopback TLS like any other node, and switches the local bff to hub mode; `pai node demote` undoes
    the switch and stops the director, keeping its state.
+8. **No node manager runs as root or LocalSystem** (user, 2026-11-22; proposed): its own account on
+   each OS, polkit or per-service DACLs scoped to the instances, and a small privileged helper keeping
+   only what cannot be delegated (a password check on Linux, boot on and off, service creation on
+   Windows), all before the manager listens on the network.
 
 ### Role and boundaries
 
 | | Manager (on each node) | Director | bff |
 | --- | --- | --- | --- |
-| Runs as | `pai-manager serve`, unit `private-ai-manager.service`, root (Windows: the service `private-ai-manager`, LocalSystem) | `pai-manager director`, unit `private-ai-director.service`, the system user `private-ai-director` (Windows: later) | `pai-bff`, unit `private-ai-bff.service`, the system user `private-ai-bff` |
+| Runs as | `pai-manager serve`, unit `private-ai-manager.service`, root today, `private-ai-manager` as proposed (Windows: the service `private-ai-manager`, LocalSystem today, `NT SERVICE\private-ai-manager` as proposed) | `pai-manager director`, unit `private-ai-director.service`, the system user `private-ai-director` (Windows: later) | `pai-bff`, unit `private-ai-bff.service`, the system user `private-ai-bff` |
 | Owns | The instances, their files, the checks, local authorization | The node registry (name, address, certificate serial and expiry), the CA and its keys, the deny list, the join and renewals, fan-out with per-node timeouts | Web sessions, the HTTP API, the web UI |
 | Never | Knows the director's users; accepts a password from off the machine | Caches a node's files as truth; runs checks; starts engines; sees passwords | Holds the node key; reaches a node directly |
 | Talks to | systemd / SCM; local callers; the enrolled director over TLS | Nodes over TLS; its local bff over a local socket | The local manager (local mode) or the director (hub mode) |
@@ -3851,10 +3856,11 @@ neither process can be made to take the other's role by a unit drop-in alone. Un
 | B. A package `private-ai-framework-director` with only the unit and the sysusers entry | A fifth package, its version tied to `-core` | Promote becomes an install (an action with real effects, run by the user); a package mismatch is one more skew | Only if the user wants no director account on plain nodes |
 
 **Promote.** `pai node promote [--name <node>]` (and the same in the GUI later), a `configure` call to the
-local manager (a `pai` member, polkit `auth_self_keep` as for any `configure`), which as root, in order,
+local manager (a `pai` member, polkit `auth_self_keep` as for any `configure`), which, in order,
 each step idempotent so a failed promote is resumed by running it again:
 
-1. enables and starts `private-ai-director.service`; at its first start the director creates the CA,
+1. enables `private-ai-director.service` (through the helper's `SetDirector` once the manager is
+   unprivileged) and starts it; at its first start the director creates the CA,
    its own leaf and the signer (the profile above) and opens its socket;
 2. enables the node's own listener on `127.0.0.1:8592` when it is not already enabled (`pai node enable`'s
    key and join code, kept in the manager's memory, never printed);
@@ -3875,8 +3881,9 @@ the director's machine, not an option of demote (preference: no one-word command
 Moving the director to another machine is `ca export` there, promote and `ca import` here.
 
 **Who may call the director's socket.** The bff's uid (each call naming a session's principal) and
-uid 0 (the manager, for promote; and root already reads the CA key, so admitting it adds no power),
-both by `SO_PEERCRED`; everyone else is refused before a frame is parsed.
+the manager's (for promote: uid 0 today, `private-ai-manager` once the manager drops root; root already
+reads the CA key, so admitting it adds no power), both by `SO_PEERCRED`; everyone else is refused before a
+frame is parsed.
 
 **What is shared and what is one role's** (all in `crates/manager`, plus the client in `pai-core`):
 
@@ -3889,6 +3896,214 @@ Cost of one binary, accepted: the node's binary carries the director's code and 
 issuing half, the store's HTTP server), a larger binary on every node; its security effect is nil, since
 code a process never runs grants nothing, and the keys stay where the accounts put them.
 
+### The node's manager without root or LocalSystem (user, 2026-11-22): proposed
+
+The user's words (2026-11-22): the node's manager should not run as root nor as LocalSystem, "lo farei
+sia per Linux che per Windows", before the manager opens to the network (slice 2 below). Status:
+**proposed**, the defaults taken; no migration (pre-release: the packages are installed fresh).
+
+**Why it runs privileged today, and what each reason becomes.** The reasons are the unit's
+(`xtask/src/linux/system_files.rs` `manager_unit` and its test) and the calls the code makes
+(`crates/manager/src/manager/dbus.rs`, `accounts.rs`, `windows/scm.rs`, `windows/logon.rs`):
+
+| What needs privilege today | Linux | Windows |
+| --- | --- | --- |
+| Write the instance files and `bff.ini` | `/etc/llama.cpp` and `/etc/private-ai` owned by the manager's account (below) | `%ProgramData%\llama.cpp\config\` and `%ProgramData%\private-ai\config\` granted to the manager's service SID |
+| Start, stop, restart, reset an instance | polkit rule on `manage-units` for `llama.cpp@*.service` only (below) | per-service DACL on `llama.cpp_<id>`: start, stop, query |
+| Enable or disable an instance at boot | **the helper** (no polkit detail exists for it, below) | **the helper** (`SERVICE_CHANGE_CONFIG` is admin-equivalent, below) |
+| Create and delete an instance service | nothing: a template unit `llama.cpp@.service` needs no creation | **the helper** (`SC_MANAGER_CREATE_SERVICE`, below) |
+| Check a caller with polkit | the `org.freedesktop.policykit.owner` annotation on our two actions | nothing: the pipe client's token is read at identification level |
+| Check another user's password (`Authenticate`) | **the helper** (pam_unix refuses it unprivileged, below) | stays in the manager: `LogonUserW` needs no privilege |
+| Read model files at any path a `pai` member names | what the account can read: the instances' reach (below) | the same |
+
+The instances keep their own accounts as they are (`private-ai` on Linux, `NT SERVICE\llama.cpp_<id>` on
+Windows), and so does `run-instance`.
+
+#### Linux
+
+**The account.** A static system user `private-ai-manager` (sysusers.d in `-core`), member of
+`private-ai` (to give the files it writes that group: chown(2), "the owner of a file may change the group
+of the file to any group of which that owner is a member", as `service.rs` already does) and of `render`
+and `video` (the Vulkan probe child, `vulkan_child.rs`). Static, not `DynamicUser=`, for the reason the bff
+already records: dbus-daemon drops a dynamic user at Hello (the bff unit's comment in `system_files.rs`).
+
+**The configuration directories.** systemd makes a `ConfigurationDirectory=` owned by root whatever
+`User=` says (systemd.exec(5), quoted in the unit's test), so the manager can no longer write
+`/etc/llama.cpp` or `/etc/private-ai` through it. `-core` ships tmpfiles.d lines
+`d /etc/llama.cpp 0755 private-ai-manager private-ai -` and `d /etc/private-ai 0755 private-ai-manager
+private-ai -` (tmpfiles.d(5): `d` adjusts the mode and ownership of an existing directory), the unit
+dropping `ConfigurationDirectory=` for `ReadWritePaths=`. Files the engine package copied in as root stay
+readable (group `private-ai`) and are replaced by rename, which needs only the directory. The node key
+(`/etc/private-ai/node/`, slice 1) is created 0600 by `private-ai-manager`, not root.
+
+**The instances' units: polkit details exist for start and stop, not for enable.** Since systemd 226 a
+unit job sends polkit the unit name and the verb ([NEWS, "CHANGES WITH 226"](https://github.com/systemd/systemd/blob/main/NEWS):
+"it will now add additional fields to the request, including unit name and desired operation"); the
+current code passes `unit` and `verb` (`start`, `stop`, `restart`, `reset-failed`) for every unit job
+(`src/core/dbus-unit.c`, `unit_polkit_details` in `src/core/unit.c`), read in a rule with
+`action.lookup("unit")` ([polkit(8)](https://www.freedesktop.org/software/polkit/docs/latest/polkit.8.html)).
+`EnableUnitFiles` and `DisableUnitFiles` need `manage-unit-files`
+([org.freedesktop.systemd1(5)](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.systemd1.html), "Security"),
+which systemd checks **with no details** (`bus_verify_manage_unit_files_async` passes `details = NULL`,
+`src/core/dbus-util.c`), and `Reload` needs `reload-daemon`. So a rule can scope start and stop to
+`llama.cpp@*.service`, but not enable. Granting `manage-unit-files` whole would let the account enable any
+installed unit, among them `debug-shell.service`, a root shell on tty9
+([systemd-debug-generator(8)](https://www.freedesktop.org/software/systemd/man/latest/systemd-debug-generator.html)):
+root by another door, rejected. Every supported distribution ships systemd far past 226 (this machine: 259).
+The rule `-core` ships beside `50-private-ai.rules`:
+
+```js
+polkit.addRule(function (action, subject) {
+  if (action.id != "org.freedesktop.systemd1.manage-units" || subject.user != "private-ai-manager") return;
+  var unit = action.lookup("unit"), verb = action.lookup("verb");
+  var ok = /^llama\.cpp@[A-Za-z0-9_-]+\.service$/.test(unit)
+    || unit == "private-ai-bff.service" || unit == "private-ai-director.service";
+  if (ok && ["start", "stop", "restart", "reset-failed"].indexOf(verb) >= 0) return polkit.Result.YES;
+});
+```
+
+(the instance id pattern to match `valid_instance_id`; the bff and the director for the promote).
+
+**Checking its callers with polkit, unprivileged.** polkitd lets a caller check a subject of another
+user only when the caller is uid 0 or is named in the action's `org.freedesktop.policykit.owner`
+annotation (polkit(8): "If this annotation is not specified then only root can query whether a client
+running as a different user is authorized for an action", "A typical use of this annotation is for a
+daemon process that runs as a system user rather than root"; the code:
+`may_identity_check_authorization`, `src/polkitbackend/polkitbackendinteractiveauthority.c`). Our
+`org.privateai.manager.control` and `configure` gain
+`<annotate key="org.freedesktop.policykit.owner">unix-user:private-ai-manager</annotate>`. The manager
+passes no details (`dbus.rs` `PolkitAuthority::check`), so nothing else changes.
+
+**The bus name.** The D-Bus policy's `<policy user="root"><allow own=...>` becomes
+`<policy user="private-ai-manager">`; everyone may still send, polkit deciding per call.
+
+**Authenticate: pam_unix cannot check another user's password unprivileged.** Unless built with the
+non-default `pam_unix-try-getspnam` (`meson_options.txt`, default false), pam_unix hands a shadowed
+account to `unix_chkpwd` (`modules/pam_unix/passverify.c`), and the helper, called by a non-root user for
+another user's name, drops to the caller and fails (`unix_chkpwd.c`: "if the caller specifies the
+username, verify that user matches it"), as the playbook's first fact already says
+([linux-pam](https://github.com/linux-pam/linux-pam)). Options:
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. A root helper, socket-activated per call** | `pai-manager helper` (the same binary), `private-ai-helper.socket` (`ListenStream=/run/private-ai-helper.sock`, `SocketUser=root`, `SocketGroup=private-ai-manager`, `SocketMode=0660`, `Accept=yes`: [systemd.socket(5)](https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html)) and `private-ai-helper@.service` | Root code remains, but only a fixed verb set taking a validated id or a credential pair, one process per connection, nothing listening on the network, peer checked by `SO_PEERCRED` | **Recommended** |
+| B. Membership in `shadow` and our own crypt check | No root process | Bypasses the PAM stack (faillock, account expiry, sssd); the account reads every hash for offline cracking | Rejected |
+| C. Keep `Authenticate` and enable in a root manager | None | The requirement is not met | Rejected |
+
+**The helper's verbs** (Linux): `Authenticate{user, password}` (the PAM `private-ai` service, as
+`accounts.rs` today; the manager then reads the groups itself, which needs no privilege);
+`SetBoot{id, on}` (`EnableUnitFiles` or `DisableUnitFiles` of `llama.cpp@<id>.service` and `Reload`, the
+id held to `valid_instance_id`); `SetDirector{on}` (the same for `private-ai-director.service`, for
+promote). Nothing else: no path, no unit name, no argument passes through. The unit: root, hardened
+(`NoNewPrivileges=`, `ProtectSystem=strict`, `PrivateNetwork=yes`, `RestrictAddressFamilies=AF_UNIX`; the
+capability set reduced to what the PAM stack reads, to be measured in the slice: `CAP_DAC_READ_SEARCH`
+where `/etc/shadow` is mode 0000, unverified per distribution).
+
+**The unit.** `User=private-ai-manager`, `Group=private-ai-manager`,
+`SupplementaryGroups=private-ai render video`, `ReadWritePaths=/etc/llama.cpp /etc/private-ai`,
+`StateDirectory=private-ai-manager` (now owned by the account, as the metrics design already assumes),
+`Environment=HOME=/var/lib/private-ai` kept, and the bff's hardening (`ProtectSystem=strict`,
+`ProtectHome=read-only` (file modes decide, as for the instances), `PrivateTmp=`, `NoNewPrivileges=`,
+`CapabilityBoundingSet=` empty, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` for slice 2's
+listener), but not `PrivateDevices=` (the GPU probe).
+
+**Model files.** The manager reads (GGUF header, scans) only what `private-ai-manager` may: the shared
+folder `/var/lib/private-ai/models` (group `pai`, world readable), any world-readable path, and what group
+`private-ai` reads. It can no longer read a file under a user's home that is not readable by others
+(current Ubuntu and Fedora create homes not readable by others: unverified per release). Those files were
+never usable anyway: the instance account `private-ai` cannot read them either, so the manager's reach
+becomes the instances' reach. What the user does: keep models in the shared folder (the recommended
+place), or grant read to the group `private-ai` on their own folder. The refusal is the existing
+not-found or unreadable answer for that path.
+
+#### Windows
+
+**The account.** The virtual account `NT SERVICE\private-ai-manager` (the service's own SID, no
+password, local; on a domain it reaches the network as the computer account:
+[Service accounts](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-service-accounts)),
+recommended over a (group) managed service account, which needs Active Directory, and over
+`LocalService`, which every such service shares. The service's required privileges are set to none
+beyond `SeChangeNotifyPrivilege`, which the SCM always keeps
+([SERVICE_REQUIRED_PRIVILEGES_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_required_privileges_infow):
+"the SCM will remove the privileges that are not required from the process token"), so the token drops
+`SeImpersonatePrivilege`, which every SCM service holds through the Service group
+([Impersonate a client after authentication](https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/impersonate-a-client-after-authentication))
+and which Microsoft's own page names as an elevation path.
+
+**The pipe and the token read.** The pipe's DACL (`PIPE_SDDL`) stays; the manager creates it as its
+own account. Reading the client's token needs no privilege when the client connects at identification
+level: impersonation is allowed when "the requested impersonation level of the token is less than
+SecurityImpersonation" ([ImpersonateNamedPipeClient](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-impersonatenamedpipeclient)),
+and at `SecurityIdentification` "the server can get the identity and privileges of the client"
+([Impersonation levels](https://learn.microsoft.com/en-us/windows/win32/secauthz/impersonation-levels),
+which also says the client chooses it in `CreateFile`; impersonation is the default). So `PipeClient`
+opens the pipe with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`; a client that does not is refused
+(fail closed: a failed `ImpersonateNamedPipeClient` or a token above identification level answers
+nothing). `pai` membership by name (`NetUserGetLocalGroups`) works for any authenticated caller on a
+workstation or member server ([NetUserGetLocalGroups](https://learn.microsoft.com/en-us/windows/win32/api/lmaccess/nf-lmaccess-netusergetlocalgroups),
+Remarks), and `LogonUserW` needs no privilege: "The SE_TCB_NAME privilege is not required for this
+function unless you are logging onto a Passport account" ([LogonUserW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-logonuserw)).
+
+**The instance services.** By default only Administrators may create services or change a service's
+configuration, and `SERVICE_CHANGE_CONFIG` "grants the caller the right to change the executable file
+that the system runs, it should be granted only to administrators"
+([Service security and access rights](https://learn.microsoft.com/en-us/windows/win32/services/service-security-and-access-rights));
+`DeleteService` needs `DELETE`. The manager creates and deletes `llama.cpp_<id>` (`windows/scm.rs`) and
+changes its start type for boot. Options:
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| A. Grant the manager `SC_MANAGER_CREATE_SERVICE` on the SCM's descriptor (settable since Server 2003 SP1, same page) | One descriptor change at install | Whoever creates a service chooses its binary and account, LocalSystem included: the manager would be SYSTEM-equivalent | Rejected |
+| **B. A small LocalSystem helper**: `pai-manager helper` as the service `private-ai-helper`, a pipe whose DACL admits only the manager's service SID | One more service in the framework's MSI | Root-equivalent code remains, but with a fixed verb set taking only a validated id; it builds the whole service spec itself (binary from `HKLM\Software\private-ai` `InstallDir`, account `NT SERVICE\llama.cpp_<id>`, `run-instance <id>`) | **Recommended**, the Linux helper's twin |
+| C. Services pre-created by the MSI (fixed slots) | No runtime creation | Instance ids are user-chosen and name the service, its account and its log; slots break all three | Rejected |
+| D. Instances created only by the MSI | No helper | Removes the web UI's instance creation (`POST /api/instances`) | Rejected |
+
+**The helper's verbs** (Windows): `Ensure{id}` (create `llama.cpp_<id>` or repair it to the fixed spec,
+with its DACL: SYSTEM and Administrators as by default, plus the manager's SID with start, stop, query
+status, query config, interrogate, read control; never change config, `WRITE_DAC` or delete);
+`Delete{id}`; `SetBoot{id, on}` (the start type only). Running or not: auto start and idle on its pipe
+(preference: no service DACL for the manager to start it on demand, whose WiX expression is to be
+confirmed); a demand start can come later.
+
+**The folders.** `%ProgramData%\llama.cpp\config\` and `%ProgramData%\private-ai\config\` add the
+manager's service SID with modify (both MSIs; service SIDs are computed from the service name, so the
+engine's MSI can name it as it names `S-1-5-80-0` today); `%ProgramData%\private-ai\node\` (slice 1)
+grants SYSTEM and the manager's SID only; `logs\` and `models\` stay as they are.
+
+#### What the director role gains
+
+On a promoted machine no process facing the network runs as root or LocalSystem: the node listener
+(8592) is `private-ai-manager`, the director's (8593) `private-ai-director`, the web service
+`private-ai-bff`. The director's socket admits the manager's uid instead of uid 0 for promote, so the
+socket's rule becomes "the bff and the manager" ("One binary, two roles", updated). A compromised node
+manager acts on its instances and files (as any `configure` caller could) and can ask the helper its
+three verbs; it cannot become root.
+
+#### Slices (each leaves a working install, since every closed slice is deployed on this machine)
+
+P1. **Linux helper, still root.** `pai-manager helper` with `Authenticate` and `SetBoot`, its socket and
+    unit; the manager calls it. Done when: a peer other than `private-ai-manager` (and, while the manager
+    is still root, uid 0) is refused before a frame is read; an id outside `valid_instance_id` is refused;
+    `Authenticate` and boot on/off behave as today through a fake helper; the unit files are checked by
+    `system_files.rs` tests.
+P2. **Linux rights in place, still root.** The account (sysusers), the tmpfiles lines, the polkit rule,
+    the owner annotation, the D-Bus policy for `private-ai-manager`. Done when: the files' tests pin each
+    line; the rule's id pattern matches `valid_instance_id` in a test over the same cases.
+P3. **Linux: drop root.** `User=` and the hardening in the unit. Done when: the unit test asserts the
+    lines; after `xtask install` (the user's run, or the standing deploy) the services check (start,
+    stop, save, boot on and off, sign-in) passes.
+P4. **Windows helper, still LocalSystem.** `private-ai-helper` with `Ensure`, `Delete`, `SetBoot`. Done
+    when: the spec it builds is pinned by tests from an id alone; an invalid id is refused; the
+    DACL string grants the manager no change-config, `WRITE_DAC` or delete; type-checked.
+P5. **Windows clients at identification level.** `PipeClient` opens with SQOS identification; the server
+    refuses a higher level. Done when: tests pin the flags; type-checked.
+P6. **Windows: drop LocalSystem.** The virtual account, the required privileges, the folders' ACLs in both
+    MSIs. Done when: the MSI text checks pin them; the CI install, repair and uninstall pass.
+
+**Where in the plan** (recommended): at the head of step 14, before its slice 1, since slice 1 creates
+the node key as the manager's account; Linux (P1 to P3) then Windows (P4 to P6). The alternative, after
+step 14's slice 4, would build the listener and the join on root and move them.
+
 ### Transport between machines
 
 | Option | Cost | Risk | Verdict |
@@ -3900,7 +4115,7 @@ code a process never runs grants nothing, and the keys stay where the accounts p
 | E. D-Bus over TCP | None | The specification: no integrity or confidentiality, non-local TCP deprecated ([D-Bus spec](https://dbus.freedesktop.org/doc/dbus-specification.html), "TCP Sockets", revision 0.33) | Rejected |
 
 **Who listens.** The director dials the nodes; each node listens. Option A puts the listener in
-the manager (root, LocalSystem), the smallest design, since the manager already serves the protocol
+the manager (unprivileged once "The node's manager without root or LocalSystem" is built, which comes first), the smallest design, since the manager already serves the protocol
 and a node then needs only `-core` and the engine (a headless GPU box needs no bff). The alternatives
 are a relay in the node's bff (which is sandboxed and unprivileged, but must then be installed on every
 node and be trusted to grant `configure` on the director's behalf, the same power with more code)
@@ -3979,8 +4194,8 @@ joined. The process is unprivileged and hardened like the bff; a hardware key (P
 **The join** (the director still dials, the code still comes from the node):
 
 1. On the node, a `pai` member runs `pai node enable` (`configure`). The manager generates the node's
-   P-256 key (`/etc/private-ai/node/`, 0600 root; Windows `%ProgramData%\private-ai\node\`, SYSTEM and
-   Administrators), opens the listener in join mode with a **temporary self-signed certificate of that
+   P-256 key (`/etc/private-ai/node/`, 0600 `private-ai-manager`; Windows `%ProgramData%\private-ai\node\`,
+   SYSTEM and the manager's service SID: "The node's manager without root or LocalSystem"), opens the listener in join mode with a **temporary self-signed certificate of that
    key**, and prints the **join code**: the key's SPKI SHA-256 (truncated to 128 bits) and a random
    128-bit secret, valid 15 minutes, single use.
 2. In the director's web UI an administrator adds the node: its name, its address, the code.
@@ -4070,7 +4285,7 @@ has a new key and no certificate: it joins again.
 How a web session maps to a node: the user signs in on the director machine's bff, checked by
 **that machine's** manager (`Authenticate`, so that machine has `-core`); only a `pai` member gets a
 session. The bff sends each call to the director with the session's principal
-(`alice@<director name>`); the director admits only its bff, and root for promote (by peer credentials:
+(`alice@<director name>`); the director admits only its bff, and the manager for promote (by peer credentials:
 `SO_PEERCRED` on a Unix socket, [unix(7)](https://man7.org/linux/man-pages/man7/unix.7.html); "One binary,
 two roles") and forwards the call to
 the node with the same principal as a field. The node's manager authorizes the enrolled peer and logs
@@ -4149,8 +4364,8 @@ and offer an endpoint to the hosts to download them locally."
   | **A. The node pulls: HTTPS `GET /store/<name>` on a director listener, TLS 1.3 mutual, certificates from the director's CA (the listener that also takes renewals)** | A listener in the director (unprivileged, its own port, a proposal: 8593); HTTP range requests give resume for free (RFC 9110, "Range Requests") | The director must be reachable from the nodes, the reverse of the answer to question 1 | **Recommended**: it is what the user asked ("an endpoint to download"), and a big transfer is a plain stream, not 1 MiB JSON frames |
   | B. The director pushes over the node's listener (`StoreWrite{name, offset, bytes}` frames) | No new listener | Base64 in 1 MiB JSON frames (a third larger), a long-held connection on the node's manager, resume by offset hand-made | Fallback if nodes cannot reach the director |
 
-  The node's manager (root, LocalSystem) does the transfer, since only it holds the node key
-  (`/etc/private-ai/node/`, 0600 root). It parses only TLS and HTTP headers; the body is hashed and
+  The node's manager (its own account, `private-ai-manager` or `NT SERVICE\private-ai-manager`) does the
+  transfer, since only it holds the node key (`/etc/private-ai/node/`, 0600 that account). It parses only TLS and HTTP headers; the body is hashed and
   written, never interpreted.
 - **Integrity.** The node writes `<ModelsDir>/.store-staging/<sha256>.partial`, hashes while writing,
   and renames into `<ModelsDir>/models/store/<name>` (owned by the engine's account) only when size and
@@ -4173,13 +4388,15 @@ and offer an endpoint to the hosts to download them locally."
 ### Slices
 
 Each test first; the coordinator may split further. Linux first; the Windows halves of 1 to 4 are
-type-checked like the rest of the Windows code.
+type-checked like the rest of the Windows code. P1 to P6 ("The node's manager without root or
+LocalSystem") come before slice 1.
 
 0. **Before step 10 slice 6b part 3 hardens** (no new behaviour): the acting principal is a field of
    the request beside the transport caller, not folded into `Caller` (below). Done when: a test pins
    that a call from the bff carrying a principal reaches the Authority as (caller, principal, action).
 1. **Node identity.** `pai node show|enable` creates the P-256 key and the temporary certificate and
-   prints the code. Done when: the key file is 0600 root (SYSTEM and Administrators on Windows), the
+   prints the code (after P1 to P6, "The node's manager without root or LocalSystem"). Done when: the key
+   file is 0600 `private-ai-manager` (SYSTEM and the manager's service SID on Windows), the
    code's hash is the key's SPKI, a non-`configure` caller is refused.
 2. **The listener.** TLS 1.3, ALPN, client certificates verified against the node's CA bundle with the
    name `director.pai.invalid` and `clientAuth`, `manager::pipe` dispatch with a new caller kind. Done
@@ -4213,7 +4430,7 @@ type-checked like the rest of the Windows code.
    certificate of another CA reads `untrusted`, an expired one `expired`; a stopped node reads
    `unreachable` within the timeout while another answers.
 6. **Its local interface.** The protocol with `node` and principal on a Unix socket, the bff's uid and
-   uid 0 only. Done when: another uid is refused before a frame is parsed; calls reach the right node;
+   the manager's uid only. Done when: another uid is refused before a frame is parsed; calls reach the right node;
    `ListNodes` fans out.
 7. **The bff's hub mode.** `Director`, `nodes` in `/api/version`, `/api/nodes`, the node-prefixed
    routes over a node seam. Done when: tests against a fake director pass and every local-mode
@@ -4299,3 +4516,10 @@ One binary, two roles (2026-11-22), notes that block nothing, the default taken:
 director's unit and account in `-core`, disabled (default); or a small `-director` package so plain nodes
 carry no director account. 13. **Demote and the CA**: demote keeps the director's state, so a promote
 restores the fleet (default); or demote also deletes it, every node then joining again.
+
+The node's manager without root or LocalSystem (2026-11-22), notes that block nothing, the default
+taken: 14. **The remaining privileged part**: a helper with three fixed verbs per OS (default); or keep
+those operations by hand (an administrator runs `systemctl enable` and the web UI loses instance
+creation on Windows), with no privileged code at all. 15. **Windows helper**: always running and idle on
+its pipe (default); or started on demand by the manager. 16. **Plan order**: at the head of step 14
+(default); or as a step of its own before step 13's remaining work.

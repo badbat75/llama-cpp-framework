@@ -523,6 +523,14 @@ with a **+ Add node** button; on a single node the + explains that this machine 
 asks to confirm, promotes it (`pai node promote`, which also stays on the command line for headless
 nodes and scripts), then asks for the one-time code made on the other node. Designer's brief first.
 
+The node's manager without root or LocalSystem (user, 2026-11-22: "sia per Linux che per Windows";
+`ARCHITECTURE.md` part 2, "The node's manager without root or LocalSystem", proposed): the manager runs
+as `private-ai-manager` (Linux) and `NT SERVICE\private-ai-manager` (Windows); a small privileged
+helper keeps the few verbs that cannot be scoped (Linux: password check, boot on/off, director on/off;
+Windows: create/repair, delete, boot on/off of instance services). Slices P1 to P6 at the head of this
+step, before slice 1, which would otherwise create the node key as root. Models are then read only
+where the instances can read them (`/var/lib/private-ai/models`, or a folder readable by `private-ai`).
+
 Design accepted by the user on 2026-11-15: `ARCHITECTURE.md` part 2 (a separate unprivileged
 `pai-supermanager`; the manager protocol over mutual TLS 1.3 with pinned fingerprints, off on a node
 until its administrator enables it; join by a one-time code; every `pai` member of the super-manager's

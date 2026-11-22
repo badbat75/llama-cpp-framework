@@ -210,6 +210,13 @@ description: What the architect has learned about this project's components, int
   wants one codebase; the separation that matters is process, account and files, so keep it there
   (a director at euid 0 refuses to start; `serve` never reads its state). Roles by subcommand, never by
   a writable config key: a file would let one write move the CA into the root process.
+- Dropping root (checked in sources 2026-11-22): systemd sends polkit `unit` and `verb` for unit jobs
+  (v226+, `unit_polkit_details`) but NO details for `manage-unit-files` (`dbus-util.c`), so enable
+  cannot be scoped to a unit; polkit lets a non-root daemon check other users' subjects only via the
+  action's `org.freedesktop.policykit.owner` annotation; pam_unix cannot check another user's password
+  unprivileged (`unix_chkpwd`); Windows `SERVICE_CHANGE_CONFIG` and `SC_MANAGER_CREATE_SERVICE` are
+  admin-equivalent; `LogonUserW` and `NetUserGetLocalGroups` need no privilege; a pipe client at
+  `SECURITY_IDENTIFICATION` needs no `SeImpersonatePrivilege` on the server.
 - Before inventing a framework key for `models.ini`, grep llama.cpp's `common/arg.cpp` for a native
   option: v1.0.0 has `--tags` (preset key `tags`, listed in the router's `/models`) and `--alias`
   (checked 2026-11-22). A router reload unloads a running model whose preset options changed, `tags`
