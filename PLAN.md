@@ -1182,7 +1182,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     In progress: 2j, brief 21 (`fe/briefs/21-tensor-placement.md`, 2026-11-22: a Tensor placement card
     of rule rows, tensor kind, layers, device, the raw rules editable as text; parts TP1 T.1 to T.9, in
     progress since 2026-11-22, then TP2 T.10 to T.13 and TP3 T.14 to T.17; the brief's two questions, a
-    tensor picker and Move up/down for rules, taken as recommended: not now). Then slice 17.
+    tensor picker and Move up/down for rules, taken as recommended: not now). Slice 17 started 2026-11-22 at the user's request, beside 2j: the designer refreshes brief 16 against main first, then 17a's tests and code take `fe/` after TP1's chain, one `fe/` user at a time.
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.
