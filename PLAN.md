@@ -521,7 +521,10 @@ the web UI is one interface for manager and director (N1's Nodes and Profiles me
 adding nodes from the web: a **Nodes page** (an overview of the nodes: name, state, version, instances)
 with a **+ Add node** button; on a single node the + explains that this machine becomes the director,
 asks to confirm, promotes it (`pai node promote`, which also stays on the command line for headless
-nodes and scripts), then asks for the one-time code made on the other node. Designer's brief first.
+nodes and scripts), then asks for the one-time code made on the other node. Designer's brief first. A dedicated
+director (a small machine that runs no models) is the recommended setup (user, 2026-11-22): the + flow
+says so, with the reason, before promoting a node that runs instances (a fully compromised machine
+gives away the CA with it), and the install docs present it first; promoting such a node stays allowed.
 
 The node's manager without root or LocalSystem (user, 2026-11-22: "sia per Linux che per Windows";
 `ARCHITECTURE.md` part 2, "The node's manager without root or LocalSystem", proposed): the manager runs
