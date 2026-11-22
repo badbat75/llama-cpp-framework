@@ -1101,7 +1101,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     will call too), the Vulkan driver per GPU included (a `pai-manager vulkan-probe` child; its first
     run on this machine needs the user's go-ahead), About reads `/api/version` with `os`. Slices AN1 to
     AN5 (brief 18 for AN5, split AN5a and AN5b). Built: AN1, AN2 (the Vulkan child and join; its first real run on
-    this machine still waits for the user's go-ahead). Built: AN5, the About and Node info pages (2026-11-22; they show real node facts once AN3 and AN4 land). First real Vulkan run (user's go-ahead, 2026-11-22): 3 rows, PCI ids as lspci, radv, Mesa 26.0.8, 2.2 s. Next: AN3, AN4.
+    this machine still waits for the user's go-ahead). Built: AN5, the About and Node info pages (2026-11-22; they show real node facts once AN3 and AN4 land). First real Vulkan run (user's go-ahead, 2026-11-22): 3 rows, PCI ids as lspci, radv, Mesa 26.0.8, 2.2 s. In progress: AN3 (2026-11-22). Next: AN4.
     **Tags on model profiles** (user, 2026-11-22): a model profile carries tags too, as chips with the
     same suggestions (C1, C2), for three uses: labels and a filter on the Models page, routing (the router
     and the director pick a model by tag, step 14 and item 14), and shown to clients in the model list
@@ -1155,7 +1155,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     /api/profiles/model/{id}/model-info`); an `hf-repo` not yet downloaded gives no layer facts for now;
     the manager refuses `override-tensor`, `device-draft` or `mmproj-device` naming a GPU outside the
     instance's server profile `Devices`; `moe-cache-mib` stays off the web until its floor rule. Slices
-    L1 to L4, 2g (designer first), J1, 2j (designer first). Built: L1, the manager's `ModelInfo`/`ModelInfoAs`
+    L1 to L4, 2g (designer first; brief 19 in progress, 2026-11-22), J1, 2j (designer first). Built: L1, the manager's `ModelInfo`/`ModelInfoAs`
     (2026-11-22). Next: L2.
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
