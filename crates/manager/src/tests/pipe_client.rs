@@ -1565,6 +1565,159 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         hang_up(server, client);
     }
+
+    // ── The layer facts of a saved model profile (ModelInfo / ModelInfoAs) ──
+    // L1 of "Layers, MoE and tensor placement on the web model profile page"
+    // (ARCHITECTURE.md (1)): the reply the bff reads (`model`, `info`,
+    // `reason`), over the stream, gated as reading `models.ini` is. The read
+    // opens a file under this phase's redirect, so it lives here.
+    {
+        use crate::manager::service::write_gguf_kv;
+        use pai_core::client::{ModelFacts, Reason};
+
+        let models = dir.path().join("info-models");
+        std::fs::create_dir_all(&models).expect("models dir");
+        // A MoE file: the header's counts are the reply, `moe` from the
+        // routed-expert tensors.
+        let gguf = models.join("stream.gguf");
+        write_gguf_kv(
+            &gguf,
+            "qwen3moe",
+            &[
+                ("qwen3moe.block_count", 40),
+                ("qwen3moe.expert_count", 128),
+                ("qwen3moe.expert_used_count", 8),
+            ],
+            &[
+                ("token_embd.weight", 1 << 20),
+                ("blk.0.ffn_gate_exps.weight", 1 << 20),
+                ("blk.1.ffn_gate_exps.weight", 1 << 20),
+                ("output.weight", 1 << 20),
+            ],
+        );
+        let gone = models.join("gone.gguf");
+        std::fs::write(
+            sys.join("models.ini"),
+            format!(
+                "[stream]\nmodel = {}\n\n[fetched]\nhf-repo = the-org/the-model\n\n[gone]\nmodel = {}\n",
+                gguf.display(),
+                gone.display()
+            ),
+        )
+        .expect("models.ini");
+        let facts = ModelFacts {
+            block_count: 40,
+            moe: true,
+            expert_count: 128,
+            expert_used: 8,
+        };
+        let same = |got: &str, want: &std::path::Path| {
+            std::fs::canonicalize(got).ok() == std::fs::canonicalize(want).ok()
+        };
+
+        // The bff's own read, and the member's read it vouches for.
+        let (c, asked) = devices_core(true);
+        let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+        let got = client.model_info("stream").expect("the bff's own read");
+        assert_eq!(
+            got.info,
+            Some(facts.clone()),
+            "the facts, in the fields of the design, on the wire"
+        );
+        assert!(
+            got.model.as_deref().is_some_and(|p| same(p, &gguf)),
+            "`model` is the resolved absolute path the read opened: {got:?}"
+        );
+        assert_eq!(got.reason, None, "facts: no reason");
+        assert_eq!(
+            *c.authority().asked_quietly.lock().unwrap(),
+            vec![(Caller(BFF_SID.into()), Action::Control)],
+            "control asked without interaction"
+        );
+        assert_eq!(
+            *c.authority().asked.lock().unwrap(),
+            Vec::<(Caller, Action)>::new(),
+            "never asked with a prompt"
+        );
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .model_info("stream")
+                .map(|got| (got.info, got.reason)),
+            Ok((Some(facts.clone()), None)),
+            "the member's read, vouched for by the bff: the same facts"
+        );
+        assert_eq!(
+            client.acting_for("bob").model_info("stream"),
+            Err(ClientError::NotAuthorized),
+            "bob is no member of `pai`: no facts, and no path of the profile's file"
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            Vec::<String>::new(),
+            "the read asks the manager's own seam for nothing"
+        );
+        hang_up(server, client);
+
+        // A caller that is not the bff, vouching for a member: refused.
+        let (c, _) = devices_core(true);
+        let (server, client) = connect(&c, &alice);
+        assert_eq!(
+            client.acting_for("alice").model_info("stream"),
+            Err(ClientError::NotAuthorized),
+            "only the bff's account vouches"
+        );
+        hang_up(server, client);
+
+        // A caller polkit refuses the quiet check: refused.
+        let (c, _) = devices_core(false);
+        let (server, client) = connect(&c, &alice);
+        assert_eq!(
+            client.model_info("stream"),
+            Err(ClientError::NotAuthorized),
+            "no control, no facts"
+        );
+        hang_up(server, client);
+
+        // The reasons are answers of a call that worked, and an id the pool has
+        // no section for is the keyed refusal (the page's 404).
+        let (c, _) = devices_core(true);
+        let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .model_info("fetched")
+                .map(|got| (got.info, got.reason)),
+            Ok((
+                None,
+                Some(Reason {
+                    key: "model-info-fetched".into(),
+                    args: vec!["hf-repo".into()],
+                })
+            )),
+            "a model to fetch has no facts, and the key the section names"
+        );
+        assert_eq!(
+            client
+                .acting_for("alice")
+                .model_info("gone")
+                .map(|got| got.reason),
+            Ok(Some(Reason {
+                key: "model-info-missing".into(),
+                args: vec![gone.to_string_lossy().into_owned()],
+            })),
+            "a file that is not there: the resolved path, as the page shows it"
+        );
+        assert_eq!(
+            client.acting_for("alice").model_info("nope"),
+            Err(ClientError::Invalid(Refusal {
+                key: "no-model-profile-named",
+                values: vec!["nope".into()],
+            })),
+            "no section named `nope`: the keyed refusal"
+        );
+        hang_up(server, client);
+    }
 }
 
 /// The bff's account on Windows, `NT SERVICE\private-ai-bff`, by its

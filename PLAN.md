@@ -1154,7 +1154,8 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     /api/profiles/model/{id}/model-info`); an `hf-repo` not yet downloaded gives no layer facts for now;
     the manager refuses `override-tensor`, `device-draft` or `mmproj-device` naming a GPU outside the
     instance's server profile `Devices`; `moe-cache-mib` stays off the web until its floor rule. Slices
-    L1 to L4, 2g (designer first), J1, 2j (designer first). In progress: L1 (2026-11-22).
+    L1 to L4, 2g (designer first), J1, 2j (designer first). Built: L1, the manager's `ModelInfo`/`ModelInfoAs`
+    (2026-11-22). Next: L2.
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.

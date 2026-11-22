@@ -1832,6 +1832,133 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         Ok(self.gpus.devices())
     }
 
+    /// L1 of "Layers, MoE and tensor placement on the web model profile page"
+    /// (ARCHITECTURE.md (1)): the layer facts of ONE saved model profile, by
+    /// its id. The gate is the gate of reading `models.ini`
+    /// ([`Self::authorize_quietly`] with `control`): the caller's own read is
+    /// polkit asked quietly, the `As` form is the bff's account vouching for a
+    /// current member of `pai`, and every refusal reads nothing. The section is
+    /// looked for in `models.ini`, else in `models.ini.disabled` (a switched-off
+    /// profile has sliders too); no section, and `*`, answer the keyed
+    /// `no-model-profile-named`. `model` resolves as `model_path` resolves it,
+    /// against the instances' working directory, and the key the section lacks
+    /// is the pool's `[*]` one, key by key, as `estimated_of` reads it. The
+    /// outcomes are all a SUCCESS of the call, with `info` null and a keyed
+    /// `reason` (the outcome table of the design); a shard set declaring more
+    /// shards than [`MAX_MODEL_SHARDS`] is `model-info-unreadable` naming the
+    /// model, judged from the name with no shard opened. The reader's own text
+    /// never travels, so no byte of a file it refused reaches the reply.
+    pub fn model_info(
+        &self,
+        who: &Requester,
+        profile: &str,
+    ) -> Result<pai_core::client::ModelInfoReply, ManagerError> {
+        use pai_core::client::{ModelFacts, ModelInfoReply, Reason};
+        self.authorize_quietly(who, Action::Control)?;
+        let reason = |key: &str, args: Vec<String>| ModelInfoReply {
+            model: None,
+            info: None,
+            reason: Some(Reason {
+                key: key.into(),
+                args,
+            }),
+        };
+        let named = |name: &str| -> Vec<pai_core::ini::Section> {
+            std::fs::read_to_string(crate::paths::engine_config_dir().join(name))
+                .map(|text| pai_core::ini::parse_sections(&text))
+                .unwrap_or_default()
+        };
+        // The section, in the pool that has it: the enabled file first, the
+        // switched-off one next.
+        let enabled = named("models.ini");
+        let disabled = named("models.ini.disabled");
+        let (sections, section) = match profile_section(&enabled, profile)
+            .map(|s| (enabled.as_slice(), s))
+            .or_else(|| profile_section(&disabled, profile).map(|s| (disabled.as_slice(), s)))
+        {
+            Some(found) => found,
+            None => return Err(one_value_refusal("no-model-profile-named", profile)),
+        };
+        let own = |key: &str| {
+            section
+                .keys
+                .get(key)
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
+        // A fetch key of the section names no file of the node: the answer is
+        // "fetched", and no file is opened.
+        if let Some(key) = FETCH_KEYS.iter().find(|key| own(key).is_some()) {
+            return Ok(reason("model-info-fetched", vec![(*key).to_string()]));
+        }
+        // The section's own `model`, else the pool's `[*]` one: the cascade is
+        // PER KEY, exactly as `estimated_of` resolves it.
+        let global = sections.iter().find(|s| s.id == "*");
+        let get = |key: &str| {
+            own(key).or_else(|| {
+                global
+                    .as_ref()
+                    .and_then(|g| g.keys.get(key))
+                    .map(String::as_str)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned)
+            })
+        };
+        let Some(model) = get("model") else {
+            return Ok(reason("model-profile-no-model", vec![profile.to_string()]));
+        };
+        let cwd = crate::launch::instance_current_dir(
+            cfg!(windows),
+            &crate::paths::data_root(),
+            &crate::paths::instance_state_dir(),
+        );
+        let path = model_path(&model, &cwd);
+        // The shard set first, from the name alone: a split model declaring
+        // more shards than [`MAX_MODEL_SHARDS`] is `unreadable`, naming the
+        // model, and nothing past the first shard is opened. Then a shard that
+        // is not there answers `missing` naming that shard, and a path that
+        // names no regular file answers `unreadable`, before the reader turns
+        // either into its own text.
+        let shards = pai_core::gguf_shape::shard_set(&path);
+        if shards.len() > MAX_MODEL_SHARDS {
+            return Ok(reason(
+                "model-info-unreadable",
+                vec![path.to_string_lossy().into_owned()],
+            ));
+        }
+        for shard in shards {
+            let named = shard.to_string_lossy().into_owned();
+            match std::fs::metadata(&shard) {
+                Err(_) => return Ok(reason("model-info-missing", vec![named])),
+                Ok(meta) if !meta.is_file() => {
+                    return Ok(reason("model-info-unreadable", vec![named]))
+                }
+                Ok(_) => {}
+            }
+        }
+        match pai_core::gguf_shape::local_shape(&path) {
+            Ok(shape) => Ok(ModelInfoReply {
+                model: Some(path.to_string_lossy().into_owned()),
+                info: Some(ModelFacts {
+                    block_count: shape.block_count,
+                    moe: shape.moe,
+                    expert_count: shape.expert_count,
+                    expert_used: shape.expert_used_count,
+                }),
+                reason: None,
+            }),
+            // The reader's text is dropped: the reply names the path, never
+            // what the file's bytes spelled.
+            Err(_) => Ok(reason(
+                "model-info-unreadable",
+                vec![path.to_string_lossy().into_owned()],
+            )),
+        }
+    }
+
     /// The gate of a read that may prompt for nothing: the principal gate first,
     /// then polkit asked quietly, and for a call that vouches for a user nothing
     /// of polkit at all (the pair is its right, and polkit's subject is the
@@ -2427,6 +2554,34 @@ fn check_renders(enabled: &str, disabled: &str) -> Result<(), pai_core::checks::
 /// check looks at nothing for it.
 const FETCH_KEYS: [&str; 3] = ["hf-repo", "model-url", "docker-repo"];
 
+/// A `model` value as the instance sees it: absolute as it stands, else under
+/// `cwd`, the folder the instance inherits. The one resolution the GPU memory
+/// check and `ModelInfo` share, so the sliders and the check read the same
+/// file.
+fn model_path(model: &str, cwd: &std::path::Path) -> std::path::PathBuf {
+    let file = std::path::Path::new(model);
+    if file.is_absolute() {
+        file.to_path_buf()
+    } else {
+        cwd.join(file)
+    }
+}
+
+/// The shard cap of [`Manager::model_info`]'s read: a split model whose name
+/// declares more shards than this is refused as `model-info-unreadable` naming
+/// the model, with no shard opened. The bound is the design's, "Bounds and
+/// caching" in ARCHITECTURE.md.
+const MAX_MODEL_SHARDS: usize = 256;
+
+/// The pool's section of the model profile `profile`, None when the pool has
+/// none. `*` is the pool's global section, never a profile.
+fn profile_section<'a>(
+    sections: &'a [pai_core::ini::Section],
+    profile: &str,
+) -> Option<&'a pai_core::ini::Section> {
+    sections.iter().find(|s| s.id == profile && s.id != "*")
+}
+
 /// The model files of every instance's render, in id order: the first render
 /// naming a file the write ADDS refuses. `assignments`, `enabled` and
 /// `disabled` are the record and the pool pair the write leaves; `old` and
@@ -2516,12 +2671,7 @@ fn missing_model_files(render: &str, cwd: &std::path::Path) -> Vec<(String, Stri
             continue;
         }
         for file in pai_core::checks::model_files_of(get("model").unwrap_or_default()) {
-            let file = std::path::Path::new(&file);
-            let path = if file.is_absolute() {
-                file.to_path_buf()
-            } else {
-                cwd.join(file)
-            };
+            let path = model_path(&file, cwd);
             if !std::fs::metadata(&path).is_ok_and(|f| f.is_file()) {
                 missing.push((section.id.clone(), path.to_string_lossy().into_owned()));
             }
@@ -2700,12 +2850,7 @@ fn estimated_of(render: &str, cwd: &std::path::Path) -> Vec<Estimated> {
         let Some(model) = get("model") else {
             continue;
         };
-        let file = std::path::Path::new(&model);
-        let path = if file.is_absolute() {
-            file.to_path_buf()
-        } else {
-            cwd.join(file)
-        };
+        let path = model_path(&model, cwd);
         let Some(shape) = pai_core::gguf_shape::local_shape(&path).ok() else {
             continue;
         };
@@ -15800,6 +15945,723 @@ pub(crate) fn manager_devices_e2e() {
             "no probe answer: no card and no time, never an error and never a card"
         );
     }
+}
+
+/// A GGUF v3 file for the model-info fixtures: arch `arch`, the KV keys of
+/// `kvs` (each written as a u32, the caller spelling the `<arch>.` prefix), and
+/// one tensor of `bytes` per `(name, bytes)`, laid out as `write_gguf` lays a
+/// model out (each aligned to 32, the file sparse after the header). Same bytes
+/// as `pai-core`'s `gguf_shape::tests::gguf`, so the reader sees what it sees in
+/// its own tests.
+#[cfg(test)]
+pub(crate) fn write_gguf_kv(
+    path: &std::path::Path,
+    arch: &str,
+    kvs: &[(&str, u32)],
+    tensors: &[(&str, u64)],
+) {
+    let put_str = |out: &mut Vec<u8>, s: &str| {
+        out.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    };
+    let put_u32 = |out: &mut Vec<u8>, x: u32| out.extend_from_slice(&x.to_le_bytes());
+    let put_u64 = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
+    let mut out = b"GGUF".to_vec();
+    put_u32(&mut out, 3);
+    // The header's order is the reader's: tensor infos first, then the kv.
+    put_u64(&mut out, tensors.len() as u64);
+    put_u64(&mut out, (kvs.len() + 1) as u64);
+    put_str(&mut out, "general.architecture");
+    put_u32(&mut out, 8);
+    put_str(&mut out, arch);
+    for (k, v) in kvs {
+        put_str(&mut out, k);
+        put_u32(&mut out, 4);
+        put_u32(&mut out, *v);
+    }
+    let mut off = 0u64;
+    for (name, bytes) in tensors {
+        put_str(&mut out, name);
+        put_u32(&mut out, 2);
+        put_u64(&mut out, 4096);
+        put_u64(&mut out, bytes / 4096);
+        put_u32(&mut out, 12);
+        put_u64(&mut out, off);
+        off += bytes.div_ceil(32) * 32;
+    }
+    let data_start = (out.len() as u64).div_ceil(32) * 32;
+    std::fs::write(path, out).expect("gguf header");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open gguf")
+        .set_len(data_start + off)
+        .expect("sparse gguf");
+}
+
+/// L1 of "Layers, MoE and tensor placement on the web model profile page"
+/// (ARCHITECTURE.md (1)): `ModelInfo(profile)` / `ModelInfoAs(principal,
+/// profile)`, the layer facts of a SAVED model profile, read by the manager
+/// because the bff cannot reach the file (`ProtectHome`). The gate is the gate
+/// of reading `models.ini`: the caller's own read asks `control` WITHOUT
+/// interaction, the `As` form is the bff's account vouching for a current
+/// member of `pai` and asks polkit for nothing; every refusal is
+/// `NotAuthorized` with nothing read. The section is looked for in `models.ini`,
+/// else in `models.ini.disabled` (a switched-off profile has sliders too); no
+/// section, and `*`, are the keyed `no-model-profile-named` `[id]`. `model` is
+/// resolved as the GPU memory check resolves it (the section's own key, else
+/// `[*]`'s; absolute, else against the instances' working directory), the one
+/// helper `estimated_of` uses too. The outcomes are all a SUCCESS of the call,
+/// with `info` null and a keyed `reason`: a `FETCH_KEYS` key answers
+/// `model-info-fetched` `[key]` and opens no file; no `model` answers
+/// `model-profile-no-model` `[id]`; a path, or a shard of it, that is not there
+/// answers `model-info-missing` `[path]`; a file the GGUF reader refuses answers
+/// `model-info-unreadable` `[path]` and carries none of its bytes; a read
+/// answers `blockCount` (the header's key, else the blocks the tensors name),
+/// `moe`, `expertCount` and `expertUsed`. A shard set declaring MORE than 256
+/// shards is `model-info-unreadable` too, naming the model: the cap is judged
+/// from the name, before any shard past the first is opened, and a set of 256
+/// is read as any split is.
+///
+/// Names the tests assume, the contract for the coder:
+/// `Manager::model_info(&self, who: &Requester, profile: &str) ->
+/// Result<pai_core::client::ModelInfoReply, ManagerError>`, with
+/// `pai_core::client::ModelInfoReply` of `model`, `info` (`block_count`, `moe`,
+/// `expert_count`, `expert_used`) and `reason` (`key`, `args`).
+#[cfg(test)]
+pub(crate) fn manager_model_info_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use pai_core::checks::Refusal;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    // The models folder. A relative `model` resolves against the instances'
+    // working directory (the data root, the instance's state dir on Windows):
+    // `launch::instance_current_dir`, the same place the memory check resolves
+    // it. Under `redirect_for_tests` the data root is `<dir>/private-ai`.
+    let cwd = crate::launch::instance_current_dir(
+        cfg!(windows),
+        &crate::paths::data_root(),
+        &crate::paths::instance_state_dir(),
+    );
+    let models = cwd.join("models");
+    std::fs::create_dir_all(&models).expect("models dir");
+
+    // A MoE file whose header says 40 blocks, 128 experts, 8 used, while its
+    // tensors name only 3 of the blocks: the header's numbers are the reply.
+    let moe = models.join("moe.gguf");
+    write_gguf_kv(
+        &moe,
+        "qwen3moe",
+        &[
+            ("qwen3moe.context_length", 262_144),
+            ("qwen3moe.block_count", 40),
+            ("qwen3moe.expert_count", 128),
+            ("qwen3moe.expert_used_count", 8),
+        ],
+        &[
+            ("token_embd.weight", 1 << 20),
+            ("blk.0.ffn_gate_exps.weight", 1 << 20),
+            ("blk.1.attn_q.weight", 1 << 20),
+            ("blk.39.ffn_down_exps.weight", 1 << 20),
+            ("output.weight", 1 << 20),
+        ],
+    );
+    let moe_facts = pai_core::client::ModelFacts {
+        block_count: 40,
+        moe: true,
+        expert_count: 128,
+        expert_used: 8,
+    };
+    // A dense file whose header names NO block count: 5, counted from
+    // blk.0..blk.4, and no experts to count.
+    let plain = models.join("plain.gguf");
+    write_gguf_kv(
+        &plain,
+        "llama",
+        &[("llama.context_length", 32_768)],
+        &[
+            ("token_embd.weight", 1 << 20),
+            ("blk.0.attn_q.weight", 1 << 20),
+            ("blk.1.attn_q.weight", 1 << 20),
+            ("blk.2.attn_q.weight", 1 << 20),
+            ("blk.3.attn_q.weight", 1 << 20),
+            ("blk.4.attn_q.weight", 1 << 20),
+            ("output.weight", 1 << 20),
+        ],
+    );
+    let plain_facts = pai_core::client::ModelFacts {
+        block_count: 5,
+        moe: false,
+        expert_count: 0,
+        expert_used: 0,
+    };
+    // A split model with only its FIRST shard on disk: the second is missing.
+    let shard_one = models.join("split-00001-of-00002.gguf");
+    let shard_two = models.join("split-00002-of-00002.gguf");
+    write_gguf_kv(
+        &shard_one,
+        "llama",
+        &[("llama.block_count", 1)],
+        &[("blk.0.attn_q.weight", 1 << 20)],
+    );
+    // A file that is not a GGUF at all, with bytes no reply may carry.
+    let junk = models.join("junk.gguf");
+    std::fs::write(&junk, "GGUF-wannabe MARKER-8f2d-not-a-header\n").expect("junk");
+    // A GGUF whose body is cut short: the reader's `Truncated`.
+    let trunc = models.join("trunc.gguf");
+    std::fs::write(
+        &trunc,
+        b"GGUF\x03\0\0\0"
+            .to_vec()
+            .into_iter()
+            .chain(
+                1u64.to_le_bytes()
+                    .into_iter()
+                    .chain(0u64.to_le_bytes())
+                    .collect::<Vec<u8>>(),
+            )
+            .collect::<Vec<u8>>(),
+    )
+    .expect("truncated gguf");
+    // Not a file at all: a directory where a model is named.
+    let a_dir = models.join("a-dir.gguf");
+    std::fs::create_dir(&a_dir).expect("a directory as a model");
+    // The `hf-repo` profile's `model`: a path that is NOT there, beside the
+    // fetch key. The fetch key wins: the answer is "fetched", and the file is
+    // never opened.
+    let absent = models.join("absent.gguf");
+    // A split model whose shard set DECLARES 257 shards, with only the FIRST
+    // shard on disk. The design caps a split model at 256, so the cap answers
+    // `unreadable` naming the model, and the 257 shards that are not there
+    // never turn the answer into `missing`: nothing past the first is opened.
+    let over_one = models.join("over-00001-of-00257.gguf");
+    write_gguf_kv(
+        &over_one,
+        "llama",
+        &[("llama.block_count", 3)],
+        &[("blk.0.attn_q.weight", 1 << 20)],
+    );
+    // The boundary: a 256-shard set with EVERY file there, answered normally.
+    let cap_one = models.join("cap-00001-of-00256.gguf");
+    write_gguf_kv(
+        &cap_one,
+        "llama",
+        &[("llama.block_count", 3)],
+        &[("blk.0.attn_q.weight", 1 << 20)],
+    );
+    for i in 2..=256u32 {
+        // The later shards of a split carry no keys of their own: the reader
+        // takes the kv from the shard that names the architecture.
+        write_gguf_kv(
+            &models.join(format!("cap-{i:05}-of-00256.gguf")),
+            "llama",
+            &[],
+            &[],
+        );
+    }
+    let cap_facts = pai_core::client::ModelFacts {
+        block_count: 3,
+        moe: false,
+        expert_count: 0,
+        expert_used: 0,
+    };
+    // The cap again, with the SECOND shard a directory: were the shard set
+    // walked at all, that shard answers `unreadable` naming itself, so the
+    // path in the reply shows whether anything past the first was opened.
+    let dir2_one = models.join("dirtwo-00001-of-00257.gguf");
+    write_gguf_kv(
+        &dir2_one,
+        "llama",
+        &[("llama.block_count", 3)],
+        &[("blk.0.attn_q.weight", 1 << 20)],
+    );
+    std::fs::create_dir(models.join("dirtwo-00002-of-00257.gguf"))
+        .expect("a directory as the second shard");
+
+    std::fs::write(
+        sys.join("models.ini"),
+        format!(
+            "[*]\nmodel = {}\nctx-size = 4096\n\n\
+             [moe-abs]\nmodel = {}\n\n\
+             [plain-rel]\nmodel = models/plain.gguf\n\n\
+             [cascade]\n\n\
+             [shards]\nmodel = {}\n\n\
+             [junk]\nmodel = {}\n\n\
+             [trunc]\nmodel = {}\n\n\
+             [notreg]\nmodel = {}\n\n\
+             [fetched]\nmodel = {}\nhf-repo = the-org/the-model\n\n\
+             [ctx-only]\nctx-size = 1024\n\n\
+             [split-over]\nmodel = {}\n\n\
+             [split-dir2]\nmodel = {}\n\n\
+             [split-cap]\nmodel = {}\n",
+            moe.display(),
+            moe.display(),
+            shard_one.display(),
+            junk.display(),
+            trunc.display(),
+            a_dir.display(),
+            absent.display(),
+            over_one.display(),
+            dir2_one.display(),
+            cap_one.display(),
+        ),
+    )
+    .expect("models.ini");
+    // A switched-off profile: the same facts, read from `models.ini.disabled`.
+    std::fs::write(
+        sys.join("models.ini.disabled"),
+        format!("[switched-off]\nmodel = {}\n", moe.display()),
+    )
+    .expect("models.ini.disabled");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let own = Requester {
+        caller: desktop.clone(),
+        principal: None,
+    };
+    let own_bff = Requester {
+        caller: bff.clone(),
+        principal: None,
+    };
+
+    let core = |allow: bool, quiet: bool| {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let manager = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(quiet).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_log(log);
+        (manager, lines)
+    };
+
+    let facts = |got: &pai_core::client::ModelInfoReply| {
+        got.info
+            .clone()
+            .unwrap_or_else(|| panic!("no facts in the reply: {got:?}"))
+    };
+    let reason = |got: &pai_core::client::ModelInfoReply| {
+        got.reason
+            .clone()
+            .unwrap_or_else(|| panic!("no reason in the reply: {got:?}"))
+    };
+    // The reply's own words: a path in it is the resolved one, and no byte of
+    // a file the reader refused travels in it.
+    let wire = |got: &pai_core::client::ModelInfoReply| format!("{got:?}");
+    let same_path = |got: &str, want: &std::path::Path| {
+        std::fs::canonicalize(got).ok() == std::fs::canonicalize(want).ok()
+    };
+    let listing = |dir: &std::path::Path| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("the config dir")
+            .flatten()
+            .map(|e| {
+                format!(
+                    "{}:{}",
+                    e.file_name().to_string_lossy(),
+                    std::fs::read_to_string(e.path()).unwrap_or_default()
+                )
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    let before = listing(&sys);
+
+    // ── An absolute `model`: the header's counts, and the resolved path ────
+    {
+        let (m, lines) = core(true, true);
+        let got = m
+            .model_info(&member, "moe-abs")
+            .expect("a read of a member");
+        assert_eq!(
+            facts(&got),
+            moe_facts,
+            "the header's block and expert counts, and `moe` from the routed tensors"
+        );
+        assert!(
+            got.model.as_deref().is_some_and(|p| same_path(p, &moe)),
+            "`model` is the resolved absolute path: {got:?}"
+        );
+        assert_eq!(got.reason, None, "facts: no reason");
+        assert_eq!(
+            *lines.lock().unwrap(),
+            Vec::<String>::new(),
+            "a read records no action"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![],
+            "the pair is the right: polkit is asked for nothing, not even quietly"
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![],
+            "a read prompts for nothing"
+        );
+    }
+
+    // ── A relative `model`, and the pool's `[*]` standing in ───────────────
+    {
+        let (m, _) = core(true, true);
+        let got = m
+            .model_info(&member, "plain-rel")
+            .expect("a relative model");
+        assert_eq!(
+            facts(&got),
+            plain_facts,
+            "no block_count key: the blocks the tensors name, no experts, and its OWN \
+             file, not the pool's `[*]` model"
+        );
+        assert!(
+            got.model
+                .as_deref()
+                .is_some_and(|p| same_path(p, &models.join("plain.gguf"))),
+            "a relative `model` resolves against the instances' working directory, \
+             as the memory check resolves it: {got:?}"
+        );
+        // A section with no `model` of its own: `[*]`'s, the same cascade.
+        let cascaded = m.model_info(&member, "cascade").expect("the pool default");
+        assert_eq!(
+            facts(&cascaded),
+            moe_facts,
+            "[*]'s `model` is the section's, as `estimated_of` takes it"
+        );
+        // A section with a key of its own and NO `model`: the cascade is PER
+        // KEY, exactly as `estimated_of` resolves it, so `[*]`'s `model` still
+        // stands in for the key the section lacks.
+        let keyed = m
+            .model_info(&member, "ctx-only")
+            .expect("a `ctx-size` of its own does not hide the pool's `model`");
+        assert_eq!(
+            facts(&keyed),
+            moe_facts,
+            "`[*]`'s `model` fills the key the section lacks, key by key, not only a \
+             section with no keys at all: {keyed:?}"
+        );
+        assert_eq!(
+            keyed.reason, None,
+            "the pool's model is read, not refused: {keyed:?}"
+        );
+    }
+
+    // ── A switched-off profile is answered ───────────────────────────────
+    {
+        let (m, _) = core(true, true);
+        let off = m
+            .model_info(&member, "switched-off")
+            .expect("a switched-off profile has sliders too");
+        assert_eq!(facts(&off), moe_facts, "read from `models.ini.disabled`");
+        assert!(
+            off.model.as_deref().is_some_and(|p| same_path(p, &moe)),
+            "{off:?}"
+        );
+    }
+
+    // ── An `hf-repo` profile: fetched, and the file is never opened ───────
+    {
+        let (m, _) = core(true, true);
+        let got = m
+            .model_info(&member, "fetched")
+            .expect("a fetch key is an answer");
+        assert_eq!(got.info, None, "no facts for a model not yet downloaded");
+        assert_eq!(
+            reason(&got),
+            pai_core::client::Reason {
+                key: "model-info-fetched".into(),
+                args: vec!["hf-repo".into()],
+            },
+            "the fetch key the section names, and nothing read: the `model` beside \
+             it does not exist and the answer is not \"missing\": {got:?}"
+        );
+    }
+
+    // ── No `model` in the cascade: the existing key, and no path ─────────
+    {
+        // `[*]` here names NO model, so the per-key cascade finds none: a
+        // section with a key of its own, and one with none, answer the same.
+        // The pool as this block found it goes back at its end, so every later
+        // block still reads it.
+        let pool = std::fs::read_to_string(sys.join("models.ini")).expect("models.ini");
+        let (m, _) = core(true, true);
+        std::fs::write(
+            sys.join("models.ini"),
+            "[*]\nctx-size = 4096\n\n[no-model]\nctx-size = 1024\n\n[no-keys]\n",
+        )
+        .expect("models.ini, a pool naming no model");
+        for id in ["no-model", "no-keys"] {
+            let got = m
+                .model_info(&member, id)
+                .unwrap_or_else(|got| panic!("no model is an answer: {id}: {got:?}"));
+            assert_eq!(got.info, None, "`{id}`: {got:?}");
+            assert_eq!(
+                got.model, None,
+                "`{id}`: nothing to resolve, no path in the reply"
+            );
+            assert_eq!(
+                reason(&got),
+                pai_core::client::Reason {
+                    key: "model-profile-no-model".into(),
+                    args: vec![id.into()],
+                },
+                "the key the page shows for a profile with no Model file"
+            );
+        }
+        std::fs::write(sys.join("models.ini"), pool).expect("models.ini restored");
+    }
+
+    // ── A missing file, and a missing shard ──────────────────────────────
+    {
+        let (m, _) = core(true, true);
+        let got = m
+            .model_info(&member, "shards")
+            .expect("a missing shard is an answer");
+        assert_eq!(got.info, None);
+        let r = reason(&got);
+        assert_eq!(r.key, "model-info-missing", "{got:?}");
+        assert_eq!(
+            r.args.len(),
+            1,
+            "the path the reply names, one value: {r:?}"
+        );
+        assert!(
+            same_path(&r.args[0], &shard_two),
+            "a split names the shard that is not there, not the one that is: {r:?}"
+        );
+        // A path that is not there at all (the fetch fixture's own `model`).
+        // The pin needs a pool with ONLY that section, so the file is rewritten
+        // here; the text as this block found it is written back at its end, so
+        // every later block still reads the pool.
+        let pool = std::fs::read_to_string(sys.join("models.ini")).expect("models.ini");
+        let (m, _) = core(true, true);
+        std::fs::write(
+            sys.join("models.ini"),
+            format!("[gone]\nmodel = {}\n", absent.display()),
+        )
+        .expect("models.ini, one section");
+        let got = m
+            .model_info(&member, "gone")
+            .expect("a missing file is an answer");
+        assert_eq!(
+            reason(&got),
+            pai_core::client::Reason {
+                key: "model-info-missing".into(),
+                args: vec![absent.to_string_lossy().into_owned()],
+            },
+            "the resolved path, as the page shows it"
+        );
+        std::fs::write(sys.join("models.ini"), pool).expect("models.ini restored");
+    }
+
+    // ── Not a GGUF, cut short, no file: unreadable, with none of the bytes ─
+    {
+        let (m, _) = core(true, true);
+        for (id, path) in [("junk", &junk), ("trunc", &trunc), ("notreg", &a_dir)] {
+            let got = m
+                .model_info(&member, id)
+                .unwrap_or_else(|got| panic!("an unreadable model is an answer: {id}: {got:?}"));
+            assert_eq!(got.info, None, "no facts from `{id}`: {got:?}");
+            let r = reason(&got);
+            assert_eq!(r.key, "model-info-unreadable", "`{id}`: {got:?}");
+            assert!(
+                r.args.iter().any(|a| same_path(a, path)),
+                "the path the reader refused, `{id}`: {r:?}"
+            );
+            assert!(
+                !wire(&got).contains("MARKER-8f2d"),
+                "the reader's text, and so no byte of the file, reaches the reply: {got:?}"
+            );
+        }
+    }
+
+    // ── A shard set over the 256-shard cap ──────────────────────────────
+    {
+        // Declares 257 shards and only its first is on disk: the cap answers
+        // before the shard set is walked, so the 257 that are not there never
+        // turn the answer into `missing`.
+        let (m, _) = core(true, true);
+        let got = m
+            .model_info(&member, "split-over")
+            .expect("a shard set past the cap is an answer");
+        assert_eq!(
+            got.info, None,
+            "no facts from a model past the cap: {got:?}"
+        );
+        let r = reason(&got);
+        assert_eq!(
+            r.key, "model-info-unreadable",
+            "over 256 shards is the table's `unreadable`, not a shard's `missing`: {r:?}"
+        );
+        assert!(
+            r.args.iter().any(|a| same_path(a, &over_one)),
+            "the answer names the model path, the first shard: {r:?}"
+        );
+        // The same cap, with a shard past the first that is no file: were the
+        // shard set walked at all, the answer would name THAT shard.
+        let got = m
+            .model_info(&member, "split-dir2")
+            .expect("a shard set past the cap is an answer, whatever a shard is");
+        let r = reason(&got);
+        assert_eq!(r.key, "model-info-unreadable", "{got:?}");
+        assert!(
+            r.args.iter().all(|a| same_path(a, &dir2_one)),
+            "the cap is checked before any shard past the first is opened, so no shard's \
+             own name is in the answer: {r:?}"
+        );
+        // The boundary: 256 shards, every file there, answered normally.
+        let at = m
+            .model_info(&member, "split-cap")
+            .expect("256 shards is answered");
+        assert_eq!(
+            facts(&at),
+            cap_facts,
+            "256 shards is at the cap, not over it: read as any split is"
+        );
+        assert!(
+            at.model.as_deref().is_some_and(|p| same_path(p, &cap_one)),
+            "the resolved first shard: {at:?}"
+        );
+    }
+
+    // ── An id the pool has no section for, and `*` ───────────────────────
+    {
+        let (m, _) = core(true, true);
+        for id in ["nope", "*", "disabled"] {
+            assert_eq!(
+                m.model_info(&member, id),
+                Err(ManagerError::Invalid(Refusal {
+                    key: "no-model-profile-named",
+                    values: vec![id.into()],
+                })),
+                "no section named `{id}`, in either file: the keyed refusal"
+            );
+        }
+    }
+
+    // ── The gate: the caller's own read asks `control` quietly ───────────
+    {
+        let (m, _) = core(true, true);
+        assert_eq!(
+            facts(
+                &m.model_info(&own, "moe-abs")
+                    .expect("the caller's own read")
+            ),
+            moe_facts,
+            "a caller with `control` asked quietly reads its own node"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![(desktop.clone(), Action::Control)],
+            "the quiet check, never the prompting one"
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            vec![],
+            "a read that can prompt for nothing never prompts"
+        );
+    }
+    {
+        // A caller polkit would challenge, or refuses quietly: no facts.
+        let (m, lines) = core(true, false);
+        assert_eq!(
+            m.model_info(&own, "moe-abs"),
+            Err(ManagerError::NotAuthorized),
+            "the quiet check is the read's gate"
+        );
+        assert_eq!(
+            m.model_info(&own_bff, "moe-abs"),
+            Err(ManagerError::NotAuthorized),
+            "the bff's own read is gated the same way as any other's"
+        );
+        assert_eq!(*lines.lock().unwrap(), Vec::<String>::new());
+    }
+
+    // ── The As form: the bff's account, and a current member of `pai` ────
+    {
+        let (m, lines) = core(true, true);
+        assert_eq!(
+            m.model_info(&outsider, "moe-abs"),
+            Err(ManagerError::NotAuthorized),
+            "bob is no member of `pai`: no facts, and no path of the profile's file"
+        );
+        assert_eq!(
+            m.model_info(&outsider, "junk"),
+            Err(ManagerError::NotAuthorized),
+            "not even the reason of a profile whose file is unreadable: the read \
+             is gated before the file"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![],
+            "the pair is the right: polkit is asked for nothing"
+        );
+        assert_eq!(*lines.lock().unwrap(), Vec::<String>::new());
+    }
+    {
+        // A caller that is not the bff's account vouching for a user.
+        let (m, _) = core(true, true);
+        let forger = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.model_info(&forger, "moe-abs"),
+            Err(ManagerError::NotAuthorized),
+            "only the bff's account vouches for a user"
+        );
+    }
+    {
+        // A member removed between two calls is refused at the next one.
+        let passwords = FakePasswords::new();
+        let admins = passwords.admins.clone();
+        let manager = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(FakeActionLog::new());
+        assert_eq!(
+            facts(
+                &manager
+                    .model_info(&member, "moe-abs")
+                    .expect("a member reads")
+            ),
+            moe_facts
+        );
+        admins.lock().unwrap().remove("alice");
+        assert_eq!(
+            manager.model_info(&member, "moe-abs"),
+            Err(ManagerError::NotAuthorized),
+            "the membership is read at every call, never cached"
+        );
+    }
+
+    // ── A read writes nothing ────────────────────────────────────────────
+    assert_eq!(
+        listing(&sys),
+        before,
+        "every read above left the pool and the records as it found them"
+    );
 }
 
 #[cfg(test)]

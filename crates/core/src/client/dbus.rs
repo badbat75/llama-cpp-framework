@@ -5,7 +5,7 @@
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
 //! `CreateServerProfile`, `DeleteServerProfile` and
-//! `SetInstanceTags` go as the
+//! `SetInstanceTags` and `ModelInfo` go as the
 //! `As` form of the same method, with the user's name as its first argument
 //! (the manager answers a principal for the bff's account alone) and answers
 //! the plain method's shape. The methods that need no right are unchanged,
@@ -22,6 +22,10 @@
 //! CreateServerProfileAs(s principal, s engine, s profile, q port)
 //! DeleteServerProfileAs(s principal, s engine, s profile)
 //! SetInstanceTagsAs(s principal, s instance, as tags)
+//! ModelInfo(s profile) -> (s model, (b has_info, t block_count, b moe,
+//!                                    t expert_count, t expert_used),
+//!                          (s key, as args))
+//! ModelInfoAs(s principal, s profile)    (the same reply)
 //! Instances() -> a(sssqasas)          (id, engine, port, profile tags, instance tags)
 //! ServerProfiles() -> a(ssqass)       (id, engine, port, tags, instance)
 //! Version() -> (s version, u protocol)
@@ -29,7 +33,7 @@
 
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, NodeDevices, ServerProfileInfo,
+    ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, Reason, ServerProfileInfo,
 };
 use zbus::blocking::Connection;
 use zbus::export::serde::Serialize;
@@ -66,6 +70,14 @@ type ServerProfileRow = (String, String, u16, Vec<String>, String);
 /// MiB grows past a uint16, and a signed type has no reading for a device
 /// with no memory. A probe that answered nothing is 0 with an empty list.
 type DeviceRow = (String, String, String, u64, u64);
+
+/// The `ModelInfo` reply as the bus answers it:
+/// `(s model, (b has_info, t block_count, b moe, t expert_count,
+/// t expert_used), (s key, as args))`. The bus has no null, so the path is
+/// the empty string when the profile names none, `has_info` says the four
+/// counts are there, and a non-empty `key` is the keyed why. The half of the
+/// reply that is not there carries zeros and the empty strings.
+type ModelInfoRow = (String, (bool, u64, bool, u64, u64), (String, Vec<String>));
 
 /// The manager's client over one D-Bus connection.
 pub struct DbusClient {
@@ -382,6 +394,30 @@ impl ManagerClient for DbusClient {
                     free_mib,
                 })
                 .collect(),
+        })
+    }
+    fn model_info(&self, profile: &str) -> Result<ModelInfoReply, ClientError> {
+        // `(s model, (b has_info, t block_count, b moe, t expert_count,
+        // t expert_used), (s key, as args))`: the path the read opened, the
+        // four counts when there are facts, the keyed why when there are
+        // none. The bus has no null and no shape to get wrong: the flags say
+        // which half of the reply is there, the way the stream's nulls do,
+        // and the manager answers exactly one of the two.
+        let (model, facts, reason): ModelInfoRow = match self.acting() {
+            Some(principal) => body(self.call("ModelInfoAs", &(principal, profile))?)?,
+            None => body(self.call("ModelInfo", &(profile,))?)?,
+        };
+        let (has_info, block_count, moe, expert_count, expert_used) = facts;
+        let (key, args) = reason;
+        Ok(ModelInfoReply {
+            model: (!model.is_empty()).then_some(model),
+            info: has_info.then_some(ModelFacts {
+                block_count,
+                moe,
+                expert_count,
+                expert_used,
+            }),
+            reason: (!key.is_empty()).then_some(Reason { key, args }),
         })
     }
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {

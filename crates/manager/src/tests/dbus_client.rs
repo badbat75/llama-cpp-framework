@@ -1918,6 +1918,161 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
             "a caller that is not the bff writes and removes nothing"
         );
     }
+
+    // ── The layer facts of a saved model profile (ModelInfo / ModelInfoAs) ──
+    // L1 of "Layers, MoE and tensor placement on the web model profile page"
+    // (ARCHITECTURE.md (1)). The bus carries the same answer the stream does
+    // (`tests/pipe_client.rs` pins it there): `model` the resolved absolute
+    // path, `info` the counts, `reason` the keyed why, the reply's D-Bus
+    // signature the coder's to pick. `ModelInfo(s)` is the caller's own read,
+    // gated on `control` asked WITHOUT interaction; `ModelInfoAs(s, s)` is the
+    // bff's, for a current member of `pai`, and a refused read opens no file.
+    // The read opens a file under this phase's redirect, so it lives here.
+    {
+        use crate::manager::service::write_gguf_kv;
+        use pai_core::client::{ModelFacts, Reason};
+
+        let models = dir.path().join("info-models");
+        std::fs::create_dir_all(&models).expect("models dir");
+        let gguf = models.join("bus.gguf");
+        write_gguf_kv(
+            &gguf,
+            "qwen3moe",
+            &[
+                ("qwen3moe.block_count", 40),
+                ("qwen3moe.expert_count", 128),
+                ("qwen3moe.expert_used_count", 8),
+            ],
+            &[
+                ("token_embd.weight", 1 << 20),
+                ("blk.0.ffn_gate_exps.weight", 1 << 20),
+                ("blk.1.ffn_gate_exps.weight", 1 << 20),
+                ("output.weight", 1 << 20),
+            ],
+        );
+        let gone = models.join("gone.gguf");
+        std::fs::write(
+            sys.join("models.ini"),
+            format!(
+                "[bus]\nmodel = {}\n\n[fetched]\nhf-repo = the-org/the-model\n\n[gone]\nmodel = {}\n",
+                gguf.display(),
+                gone.display()
+            ),
+        )
+        .expect("models.ini");
+        let facts = ModelFacts {
+            block_count: 40,
+            moe: true,
+            expert_count: 128,
+            expert_used: 8,
+        };
+        let same = |got: &str, want: &std::path::Path| {
+            std::fs::canonicalize(got).ok() == std::fs::canonicalize(want).ok()
+        };
+        let bff = ":1.9";
+        let other = ":1.42";
+
+        // The bff's own read, and the member's read it vouches for.
+        let (c, asked) = devices_core(bff, true);
+        let (_server, client) = connect(&c, Some(bff));
+        let client = Arc::new(client);
+        let got = on("model_info", &client, |c| c.model_info("bus")).expect("the bff's own read");
+        assert_eq!(
+            got.info,
+            Some(facts.clone()),
+            "the facts, the fields of the design, over the bus"
+        );
+        assert!(
+            got.model.as_deref().is_some_and(|p| same(p, &gguf)),
+            "`model` is the resolved absolute path the read opened: {got:?}"
+        );
+        assert_eq!(got.reason, None, "facts: no reason");
+        assert_eq!(
+            *c.authority().asked_quietly.lock().unwrap(),
+            vec![(Caller(bff.into()), Action::Control)],
+            "control asked without interaction"
+        );
+        assert_eq!(
+            *c.authority().asked.lock().unwrap(),
+            Vec::<(Caller, Action)>::new(),
+            "never asked with a prompt"
+        );
+        let member = Arc::new(client.acting_for("alice"));
+        assert_eq!(
+            on("model_info as alice", &member, |c| c.model_info("bus")).map(|got| got.info),
+            Ok(Some(facts.clone())),
+            "the member's read, vouched for by the bff: the same facts"
+        );
+        let outsider = Arc::new(client.acting_for("bob"));
+        assert_eq!(
+            on("model_info as bob", &outsider, |c| c.model_info("bus")),
+            Err(ClientError::NotAuthorized),
+            "bob is no member of `pai`: no facts, and no path of the profile's file"
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            Vec::<String>::new(),
+            "the read asks the manager's own seam for nothing"
+        );
+
+        // The reasons are answers of a call that worked, and an id the pool has
+        // no section for is the keyed refusal (the page's 404).
+        assert_eq!(
+            on("model_info fetched", &member, |c| c.model_info("fetched"))
+                .map(|got| (got.info, got.reason)),
+            Ok((
+                None,
+                Some(Reason {
+                    key: "model-info-fetched".into(),
+                    args: vec!["hf-repo".into()],
+                })
+            )),
+            "a model to fetch has no facts, and the key the section names"
+        );
+        assert_eq!(
+            on("model_info gone", &member, |c| c.model_info("gone")).map(|got| got.reason),
+            Ok(Some(Reason {
+                key: "model-info-missing".into(),
+                args: vec![gone.to_string_lossy().into_owned()],
+            })),
+            "a file that is not there: the resolved path, as the page shows it"
+        );
+        assert_eq!(
+            on("model_info nope", &member, |c| c.model_info("nope")),
+            Err(ClientError::Invalid(Refusal {
+                key: "no-model-profile-named",
+                values: vec!["nope".into()],
+            })),
+            "no section named `nope`: the keyed refusal"
+        );
+
+        // A caller polkit refuses the quiet check: refused.
+        let (c, asked) = devices_core(other, false);
+        let (_server, client) = connect(&c, Some(other));
+        let client = Arc::new(client);
+        assert_eq!(
+            on("model_info", &client, |c| c.model_info("bus")),
+            Err(ClientError::NotAuthorized),
+            "no control, no facts"
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            Vec::<String>::new(),
+            "a refused read opens nothing"
+        );
+
+        // A caller that is not the bff, vouching for a member: refused.
+        let (c, _) = devices_core(bff, true);
+        let (_server, client) = connect(&c, Some(other));
+        let client = Arc::new(client);
+        assert_eq!(
+            on("model_info as alice", &client, |c| c
+                .acting_for("alice")
+                .model_info("bus")),
+            Err(ClientError::NotAuthorized),
+            "only the bff's account vouches"
+        );
+    }
 }
 
 // ── The node's device list over the bus (G2, ARCHITECTURE.md 1) ──────────

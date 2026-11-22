@@ -2764,7 +2764,10 @@ and `expertUsed` are `<arch>.expert_count` and `<arch>.expert_used_count`, 0 whe
 GUI's `ModelInfo` reads). In 2j the reply gains `tensors`: `[{name, bytes}]` from `tensor_bytes` over
 every shard, in file order, at most 20 000 entries, then `tensorsTruncated: true`. D-Bus and pipe carry
 the same fields (`model` the resolved absolute path, `info`, `reason` as `{key, args}`); additive while
-the protocol is in no release.
+the protocol is in no release. As built (L1, reviewed 2026-11-22): `model` is set only with `info`; every `reason` row answers `model`
+null (the path, when there is one, is the reason's arg); the pipe spells the counts in its snake_case
+(`block_count`, `expert_count`, `expert_used`), the bus as `(s, (b has_info, t, b, t, t), (s, as))`
+with the empty string for null; the bff's JSON is camelCase.
 
 **The `hf-repo` profile not yet downloaded.** (i) **Recommended now**: no facts (`model-info-fetched`);
 the page shows raw weights and plain number fields, as the GUI does with no model read. (ii) After M1 and

@@ -308,11 +308,30 @@ pub struct Shape {
     /// The f16 KV bytes of one token (`kv_per_token`); `None` when the layout
     /// cannot be read, the Shape does not decide what that costs.
     pub kv_f16_per_token: Option<u64>,
+    /// The blocks of the model: `<arch>.block_count`, else the number of
+    /// `blk.N` blocks the tensor names mention (the GUI's sliders run over it).
+    pub block_count: u64,
+    /// `<arch>.expert_count`, 0 when the header has none.
+    pub expert_count: u64,
+    /// `<arch>.expert_used_count`, 0 when the header has none.
+    pub expert_used_count: u64,
 }
 
 /// `blk.N.` → N.
 fn block_of(name: &str) -> Option<usize> {
     name.strip_prefix("blk.")?.split('.').next()?.parse().ok()
+}
+
+/// The number of `blk.N` blocks the tensor names of every shard mention: one
+/// past the greatest `N` (the tensor names of a quantized model are a
+/// contiguous run from `blk.0`).
+fn named_block_count(shards: &[(Header, u64)]) -> u64 {
+    shards
+        .iter()
+        .flat_map(|(h, _)| h.tensors.iter().map(|(n, _)| n.as_str()))
+        .filter_map(block_of)
+        .max()
+        .map_or(0, |n| n as u64 + 1)
 }
 
 /// An input embedding table, which llama.cpp keeps in host memory whatever
@@ -364,6 +383,9 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
         ctx: 0,
         trained_ctx: 0,
         kv_f16_per_token: None,
+        block_count: 0,
+        expert_count: 0,
+        expert_used_count: 0,
     };
     for (h, file_size) in shards {
         for (name, bytes) in tensor_bytes(h, *file_size)? {
@@ -394,6 +416,9 @@ pub fn shape_of(shards: &[(Header, u64)]) -> Result<Shape, String> {
     let key = |k: &str| kvs.get(&format!("{arch}.{k}"));
     let int = |k: &str| key(k).and_then(Kv::as_u64);
     s.trained_ctx = int("context_length").unwrap_or(0);
+    s.block_count = int("block_count").unwrap_or_else(|| named_block_count(shards));
+    s.expert_count = int("expert_count").unwrap_or(0);
+    s.expert_used_count = int("expert_used_count").unwrap_or(0);
     s.ctx = int("context_length")
         .filter(|&c| c > 0)
         .map_or(REF_CTX, |c| c.min(REF_CTX));
@@ -967,6 +992,127 @@ mod tests {
         // 4 kv heads x (128 + 128) x 2 bytes x 2 layers, at 32k (the model's 256k capped).
         assert_eq!(s.ctx, REF_CTX);
         assert_eq!(s.kv, 4 * 256 * 2 * 2 * REF_CTX);
+    }
+
+    /// The block count the model profile page's sliders run over (L1 of
+    /// "Layers, MoE and tensor placement on the web model profile page",
+    /// ARCHITECTURE.md (1)): the header's `<arch>.block_count` when it has one,
+    /// the blocks the tensor names mention when it has none. The header wins:
+    /// a file that ships only some of its blocks' tensors (a partial offload
+    /// fixture, a split whose last shard is absent from the read) is the model
+    /// the header describes, and llama.cpp cuts `block_count + 1` positions by
+    /// the `tensor-split` weights.
+    #[test]
+    fn the_block_count_is_the_headers_key_else_the_blocks_the_tensors_name() {
+        // The header says 40, the tensors name 3 of them.
+        let (h, size) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(40)),
+            ],
+            &[
+                ("token_embd.weight", MIB),
+                ("blk.0.ffn_up_exps.weight", MIB),
+                ("blk.1.attn_q.weight", MIB),
+                ("blk.39.ffn_down_exps.weight", MIB),
+                ("output.weight", MIB),
+            ],
+        );
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(
+            s.block_count, 40,
+            "the header's key wins over the blocks the tensors name"
+        );
+        assert_eq!(
+            s.layers.len(),
+            40,
+            "the layers fold is unchanged by the count: blocks 0..=39"
+        );
+
+        // No key: the blocks the tensors name, the highest of them + 1.
+        let (h, size) = gguf(
+            &[("general.architecture", W::Str("llama"))],
+            &[
+                ("token_embd.weight", MIB),
+                ("blk.0.attn_q.weight", MIB),
+                ("blk.4.attn_q.weight", MIB),
+                ("output.weight", MIB),
+            ],
+        );
+        assert_eq!(
+            shape_of(&[(parse_header(&h).unwrap(), size)])
+                .unwrap()
+                .block_count,
+            5,
+            "a header with no key is counted from its tensors"
+        );
+
+        // A split model: a block named only by the second shard counts.
+        let (h1, s1) = gguf(
+            &[("general.architecture", W::Str("llama"))],
+            &[("blk.0.attn_q.weight", MIB)],
+        );
+        let (h2, s2) = gguf(&[("split.no", W::U32(1))], &[("blk.7.attn_q.weight", MIB)]);
+        assert_eq!(
+            shape_of(&[
+                (parse_header(&h1).unwrap(), s1),
+                (parse_header(&h2).unwrap(), s2)
+            ])
+            .unwrap()
+            .block_count,
+            8,
+            "the count is over every shard, as the layers fold is"
+        );
+    }
+
+    /// The expert counts of the same reply, read off the header as the GUI's
+    /// `ModelInfo` reads them: `<arch>.expert_count` and
+    /// `<arch>.expert_used_count`, 0 when the header has none (a dense model
+    /// has no experts to count, and the page's MoE slider stays hidden).
+    #[test]
+    fn the_expert_counts_are_the_headers_keys_and_zero_when_absent() {
+        let (h, size) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.block_count", W::U32(48)),
+                ("qwen3moe.expert_count", W::U32(128)),
+                ("qwen3moe.expert_used_count", W::U32(8)),
+            ],
+            &[
+                ("token_embd.weight", MIB),
+                ("blk.0.ffn_gate_exps.weight", MIB),
+                ("output.weight", MIB),
+            ],
+        );
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!((s.expert_count, s.expert_used_count), (128, 8));
+        assert!(s.moe, "the routed-expert tensors are what sets `moe`");
+
+        // A dense model, and a MoE header that names only one of the two: the
+        // count that is absent is 0, never the other one's value.
+        let (h, size) = gguf(
+            &[
+                ("general.architecture", W::Str("qwen3moe")),
+                ("qwen3moe.expert_count", W::U32(64)),
+            ],
+            &[("blk.0.ffn_gate_exps.weight", MIB)],
+        );
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(s.expert_count, 64);
+        assert_eq!(s.expert_used_count, 0, "no key is no experts used");
+        let (h, size) = gguf(
+            &[
+                ("general.architecture", W::Str("llama")),
+                ("llama.block_count", W::U32(2)),
+            ],
+            &[("blk.0.attn_q.weight", MIB)],
+        );
+        let s = shape_of(&[(parse_header(&h).unwrap(), size)]).unwrap();
+        assert_eq!(
+            (s.expert_count, s.expert_used_count, s.moe),
+            (0, 0, false),
+            "a dense model has nothing to count"
+        );
     }
 
     #[test]

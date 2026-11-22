@@ -244,6 +244,62 @@ pub struct ServerProfileInfo {
     pub instance: Option<String>,
 }
 
+/// The layer facts of one saved model profile's `model` file, as
+/// [`ManagerClient::model_info`] answers them: what the model profile page's
+/// sliders run over. The counts are the GGUF header's own (`<arch>.block_count`,
+/// `<arch>.expert_count`, `<arch>.expert_used_count`), the block count falling
+/// back to the blocks the tensor names mention, and an expert count the header
+/// lacks is 0. `moe` is the file having routed-expert tensors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFacts {
+    pub block_count: u64,
+    pub moe: bool,
+    pub expert_count: u64,
+    pub expert_used: u64,
+}
+
+/// Why a model profile answers no facts, as the page shows it: a key of the
+/// strings files and the values of its `{0}`, `{1}` (the wire's `{key, args}`).
+/// It is the answer of a read that worked, not a refusal: the manager answers
+/// `Ok` with `reason` where it has no facts to read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reason {
+    pub key: String,
+    pub args: Vec<String>,
+}
+
+impl Reason {
+    /// The text of the key with its args filled in, in the strings file this
+    /// process reads, the way [`Refusal::text`] renders a refusal.
+    ///
+    /// One arm per key, each with its own args, so the strings lint
+    /// (`binding_lint`) holds every text to the values it passes. A key this
+    /// build does not know (a manager of another protocol) renders as the key
+    /// itself, what `strings::t` makes of a key with no entry.
+    pub fn text(&self) -> String {
+        let v = |i: usize| self.args.get(i).map_or("", String::as_str);
+        match self.key.as_str() {
+            "model-info-fetched" => strings::fill("model-info-fetched", &[&v(0)]),
+            "model-profile-no-model" => strings::fill("model-profile-no-model", &[&v(0)]),
+            "model-info-missing" => strings::fill("model-info-missing", &[&v(0)]),
+            "model-info-unreadable" => strings::fill("model-info-unreadable", &[&v(0)]),
+            other => strings::t(other),
+        }
+    }
+}
+
+/// The `ModelInfo` / `ModelInfoAs` reply: `model` is the profile's `model`
+/// resolved to an absolute path (the pool's `[*]` standing in for a section
+/// that names none; `None` when there is nothing to resolve), `info` the facts
+/// of that file, and `reason` why there are none. Exactly one of `info` and
+/// `reason` is `Some`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelInfoReply {
+    pub model: Option<String>,
+    pub info: Option<ModelFacts>,
+    pub reason: Option<Reason>,
+}
+
 /// What the configurator asks the manager.
 pub trait ManagerClient {
     fn list_instances(&self) -> Result<Vec<String>, ClientError>;
@@ -425,6 +481,27 @@ pub trait ManagerClient {
     fn devices(&self) -> Result<NodeDevices, ClientError> {
         Err(ClientError::Other(
             "this transport of the manager has no Devices".into(),
+        ))
+    }
+    /// The layer facts of the model of ONE saved model profile, by its id: the
+    /// manager reads the file (its `model`, resolved as the GPU memory check
+    /// resolves it) and answers the counts, the resolved path, or the keyed
+    /// [`Reason`] why it has none (a profile to fetch, no `model`, a file that
+    /// is missing, or one it cannot read as a GGUF). The read is the memory
+    /// check's own, so it is guarded as reading `models.ini` is: `control`
+    /// asked without interaction, and as every `As` method for the bff's read
+    /// for a signed-in user, who must be a current member of `pai`; a caller
+    /// with no right is [`ClientError::NotAuthorized`] with nothing read. An
+    /// id the pool has no section for, and `*`, are
+    /// [`ClientError::Invalid`] `no-model-profile-named`.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn model_info(&self, profile: &str) -> Result<ModelInfoReply, ClientError> {
+        let _ = profile;
+        Err(ClientError::Other(
+            "this transport of the manager has no ModelInfo".into(),
         ))
     }
     /// Whether `password` is `user`'s OS password, and whether that user may
@@ -1041,6 +1118,80 @@ mod tests {
         // call is the pin.
         let ask: fn(&dyn ManagerClient) -> Result<NodeDevices, ClientError> = |c| c.devices();
         let _ = ask;
+    }
+
+    /// `model_info(profile)` is a verb of the manager as its siblings are: the
+    /// same `Result<_, ClientError>` shape, and a verb of the trait object, so
+    /// every transport has it. Its reply is the three fields of the design
+    /// (L1, ARCHITECTURE.md (1)): the resolved `model`, `info` the four counts,
+    /// `reason` the keyed why. The names are the contract for every transport
+    /// and for the bff's JSON `model`, `info` (`blockCount`, `moe`,
+    /// `expertCount`, `expertUsed`) and `reason` (`key`, `args`).
+    #[test]
+    fn model_info_is_a_verb_of_the_manager() {
+        let ask: fn(&dyn ManagerClient, &str) -> Result<ModelInfoReply, ClientError> =
+            |c, profile| c.model_info(profile);
+        let _ = ask;
+        let facts = ModelInfoReply {
+            model: Some("/var/lib/llama.cpp/models/m.gguf".into()),
+            info: Some(ModelFacts {
+                block_count: 64,
+                moe: true,
+                expert_count: 128,
+                expert_used: 8,
+            }),
+            reason: None,
+        };
+        assert_eq!(
+            (
+                facts.info.as_ref().map(|f| f.block_count),
+                facts.info.as_ref().map(|f| f.expert_count),
+                facts.info.as_ref().map(|f| f.expert_used)
+            ),
+            (Some(64), Some(128), Some(8)),
+            "the counts are u64: a header declaring more than a u32 counts is answered"
+        );
+        // No facts: `model` and `reason`, never an empty `info` (the page
+        // shows the reason's text, so it needs the key and its values).
+        let none = ModelInfoReply {
+            model: Some("/var/lib/llama.cpp/models/m.gguf".into()),
+            info: None,
+            reason: Some(Reason {
+                key: "model-info-unreadable".into(),
+                args: vec!["/var/lib/llama.cpp/models/m.gguf".into()],
+            }),
+        };
+        assert_eq!(none.info, None);
+        assert_eq!(
+            none.reason.as_ref().map(|r| r.key.as_str()),
+            Some("model-info-unreadable")
+        );
+        assert_eq!(
+            ModelInfoReply {
+                model: None,
+                info: None,
+                reason: Some(Reason {
+                    key: "model-profile-no-model".into(),
+                    args: vec!["p".into()],
+                }),
+            }
+            .model,
+            None,
+            "a profile naming no `model` answers no path"
+        );
+    }
+
+    /// A transport that speaks no `ModelInfo` (a manager of an older protocol)
+    /// says so, and answers no facts: a page that read a default body must not
+    /// show a model with 0 blocks.
+    #[test]
+    fn a_client_of_the_default_body_answers_no_model_info() {
+        match Bare.model_info("Qwen3.8-27B") {
+            Err(ClientError::Other(detail)) => {
+                assert!(!detail.is_empty(), "the detail says why: {detail:?}")
+            }
+            other => panic!("the trait's default body: {other:?}"),
+        }
     }
 
     /// No system bus at all (its socket missing) is Unavailable, never a

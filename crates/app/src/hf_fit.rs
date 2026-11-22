@@ -1786,6 +1786,9 @@ pub mod tests {
             ctx: REF_CTX,
             trained_ctx: REF_CTX,
             kv_f16_per_token: Some(GIB / REF_CTX),
+            block_count: 48,
+            expert_count: 128,
+            expert_used_count: 8,
         }
     }
 
@@ -1809,6 +1812,9 @@ pub mod tests {
             ctx: REF_CTX,
             trained_ctx: REF_CTX,
             kv_f16_per_token: Some(4 * GIB / REF_CTX),
+            block_count: 32,
+            expert_count: 0,
+            expert_used_count: 0,
         }
     }
 
@@ -1918,6 +1924,9 @@ pub mod tests {
             ctx: REF_CTX,
             trained_ctx: REF_CTX,
             kv_f16_per_token: Some(6 * GIB / REF_CTX),
+            block_count: 48,
+            expert_count: 0,
+            expert_used_count: 0,
         };
         let e = estimate(&big, &pair(Some(64)));
         assert_eq!(
@@ -2198,6 +2207,9 @@ pub mod tests {
             ctx: REF_CTX,
             trained_ctx: REF_CTX,
             kv_f16_per_token: Some(44 * GIB / 8 / REF_CTX),
+            block_count: 44,
+            expert_count: 0,
+            expert_used_count: 0,
         }
     }
 
@@ -2501,6 +2513,9 @@ pub mod tests {
             ctx: REF_CTX,
             trained_ctx: REF_CTX,
             kv_f16_per_token: Some(GIB / REF_CTX),
+            block_count: 4,
+            expert_count: 0,
+            expert_used_count: 0,
         };
         let b = budget_of(12, Some(32));
         let x = Extras {

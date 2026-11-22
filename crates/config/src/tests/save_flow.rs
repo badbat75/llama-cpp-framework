@@ -1678,6 +1678,9 @@ pub(super) fn run(app: &AppWindow) {
             ctx: 32768,
             trained_ctx: 32768,
             kv_f16_per_token: Some((1 << 30) / 32768),
+            block_count: 4,
+            expert_count: 0,
+            expert_used_count: 0,
         })
     };
     st.invoke_hf_pick_result(0);

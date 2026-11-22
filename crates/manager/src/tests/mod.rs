@@ -63,6 +63,11 @@ fn data_root_e2e() {
     // ── Manager core: the same check measured on the server profile's cards ─
     crate::manager::service::manager_pair_memory_check_e2e();
 
+    // ── Manager core: the layer facts of a saved model profile (ModelInfo) ──
+    // After the memory checks: those pin `estimated_of`, whose resolution the
+    // read shares with this one, so the e2e proves them before this phase ends.
+    crate::manager::service::manager_model_info_e2e();
+
     // ── Manager core: SetServerProfile, the verb that writes instances.ini ─
     crate::manager::service::manager_set_server_profile_e2e();
 

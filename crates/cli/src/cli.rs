@@ -2204,6 +2204,9 @@ mod tests {
                 ctx: 32768,
                 trained_ctx: 32768,
                 kv_f16_per_token: Some(GIB / 32768),
+                block_count: 4,
+                expert_count: 0,
+                expert_used_count: 0,
             })
         };
         let b = Budget {

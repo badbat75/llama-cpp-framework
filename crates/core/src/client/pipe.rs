@@ -21,6 +21,7 @@
 //! {"method":"ServerProfiles"}
 //! {"method":"Devices"}
 //! {"method":"Authenticate","user":"alice","password":"..."}
+//! {"method":"ModelInfo","profile":"qwen3"}
 //! {"method":"Version"}
 //! ```
 //!
@@ -28,7 +29,7 @@
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
 //! `CreateServerProfile`, `DeleteServerProfile`,
-//! `SetInstanceTags` and `Devices` go as the
+//! `SetInstanceTags`, `Devices` and `ModelInfo` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
 //! (the manager answers a principal for the bff's account alone). The methods
 //! that need no right are unchanged, `Instances` and `ServerProfiles` among
@@ -49,6 +50,7 @@
 //! {"method":"DeleteServerProfileAs","principal":"alice","engine":"llama.cpp",
 //!                                         "profile":"big"}
 //! {"method":"DevicesAs","principal":"alice"}
+//! {"method":"ModelInfoAs","principal":"alice","profile":"qwen3"}
 //! ```
 //!
 //! A reply is the value or an error with the same (name, message) pair the
@@ -88,7 +90,7 @@
 
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, NodeDevices, ServerProfileInfo,
+    ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, Reason, ServerProfileInfo,
 };
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
@@ -555,6 +557,72 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             (Some(ok), Some(can_configure)) => Ok((ok, can_configure)),
             _ => Err(ClientError::Other(v.to_string())),
         }
+    }
+    fn model_info(&self, profile: &str) -> Result<ModelInfoReply, ClientError> {
+        let v = self.call(self.guarded("ModelInfo", &[("profile", json!(profile))]))?;
+        // Every field read strictly, like the other rows: a page that showed a
+        // half-reply would set its sliders at the wrong end, and a 0 blocks is
+        // what a model with 64 looks like when a field is not there.
+        let bad = || ClientError::Other(v.to_string());
+        let model = match v.get("model") {
+            Some(Value::Null) => None,
+            Some(one) => Some(one.as_str().ok_or_else(&bad)?.to_string()),
+            None => return Err(bad()),
+        };
+        // Each of the two an object or null, its key always there, and exactly
+        // one of them: a reply with both says what it read and what it did
+        // not, and one with neither says nothing.
+        let part = |key: &str| -> Result<Option<&Value>, ClientError> {
+            match v.get(key) {
+                None => Err(bad()),
+                Some(Value::Null) => Ok(None),
+                Some(one @ Value::Object(_)) => Ok(Some(one)),
+                Some(_) => Err(bad()),
+            }
+        };
+        let (facts, why) = (part("info")?, part("reason")?);
+        if facts.is_some() == why.is_some() {
+            return Err(bad());
+        }
+        let info = facts
+            .map(|o| -> Result<ModelFacts, ClientError> {
+                let count = |key: &str| o.get(key).and_then(Value::as_u64);
+                match (
+                    count("block_count"),
+                    o.get("moe").and_then(Value::as_bool),
+                    count("expert_count"),
+                    count("expert_used"),
+                ) {
+                    (Some(block_count), Some(moe), Some(expert_count), Some(expert_used)) => {
+                        Ok(ModelFacts {
+                            block_count,
+                            moe,
+                            expert_count,
+                            expert_used,
+                        })
+                    }
+                    _ => Err(bad()),
+                }
+            })
+            .transpose()?;
+        let reason = why
+            .map(|o| -> Result<Reason, ClientError> {
+                let key = o.get("key").and_then(Value::as_str).ok_or_else(&bad)?;
+                let args = o.get("args").and_then(Value::as_array).ok_or_else(&bad)?;
+                Ok(Reason {
+                    key: key.to_string(),
+                    args: args
+                        .iter()
+                        .map(|a| a.as_str().map(str::to_string).ok_or_else(&bad))
+                        .collect::<Result<Vec<_>, _>>()?,
+                })
+            })
+            .transpose()?;
+        Ok(ModelInfoReply {
+            model,
+            info,
+            reason,
+        })
     }
 }
 
@@ -1223,6 +1291,203 @@ mod tests {
             sent_frames(&sent),
             vec![json!({"method": "DevicesAs", "principal": "alice"})],
             "the refusal answers the As call"
+        );
+    }
+
+    /// The model facts of one saved profile (L1, ARCHITECTURE.md (1)) cross the
+    /// stream as the three fields of the design: `model` the resolved absolute
+    /// path (null when the section names none), `info` the four counts, `reason`
+    /// the keyed why. Exactly one of `info` and `reason` is there; the counts are
+    /// read as the manager's own `Shape` fields, in the stream's snake_case, the
+    /// way every row of this protocol is spelled. The frame a plain (not acting)
+    /// client sends is `ModelInfo` with the profile.
+    #[test]
+    fn the_model_info_reply_is_the_facts_or_the_reason_the_manager_answered() {
+        use crate::client::{ModelFacts, ModelInfoReply, Reason};
+
+        let (client, sent) = client_on(input(&[json!({"ok": {
+            "model": "/var/lib/llama.cpp/models/m.gguf",
+            "info": {"block_count": 40u64, "moe": true, "expert_count": 128u64, "expert_used": 8u64},
+            "reason": null,
+        }})]));
+        assert_eq!(
+            client.model_info("moe-abs"),
+            Ok(ModelInfoReply {
+                model: Some("/var/lib/llama.cpp/models/m.gguf".into()),
+                info: Some(ModelFacts {
+                    block_count: 40,
+                    moe: true,
+                    expert_count: 128,
+                    expert_used: 8,
+                }),
+                reason: None,
+            }),
+            "the facts, in the manager's order, with the path it read"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "ModelInfo", "profile": "moe-abs"})],
+            "the plain form, with the profile as given"
+        );
+
+        // No facts: a fetch key, with the key as the reason's only value.
+        let (client, _) = client_on(input(&[json!({"ok": {
+            "model": "/var/lib/llama.cpp/models/x.gguf",
+            "info": null,
+            "reason": {"key": "model-info-fetched", "args": ["hf-repo"]},
+        }})]));
+        assert_eq!(
+            client.model_info("fetched").map(|r| (r.model, r.reason)),
+            Ok((
+                Some("/var/lib/llama.cpp/models/x.gguf".into()),
+                Some(Reason {
+                    key: "model-info-fetched".into(),
+                    args: vec!["hf-repo".into()],
+                })
+            )),
+            "the reason is data of a call that worked, not an error"
+        );
+
+        // A profile with no `model`: no path at all.
+        let (client, _) = client_on(input(&[json!({"ok": {
+            "model": null,
+            "info": null,
+            "reason": {"key": "model-profile-no-model", "args": ["no-model"]},
+        }})]));
+        let got = client.model_info("no-model").expect("an answer");
+        assert_eq!(got.model, None);
+        assert_eq!(got.info, None);
+        assert_eq!(
+            got.reason.map(|r| (r.key, r.args)),
+            Some((
+                "model-profile-no-model".to_string(),
+                vec!["no-model".to_string()]
+            ))
+        );
+
+        // A path with no shard of it: the reason names the path.
+        let (client, _) = client_on(input(&[json!({"ok": {
+            "model": "/m/x-00001-of-00002.gguf",
+            "info": null,
+            "reason": {"key": "model-info-missing", "args": ["/m/x-00002-of-00002.gguf"]},
+        }})]));
+        let got = client.model_info("shards").expect("an answer");
+        assert_eq!(
+            got.reason.map(|r| r.args),
+            Some(vec!["/m/x-00002-of-00002.gguf".to_string()])
+        );
+    }
+
+    /// A `ModelInfo` reply of the wrong shape is `Other`, like every other
+    /// row: a page that read a half-reply would show 0 blocks for a model with
+    /// 64, the sliders on the wrong end. Every field is read strictly: `model`
+    /// a string or null, `info` and `reason` an object or null, exactly one of
+    /// them, the counts numbers that are neither negative nor text, `args` a
+    /// list of strings.
+    #[test]
+    fn a_model_info_reply_of_the_wrong_shape_is_other() {
+        let ok = |reply: serde_json::Value| json!({"ok": reply});
+        for reply in [
+            // Not an object, and no fields at all.
+            ok(json!([])),
+            ok(json!(null)),
+            ok(json!({})),
+            // Both, and neither: the reply says nothing about what it read.
+            json!({"ok": {
+                "model": null,
+                "info": {"block_count": 1u64, "moe": false, "expert_count": 0u64, "expert_used": 0u64},
+                "reason": {"key": "model-info-missing", "args": []},
+            }}),
+            json!({"ok": {"model": "/m/x.gguf", "info": null, "reason": null}}),
+            // `model` of the wrong type.
+            json!({"ok": {"model": 1, "info": null, "reason": {"key": "k", "args": []}}}),
+            json!({"ok": {"model": true, "info": null, "reason": {"key": "k", "args": []}}}),
+            // `info` of the wrong shape: a field missing, a text count, a
+            // negative one, `moe` not a bool, `info` not an object.
+            json!({"ok": {"model": null, "info": {"moe": false, "expert_count": 0u64, "expert_used": 0u64}, "reason": null}}),
+            json!({"ok": {"model": null, "info": {"block_count": "40", "moe": false, "expert_count": 0u64, "expert_used": 0u64}, "reason": null}}),
+            json!({"ok": {"model": null, "info": {"block_count": -1i64, "moe": false, "expert_count": 0u64, "expert_used": 0u64}, "reason": null}}),
+            json!({"ok": {"model": null, "info": {"block_count": 1u64, "moe": "yes", "expert_count": 0u64, "expert_used": 0u64}, "reason": null}}),
+            json!({"ok": {"model": null, "info": [], "reason": null}}),
+            // `reason` of the wrong shape: no key, a key that is not a string,
+            // no args, args not a list, a value that is not a string.
+            json!({"ok": {"model": null, "info": null, "reason": {"args": []}}}),
+            json!({"ok": {"model": null, "info": null, "reason": {"key": 1, "args": []}}}),
+            json!({"ok": {"model": null, "info": null, "reason": {"key": "k"}}}),
+            json!({"ok": {"model": null, "info": null, "reason": {"key": "k", "args": {}}}}),
+            json!({"ok": {"model": null, "info": null, "reason": {"key": "k", "args": [1]}}}),
+            json!({"ok": {"model": null, "info": null, "reason": "model-info-missing"}}),
+        ] {
+            let (client, _) = client_on(input(std::slice::from_ref(&reply)));
+            let got = client.model_info("p");
+            assert!(
+                matches!(got, Err(ClientError::Other(_))),
+                "{reply}: a reply of the wrong shape is refused: {got:?}"
+            );
+        }
+    }
+
+    /// A client acting for the signed-in user asks `ModelInfoAs`, with the
+    /// principal: the bff always asks this way, and the manager reads the file
+    /// for a member of `pai`.
+    #[test]
+    fn an_acting_client_asks_the_model_info_for_the_signed_in_user() {
+        let (client, sent) = client_on(input(&[json!({"ok": {
+            "model": null,
+            "info": null,
+            "reason": {"key": "model-profile-no-model", "args": ["p"]},
+        }})]));
+        let bound = client.acting_for("alice");
+        assert!(
+            bound.model_info("p").is_ok(),
+            "an answer of no facts is still an answer"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "ModelInfoAs", "principal": "alice", "profile": "p"})],
+            "the As form, with the principal as given"
+        );
+    }
+
+    /// The refusals of the model-info read cross the wire like every other
+    /// method's: the gate's `NotAuthorized` for a caller without `control` (and
+    /// for an `As` principal outside `pai`), and the keyed
+    /// `no-model-profile-named` for an id the pool has no section for, which is
+    /// the page's 404.
+    #[test]
+    fn a_model_info_refusal_is_the_error_the_manager_sent() {
+        let (client, _) = client_on(input(&[error_reply("NotAuthorized", "NotAuthorized")]));
+        assert_eq!(
+            client.model_info("moe-abs"),
+            Err(ClientError::NotAuthorized),
+            "the plain form, refused by the quiet `control` check"
+        );
+        let (client, sent) = client_on(input(&[error_reply("NotAuthorized", "NotAuthorized")]));
+        assert_eq!(
+            client.acting_for("bob").model_info("moe-abs"),
+            Err(ClientError::NotAuthorized),
+            "the As form, refused for a principal outside `pai`"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "ModelInfoAs", "principal": "bob", "profile": "moe-abs"})],
+            "the refusal answers the As call"
+        );
+        let (client, _) = client_on(input(&[error_reply(
+            "Invalid",
+            &Refusal {
+                key: "no-model-profile-named",
+                values: vec!["nope".into()],
+            }
+            .encode(),
+        )]));
+        assert_eq!(
+            client.model_info("nope"),
+            Err(ClientError::Invalid(Refusal {
+                key: "no-model-profile-named",
+                values: vec!["nope".into()],
+            })),
+            "the keyed refusal, with the id it names, is the page's 404"
         );
     }
 

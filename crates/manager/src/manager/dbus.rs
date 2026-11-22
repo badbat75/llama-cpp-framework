@@ -179,6 +179,24 @@ fn device_list(list: pai_core::client::NodeDevices) -> (u64, Vec<DeviceRow>, u64
     )
 }
 
+/// The `ModelInfo` reply as the bus answers it:
+/// `(s model, (b has_info, t block_count, b moe, t expert_count,
+/// t expert_used), (s key, as args))`. `model` is the path the read opened,
+/// the empty string when the profile names none; `has_info` is the facts'
+/// part, `key` the keyed why's. The bus has no null, so the flag says which
+/// half of the reply is there, and the half that is not carries zeros and the
+/// empty strings: exactly what the stream's nulls say.
+type ModelInfoRow = (String, (bool, u64, bool, u64, u64), (String, Vec<String>));
+
+fn model_info_row(reply: pai_core::client::ModelInfoReply) -> ModelInfoRow {
+    let facts = reply
+        .info
+        .map(|f| (true, f.block_count, f.moe, f.expert_count, f.expert_used))
+        .unwrap_or((false, 0, false, 0, 0));
+    let reason = reply.reason.map(|r| (r.key, r.args)).unwrap_or_default();
+    (reply.model.unwrap_or_default(), facts, reason)
+}
+
 #[zbus::interface(name = "org.privateai.Manager1")]
 impl<S, A, R> ManagerInterface<S, A, R>
 where
@@ -262,6 +280,38 @@ where
     ) -> Result<(u64, Vec<DeviceRow>, u64, u32), Error> {
         let who = requester_as(&header, principal)?;
         Ok(device_list(self.core(move |m| m.devices(&who)).await?))
+    }
+
+    /// `ModelInfo`: the layer facts of one saved model profile's `model` file,
+    /// `(s model, (b has_info, t block_count, b moe, t expert_count,
+    /// t expert_used), (s key, as args))`, the parts of `model_info_row`. The
+    /// gate of reading `models.ini`: `control` asked of polkit WITHOUT
+    /// interaction, and a refused read opens nothing. An id the pool has no
+    /// section for, and `*`, are the keyed `no-model-profile-named`.
+    async fn model_info(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+    ) -> Result<ModelInfoRow, Error> {
+        let who = requester_of(&header)?;
+        Ok(model_info_row(
+            self.core(move |m| m.model_info(&who, &profile)).await?,
+        ))
+    }
+
+    /// `ModelInfoAs`: the same facts, asked as a principal the caller vouches
+    /// for: the bff's account, and a current member of `pai`. No polkit
+    /// question at all: the pair is the right.
+    async fn model_info_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+    ) -> Result<ModelInfoRow, Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(model_info_row(
+            self.core(move |m| m.model_info(&who, &profile)).await?,
+        ))
     }
 
     async fn status(&self, id: String) -> Result<String, Error> {

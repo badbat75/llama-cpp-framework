@@ -29,7 +29,8 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// with its `As` form; 3 also carries `CreateServerProfile` and
 /// `DeleteServerProfile`, each with its `As` form, and `ServerProfiles`, the
 /// list of the node's profiles, and `CreateInstance` and `RemoveInstance`,
-/// each with its `As` form.
+/// each with its `As` form, and `ModelInfo` with its `As` form, the layer
+/// facts of one saved model profile.
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -71,6 +72,8 @@ enum Request {
     ServerProfiles,
     /// The node's compute devices, from the engine's own probe.
     Devices(Option<Principal>),
+    /// `profile`: the layer facts of one saved model profile's model.
+    ModelInfo(String, Option<Principal>),
     Authenticate(String, String),
 }
 
@@ -219,6 +222,10 @@ impl Request {
             // read it. It takes no argument.
             "Devices" => Request::Devices(None),
             "DevicesAs" => Request::Devices(principal().map(Some)?),
+            // The layer facts of one saved model profile: guarded as reading
+            // `models.ini` is, because the manager reads the model file.
+            "ModelInfo" => Request::ModelInfo(arg("profile")?, None),
+            "ModelInfoAs" => Request::ModelInfo(arg("profile")?, principal().map(Some)?),
             "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
@@ -375,6 +382,28 @@ where
                             "free_mib": d.free_mib,
                         }))
                         .collect::<Vec<_>>(),
+                })
+            }),
+        // The layer facts of one saved model profile, the reply of the design:
+        // `model` the path it resolved (null when the section names none),
+        // `info` the four counts, `reason` the keyed why. Exactly one of the
+        // two is ever there: an outcome the read could not answer is a success
+        // of the call with `info` null, and the reader's own text never
+        // travels, so no byte of a file it refused reaches the frame.
+        Request::ModelInfo(profile, principal) => requester(caller, principal)
+            .and_then(|who| manager.model_info(&who, &profile))
+            .map(|reply| {
+                json!({
+                    "model": reply.model,
+                    "info": reply.info.map(|f| json!({
+                        "block_count": f.block_count,
+                        "moe": f.moe,
+                        "expert_count": f.expert_count,
+                        "expert_used": f.expert_used,
+                    })),
+                    "reason": reply
+                        .reason
+                        .map(|r| json!({"key": r.key, "args": r.args})),
                 })
             }),
         // The empty caller too goes to the core, which answers only the bff.

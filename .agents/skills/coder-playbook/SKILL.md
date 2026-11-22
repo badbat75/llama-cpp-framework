@@ -549,6 +549,18 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## The manager's verbs, refusals and records
 
+- The manager's e2e phases are `pub(crate) fn` called in sequence by ONE `#[test]`
+  (`crates/manager/src/tests/mod.rs`'s `data_root_e2e`), so a filter naming the phase
+  (`cargo test -p pai-manager manager_model_info`) runs 0 tests and says `ok`: green over
+  nothing. Filter `data_root_e2e`, and read the panic's LINE to find which phase is red, since one
+  panic hides every later phase.
+- The GUI is the same shape: `src/tests/save_flow.rs` exposes no `#[test]`, its `run(&app)` is called by
+  ONE shared `#[test]`, `tests::ui_bindings::editable_widgets_track_model_after_edit`, so
+  `cargo test -p pai-config save_flow` runs 0 tests over lib, main and `tests/gui_binary.rs`. Before
+  calling a filter green, `grep -rn "<module>::run" crates/config/src/tests` for the caller and filter
+  on the test that calls it (16 s, one window).
+- `pai_core::gguf_shape::shard_set` is name math (no disk read), so a shard-count bound is judged
+  from it BEFORE any `metadata`/read of a shard; the cap is the manager's read, not the reader's.
 - A refusal a client test decodes must be a key of `checks::KEYS` with a `text()` arm: `Refusal::decode`
   answers `Other` for any other key, so a new key added only to the strings files reddens the D-Bus and
   pipe round trips. `Refusal::new` is private and its key is `&'static str`, so manager code builds the
@@ -1347,6 +1359,28 @@ Lessons only: the rules are in `AGENTS.md`.
 - `xtask/src/linux/package.rs`'s own source pin is `include_str!("package.rs")` sliced to `run()`
   (`split("pub fn run(").nth(1)` up to the next `\nfn `): the needles are the CALL texts, so a comment
   added inside `run()` is safe and `cmd("ldd")` must be gone from that region.
+- A GGUF fixture writer that puts `n_kv` in the slot `parse_header` reads as `n_tensors` (the manager's
+  `service.rs::write_gguf_kv`) parses whenever the two counts are EQUAL, which is why the 4-kv / 4-tensor
+  transport pins are green and a 2-kv / 7-tensor one is answered `model-info-unreadable: a string of N
+  bytes`. The reader's order is tensors then kv (`gguf_shape.rs`'s `parse_header`, and its own test writer
+  `gguf()` writes it that way): say so, never "fix" the reader for a fixture.
+- `paths::redirect_for_tests(dir)` makes `paths::data_root()` `<dir>/private-ai` (`APP_DIR`), NOT `dir`. A
+  fixture naming a RELATIVE `model` has to put the file under `data_root()`: the instances' working
+  directory is `launch::instance_current_dir(cfg!(windows), &data_root(), &instance_state_dir())`, the same
+  `cwd` the GPU memory check resolves against, pinned by its own passing block.
+- A phase that rewrites a shared pool file to pin one case (`std::fs::write(models.ini, "[gone] ...")` for a
+  missing path) erases every section the LATER blocks of the same test read, so their first read answers
+  `no-model-profile-named`. The rewrite is the defect; the later blocks are green once the pool is restored.
+- The pins a stopped phase hides, without a tree copy: add `crates/manager/src/manager/scratch.rs` with one
+  `#[test]` per phase (`crate::tests::pipe_client::manager_pipe_client_e2e()`), the phase fns are private so
+  a filter runs 0 tests until `tests/mod.rs`'s `mod` lines go `pub(crate)`, run each with its own filter
+  (every phase redirects the data root process-wide, so never two at once), then delete the file and the
+  marks. `git status --short` proves nothing of it is left.
+- A reason key that travels in a payload (`ModelInfoReply`'s `Reason { key, args }`), not as a
+  `checks::Refusal`, needs a literal `strings::fill("<key>", ..)` arm in a source the CLI reaches, else
+  `binding_lint` reds it as "in cli.toml but used by no source"; one `text()`-style fn with one arm per key
+  is the link, and `checks::KEYS` needs no entry for such a key.
+
 
 ## Stop every stub you start
 

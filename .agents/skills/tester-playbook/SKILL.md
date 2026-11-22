@@ -13,7 +13,10 @@ Lessons only: the rules are in `AGENTS.md`.
 - A Rust mutant run: a script that copies the file to its own backup, applies ONE exact snippet
   (`src.count(old) == 1` or abort, never "replace the first"), runs one filtered test, prints the mutated
   line's number plus the panic/assertion lines and the failing test names, then restores with `cp` and
-  proves it with `cmp -s`. Judge red from the OUTPUT (`FAILED` / `panicked at`), never from the exit code:
+  proves it with `cmp -s`. Report the mutated line from the OLD snippet's index: the NEW text usually
+  exists in other phases of the same file, so indexing the new text names a line in an unrelated phase.
+  A script that dies between its write and its restore leaves the file mutated: restore from the backup
+  and `grep -n` the fixed text before running anything else. Judge red from the OUTPUT (`FAILED` / `panicked at`), never from the exit code:
   `cmd | tail` reports `tail`'s 0 and a survivor reads as green.
 - A gate whose first four lines are copied verbatim into every guarded verb (`authorize_as` + lock +
   `known_engine` in the manager's verbs) cannot be mutated in place: the snippet matches 3 times. Include
@@ -30,6 +33,16 @@ Lessons only: the rules are in `AGENTS.md`.
 future` of a non-async block), run it, then delete it and write the real tests. Report the shape.
 - A throwaway is a probe of reachability, not of behaviour: it shows a value is constructible and a call
   compiles, not that a call site exists. Name it in the report as a probe.
+- A stub that adds a field to a struct other crates' tests build as a literal is a COMPILE red in those
+  crates, not an assertion. Grep `Struct {` and run `cargo check --workspace --all-targets --exclude
+  pai-config` before reporting red, then fill the field at every literal with the value that test's own
+  fixture implies (a literal needs all fields: that is the smallest stub, it answers no behaviour).
+- `cargo fmt -p <crate>` rewrites every file of the crate, production ones included: run it only when each
+  uncommitted line is yours, and prove afterwards with `git status --porcelain` that no other file moved.
+  When the tree carries other roles' uncommitted lines, list the hunks first
+  (`cargo fmt -p <crate> --check | grep '^Diff in'`): if every one is yours, the write is safe; prove it
+  with `diff -u <copy taken before the write>` (its hunks are exactly the listed ones) and a
+  `git status --porcelain` before/after diff.
 - When the coder's work already contains the rule, the test you expect red is green. Say so, and add an
   assertion that fails for a reason you cannot fix: the EN strings the brief gives that `en_US.json`
   lacks, the key pair that must be equal.
@@ -121,6 +134,15 @@ future` of a non-async block), run it, then delete it and write the real tests. 
   write line for `let _ = found;` (compiles, so the red is the later phase's panic line, not a compile).
 - A phase's own "the write landed" loop and the restore coexist: read the snapshot BEFORE the loop, never
   after, and keep the block's asserts on the writes (the restore belongs to the tree, not to the pin).
+- A fixture a production path resolves as RELATIVE goes in the folder that path names, computed by the
+  SAME helper the code uses (`launch::instance_current_dir(cfg!(windows), &paths::data_root(),
+  &paths::instance_state_dir())` for a `model`): `redirect_for_tests(dir)` makes `data_root()`
+  `<dir>/private-ai`, and on Windows the folder is the instance's state dir, so `dir.path().join(..)` is
+  wrong on both. The red reads `model-info-missing` naming a `<dir>/private-ai/...` path nobody wrote.
+- A fixture writer that lays out a header (GGUF: the tensor-info count then the kv count, the order
+  `gguf_shape::parse_header` reads) is invisible when SWAPPED on every fixture whose two counts are EQUAL,
+  which is the common case. Keep at least one fixture with UNEQUAL counts (2 kv, 7 tensors), and mirror
+  the reader's own test writer (`gguf_shape::tests::gguf`), never "fix" the reader for a fixture.
 - A phase that drives a real save goes through `config_seam_e2e` (`crates/app/src/server_control.rs`:
   redirect the tree, save through the seam, reload, assert), never through a direct write of
   the files: that passes without the seam.
@@ -244,6 +266,21 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   `en_US.json`, so putting a brief's new strings in `EN` (which `en()` needs to name them) reds that
   test naming exactly the keys the sheet lacks. Report it as the strings criterion's red, never as
   collateral, and never work around it by writing the English inline in the new file.
+- A fixture constant a test looks up by accessible name (`getByRole(r, { name: FIXTURE.name })`) must not
+  carry the option type of the API body it rides in: `{ name?: string | null }` makes it
+  `string | null | undefined` and every one of those locators is `TS2769` / `TS2345`, which reads as a
+  broken suite. Annotate the constant narrowly (`VersionBody & { name: string }`), and pair a tuple loop
+  over it with an explicit `const pairs: [HTMLAnchorElement, string][]`, since a literal array of
+  `[el, string]` widens to a union and the element's methods vanish.
+- When a read MOVES onto a route other pages already read (18 AN.15: the shell's host name rides
+  `GET /api/version`, which the Overview's version line reads too), every per-page read-count and
+  "a 401 here ends no session" pin of that route must MOVE to a page that reads nothing of that route
+  (the model profiles page: the one read there is the shell's). On a page that reads the route itself the
+  two are indistinguishable, so the row is dropped from the session suite with a comment naming where it
+  is pinned; an absolute count left behind reds as "expected 2 to be 1" and reads as the fake breaking.
+- After changing the shared fe fake (`src/test/bff.ts`), run the whole suite ONCE as the regression check:
+  every `FAIL` line must sit in a file the slice touched, and the per-file counts must sum to the run's
+  total. Untouched files failing is the fake, not the criterion.
 - `Icon.tsx` answers an unknown name with an EMPTY svg (`SHAPES[name]` is undefined), so the red of a
   new icon is `expected [] to deeply equal [ <path d>, .. ]` with all eight svg attributes passing.
   A literal name is a COMPILE red (the prop is the `IconName` union), which is why the shape tests
@@ -1932,3 +1969,26 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
 - One criterion per test even when it lists modes: C2.6 loops 401, 503, a non-JSON body, a rejected
   fetch and a never-settling promise inside one test, each answered by a fresh `openPage` and closed
   with `cleanup()`, so one criterion is one red line in the report.
+
+## A cascade resolved per key, and a shard-set cap (manager L1 review, 2026-11-22)
+
+- A REFUSAL pin whose fixture carries one of the keys a rule cascades is often a pin OF THE DEFECT. The
+  L1 pool was `[*] model = moe` + `[no-model] ctx-size = 1024`, so the existing
+  `model-profile-no-model [no-model]` assert pinned the per-SECTION cascade (a section with any key never
+  asked the pool). Before adding the cascade's red, walk the pool the fixtures already build: the red is
+  a section with a key of its own and no value, and the refusal needs a pool with NOTHING to cascade:
+  snapshot `models.ini`, write a pool whose `[*]` names no model, loop the section with a key and the one
+  with none (both answer the refusal), write the snapshot back, and the phase's end-of-reads
+  `listing(&sys)` guard keeps its teeth.
+- `gguf_shape::shard_set` reads NO disk: the count is the `-NNNNN-of-NNNNN` name, so an over-cap fixture
+  is ONE file (`over-00001-of-00257.gguf`, valid) and the key is the red: a shard walk that runs reaches
+  the absent 2nd shard and answers `model-info-missing` naming it, where the cap answers
+  `model-info-unreadable` naming the model.
+- "No shard past the first is opened" has teeth only on a shard that METADATA likes: make shard 2 a
+  DIRECTORY (`create_dir`, `is_file()` false, `metadata` ok), so a shard walk answers `unreadable` naming
+  THAT shard: the key assert greens and the path assert is the red naming shard 2. Pin the pair (absent
+  shards for the key, a directory shard for the path), one red each, never one fixture for both.
+- The 256 boundary is cheap: 256 files written `write_gguf_kv(path, "llama", &[], &[])` (1 kv, 0 tensors:
+  `data_start` equals the file length, `tensor_bytes` answers an empty list) with the architecture kv in
+  the first shard only, `local_shape` reads them in one pass. It is GREEN today (no cap in `pai-core`):
+  report it as the boundary guard beside the over-cap red.
