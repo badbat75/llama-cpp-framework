@@ -205,6 +205,11 @@ description: What the architect has learned about this project's components, int
   export only), no grace for an expired node (rejoin), P-256, CA 5 years rotated at 4, no offline root.
   The user overrode two security recommendations this day (path, key at rest): state the exposure
   plainly and let them choose.
+- The director is a role of `pai-manager` (user, 2026-11-22): `pai-manager director`, its own unit and
+  account `private-ai-director`, unit shipped disabled in `-core`, `pai node promote|demote`. The user
+  wants one codebase; the separation that matters is process, account and files, so keep it there
+  (a director at euid 0 refuses to start; `serve` never reads its state). Roles by subcommand, never by
+  a writable config key: a file would let one write move the CA into the root process.
 - Before inventing a framework key for `models.ini`, grep llama.cpp's `common/arg.cpp` for a native
   option: v1.0.0 has `--tags` (preset key `tags`, listed in the router's `/models`) and `--alias`
   (checked 2026-11-22). A router reload unloads a running model whose preset options changed, `tags`

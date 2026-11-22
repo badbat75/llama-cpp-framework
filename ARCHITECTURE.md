@@ -9,7 +9,7 @@ Drawn views of this page: [docs/architecture/infrastructure.html](docs/architect
 (deployment) and [docs/architecture/system.html](docs/architecture/system.html) (components and flows).
 
 Part 1 is the baseline, what exists on 2026-11-15. Part 2 is the design of `PLAN.md` step 14 (R13, a
-director), proposed and waiting for the user's acceptance.
+director), accepted by the user (2026-11-15, revised 2026-11-21 and 2026-11-22), not built.
 
 ## Part 1: the baseline
 
@@ -3758,14 +3758,21 @@ The user's words (2026-11-15): "Ci potrebbe essere un componente super partes ti
 installato su un server differente che può governare differenti manager. Se il bff si connette a questo
 gli viene offerta anche la gestione dei nodi." Status: **accepted** by the user on 2026-11-15, who
 answered the four questions at the end with the recommended option each. Renamed **the director**
-(`pai-director`), formerly the super-manager (user, 2026-11-21); the links were revised the same day to a
-private CA ("Identity and joining").
+formerly the super-manager (user, 2026-11-21); the links were revised the same day to a private CA
+("Identity and joining"). Revised again on 2026-11-22 (user): one codebase and one binary, the director
+being **a separate instance of `pai-manager` with another role**, not a crate or binary of its own:
+"intendo tenere unito il codice ma il director è un'istanza separata del manager con un ruolo diverso",
+and "se un manager viene promosso a director può connettersi ai manager invece che al servizio" ("One
+binary, two roles").
 
 ### Decision summary
 
-1. **A separate service, `pai-director`**, on its own server, unprivileged, holding the node
-   registry and the one key the nodes trust. It runs no engine and checks no content: each node's
-   manager stays the authority over its machine.
+1. **A separate service of the same binary**: `pai-manager director`, the unit
+   `private-ai-director.service` under its own unprivileged account `private-ai-director`, holding the
+   node registry and the one key the nodes trust in its own state directory. It runs no engine and
+   checks no content: each node's manager stays the authority over its machine. It never runs inside
+   the node's manager process (root, LocalSystem): the role is the subcommand the unit starts, and a
+   director started as root refuses to run.
 2. **Nodes are managers.** The director speaks to each node's `pai-manager` with **the existing
    manager protocol over TLS 1.3 with mutual authentication**, every certificate issued by **a
    private CA the director holds** (90-day leaves, renewed by the nodes from 30 days before expiry; revoked by refused renewal and
@@ -3781,11 +3788,16 @@ private CA ("Identity and joining").
    manager and the API grows a node prefix; the local mode stays as it is.
 6. **Nodes never depend on the director**: their instances, boot settings and local clients work
    with it down or gone.
+7. **A node is promoted, not reinstalled** (user, 2026-11-22): `-core` ships the director's unit
+   disabled; `pai node promote` on a node enables it, joins that machine's own manager to it over
+   loopback TLS like any other node, and switches the local bff to hub mode; `pai node demote` undoes
+   the switch and stops the director, keeping its state.
 
 ### Role and boundaries
 
 | | Manager (on each node) | Director | bff |
 | --- | --- | --- | --- |
+| Runs as | `pai-manager serve`, unit `private-ai-manager.service`, root (Windows: the service `private-ai-manager`, LocalSystem) | `pai-manager director`, unit `private-ai-director.service`, the system user `private-ai-director` (Windows: later) | `pai-bff`, unit `private-ai-bff.service`, the system user `private-ai-bff` |
 | Owns | The instances, their files, the checks, local authorization | The node registry (name, address, certificate serial and expiry), the CA and its keys, the deny list, the join and renewals, fan-out with per-node timeouts | Web sessions, the HTTP API, the web UI |
 | Never | Knows the director's users; accepts a password from off the machine | Caches a node's files as truth; runs checks; starts engines; sees passwords | Holds the node key; reaches a node directly |
 | Talks to | systemd / SCM; local callers; the enrolled director over TLS | Nodes over TLS; its local bff over a local socket | The local manager (local mode) or the director (hub mode) |
@@ -3794,7 +3806,88 @@ The director is separate from the bff (rather than a "hub mode" holding the regi
 bff) for one security reason and one operational one: the browser-facing process never holds the key
 every node trusts, so a compromised bff can act only while it is compromised and only as a signed-in
 session could, and cannot carry the key away; and the director can be restarted, upgraded or
-backed up without the web service. Cost: a third local service and a small local interface.
+backed up without the web service. Cost: a third local service and a small local interface. The same
+two reasons keep it out of the node's manager process: the process facing the network with the fleet's
+key is not root, and a fault in the director (a parser, the store's HTTP) cannot take the machine's own
+instances with it. One binary changes neither: what separates them is the process, its account and its
+files, not the crate.
+
+### One binary, two roles (user, 2026-11-22)
+
+**What stays from the accepted design.** The director is its own process, unit and account
+(`private-ai-director`), with its own state (`/var/lib/private-ai-director/`: the CA key 0600 in a 0700
+directory, the registry, the deny list, the store) that no other account reads; the node's manager
+never opens that directory and never holds the CA key; the machine's own manager stays a node and joins
+its director over TLS like any other (loopback, one code path); nodes never depend on the director.
+**What moves**: the code, from a planned crate `pai-director` into `crates/manager` as a role of
+`pai-manager`; the packaging, from a planned package `private-ai-framework-director` into `-core`.
+**What is removed**: the separate binary and package.
+
+**How the role is chosen.**
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. A subcommand, `pai-manager director`**, beside `serve`, `run-instance`, `save-slots` (`crates/manager/src/manager.rs` `parse_args`) | One arm in `parse_args`, one unit | None new: the role is fixed by the unit's `ExecStart=`, before any file is read | **Chosen**: the pattern the binary already has (`run-instance` is already the same binary under another account) |
+| B. A flag, `pai-manager serve --role director` | The same, plus a flag parser for one value | `serve` grows two meanings; a drop-in that edits arguments flips roles | No gain over A |
+| C. A key in a config file (`[Manager] Role = director`) read by `serve` | A file to own and a reload path | The role would follow a writable file: one write and the root process takes the director's role (the CA key in a root process, against the reasons above) | Rejected |
+
+Fail closed at start: `pai-manager director` exits with an error when its effective uid is 0 (Windows,
+when later: when its token is LocalSystem), and `serve` never reads the director's state directory, so
+neither process can be made to take the other's role by a unit drop-in alone. Unit and names:
+
+| | Linux | Windows (later: the director is Linux only at first, answer 4) |
+| --- | --- | --- |
+| Service | `private-ai-director.service`, `ExecStart=/usr/libexec/private-ai/pai-manager director` | `private-ai-director`, `pai-manager.exe director`, manual start |
+| Account | `User=private-ai-director` (a static sysusers entry, preference: a stable owner of the CA key across restarts and backups, as for the bff), hardened like the bff (`ProtectSystem=strict`, `NoNewPrivileges=`, no capabilities) | the virtual account `NT SERVICE\private-ai-director` |
+| State | `StateDirectory=private-ai-director`, `StateDirectoryMode=0700` | `%ProgramData%\private-ai-director\`, SYSTEM and the virtual account only |
+| Local interface | `RuntimeDirectory=private-ai-director`, the socket `director.sock` mode 0660 group `private-ai-bff` | a named pipe `\\.\pipe\private-ai-director`, ACL the bff's account and SYSTEM |
+| Listeners | the store and renewal listener, 8593 | the same |
+
+**Packaging.**
+
+| Option | Cost | Risk | Verdict |
+| --- | --- | --- | --- |
+| **A. `-core` ships the director's unit disabled** (no preset, no enable in the postinst) and its sysusers entry | Every node carries one unit file and one idle system account | Nothing runs and nothing listens until a promote; the account owns nothing until then | **Chosen**: the binary is in `-core` anyway, and "promote" then needs no package install, only a `configure` call |
+| B. A package `private-ai-framework-director` with only the unit and the sysusers entry | A fifth package, its version tied to `-core` | Promote becomes an install (an action with real effects, run by the user); a package mismatch is one more skew | Only if the user wants no director account on plain nodes |
+
+**Promote.** `pai node promote [--name <node>]` (and the same in the GUI later), a `configure` call to the
+local manager (a `pai` member, polkit `auth_self_keep` as for any `configure`), which as root, in order,
+each step idempotent so a failed promote is resumed by running it again:
+
+1. enables and starts `private-ai-director.service`; at its first start the director creates the CA,
+   its own leaf and the signer (the profile above) and opens its socket;
+2. enables the node's own listener on `127.0.0.1:8592` when it is not already enabled (`pai node enable`'s
+   key and join code, kept in the manager's memory, never printed);
+3. enrols itself: `AddNode{name, 127.0.0.1:8592, code}` on the director's socket, with the promoting
+   user as principal; the director dials the node and runs the join exactly as for a remote node. The
+   name defaults to the host name held to the registry rule;
+4. writes `Director = true` into `bff.ini` (`/etc/private-ai/`, the manager's configuration directory)
+   and restarts `private-ai-bff.service`, last, so the web UI never shows a hub without its own node.
+
+A machine already joined to another director is refused (`node-has-director`: one director per node);
+`pai node leave` first.
+
+**Demote.** `pai node demote` (`configure`): writes `Director = false` and restarts the bff first (the web
+UI goes back to the local machine), then stops and disables the director. The director's state is kept,
+so a later promote restores the same CA and every node stays joined; the local node stays joined too
+(`pai node leave` forgets it). Deleting the state, which makes every node join again, is a manual act on
+the director's machine, not an option of demote (preference: no one-word command that unjoins a fleet).
+Moving the director to another machine is `ca export` there, promote and `ca import` here.
+
+**Who may call the director's socket.** The bff's uid (each call naming a session's principal) and
+uid 0 (the manager, for promote; and root already reads the CA key, so admitting it adds no power),
+both by `SO_PEERCRED`; everyone else is refused before a frame is parsed.
+
+**What is shared and what is one role's** (all in `crates/manager`, plus the client in `pai-core`):
+
+| Shared | Node only (`serve`) | Director only (`director`) |
+| --- | --- | --- |
+| The protocol: frames, methods, errors (`manager::pipe` and its dispatch), `pai_core::client::pipe::PipeClient`; the TLS configuration (TLS 1.3, ALPN, the name rules under `pai.invalid`, the certificate profile checks); the signed-record format (built by the director, verified by the node) | The listener on 8592 and its caller kind, the join responder, the key and CSR, renewal as a client, the Authority, systemd and the SCM, the store's pull client | The CA, issuing and the deny list (CRL), the registry, the fan-out with per-node timeouts, the local socket, the renewal and store listener on 8593, the signer |
+
+A module boundary (`manager::director`) keeps the director's code apart; the node's code never calls it.
+Cost of one binary, accepted: the node's binary carries the director's code and its crates (rcgen's
+issuing half, the store's HTTP server), a larger binary on every node; its security effect is nil, since
+code a process never runs grants nothing, and the keys stay where the accounts put them.
 
 ### Transport between machines
 
@@ -3877,7 +3970,9 @@ mode 0600, owner and group `private-ai-director` (the director's system user), i
 mode at each start). No systemd credential and no TPM binding. Consequences, accepted: whoever can read
 that file, root on the director's machine or any backup of its disk, holds the CA and so the fleet;
 backups of the director's disk carry the key and must be kept like it. An optional manual export,
-`pai-director ca export <file>` (a `pai` member on the director's machine), writes a copy encrypted with
+`pai-manager director ca export <file>` (run as the director's account, `sudo -u private-ai-director`, so
+by an administrator of the director's machine: revised 2026-11-22, the key being readable by that account
+alone), writes a copy encrypted with
 a passphrase typed at the prompt, for an offline copy; restoring it on a new director keeps every node
 joined. The process is unprivileged and hardened like the bff; a hardware key (PKCS#11) can come later.
 
@@ -3975,8 +4070,9 @@ has a new key and no certificate: it joins again.
 How a web session maps to a node: the user signs in on the director machine's bff, checked by
 **that machine's** manager (`Authenticate`, so that machine has `-core`); only a `pai` member gets a
 session. The bff sends each call to the director with the session's principal
-(`alice@<director name>`); the director admits only its bff (by peer credentials: `SO_PEERCRED`
-on a Unix socket, [unix(7)](https://man7.org/linux/man-pages/man7/unix.7.html)) and forwards the call to
+(`alice@<director name>`); the director admits only its bff, and root for promote (by peer credentials:
+`SO_PEERCRED` on a Unix socket, [unix(7)](https://man7.org/linux/man-pages/man7/unix.7.html); "One binary,
+two roles") and forwards the call to
 the node with the same principal as a field. The node's manager authorizes the enrolled peer and logs
 the principal with every change. No password leaves the machine it was typed for.
 
@@ -4016,13 +4112,15 @@ them) and it cannot impersonate the director to other nodes.
 
 ### Packaging, upgrades and version skew
 
-- **A separate package**: `private-ai-framework-director` (Linux) with `pai-director` in
-  `/usr/libexec/private-ai`, its unit, its sysusers entry (`private-ai-director`), its socket in its
-  runtime directory, group-readable by `private-ai-bff` only; requires `-core` (the sign-in) and
-  usually sits beside `-bff`. Its own machine is a node only if joined like any other, over
-  `127.0.0.1`, one code path. Windows: later (a feature of the framework's MSI, off by default, or not
-  at all; a user question).
+- **No package of its own** (revised 2026-11-22, "One binary, two roles"): `-core` ships
+  `pai-manager` (both roles), the director's unit disabled and its sysusers entry
+  (`private-ai-director`); a hub also needs `-bff`. Its own machine is a node, joined by the promote over
+  `127.0.0.1`, one code path. Windows: later (the same service shape in the framework's MSI, installed
+  manual and stopped, or not at all; a user question).
 - **Nodes need nothing new**: the listener is part of `pai-manager` in `-core`, off until enabled.
+- **Upgrades**: one package upgrades both roles at once on the director's machine, so its director and
+  its own node never skew; the postinst restarts `private-ai-director.service` only when it was running
+  (`deb-systemd-invoke` as for the other units), and never enables it.
 - **Skew**: the ALPN name carries the protocol's major version (`pai-manager/1`); within a major,
   changes are additive (new methods, new optional fields), and a new `Version` method (no authorization)
   returns the node's framework version and protocol minor, so the director shows it and avoids
@@ -4106,20 +4204,34 @@ type-checked like the rest of the Windows code.
    (including the API key in reads); each change it makes is logged with its principal and the
    signer's signature; a command unsigned, signed by a certificate without the private EKU, outside
    the 5-minute window, or with a replayed nonce is refused.
-5. **The director.** Crate and binary, the CA (a plain 0600 file), its leaves and the signer, the
-   registry, `add` against an in-process node. Done when: the CA key is created as `ca.key` 0600
+5. **The director.** The role `pai-manager director` (module `manager::director`, no new crate), the CA
+   (a plain 0600 file), its leaves and the signer, the registry, `add` against an in-process node. Done
+   when: `parse_args` gives the director command for `director` and refuses an extra argument; the
+   director started with effective uid 0 exits with an error before touching its state; the CA key is created as `ca.key` 0600
    `private-ai-director` in a 0700 directory; `ca export` writes a passphrase-encrypted copy that a
    fresh director imports and then still verifies the nodes' certificates; `add` with a code issues the node's certificate; a node presenting a
    certificate of another CA reads `untrusted`, an expired one `expired`; a stopped node reads
    `unreachable` within the timeout while another answers.
-6. **Its local interface.** The protocol with `node` and principal on a Unix socket, the bff's uid
-   only. Done when: another uid is refused; calls reach the right node; `ListNodes` fans out.
+6. **Its local interface.** The protocol with `node` and principal on a Unix socket, the bff's uid and
+   uid 0 only. Done when: another uid is refused before a frame is parsed; calls reach the right node;
+   `ListNodes` fans out.
 7. **The bff's hub mode.** `Director`, `nodes` in `/api/version`, `/api/nodes`, the node-prefixed
    routes over a node seam. Done when: tests against a fake director pass and every local-mode
    test still passes unchanged.
+7b. **Promote and demote.** `Promote` and `Demote` on the manager (`configure`), `pai node promote|demote`,
+   over seams for systemd, the director's socket and `bff.ini`. Done when: a non-`configure` caller is
+   refused; promote enables and starts the director unit, enrols the local node at `127.0.0.1:8592` (the
+   fake director receives `AddNode` with the code the node's listener holds), writes `Director = true`
+   and restarts the bff in that order; a promote failed at any step leaves the bff in local mode and a
+   second run completes it; a node joined to another director is refused `node-has-director`; demote
+   writes `Director = false` and restarts the bff before it stops and disables the director, and leaves
+   the director's state directory in place.
 8. **The web UI.** Designer's brief, then nodes on the Overview and node-scoped pages.
-9. **Packaging.** The Linux package; checked by `xtask package` and its contents; installing is the
-   user's run, then the end-to-end check on two machines.
+9. **Packaging.** In `-core`: the director's unit (`User=private-ai-director`, `StateDirectory=` 0700,
+   `RuntimeDirectory=`, the hardening of the bff's unit) and its sysusers entry; checked by `xtask package`
+   and its contents: the unit is in `-core`, not enabled by any preset or maintainer script, and restarted
+   on upgrade only when active; installing is the user's run, then the end-to-end check on two machines
+   (one promoted).
 10. **The model store** (after 9). The manifest, ingestion from Hugging Face with the sha256 check, the
    pull listener, `StoreFetch` on the node with staging, hash and rename, range resume, `GET /api/store/files`.
    Done when, with a test CA over loopback: a node without a valid certificate is closed before any
@@ -4131,7 +4243,8 @@ type-checked like the rest of the Windows code.
    that renewed unable to connect, and a node still on the old CA alone reads `untrusted`.
 
 What can wait: per-node rights, a central identity, nodes that dial out (NAT), a hardware CA key, gRPC streaming
-for live logs, the director on Windows, a CLI for the director, the gateway across nodes
+for live logs, the director on Windows, promote and demote in the GUI, a CLI for the node list beyond
+promote and demote, the gateway across nodes
 (R11's routing across instances on several machines).
 
 ### What the current code should change before it hardens
@@ -4181,3 +4294,8 @@ denied, which weakens revocation by as much. 10. **Key type**: ECDSA P-256; or E
 lifetime**: 5 years, rotated at 4; or 10 years.
 Answers (user, 2026-11-21): 8. a plain 0600 file (not the architect's recommendation), with the optional
 manual export; 9. it joins again, no grace; 10. ECDSA P-256; 11. 5 years, rotated at 4.
+
+One binary, two roles (2026-11-22), notes that block nothing, the default taken: 12. **Packaging**: the
+director's unit and account in `-core`, disabled (default); or a small `-director` package so plain nodes
+carry no director account. 13. **Demote and the CA**: demote keeps the director's state, so a promote
+restores the fleet (default); or demote also deletes it, every node then joining again.
