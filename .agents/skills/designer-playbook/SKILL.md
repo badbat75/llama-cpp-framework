@@ -145,3 +145,7 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
 - The blocks, Auto and malformed lines of the GPU card sit in a `.field` grid of two columns from
   720 px: a new direct child of a fieldset that is a `.field` takes a grid cell and can push the list
   into the 200 px label column. Measure the children's x at 1280 px (`build/ux-review/ls1shot.js`).
+- Criterion ids collide across briefs: brief 17's U17a tests are named `17a.n`, as brief 16's slice
+  17a criteria were. Before numbering, grep `fe/src` for the prefix; brief 16 now has test names cite
+  `16 17a.n` (brief 20's `20 N.n` form). A tile's chips take no Tab stop because its link leads to a
+  page showing every tag whole: chips elsewhere need that page too, or text.

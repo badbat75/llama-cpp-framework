@@ -4,33 +4,45 @@
 instances", slices 14, 15 and 16 (all served: `crates/bff/README.md` "The server profile pool", "The
 association routes", "Creating and removing an instance"; `fe/briefs/api-contract.md`). The web UI part
 is slice 17. It is split in five sub-slices of at most 12 criteria each, built in this order, each with
-its own tests; criteria are numbered **17a.n** to **17e.n** and test names cite them so (`17a.4`).
+its own tests. Criteria are numbered **17a.n** to **17e.n** here, and **test names cite them with the
+brief's number first, `16 17a.4`**, because brief 17's UX pass already has tests named `17a.n`
+(`U17aSkeletons.test.tsx`, its skeletons), as brief 20 cites `20 N.4`.
 
-| Sub-slice | What | Criteria |
-|---|---|---|
-| 17a | The Server profiles list, a server profile's page with the Server form moved there, the nav entry; the instance page stops reading `/api/instances/{id}/server` | 12 |
-| 17b | Create and delete a server profile | 10 |
-| 17c | Create and remove an instance; the start refused for no model profile | 12 |
-| 17d | The restart offer; the instance's server profile switch | 11 |
-| 17e | The instance's model profiles | 11 |
+| Sub-slice | What | Criteria | Waits for |
+|---|---|---|---|
+| 17a | The Server profiles list, a server profile's page with the Server form moved there, the nav entry; the instance page stops reading `/api/instances/{id}/server` | 12 | TP1 (2j) committed: shared files, section 3 "17a and 2j" |
+| 17b | Create and delete a server profile | 10 | 17a |
+| 17c | Create and remove an instance; the start refused for no model profile | 12 | 17a |
+| 17d | The restart offer; the instance's server profile switch | 11 | 17a, and the whole of 2j (17d.4 edits the model profile page) |
+| 17e | The instance's model profiles | 11 | 17a |
 
-The old routes `GET`/`PUT /api/instances/{id}/server` are removed from the bff in slice 17's commit
-(`ARCHITECTURE.md` slice 14, "The old route stays"): after 17a no fe code calls them.
+The old routes `GET`/`PUT /api/instances/{id}/server` are removed from the bff once no fe code calls
+them (`ARCHITECTURE.md` slice 14, "The old route stays"): after 17a none does, so the removal may ride
+in 17a's commit or a later one (the coordinator's call); 17a's tests pin that the fe sends nothing to
+them.
 
-## 0. What exists (read on main at 3585c39)
+## 0. What exists (read on main at f666c49; `fe/` unchanged at 1dbcde8)
 
-- **Routes served** (all behind a session, 401 `session-required` without one):
+- **Routes served** (all behind a session, 401 `session-required` without one; `crates/bff/README.md`
+  "The server profile pool"):
   - `GET /api/profiles/server`: `[{"id", "engine", "port", "tags", "instance"}]`, sorted by id,
-    `instance` the id of the instance whose record names it or `null`, `port` 0 for a file that cannot
-    be read; 403 `session-not-administrator`, 503 `client-unavailable`, 502 `client-other`.
+    `instance` the id of the instance whose record names it or `null`, `port` 0 and `tags` `[]` for a
+    file that cannot be read; 403 `session-not-administrator`, 503 `client-unavailable`, 502
+    `client-other`.
   - `POST /api/profiles/server` `{"engine", "id", "port"}`: 201 `{"id"}`; 400
     `server-profile-malformed`; 422 `unknown-engine` (`field` `engine`), `server-profile-bad-id`
     `[id]` (`field` `id`), `not-whole-number-in-range` `[key, text, min, max]` (`field` `port`); 409
     `client-server-profile-exists` `[id]`; 503 (outcome unknown), 502.
-  - `GET /api/profiles/server/{id}`: today's server document plus `instance` (id or `null`);
-    `defaults.StateDir` is `null` for a profile no instance runs; 404 `client-no-server-profile`
-    `[id]`. `PUT` the same save as today's instance save (same body, statuses, keys), 200
-    `{"revision", "running"}`, `running` for the instance that uses it.
+  - `GET /api/profiles/server/{id}`: the instance route's server document plus `instance` (id or
+    `null`); `defaults.StateDir` is `null` for a profile no instance runs; 404
+    `client-no-server-profile` `[id]` (where the instance route answers `client-no-instance`).
+    `PUT` is the instance's save (same body, statuses and keys, 504 `client-timeout` included), 200
+    `{"revision", "running"}`, `running` for the instance that uses it (`false` for none, `true` when
+    its state cannot be read). Since R3 (5fb7b0e) the save that **changes `Devices`** of a profile an
+    instance runs can be 422 `model-profile-over-memory` `[profile, instance, needed, available]`
+    with `field` the model profile's id, which names no control of the form. The form has no
+    `Devices` control until R5 and sends the read's `Devices` back unchanged (`ServerForm.tsx` 429 to
+    431), so this refusal cannot come from it today.
   - `DELETE /api/profiles/server/{id}`: 204; 409 `client-server-profile-in-use` `[profile,
     instance]`; 404 `client-no-server-profile` `[id]`; 503, 502.
   - `GET /api/instances` items carry `serverProfile` (name or `null`) and `removable` (false only
@@ -40,29 +52,55 @@ The old routes `GET`/`PUT /api/instances/{id}/server` are removed from the bff i
     `client-no-instance`. Both: 503 (outcome unknown), 502 `client-service-failed`, 502 `client-other`.
   - `POST /api/instances/{id}/start` and `/restart`: 409 `instance-no-model-profiles` `[id]` for an
     instance that serves no model profile (a new instance has none).
-  - `PUT /api/instances/{id}/profiles/server` `{"serverProfile"}`: 200 `{"running"}`.
+  - `PUT /api/instances/{id}/profiles/server` `{"serverProfile"}`: 200 `{"running"}`; since R3 also
+    422 `model-profile-over-memory` with `field` `serverProfile`.
     `GET /api/instances/{id}/profiles/model`: `{"all": "inherit"|"none", "profiles": [{"id",
     "engine", "engineAvailable", "enabled", "model", "value", "viaAll", "effective"}]}`.
     `PUT .../profiles/model/{profile}` `{"value"}`: 200 `{"effective", "running"}`;
     `PUT .../profiles/model` `{"all"}`: 200 `{"running"}`. None of the four answers 504.
   - `PUT /api/profiles/model/{id}` and `PUT /api/profiles/model/{id}/enabled` answer `restart`: the
     ids of the running instances to restart, `[]` with `running` true when a state could not be read.
-- **The fe** (`fe/src/`): the instance page (`InstancePage.tsx`) holds the header (engine, port,
-  state, Start / Stop / Restart, Start at boot), the Instance tags field (brief 15 turns it into chips;
-  untouched here) and `ServerSection.tsx` / `ServerForm.tsx`, which read and save
-  `/api/instances/{id}/server`. The nav's Profiles group holds Model profiles only
-  (`fe/briefs/05b-profiles-nav.md`: "Server profiles" joins it when its page exists). The run controls'
-  alert texts are `InstancePage.tsx` `failureText`; `instance-no-model-profiles` has none yet.
+- **The fe** (`fe/src/`):
+  - **Nav** (N1, brief 20; `App.tsx` 453 to 522 and 585 to 663): Overview alone; **Nodes** > the host
+    label (`computer`) > one link per instance (`box`, seen `default · qwen-27b`, heard "default,
+    server profile qwen-27b", from the list item's `serverProfile`) then Node info (`cpu`);
+    **Profiles** (`p#nav-profiles` and `ul[aria-labelledby="nav-profiles"]`) with Model profiles
+    (`layers`) only, as 20 N.8 rules "until 17a"; About last, alone. `Instance.serverProfile` is
+    already read (`Instances.tsx`, 20 N.2): 17a adds no field to the list reader.
+  - **Routes** (`route.ts`): `#/profiles/model`, `#/profiles/model/<id>`, `#/instances/<id>`,
+    `#/node`, `#/about`; no `#/profiles/server`. `modelProfileIdUnreadable` is the `.`/`..` rule.
+  - **Instance page** (`InstancePage.tsx` 440 to 512): the header (engine, port, state, Start / Stop /
+    Restart, run status and alert, Start at boot), the Instance tags field as chips (brief 15 C1, C2:
+    its own chips and the "From the server profile" ones, the pill suggesting from
+    `readServerProfiles` in `Instances.tsx` 154 to 165, a silent read), then `ServerSection` /
+    `ServerForm`, which read and save `/api/instances/{id}/server` (`ServerSection.tsx` 46,
+    `ServerForm.tsx` 366). The run controls' alert texts are `failureText` (`InstancePage.tsx` 152);
+    `instance-no-model-profiles` has none yet. The page's unsaved-changes rule tracks both sections
+    (`report('server' | 'tags')`, 333 to 349).
+  - **Loading** (U17a, `Skeleton.tsx`): every page's first read shows its loading text visually
+    hidden in a `role="status"` at once and a skeleton after 300 ms (`Loading`, `Lines`, `CardBox`).
+    The instance page's skeleton today is three header lines plus the Server section's card box
+    (`U17aSkeletons.test.tsx` 241 and 262).
+  - **Tags as chips** (`Chip.tsx`: `ChipList`, `Chip`), read-only on the Overview's tiles (U17b),
+    one line with an ellipsis (user, 2026-11-21); a tile's chip takes no Tab stop because the tile's
+    id link leads to a page showing every tag whole (`Chip.tsx` 67 to 70).
+  - **The Server form's save** (`ServerForm.tsx` 545 to 585): a refusal whose `field` names a control
+    marks it, any other refusal shows `save-refused` in the bar's alert; `serverKey` maps
+    `client-no-instance` to `instance-not-found` and `server-changed-elsewhere` to Reload.
+  - Icons present (`Icon.tsx`): `plus`, `x`, `rotate-cw`, `chevron-left`, `layers`, `computer`, `box`,
+    `cpu` among them; **`server` is not there yet** (17a adds it).
 - **`pai-config` and `pai`** have no server profile pool, no instance create or remove and no
   assignment: they act on the instance `default` and the profile its record names. The web UI is first;
   the Server form itself keeps the GUI's Server tab fields, order and texts (`fe/briefs/01-server.md`).
 
 ## 1. Decisions (each a preference unless it cites a source)
 
-1. **Nav**: the Profiles group lists **Server profiles** then **Model profiles** (an instance has one
-   server profile and many model profiles: the one first). Server profiles has the `server` icon
-   (Lucide `server`, path data of `lucide-static@1.74.0` `icons/server.svg`, as brief 08 H8 copies the
-   others; licence already in `installer/licenses/lucide.txt`).
+1. **Nav**: the Profiles group of N1 (brief 20) lists **Server profiles** then **Model profiles** (an
+   instance has one server profile and many model profiles: the one first; brief 20 decision 6 and
+   Q1, `fe/DESIGN.md` 2.3). Server profiles has the `server` icon (Lucide `server`, path data of
+   `lucide-static@1.74.0` `icons/server.svg`, checked to answer 200 on 2026-11-22: two `rect`s of
+   20 x 8 at y 2 and 14 with `rx`/`ry` 2, two `line`s at x 6 to 6.01, y 6 and 18; licence already in
+   `installer/licenses/lucide.txt`). The Nodes group is unchanged: instance links keep `id · profile`.
 2. **Routes**: `#/profiles/server` (the list) and `#/profiles/server/<id>` (one profile: its "Used by"
    fact, Delete while unused, the Server form). The instance page keeps run controls, boot and tags,
    and gains a **Server profile** section (17a shows it, 17d switches it) and a **Model profiles**
@@ -218,48 +256,67 @@ key; anything else (400, 413, an unknown key, a malformed body, a network failur
 ### 17a: the list, the page, the form moved (12)
 
 **17a.1 Routes.** `#/profiles/server` is the list page and `#/profiles/server/<id>` a profile's page
-(the id percent-decoded; a bad escape is the not-found page, as `#/profiles/model/<id>`). Titles:
+(the id percent-decoded; a bad escape is the not-found page, as `#/profiles/model/<id>`); `route.ts`
+gains `serverProfileHref(id)` (`#/profiles/server/` plus `encodeURIComponent(id)`). Titles:
 `Server profiles | Private AI Framework` and `<id> | Private AI Framework`; each `h1` takes the focus on
 arrival. Signed out, the sign-in page shows (`signin-required`) and nothing is read. An id `.` or `..`
 shows `server-profile-not-found` with no request (`modelProfileIdUnreadable`'s rule).
 
-**17a.2 Nav.** Signed in, the Profiles list holds two links in order: `nav-server-profiles` to
-`#/profiles/server` with the `server` icon (`svg.icon`, `aria-hidden`), then `nav-model-profiles`.
-Server profiles has `aria-current="page"` on the list and `aria-current="true"` on a profile's page,
-none elsewhere; Model profiles keeps its own rule. The Tab order of the nav gains exactly that link.
+**17a.2 Nav.** Signed in, `ul[aria-labelledby="nav-profiles"]` holds two links in order:
+`nav-server-profiles` to `#/profiles/server` with a first child `svg.icon` of `server`
+(`aria-hidden`), then `nav-model-profiles` (unchanged). Server profiles has `aria-current="page"` on
+the list and `aria-current="true"` on a profile's page, none elsewhere; Model profiles keeps its rule
+(2d.64). Nothing else of the nav changes (20 N.3 to N.9; the Nodes group, its `id · profile` links and
+About as they are). Tab order at 1280 px with two instances: Skip to content, home link, theme switch,
+Sign out, Overview, the instance links, Node info, **Server profiles**, Model profiles, About, then the
+page; below 960 px a click on Server profiles closes the open menu (20 N.10's rule). `Icon.tsx` gains
+`server` (decision 1), with a comment citing `16 17a.2`.
 
-**17a.3 List read.** The list page sends one `GET /api/profiles/server` per arrival. While pending:
-`server-profiles-loading` in a `role="status"` paragraph. Then `h1` `server-profiles-title`, the
-paragraph `server-profiles-intro`, and a table (Table component, in `div.table-scroll`) with the
-columns `server-profiles-column-name`, `-port`, `-tags`, `-used-by`, one row per item in the reply's
-order: the id as a link to `#/profiles/server/<id>`; the port as text (empty cell for 0); the tags
-joined by ", " (empty cell for none); the instance id as a link to `#/instances/<id>`, or
-`server-profiles-unused` with the class `muted`. `[]` shows `server-profiles-empty` and no table.
+**17a.3 List read.** The list page sends one `GET /api/profiles/server` per arrival (its own read with
+the failures of 17a.4; `readServerProfiles`, the tag pill's silent read, is not reused and stays as
+is). While pending, U17a's rule (`Loading`): `server-profiles-loading` visually hidden in a
+`role="status"` at once, and after 300 ms three `.skeleton` lines in the table's place, as Model
+profiles. Then `h1` `server-profiles-title`, the paragraph `server-profiles-intro`, and a table (Table
+component, in `div.table-scroll`) with the columns `server-profiles-column-name`, `-port`, `-tags`,
+`-used-by`, one row per item in the reply's order: the id as a link to `serverProfileHref(id)`; the port
+as text (empty cell for 0); the tags as text joined by ", " in the reply's order (empty cell for none:
+not chips, because a tile's chips take no Tab stop on the promise that the id link leads to a page
+showing every tag whole, and the profile page does not show the tags until 05d; text wraps and hides
+nothing); the instance id as a link to `instanceHref(id)`,
+or `server-profiles-unused` with the class `muted`. `[]` shows `server-profiles-empty` and no table.
+The columns do not sort (section 5).
 
 **17a.4 List failures.** 401 signs the app out (sign-in page at the same hash, `signin-session-ended`,
 brief 09 S1b.1); 403 `session-not-administrator` signs out with `session-revoked`; 503
 `client-unavailable` shows `api-client-unavailable`; anything else, a network failure, or a reply that
 is not an array shows `server-profiles-failed`, each a plain paragraph in place of the table. An item
 without a non-empty string `id` is left out; a non-number `port` reads as 0, a non-array `tags` as
-none, a non-string `instance` as `null`.
+none (non-string entries dropped), a non-string `instance` as `null`.
 
 **17a.5 The profile page.** Before the `h1`, a link `server-profile-back` to `#/profiles/server`
 (as `model-profile-back`, `chevron-left` icon). After it the `h1` (the id), then, once the document
 answered, a Value list (`dl.assets`) with one row: `server-profile-used-by` / the document's `instance`
-as a link to its page, or `server-profiles-unused` (class `muted`). Then the Server section: `h2`
-`server-title`, the paragraph `server-profile-intro` with `server@<id>.ini`, and today's Server form.
+as a link to `instanceHref(instance)`, or `server-profiles-unused` (class `muted`). Then the Server
+section: `h2` `server-title`, the paragraph `server-profile-intro` with `server@<id>.ini`, and today's
+Server form, its cards, fields, order and texts unchanged.
 
 **17a.6 Read.** The page sends one `GET /api/profiles/server/<id>` (the id percent-encoded) per
-arrival and none to `/api/instances/<id>/server`. Loading: `server-loading` (`role="status"`). 404
-`client-no-server-profile` shows `server-profile-not-found` with the id and a link
-`server-profile-back`, no `dl` and no form; 401 and 403 as 17a.4; 503 `api-client-unavailable`;
-anything else `server-load-failed`.
+arrival and none to `/api/instances/<id>/server`. Loading, U17a's rule: `server-loading` visually
+hidden in a `role="status"` at once, and after 300 ms one `.skeleton` line (the Used by row) then
+`CardBox` (a `.card` holding a `.skeleton-box`). 404 `client-no-server-profile` shows
+`server-profile-not-found` with the id and a link `server-profile-back`, no `dl` and no form; 401 and
+403 as 17a.4; 503 `api-client-unavailable`; anything else, or a body that is not a server document
+(`isServerDoc`), `server-load-failed`.
 
 **17a.7 Save.** Save sends `PUT /api/profiles/server/<id>` with today's body; every reply the
-instance save handled is handled the same (statuses, keys, field marks, Reload after 409, the Sign in
-Dialog after 401, the timeout text). `running: false` shows `save-saved`; `running: true` shows
-`save-saved-restart` and keeps it until the next edit (no instance state is watched on this page; 17d
-replaces it with the offer).
+instance save handled is handled the same (statuses, keys, field marks, Reload after 409
+`server-changed-elsewhere`, the Sign in Dialog after 401, the 504 and timeout texts). Two keys differ:
+404 `client-no-server-profile` shows `server-profile-not-found` (id) in the bar's alert, where the
+instance page showed `instance-not-found`; and a 422 whose `field` names no control of the form (R3's
+`model-profile-over-memory`, `field` a model profile id) shows `save-refused` with its text
+(`api-model-profile-over-memory`, args as sent) in the alert and marks no field. `running: false`
+shows `save-saved`; `running: true` shows `save-saved-restart` and keeps it until the next edit (no
+instance state is watched on this page; 17d replaces it with the offer).
 
 **17a.8 Folders of an unused profile.** When the document's `defaults.StateDir` (or
 `defaults.ModelsDir`) is `null`, that folder field's placeholder reads `server-folder-unused-default`;
@@ -270,30 +327,64 @@ works as it did on the instance page: a nav link, Back, or a typed hash with uns
 
 **17a.10 The instance page loses the form.** At `#/instances/<id>` no request goes to
 `/api/instances/<id>/server`, no `h2` `server-title` and no save bar render, and leaving asks only for
-the tags (brief 15's rule). After the tags field, a `section` with `h2` `instance-server-title` holds a
-Value list row `instance-server-title` / the list item's `serverProfile` as a link to
-`#/profiles/server/<name>`, or `instance-server-none` (class `muted`) when it is `null` or absent. It
-follows each list answer.
+the tags (brief 15's rule; the page's `report` keeps the tags alone). After the tags field, a
+`section` with `h2` `instance-server-title` holds a Value list row `instance-server-title` / the list
+item's `serverProfile` as a link to `serverProfileHref(name)`, or `instance-server-none` (class
+`muted`) when it is `null`; it follows each list answer. The page's loading skeleton is the three
+header lines only (U17a's card box went with the Server section).
 
-**17a.11 Wrapping.** At 320 px and at 200 % text, a 32-character id and 8 tags cause no sideways
-scroll: the table scrolls in its box (`fe/DESIGN.md` Table), the `h1` and the `dd` wrap (Value list).
-No new CSS class.
+**17a.11 Wrapping.** At 320 px and at 200 % text, a 32-character id and 8 tags of 32 characters cause
+no sideways scroll on the list page: the table scrolls in its box (`fe/DESIGN.md` Table) and the tags
+cell wraps between tags; on the profile page the `h1` and the `dd` wrap (Value
+list, `overflow-wrap: anywhere` on the `dd` as `.assets dd` has it). No new CSS class, no token.
 
 **17a.12 Strings.** The strings file gains exactly 17a's keys of section 2 and loses `server-intro`.
 
-Tests that change: every test that opens the Server form at `#/instances/<id>` or stubs
-`/api/instances/<id>/server` moves to `#/profiles/server/<id>` and `/api/profiles/server/<id>`
-(`ServerSave`, `SaveAlertClean` and `test/savealert.tsx`, `LeaveGuard`, `Timeout`, `SessionEnded`,
-`SessionRevoked`, `HearthSaveBarScroll`, `SignIn`, `SignInOnly`, `HearthSignIn`, and the Server parts of
-`InstancePage`, `InstanceTags`, `Boot`, `RunControls`); `test/bff.ts` gains the two server profile
-reads; `ProfilesNav.test.tsx` and `HearthNav.test.tsx` gain the second Profiles link; `05b`'s 5b.2 ("no
-Server profiles text") is retired.
+**Tests that change** (the tester names them before the red run):
+- The Server form moves from `#/instances/default` and `/api/instances/default/server` to
+  `#/profiles/server/default` and `/api/profiles/server/default` (the document gains `instance`):
+  `ServerSave`, `ServerSaveKeys`, `SaveAlertClean` and `test/savealert.tsx`, `LeaveGuard`, `Timeout`,
+  `SessionEnded`, `SessionRevoked`, `HearthSaveBarScroll`, `SignIn`, `SignInOnly`, `HearthSignIn`,
+  `Boot`, `ModelProfileFullValue` (its Server form part, 688 to 700) and `ModelProfileSave7` (2h.159,
+  359); the Server parts of `InstancePage`, `RunControls`, `InstanceTags`.
+- `InstanceTagChips` (320 to 335, 511) and `InstanceTagSuggest` (207) place the tags before the
+  `h2` `server-title`: that anchor becomes the `h2` `instance-server-title`; their `SERVER` stubs go.
+- `U17aSkeletons.test.tsx` 241 (the instance page: three lines, no card box) and 262 (the server read's
+  skeleton moves to the profile page, 17a.6).
+- The nav's order lists gain Server profiles before Model profiles: `App.test.tsx`, `ProfilesNav`
+  (5b.2 at 360 "nothing says Server profiles" and the not-found cases at 556 to 557 are retired),
+  `HearthNav`, `HearthIcons` (H8a.2's nav icons gain `server`), `NodeNav` (13 N.11 order),
+  `NodesMenu1`, `NodesMenu2` (20 N.8 "Model profiles only" and 20 N.10's order), `NodePage`,
+  `ModelProfiles`, `ModelProfilesFilter`, `ModelProfileContent`, `InstancePage` (the lines brief 20
+  section 5 lists).
+- `test/bff.ts` gains `GET /api/profiles/server/{id}` and `PUT` there, and lets the list's reply be set
+  per test (it has `GET /api/profiles/server` at 1537 for the pill).
+
+**The UX check** (`fe/ux/`; the tester edits, the designer runs it):
+- `stub.py`: `GET` and `PUT /api/profiles/server/default` answer today's instance document plus
+  `"instance": "default"` (and `/api/instances/default/server` may go); `pool=long` adds to
+  `SERVER_PROFILES` a row with a 32-character id, port 9931, 8 tags of 32 characters (the `LONG_OWN`
+  list) and `"instance": null`, so the pill's suggestions in the other states are unchanged.
+- `check.js`: the state `instance-server` becomes `server-profile` (`#/profiles/server/default`, the
+  same markers, `h1` `default` and the Port label; renamed in `CHOICE_STATES` too); `instance-page`
+  (`#/instances/default`, markers the `h1` and the `h2` `instance-server-title`); `server-profiles`
+  (`pool=long`, `#/profiles/server`, markers the `h1` `server-profiles-title` and the long id's link).
+  The 8 known target-size findings on the Hostname rows move with the form to `server-profile`
+  (section 6, note N2).
+
+**17a and 2j (brief 21, in progress).** 17a's tester starts once TP1 is committed: the working tree
+holds TP1's uncommitted edits to `fe/src/test/bff.ts`, `fe/ux/stub.py` and `fe/ux/check.js`, which
+17a also edits, and both add keys to `en_US.json`. One `fe/` chain at a time (`PLAN.md`); if TP2 or TP3
+runs before 17a lands, the same holds. 17a does **not** touch `ModelProfilePage.tsx`,
+`ModelProfileCards.tsx`, `GpuSplit.tsx`, `gpuBlocks.ts`, the tensor rule module,
+`test/modelProfileCards.ts`, nor the `ModelProfileGpu*`, `ModelProfileLayers*`, `TensorPlacement*`,
+`tensorRules` tests. The two model-profile-named tests it edits (`ModelProfileFullValue`,
+`ModelProfileSave7`) touch only their Server form cases, which 2j does not edit.
 
 ### 17b: create and delete a server profile (10)
 
 **17b.1 The create form opens.** On the list page, after the intro and before the table (or the empty
-text), a secondary button `server-profiles-new` with the `plus` icon (brief 15's; added here if 15 is
-not built yet) and `aria-expanded="false"`. Pressing it sets `true` and shows right after it a `form`
+text), a secondary button `server-profiles-new` with the `plus` icon (in `Icon.tsx` since brief 15) and `aria-expanded="false"`. Pressing it sets `true` and shows right after it a `form`
 named by its `h2` `server-profiles-new-title`, with the fields Name (`server-profile-name`,
 hint `server-profile-name-hint`, text input, `autocomplete="off"`) and Port (`server-port`, hint
 `server-profile-port-hint`, `inputmode="numeric"`), then the buttons `create-button` (primary) and
@@ -377,7 +468,8 @@ field, as 17b.3; nothing is sent.
 **17c.4 The request.** `POST /api/instances` with `{"engine": "llama.cpp", "id": <Name trimmed>,
 "serverProfile": <chosen id>}`; status `create-creating`, buttons `aria-disabled`. 201: the app's
 instance list is read again, then (whatever that read answers) the app goes to `#/instances/<id>`,
-whose `h1` takes the focus; the nav lists the new instance once that read answered.
+whose `h1` takes the focus; the nav's host list shows the new instance as `<id> · <server profile>`
+(20 N.5) once that read answered.
 
 **17c.5 Create refusals.** By `writeFailure`: `field` `id` → under Name; `field` `serverProfile`
 (`client-address-in-use`, `client-unresolvable-host`) → under the select; `unknown-engine` and every
@@ -396,7 +488,7 @@ follows the polled state.
 **17c.7 Confirm and remove.** Pressing an active Remove shows the Confirm in place group of 17b.7 with
 `instance-remove-question` (id), `confirm-remove` and `confirm-cancel`, focus on Cancel. `confirm-remove`
 sends `DELETE /api/instances/<id>`, status `confirm-removing`. 204: the app's instance list is read
-again (the nav drops the link), and everything after the `h1` is replaced by the paragraph
+again (the nav drops the link; the host label and Node info stay, 20 N.6), and everything after the `h1` is replaced by the paragraph
 `instance-removed` (`tabindex="-1"`, focused) and a link `not-found-home` to `#/`; the page does not
 then show `instance-not-found` though the list no longer has the id.
 
@@ -418,7 +510,8 @@ and Shift+Tab reaches Remove). The same order holds for 17b's group.
 
 **17c.12 Strings.** The strings file gains exactly 17c's keys of section 2.
 
-Tests that change: `HearthTiles`/`InstanceTiles` and `Instances` (the button after the tiles),
+Tests that change: `HearthTiles`/`InstanceTiles`, `InstanceTileChips` and `Instances` (the button after
+the tiles; U17a's Overview skeleton is unchanged, the button not shown while loading),
 `RunControls` (the 409), `InstancePage` (the Remove button after the sections); `test/bff.ts` gains
 `removable`, `serverProfile`, POST and DELETE.
 
@@ -461,7 +554,8 @@ such row: `instance-server-no-free` and the link `instance-new-profiles-link`, n
 the profiles are read again, the select back on its empty option. Changing the select sends nothing.
 
 **17d.8 Switch refusals.** `field` `serverProfile` (`client-address-in-use`,
-`client-unresolvable-host`, `load-on-startup-over-max` and any other 422 with that field) → the text
+`client-unresolvable-host`, `load-on-startup-over-max`, R3's `model-profile-over-memory` with its
+text `api-model-profile-over-memory`, and any other 422 with that field) → the text
 under the select, `aria-invalid`, focus to the select; no field → the alert. After 404
 `client-no-server-profile` and 409 `client-server-profile-in-use` the profiles are read again. 404
 `client-no-instance` → `instance-not-found`. 503, 502, 401 (Sign in, focus back to the button), 403.
@@ -476,7 +570,8 @@ sideways scroll.
 **17d.11 Strings.** The strings file gains exactly 17d's keys of section 2.
 
 Tests that change: `ModelProfileSave2`, `ModelProfilesSwitch` and `ServerSave` (the restart texts with
-`restart` ids); the `-restart` fallbacks stay.
+`restart` ids); the `-restart` fallbacks stay. 17d.4 edits `ModelProfilePage.tsx` (the save bar), so
+17d starts only once the whole of 2j (TP1 to TP3) is committed.
 
 ### 17e: the instance's model profiles (11)
 
@@ -577,10 +672,18 @@ Tests that change: `InstancePage` (a section after Server profile), `test/bff.ts
 - Choosing `inherit` versus `on` explicitly (decision 7), an engine control in the create forms.
 - Hub mode (several nodes); start at boot of a new instance (its page has it, off).
 - Watching the state of an instance restarted from the offer (its page does).
+- Sorting or filtering the Server profiles table (U17c sorts Model profiles; the pool is short and the
+  bff sorts it by id). The server profile's `Devices` (R5's GPUs card, after slice 17).
+- The Hostname rows' target size (note N2): 17a moves the form and changes none of its controls.
 
-## 6. Questions for the user
+## 6. Questions for the user (notes: nothing waits on them)
 
 - **Q1.** "Served here" hides the words `inherit` / `on` / `off` / `none` behind one switch
   (decision 7). Enough, or should an administrator be able to pin `on` on a profile switched on in the
-  list (so switching it off in the list keeps it here)?
+  list (so switching it off in the list keeps it here)? Recommended: enough for now.
 - Q2 is answered (user, 2026-11-21): the form fills in the first free port from 9931 (decision 9).
+- **N2 (for the coordinator).** `PLAN.md` (step 10, the C1 note) asks to fix the Server form's Hostname
+  checkboxes, an axe 2.5.8 target-size finding (8 per run), "in U17e or 17a, whichever touches the form
+  first". 17a moves the form but changes no control, and its 12 criteria are full, so this brief leaves
+  the fix to U17e, which edits the form's fields. If the fix should come with slice 17 instead, it fits
+  17b (10 criteria) as one more criterion, and the designer writes it after measuring the rows.
