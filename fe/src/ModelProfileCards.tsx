@@ -53,6 +53,7 @@ import {
   gpuFacts,
   type FactsState,
   type GpuCardProps,
+  type GpuProbe,
 } from './GpuSplit.tsx'
 import { t } from './strings.ts'
 
@@ -186,10 +187,16 @@ type CheckboxRow = RowBase & {
   }
 }
 
-/** A device select (criterion 103): the empty option, then the file's value
- * when it has one. The device list arrives with 2f. `empty` is the text of the
- * empty option, which each field words for its own device (110). */
-type DeviceRow = RowBase & { kind: 'device'; empty: string }
+/** A device select (criterion 103, brief 19 19 G.16 and 19 G.17): the empty
+ * option, then the host's GPUs as the device read lists them, then the file's
+ * device when no GPU names it. `empty` is the text of the empty option, which
+ * each field words for its own device (110). `none` is the text of the `none`
+ * option a device key takes for not being on a GPU: only Vision GPU has one. */
+type DeviceRow = RowBase & {
+  kind: 'device'
+  empty: string
+  none?: string
+}
 
 /** The GPUs fieldset of the GPU distribution card (brief 14): not a field of
  *  the table. Its rows are the host's GPUs and the ones the profile names, and
@@ -952,6 +959,9 @@ const CARDS: CardFields[] = [
         kind: 'device',
         key: 'mmproj-device',
         empty: t('model-profile-device-follows-model'),
+        // 19 G.17: the file's `none` (the image encoder stays off the GPUs) is
+        // one of the options, never an extra one the list has to carry.
+        none: t('model-profile-device-none'),
         label: t('model-profile-vision-gpu'),
         hint: t('model-profile-vision-gpu-hint'),
         editable: true,
@@ -1760,26 +1770,76 @@ function editableWritten(
     : readAs(row.reading, raw).written
 }
 
-/** A device select's options and selected value (criterion 103): the empty
- * option first, then the device the read's value names as its own option. The
- * list is built from the value the read gave, as an enabled select builds its
- * options from the state of the read's value (132a), so picking the empty
- * option leaves the list whole and the file's device pickable again. The state
- * the control shows, when no option carries it, is added as its own. The page
- * has no device list to add, so it lists no device of its own. */
+/** The file's value for a device off the GPUs (19 G.17), the value of the
+ * `none` option of a device select. Data, not text: the file holds it and the
+ * save sends it back. */
+const DEVICE_NONE = 'none'
+
+/** A device select's options and selected value (criterion 103, brief 19's
+ * 19 G.16 and 19 G.17): the empty option, the row's `none` where it has one,
+ * then every GPU the device read lists, in the probe's order, its id as the
+ * option's value and `model-profile-device-option` as its text (the id alone
+ * when the probe names no product). The file's device is the last option when
+ * no GPU of the list names it: read as `model-profile-device-option-missing`
+ * once the probe answered with a time, else the value itself. A GPU the file
+ * spells differently (the case only differing) is the option with the file's
+ * spelling as its value, so an untouched select holds what the file holds and
+ * the form stays clean. The state the control shows, when no option carries it,
+ * is added as its own. While the read runs, or when it failed, the list is what
+ * it was before the probe (criterion 103): the empty option and the file's
+ * device, the page having no list to add. */
 function shownDevice(
   row: DeviceRow,
+  probe: GpuProbe | null | undefined,
   file: string | undefined,
   state: string | undefined,
 ): {
   options: Option[]
   value: string
 } {
+  const value = state ?? ''
+  if (probe === undefined || probe === null) {
+    const options = [
+      { value: '', text: row.empty },
+      ...(file === undefined ? [] : [{ value: file, text: file }]),
+    ]
+    return {
+      options: options.some((o) => o.value === value)
+        ? options
+        : [...options, { value, text: value }],
+      value,
+    }
+  }
+  // The GPU the file's device names, matched ignoring case (19 G.16).
+  const listed =
+    file === undefined
+      ? undefined
+      : probe.devices.find((one) => one.id.toLowerCase() === file.toLowerCase())
   const options = [
     { value: '', text: row.empty },
-    ...(file === undefined ? [] : [{ value: file, text: file }]),
+    ...(row.none === undefined ? [] : [{ value: DEVICE_NONE, text: row.none }]),
+    ...probe.devices.map((one) => ({
+      value: listed === one && file !== undefined ? file : one.id,
+      text:
+        one.name === null
+          ? one.id
+          : t('model-profile-device-option', one.id, one.name),
+    })),
   ]
-  const value = state ?? ''
+  // The file's device, when no option carries it, is the extra one at the end.
+  if (
+    file !== undefined &&
+    listed === undefined &&
+    !options.some((one) => one.value.toLowerCase() === file.toLowerCase())
+  ) {
+    options.push({
+      value: file,
+      text:
+        probe.probedAt === null
+          ? file
+          : t('model-profile-device-option-missing', file),
+    })
+  }
   return {
     options: options.some((o) => o.value === value)
       ? options
@@ -2163,9 +2223,10 @@ function ModelProfileField({
   }
   const select =
     row.kind === 'device'
-      ? // The device select's list comes from the value the read gave, and the
-        // state it shows from the form's draft (103, 132a).
-        shownDevice(row, heldFor(row, loaded), value)
+      ? // The device select's list is the host's GPUs once the device read
+        // answered, and the state it shows from the form's draft (103, 132a,
+        // 19 G.16).
+        shownDevice(row, gpu?.probe, heldFor(row, loaded), value)
       : // An enabled select shows the state the page is dirty against (132),
         // which is the state `selectSend` writes back: `selectState` decides
         // both, so the option the user reads and the value the save sends are

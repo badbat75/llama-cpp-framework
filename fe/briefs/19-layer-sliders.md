@@ -308,9 +308,11 @@ option). Enable rules unchanged.
 
 **19 G.18 The device bound refusal.** A 422 `model-profile-device-outside` puts
 `api-model-profile-device-outside` (args as sent) on the select of the key it names: `field` when
-present, else `args[2]` (`device-draft` or `mmproj-device`); the select `aria-invalid`, focus on it, or
-on its field's first enabled control by `fe/DESIGN.md` 5.2 Error when it is disabled; the bar's alert
-`save-refused` with the text (02h 142).
+present, else `args[2]` (`device-draft` or `mmproj-device`); the select `aria-invalid`, focus on it, and the bar's alert
+`save-refused` with the text (02h 142). When the select is disabled (Draft device with no Draft model
+file), 02h 198a applies, not `fe/DESIGN.md` 5.2's switch rule (that one is for the page's own checks at
+Save): the mark stays on the select, focus stays on Save changes, and the alert is `save-refused-at`
+naming the field's label and card (ruling of the LS2b review, 2026-11-22).
 
 **19 G.19 Keyboard, screen reader, 320 px, nothing else.** Tab order in a field with a slider: the
 About toggle, the default box, the text input, the slider. No sideways scroll at 320 px and 200 % text,
@@ -477,3 +479,35 @@ ones the coder used: the slider is named by the field's legend (`aria-labelledby
   clean in all three engines.
 
 **Verdict: LS2a accepted.**
+
+## LS2b review (designer, 2026-11-22)
+
+19 G.16 to G.19. I read the LS2b diff (`ModelProfileCards.tsx` 187-200, 964, 1776-1850, `ModelProfilePage.tsx`
+503, 536, `en_US.json`) and drove it in Chromium, Firefox and WebKit with the `fe/ux` stub and Playwright routes
+(`build/ux-review/ls2b.js opts|refuse|layout|kbd`; shots `build/ux-review/ls1/ls2b-*.png`), with a
+64-character GPU name and a GPU with no name in the probe.
+
+**Rulings on the tester's three assumptions.** (1) A refusal on a disabled device select follows 02h
+198a: the mark stays, focus stays on Save changes, and the alert is `save-refused-at`. DESIGN 5.2's
+switch rule is for the page's own checks at Save; 19 G.18 now says so. (2) A probe with no time shows an
+unlisted value bare: that is 19 G.16 as written. (3) A disabled select keeps the probe's list: yes. It
+shows the value in context, and the list is read only.
+
+- 19 G.16 met: the empty option, then the GPUs in probe order as "id: name" (the id alone for a nameless
+  GPU), and the file's unlisted `Vulkan9` last as "Vulkan9 (not detected)". A file's `rocm0` takes the
+  listed GPU with the file's spelling as its value, and the form stays clean. A failed device read gives
+  the old options (the empty option and the file's value).
+- 19 G.17 met: `none: not on a GPU` after the empty option. A file's `none` selects it, with no extra
+  option. Draft device has no `none`, so a file's `none` there shows as "none (not detected)", as the
+  brief rules.
+- 19 G.18 met: with `field` set, the 422 puts the text on Vision GPU (`aria-invalid`, described by its
+  error), focus goes to the select, and the alert reads `save-refused`. With no `field`, on the disabled
+  Draft device, it goes by `args[2]` and follows ruling (1).
+- 19 G.19 met: the selects are named "Vision GPU" and "Draft device". Arrow keys change the value with
+  the focus kept, and nothing is sent until Save. No sideways scroll at 1280 and 320 px, 100 % and 200 %
+  text, light and dark, in all three engines. The closed select follows the field width (right edge 279
+  of 320) and cuts the 64-character name off inside the box.
+- `npm --prefix fe/ux run check` (132 states per browser): only the 8 known `instance-server`
+  target-size findings; the model profile states clean in all three engines.
+
+**Verdict: LS2b accepted.**

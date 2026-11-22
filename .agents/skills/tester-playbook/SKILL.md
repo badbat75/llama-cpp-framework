@@ -513,6 +513,26 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   `flushTasks` branch on `vi.isFakeTimers()` and put `vi.useRealTimers()` first in `afterEach`, else the
   next test's flush hangs.
 
+- A refusal on a field with NO enabled control has one pinned behaviour in this repo (02h 198a, `ModelProfileSave16`
+  and `ModelProfileSave3`): the mark and its text stay on the control, focus stays on Save changes, and the bar
+  reads `save-refused-at` naming the field's label and its card. `DESIGN.md` 5.2 adds "else the switch that enables
+  the field", which NO page implements: pin the 198a behaviour (mark on, focus not on the disabled control, bar
+  names label and card), and report the switch reading as a question for the designer. Never pin a focus target the
+  code has no rule for.
+- A `<select>` list is pinned as ONE assert over `[...sel.options]` mapped to `{ value, text }`: it covers the order,
+  the empty option, the source's order, the extra last option of a value the list does not carry, and a matched
+  option keeping the file's spelling as its value. A fixture name is not always a word (the fake's `Device.name` is
+  `string | number | null`, GD1.7), so build the expected text behind `typeof d.name === 'string'`, else every
+  expectation is TS2345.
+- The "no sideways scroll at 320 px and 200 % text" half of a criterion is not jsdom's: pin what jsdom CAN see (the
+  control is a native `select`, an option's text carries the whole 64-character name, the tab stops of a field), say
+  in the file header that the layout half is the designer's `fe/ux` measurement, and never fake a `scrollWidth`.
+- A fe test whose helpers reach the DOM through `document.getElementById` must not destructure `{ main }` from the
+  render helper: `tsc -b` (`noUnusedLocals`) and ESLint both red on it. Call `await form(..)` bare.
+- To split a slice's run into reds and day-one guards, run `npx vitest run src/X.test.tsx --reporter=verbose` from
+  `fe/` and grep `✓` / `×`: `npm --prefix fe test -- X -- --reporter=verbose` shows only the `×` lines, so the
+  green guards stay invisible.
+
 ## Stubs, signatures and call sites
 
 - When tests and production call a stub with the same name, the production sites break first, so the red
@@ -2322,3 +2342,22 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
 - The canonical `override-tensor` value the web sends is rules joined by `,` with NO space (the INI value of
   the design), so the old taken value `blk\.1\.attn=CPU, ffn_.*_exps=ROCm1` is now a refusal
   (`override-tensor-space` naming the rule). Any older "this value is taken" pin must drop the space.
+
+## A device read that lands async (LS2b rerun, 19 G.16, 2026-11-22)
+
+- The page's device probe is a `fetch` in a `useEffect`, so a test that renders and reads a select's options
+  at once sees `probe === undefined`, the PENDING list. A probe with a `probedAt` is waited for by the as-of
+  line; a probe with `probedAt: null` writes no as-of line, and a helper that waits for nothing reads the
+  pending list: the red is `expected [ empty, CUDA9 ] to deeply equal [ empty, CUDA0, ROCm0, Vulkan0, CUDA9 ]`,
+  every GPU option named as MISSING. A harness race, not a code red. The marker a no-time reply writes is the
+  GPUs fieldset's `model-profile-gpu-no-probe` line (GD1.7), so a `landed()` helper branches: with a time, the
+  as-of `time`; without one, that line.
+- Judging that red: brief 19's "text `model-profile-device-option-missing` when the probe answered with a
+  time, else the value" is only reachable if a 200-with-list-and-no-time reaches the OPTIONS, so the brief
+  backs the test, and the coder's `probe.probedAt === null ? file : t(..missing)` branch is right. Brief 14's
+  GD1.7 "a probe that answered no moment is no answer at all" governs the fieldset's ROWS, never the selects:
+  read which element an older criterion is about before conceding the page.
+- A JSON-map run of the fe suite must be from inside `fe/`: `npx --prefix fe vitest run --root fe --config
+  fe/vite.config.ts --reporter=json --outputFile=..` from the repo root resolves the config as
+  `fe/fe/vite.config.ts`, dies at startup and writes NO outputFile (a missing JSON is that failure, not an
+  empty run).

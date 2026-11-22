@@ -497,6 +497,11 @@ const REFUSALS: RefusalTable = {
         return t('api-model-profile-model-missing', ...args)
       case 'device-bad-name':
         return t('api-device-bad-name', ...args)
+      // Brief 19, 19 G.18: the device the profile names is outside the
+      // instance's server profile. The args are [profile, instance, key,
+      // device].
+      case 'model-profile-device-outside':
+        return t('api-model-profile-device-outside', ...args)
       case 'tensor-split-format':
         return t('api-tensor-split-format', ...args)
       default:
@@ -525,6 +530,11 @@ const REFUSALS: RefusalTable = {
       // `mmproj-device`; the GPUs fieldset speaks for `device`.
       case 'device-bad-name':
         return args[0]
+      // Brief 19, 19 G.18: the L4 route names the device select in `args[2]`
+      // (its args are [profile, instance, key, device]); the reply's `field`
+      // answers for it when it carries one.
+      case 'model-profile-device-outside':
+        return args[2]
       case 'tensor-split-format':
         return 'tensor-split'
       case 'override-no-pattern':

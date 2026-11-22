@@ -107,6 +107,14 @@ Lessons only: the rules are in `AGENTS.md`.
 - A wrapping chip list capped by `max-width: 100%` on the chip is capped by its PARENT, so the `ul` of a flex row
   needs `min-width: 0` too: with the list uncapped the widest item grows the document's `scrollWidth` and the
   ux check reports `overflow: scrollWidth N > 320`.
+- A test that reads a control the device read fills has to wait for that read. The `landed()` helper of the
+  model profile GPU tests waits for the card's as-of line, so a probe fixture with `probedAt: null` waits
+  for NOTHING: its option-list assertion is a race, green under `npm --prefix fe test -- <file>` and red in
+  every full-suite run here (LS2b `19 G.16: a probe that answered with no time`). Prove it test-side in a
+  scratch copy of the file: the same body with a `waitFor` on the options goes green, and reading the
+  options where the red one reads them shows today's list, so the read had not landed. Report it: the
+  tester's fix is a `waitFor`, and a production change that made the read land synchronously would be the
+  wrong cure.
 - The full `npm --prefix fe test` (102 files, one jsdom worker each) loses one `SignInOnly.test.tsx`
   timing test about 1 run in 10 here (`09 S1a.10`, a `findByRole` on the nav after sign-in); a detached
   HEAD worktree with the same `node_modules` is green 6/6. State the rate in the report, do not chase it.

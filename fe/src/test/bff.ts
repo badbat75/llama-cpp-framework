@@ -653,13 +653,21 @@ export const EN: Record<string, string> = {
   'model-profile-gpu-output-layer': 'output layer',
   // LS2a (19 G.13, 19 G.14): the layer sliders' value text, and the two reason
   // paragraphs of MoE CPU layers. The three changed rows of section 2 are
-  // amended above, at their own keys. The keys of 19 G.16 to G.18 (the device
-  // lists and their refusal) are the next slice, so they are not here.
+  // amended above, at their own keys.
   'model-profile-layers-value': '{0} of {1}',
   'model-profile-moe-reading':
     'Reading the model file to see whether it has experts…',
   'model-profile-moe-dense':
     'This model has no experts (a dense model), so MoE CPU layers does nothing for it. Use Dense FFN CPU layers below.',
+  // LS2b (19 G.16 to G.19, fe/briefs/19-layer-sliders.md section 2): the
+  // device lists of the Draft device and Vision GPU selects, and the device
+  // bound refusal. The English is the brief's, verbatim; the refusal line has
+  // no closing full stop (02h 150).
+  'model-profile-device-option': '{0}: {1}',
+  'model-profile-device-option-missing': '{0} (not detected)',
+  'model-profile-device-none': 'none: not on a GPU',
+  'api-model-profile-device-outside':
+    "{2} = {3} names a GPU outside the Devices of instance {1}'s server profile, so model profile {0} may not use it. Pick a GPU of those Devices, or widen the server profile's Devices first",
   // Slice 2e.5 (fe/briefs/02e-model-profile-cards.md, criterion 116): the Speculative
   // decoding card. Every English is the en_US.toml line the criterion names
   // (367 to 397), unchanged.
