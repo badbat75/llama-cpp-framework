@@ -159,3 +159,11 @@ LS1 (brief 19, 12 criteria, four test files over 2000 lines) took the local code
 after repeated context compactions with only the arithmetic module written (2026-11-22). Give the coder
 one test file or one criterion group per run, tell it to run the tests and read only failing assertions,
 and stop a run at 2 hours, relaunching from what it saved.
+
+## An architecture decision updates the plan and the docs in the same turn
+
+Every decision the architect writes or the user takes (a ruling inside a slice included) goes into
+`PLAN.md` (the step it changes, its order, its open questions) and is committed with `ARCHITECTURE.md` in
+the same turn; then the `docs` agent updates every page that describes the changed design
+(`docs/architecture/*.html`, AGENTS.md, the READMEs), marking proposed designs as proposed and built
+facts only as built (user, 2026-11-22).

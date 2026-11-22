@@ -2762,7 +2762,15 @@ success of the call:
 `Shape.block_count`, read in `shape_of`); `moe` is `Shape.moe` (routed-expert tensors); `expertCount`
 and `expertUsed` are `<arch>.expert_count` and `<arch>.expert_used_count`, 0 when absent (what the
 GUI's `ModelInfo` reads). In 2j the reply gains `tensors`: `[{name, bytes}]` from `tensor_bytes` over
-every shard, in file order, at most 20 000 entries, then `tensorsTruncated: true`. D-Bus and pipe carry
+every shard, each shard's tensors in data-offset order (`tensor_bytes`), shard after shard, cut at the
+first row that would pass either bound, then `tensorsTruncated: true`: 20 000 rows
+(`gguf_shape::MAX_TENSOR_ROWS`, the one constant; `client.rs` uses it, no copy), and 917 504 bytes
+(896 KiB, `gguf_shape::MAX_TENSOR_LIST_BYTES`) of the rows' JSON, each row counted as
+`serde_json::to_string(&{"name","bytes"}).len() + 1`. The byte bound exists because the pipe's
+`MAX_FRAME` is 1 MiB (`client/pipe.rs`) and a GGUF tensor name has no length bound in our reader (and
+JSON escaping can grow it): the cut is in `pai-core` `tensor_rows`, so both transports answer the same
+list, and the reply's other fields keep 128 KiB under the frame. Raising the frame was rejected: it
+bounds what either side must buffer from the other. D-Bus and pipe carry
 the same fields (`model` the resolved absolute path, `info`, `reason` as `{key, args}`); additive while
 the protocol is in no release. As built (L1, reviewed 2026-11-22): `model` is set only with `info`; every `reason` row answers `model`
 null (the path, when there is one, is the reason's arg); the pipe spells the counts in its snake_case
@@ -2827,7 +2835,9 @@ bounded by the bff's existing per-session handling; nothing new.
     case than `CPU` (exact match, fact 3).
   Both run only when the key's line changed, through the same `known_key_line` exemption as
   `comment_markers` (decision c1): a hand-written value already in the file never blocks saving other
-  keys of the section. The existing two rules keep running on the value.
+  keys of the section. The existing two rules keep running on the value. `pai-app`'s local
+  pre-checks (`validate_for_save`, `tensor_override::validate`) pass `changed = false`: the GUI's
+  table trims the device and sanitizes the pattern, and the manager still judges every write.
 - **Not judged**: the regex itself. Rust's `regex` crate is not ECMAScript (`std::regex`), so it would
   refuse some patterns llama.cpp takes and pass some it throws on; a bad pattern fails the model's load
   in the instance, never the manager.
@@ -2837,7 +2847,12 @@ bounded by the bff's existing per-session handling; nothing new.
   `[profile, instance, key, device]` (`ManagerError::Invalid`, a keyed `checks::Refusal`, both strings
   files). The devices a model profile names: each entry of `device-draft` and `mmproj-device` (the
   section's value, else `[*]`'s, as llama.cpp cascades), and the device of each `override-tensor` rule;
-  `CPU` and `none` name no GPU. Compared case-insensitively with the entries of the instance's server
+  `CPU` and `none` name no GPU. An `-ot` right-hand side is a buffer-type name, but llama.cpp v1.0.0
+  offers only each device's own buffer type, named as the device (`CUDA0`, `ROCm0`, `Vulkan0`, `CPU`),
+  and refuses any other name, host buffers such as `CUDA_Host` included (`common/arg.cpp`
+  `parse_tensor_buffer_overrides`: `buft_list` from `ggml_backend_dev_buffer_type`, "unknown buffer
+  type"), so judging it as a device is right: a name outside `Devices` is refused, failing closed on a
+  value the engine would refuse anyway. Compared case-insensitively with the entries of the instance's server
   profile `Devices` (`ggml_backend_dev_by_name` matches so; an `-ot` device in the wrong case is
   `override-bad-device`'s or the load's). `Devices` unset: every GPU, nothing refused; `Devices = none`:
   any GPU named is outside. Not judged against the probe (a vanished card is the launch's, G1). The
@@ -2881,7 +2896,9 @@ bounded by the bff's existing per-session handling; nothing new.
    passes the copied `gpu_split.rs` vectors.
 5. **J1 `override-tensor`** (`pai-core`, `pai-manager`, `pai-bff`): `tensors` in the reply, the key move,
    the two rules with the exemption. Done when: a 3-shard fixture lists every tensor in file order; a
-   header of 20 001 tensors gives 20 000 and `tensorsTruncated`; `a=CPU, b=ROCm0` is 422
+   header of 20 001 tensors gives 20 000 and `tensorsTruncated`; a header of 20 000 tensors with
+   long names gives the rows within 917 504 bytes and `tensorsTruncated`, and its pipe reply round-trips
+   under `MAX_FRAME`; `a=CPU, b=ROCm0` is 422
    `override-tensor-space` `[2]`; `x=cpu` is `override-bad-device` `[1, cpu]`; the same values already on
    disk in the section do not block a save of another key; `x(=CPU` is not refused; `devices_outside`
    reads `-ot` devices: on `Devices = ROCm0`, `blk\.0\.=ROCm1` is `model-profile-device-outside`

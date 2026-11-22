@@ -536,7 +536,7 @@ step, before slice 1, which would otherwise create the node key as root. Models 
 where the instances can read them (`/var/lib/private-ai/models`, or a folder readable by `private-ai`).
 
 Design accepted by the user on 2026-11-15: `ARCHITECTURE.md` part 2 (a separate unprivileged
-`pai-supermanager`; the manager protocol over mutual TLS 1.3 with pinned fingerprints, off on a node
+process, first `pai-supermanager`, now the `director` role of `pai-manager`; the manager protocol over mutual TLS 1.3 with pinned fingerprints, off on a node
 until its administrator enables it; join by a one-time code; every `pai` member of the super-manager's
 machine administers every joined node; Linux super-manager first, Linux and Windows nodes). The
 slices, each test first, with the outcome each shows, are in `ARCHITECTURE.md` "Slices":
@@ -556,7 +556,7 @@ may download, over which channel and identity, integrity checks, storage and quo
 super-manager, resumable transfers, how it relates to a node's own Hugging Face downloads), then a
 slice after 9; the done-when gains: a node downloads a model from the super-manager into its models
 folder and an instance serves it.
-Decided (user, 2026-11-21): **the super-manager is named the director** (`pai-director`); **its links
+Decided (user, 2026-11-21): **the super-manager is named the director** (since 2026-11-22 a role of `pai-manager`, `pai-manager director`, not a binary of its own: above); **its links
 with the nodes are secured by a private CA in the director**: at the join (one-time code) a node sends a
 CSR and gets a short-lived certificate (about 30 days) renewed by itself over the mutual TLS channel;
 the director's own certificate comes from the same CA; revocation is a refused renewal plus a deny list.
@@ -1176,7 +1176,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     the manager refuses `override-tensor`, `device-draft` or `mmproj-device` naming a GPU outside the
     instance's server profile `Devices`; `moe-cache-mib` stays off the web until its floor rule. Slices
     L1 to L4, 2g (brief 19, `fe/briefs/19-layer-sliders.md`, written 2026-11-22: runs LS1 and LS2; LS1 in progress, 2026-11-22; the warning before Save for a Draft device or Vision GPU outside Devices is deferred to R4/R5, the save refusal names the GPU), J1, 2j (designer first). Built: L1, the manager's `ModelInfo`/`ModelInfoAs`
-    (2026-11-22); L2, the bff route `GET /api/profiles/model/{id}/model-info` (2026-11-22). L3 (`n-cpu-moe` on the web, 0..4096) and L4 (the device bound for `device-draft` and `mmproj-device`) (2026-11-22). In progress: 2g (LS1) and J1 (2026-11-22). Next: LS2, then the nav slice N1 below, then 2j.
+    (2026-11-22); L2, the bff route `GET /api/profiles/model/{id}/model-info` (2026-11-22). L3 (`n-cpu-moe` on the web, 0..4096) and L4 (the device bound for `device-draft` and `mmproj-device`) (2026-11-22). In progress: 2g (LS1) and J1 (2026-11-22; J1's tensor list gains a byte bound, 896 KiB under the pipe's 1 MiB frame, and `-ot` buffer types are judged as devices, as the architect ruled). Next: LS2, then the nav slice N1 below, then 2j.
     **N1, the side menu as Nodes and Profiles** (user, 2026-11-22; designer's brief first): the manager's
     web UI and the director's are one interface, the director's showing more and the manager's hiding
     what does not apply. The menu has two groups even with one host: "Nodes", one entry per host (here
