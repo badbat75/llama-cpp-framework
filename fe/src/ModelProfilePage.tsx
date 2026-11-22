@@ -28,8 +28,15 @@ import {
   useState,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { apiError, call, isRecord, sessionRevoked } from './api.ts'
-import { tickBox, type Boxed } from './boxed.ts'
+import {
+  apiError,
+  call,
+  isRecord,
+  readModelInfo,
+  sessionRevoked,
+  type ModelInfoRead,
+} from './api.ts'
+import { boxText, tickBox, type Boxed } from './boxed.ts'
 import { DiscardDialog } from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
@@ -67,6 +74,8 @@ import {
   gpuFileIds,
   gpuFileWeights,
   gpuHas,
+  gpuIndexOf,
+  gpuLayout,
   gpuNewWeight,
   gpuSplitLoaded,
   gpuWeightFailures,
@@ -75,6 +84,7 @@ import {
   type GpuDirection,
   type GpuProbe,
 } from './GpuSplit.tsx'
+import { setBlocks, type Layout } from './gpuBlocks.ts'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
 import {
@@ -250,6 +260,18 @@ export default function ModelProfilePage({
   })
   // Whether the form on screen has edits to lose (152).
   const dirty = useRef(false)
+  // Brief 19 (fe/briefs/19-layer-sliders.md), 19 G.1: the model file's layer
+  // facts, read on the same arrival as the model profile and the GPUs, and
+  // never again: a save, a Discard, an edit and a sign-in send nothing, and
+  // nothing polls. The read carries the id it was asked for, so the card shows
+  // it only while that model profile is the one on screen: no answer is the read
+  // running and its pending line, a read that answered nothing (no session, no
+  // manager, a body of no shape, no answer within the GET limit) is the failed
+  // line. The read ends no session and writes no alert (decision 1).
+  const [facts, setFacts] = useState<{
+    id: string
+    read: ModelInfoRead
+  } | null>(null)
 
   useEffect(() => {
     // `.` and `..` are sent to no read at all (59a): the page says there is no
@@ -271,6 +293,12 @@ export default function ModelProfilePage({
       // message its key gives (145).
       setAnswer(a)
       if (reload) document.getElementById('page-heading')?.focus()
+    })
+    // The model file's layer facts, of the same id, sent beside the profile
+    // read and after it (brief 19, 19 G.1): the arrival's reads are the profile,
+    // the facts and the GPUs, in this order.
+    readModelInfo(id).then((read) => {
+      if (live) setFacts({ id, read })
     })
     return () => {
       live = false
@@ -330,6 +358,7 @@ export default function ModelProfilePage({
         key={signIns.rereads}
         id={id}
         answer={answer}
+        modelInfo={facts?.id === id ? facts.read : undefined}
         dropped={signIns.dropped}
         renewals={signIns.kept}
         onDirty={trackDirty}
@@ -344,6 +373,7 @@ export default function ModelProfilePage({
 function Body({
   id,
   answer,
+  modelInfo,
   dropped,
   renewals,
   onDirty,
@@ -352,6 +382,8 @@ function Body({
 }: {
   id: string
   answer: Answer | undefined
+  /** The model file's layer facts, read on this arrival (brief 19, 19 G.1). */
+  modelInfo: ModelInfoRead | undefined
   /** The edits were dropped by a sign-in as another session (152). */
   dropped: boolean
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
@@ -384,6 +416,7 @@ function Body({
     return (
       <Content
         doc={answer.doc}
+        modelInfo={modelInfo}
         dropped={dropped}
         renewals={renewals}
         onDirty={onDirty}
@@ -645,12 +678,22 @@ function focusFailure(row: CheckedRow, locked: boolean) {
   focusField(row.key)
 }
 
+/** A block count as the number a blocks control applies (brief 19, 19 G.6 and
+ * 19 G.7): a whole number, trimmed; a slider's value is always one, and a typed
+ * text that is not (``, `x`, `2.5`, `-1`) applies nothing. The clamp to the
+ * places is `setBlocks`'s. */
+function gpuBlockNumber(raw: string): number | null {
+  const text = raw.trim()
+  return /^\d+$/.test(text) ? Number(text) : null
+}
+
 /** The loaded model profile as a form: the settings of 2e, the two Embeddings
  * controls of 2h.1, the number fields of 2h.4 and the KV cache card of 2h.5
  * editable, and the save bar of the Server page writing the changed keys
  * (criteria 130 to 141, 155 to 157, 164). */
 function Content({
   doc,
+  modelInfo,
   dropped,
   renewals,
   onDirty,
@@ -658,6 +701,8 @@ function Content({
   onRenewed,
 }: {
   doc: ModelProfileDoc
+  /** The model file's layer facts of this arrival, read by the page (19 G.1). */
+  modelInfo: ModelInfoRead | undefined
   /** The edits were dropped by a sign-in as another session (152). */
   dropped: boolean
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
@@ -876,6 +921,75 @@ function Content({
     fields.clear('tensor-split')
     setMarks(null)
     setPhase((p) => (p === 'saving' ? p : 'idle'))
+  }
+
+  /** The GPU layers the blocks are cut over (brief 19, 19 G.11): what the
+   * field holds, and nothing while its box is ticked, which is the default and
+   * no value of its own. A change here re-projects the rows and writes nothing:
+   * the counts are the layout's, not a key's. */
+  function gpuLayers(): string {
+    const b = boxed['n-gpu-layers']
+    return b === undefined ? '' : boxText(b)
+  }
+
+  /** The layout the blocks are cut over (brief 19, 19 G.4), read the way the
+   * rows read it: the same GPU layers and the same checked rows, so a count a
+   * row shows and a count a save writes are the same cut. */
+  function gpuBlocksLayout(): Layout | null {
+    return gpuLayout(
+      modelInfo,
+      gpuLayers(),
+      draft['split-mode'] ?? null,
+      gpuChecked().length,
+    )
+  }
+
+  /** The weights a slider's drag started from (19 G.6): the pointer going down
+   * takes them, every move of that drag is measured from them, and the pointer
+   * going up or cancelled lets them go, so a drag back to where it began
+   * leaves the rows as they were, and the arrow keys work from the counts. */
+  const blockBase = useRef<Record<string, string> | null>(null)
+
+  /** A row's block count applied (19 G.6 and 19 G.7): the counts of `base` with
+   * that row asking `blocks`, written back as the weights of GD2.5, so the
+   * counts always sum to the places and `tensor-split` is the counts joined.
+   * `null` is a count that is no whole number: the row's own text puts its
+   * count back, and nothing is written. */
+  function gpuBlocksSet(
+    id: string,
+    blocks: number | null,
+    base: Record<string, string>,
+  ) {
+    const lay = gpuBlocksLayout()
+    const checked = gpuChecked()
+    const at = gpuIndexOf(checked, id)
+    if (lay === null || at < 0 || blocks === null) return
+    setWeights(
+      Object.fromEntries(
+        checked.map((one, i) => [
+          one,
+          `${
+            setBlocks(
+              checked.map((each) => (base[each] ?? '').trim()),
+              at,
+              blocks,
+              lay,
+            )[i]
+          }`,
+        ]),
+      ),
+    )
+    fields.clear('tensor-split')
+    setMarks(null)
+    setPhase((p) => (p === 'saving' ? p : 'idle'))
+  }
+
+  function gpuBlock(id: string, raw: string) {
+    gpuBlocksSet(id, gpuBlockNumber(raw), blockBase.current ?? weights)
+  }
+
+  function gpuBlockCommit(id: string, raw: string) {
+    gpuBlocksSet(id, gpuBlockNumber(raw), weights)
   }
 
   /** The two keys the GPUs fieldset composes (GD1.10, GD2.5): the checked rows
@@ -1121,12 +1235,22 @@ function Content({
    * GPUs fieldset (brief 14). */
   const gpu: GpuCardProps = {
     probe,
+    modelInfo,
     weights,
     weightIds: marks,
     loadedDevice: loaded.values['device'] ?? null,
     onToggle: gpuToggle,
     onMove: gpuMove,
+    layers: gpuLayers(),
     onWeight: gpuWeight,
+    onBlock: gpuBlock,
+    onBlockCommit: gpuBlockCommit,
+    onBlockBase: () => {
+      blockBase.current = weights
+    },
+    onBlockRelease: () => {
+      blockBase.current = null
+    },
     onAuto: () => gpuWeightsAll(''),
     onEven: () => gpuWeightsAll('1'),
     moved,

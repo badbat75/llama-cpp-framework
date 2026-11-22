@@ -159,10 +159,19 @@ function press(el: HTMLElement) {
   fireEvent.click(el)
 }
 
-/** Every read of a model profile: the list's, and a page's. */
+/**
+ * Every read of a model profile: the list's, and a page's. The facts read of
+ * 19 G.1 hangs off the same address (`.../<id>/model-info`) and is not a read
+ * of the profile, so it is not one of these; its own tests pin it.
+ */
 function profileReads(bff: ReturnType<typeof fakeBff>): string[] {
   return bff.calls
-    .filter((c) => c.method === 'GET' && c.path.startsWith(LIST_GET))
+    .filter(
+      (c) =>
+        c.method === 'GET' &&
+        c.path.startsWith(LIST_GET) &&
+        !c.path.endsWith('/model-info'),
+    )
     .map((c) => c.path)
 }
 

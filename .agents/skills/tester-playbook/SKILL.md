@@ -64,6 +64,11 @@ future` of a non-async block), run it, then delete it and write the real tests. 
   each pin's own red with a script that in a scratch copy deletes the PRE regions and pins 1..N-1, runs
   that one phase, and restores byte for byte (`cmp -s`). The reported panic lines are of the scratch copy,
   not of the file; say so in the report.
+- A byte bound on a pipe payload pins twice: the arithmetic (rows as the transport spells them,
+  plus headroom, against `MAX_FRAME`), and the WIRE crossing. The wire pin's red lands in the client's
+  own frame check (`Other("2500184 > 1048576")` at the `call_value`), naming the bytes that overshoot,
+  because the uncut reply is refused before the manager reads it: that red is the bound's evidence, not
+  a broken harness.
 - A pin block a delete-script removes must be SELF-CONTAINED: its own snapshot reads (`let kept = read(..)`
   inside the block), no variable shared across regions, so a pins-deleted copy still compiles; and the
   block's green-run cleanup must tolerate files a deleted pin created (`let _ = remove_file(..)`), else
@@ -205,6 +210,20 @@ pai-bff` fails "the web UI is not built" until `xtask build framework` has run. 
   `--exact`, `cargo test -p pai-manager --lib -- tests::data_root_e2e --exact` (no `--test-threads=1`
   needed, nothing else runs). `--test '*'` names no target for `pai-manager` (its `src/tests/` compile
   into `--lib`) and cargo answers by listing other packages' targets.
+- Before the first cargo run, look where it writes: the generated gitignored `.cargo/config.toml` pins
+  `[build] target-dir = "build/windows/cargo-target"`, so a Linux run lands in the Windows tree. A warm
+  Linux tree is `build/linux/cargo-target`: run with `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target`,
+  and say in the report which dir a run used (a cold dir is ~8 min of compiles, not a hung test).
+- A slice whose contract is a NEW FIELD on a wire struct (`ModelFacts`) reds at COMPILE in every target
+  that reads it, so the rules' tests in that same target report nothing. Prove the field-independent rules
+  with the one file that reads the field put at HEAD
+  (`git stash push -- crates/core/src/client/pipe.rs`, run, `git stash pop`, prove with
+  `git status --porcelain <path>`), and report both lists: the target's compile red and the rules' reds.
+- The red of an e2e phase that sits behind a compile-blocked phase is shown by disabling ONLY the blocked
+  phases for one run: `#[cfg(any())]` above each phase fn and `// ` before its call in `tests/mod.rs`
+  (the fn's body then never compiles, so its missing-field errors vanish), run, then delete every
+  `#[cfg(any())]` line and uncomment the calls, proving with `grep -c` and a `git diff --stat` of the two
+  files. The first red of the one `#[test]` still stops every later phase: report those as blocked.
 - `pai-manager`'s `tests::gpu_probe::an_exe_flooding_its_pipe_past_the_buffer_is_not_stopped_by_it` is the
   other load-sensitive one: seen once red in six full runs (`left: None` at `gpu_probe.rs`, the block lost),
   green solo x3 and in the other five full runs. A run of the whole crate next to a compiling one is the
@@ -352,6 +371,15 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
 - Recompute every expected list in a brief from ITS OWN fixture sections and the stated rule: a brief's
   worked example can drop a source the rule unions (15 C2.7 omitted the instances' `fast`, which its own
   section 5 and C2.6 carry). The rule wins over the example; report the brief's arithmetic gap.
+- A mid-edit state pin through a tuple helper that reads a row's controls (`blockValues` =
+  `[id, text-input value, slider value]`): the text slot is the INPUT's value, so after a typed-not-applied
+  edit, and after Escape ("does nothing special", 19 G.7), it is the typed text, not the projected count.
+  Expecting the committed count there demands one element show two texts in one render: unsatisfiable, the
+  test is the red. Pin the tuple as typed text + untouched slider.
+- A row-order pin after unchecking (19 G.9 inherits brief 14 unchanged): compute it from GD1.5 (checked
+  rows in `device` order, then the unchecked in the reply's order) plus GD1.8 ("unchecking moves the row
+  back among the unchecked at its GD1.5 place"), never from the list as it stood: `[A,B,C]` after
+  unchecking B is the stale pin, the green `ModelProfileGpu2` GD1.8 test is the reference.
 - When a later sub-slice adds a section to the SAME page (18 AN5b's GPU blocks under AN5a's engine `h2`s),
   every AN5a count over the whole `main` inflates: a section test's helpers must scope to the elements
   between its own two `h2`s (`enginePart`: siblings from `firstElementChild` to the next section's `h2`),
@@ -2018,6 +2046,19 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
   second CSS pin, tolerant of the selector shape the coder picks, is a scan of
   `CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)` filtered by `sel.includes('.tag-options')`: it can say a
   rule exists and declares no `position: absolute`, it cannot pin a property of an unnamed selector.
+- A fix briefed as "the 720 px media rule places X in `grid-column: 2`": walk
+  `atRanges('@media (min-width: 720px)')` and take each block's inner rules as
+  `r.depth > 0 && r.at > open && r.at < end` (the header text is itself captured as a pseudo-rule
+  whose body is the first inner rule's selector: `r.at > open` drops it, and that first inner rule's
+  own `sel` is clean). Pin "the SAME block as the grid" by picking the block whose inner rules
+  include the `.field` one, then look for the target selectors there, each matched as one comma PART
+  (`r.sel.split(',')` compacted), so one comma group and two rules both pass.
+- A CSS fix whose selector names an ID moves TWO `10 R1.8` allowlists: `CLASSES` and the ids
+  `toEqual(['#root'])`. Amend both in the same edit; the ids assert sits AFTER the classes assert in
+  the same test, so the run shows only the class diff, and the ids red is reported as blocked by it.
+- A rule that conflates "JavaScript reads 0" with "is 0" (19 LS1 review D2): a case where only ONE
+  weight reads 0 (`0x0,1`) greens on day one, because the `every()` over the vector is false; the
+  red needs EVERY weight to read 0 (`0e1,0`, `0x0,0`). Name which case is the guard.
 - The shared fake `fe/src/test/bff.ts` needs a three-part change for a new read: a type whose optional
   members carry every field of the contract row (a row literal with `engine` typed as `{id, tags}` is
   a typecheck red), a `BffOptions` entry answered by array or `Answer`, and one `if (route === ...)`
@@ -2203,3 +2244,53 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
 - A key moving INTO `WEB_MODEL_PROFILE_KEYS` reddens the bff's exhaustive off-list array in
   `model_profile_save.rs`'s `save_key_outside_the_web_list_is_400_and_reaches_no_manager`: grep the bff
   tests for the key name before promising a key move green, and delete the stale array entry.
+
+## A shared fake that answers `?? DEFAULT`, and prefix filters (fe slice LS1 part 1, 2026-11-22)
+
+- `fe/src/test/bff.ts` answers a route as `options.X ?? DEFAULT`, so a test naming a literal `null`,
+  `[]` or `""` body is served the DEFAULT fixture: no reader can tell "the body is that" from "the test
+  named nothing", so the shape-table rows that name a falsy body are red by construction. Answer as
+  `options.X === undefined ? DEFAULT : options.X` (keep the `function | Response` branch: it is an
+  `Answer`, not a body). Every falsy body of a 19 G.1-style shape table then needs one fixture line,
+  not one production line.
+- A new GET under a prefix the suite already filters reddens every pin whose helper filters by
+  `path.startsWith('<prefix>')` and compares to an EXACT list: `ProfilesNav.test.tsx`'s `profileReads`
+  counted the facts GET of the same id, so 5b.6 and 5b.9 demanded NO facts read for exactly the ids
+  19 G.1 demands one for. Grep the suite for `startsWith('<the route>')` before promising a subroute
+  green, and scope the helper to the address the pin is about (`!c.path.endsWith('/model-info')`),
+  never weaken the list it compares.
+- Never assert a shape of a strings value the brief's text table does not give. `EN` in
+  `fe/src/test/bff.ts` is the mirror every text test reads and `App.test.tsx` pins `en_US.json` to it
+  key by key, so production can never lead it: a `split('\n').length` pin must equal the brief's row
+  (LS1's intro is 2 lines, one `\n`), and demanding 3 is unsatisfiable from production. Same for the
+  `en()` calls: take the text, do not re-derive it.
+- A counter in a test loop that ends up unused (`let start = 0; ... start += count`) is the lint error
+  that surfaces at the coder's `npm --prefix fe run lint`: when the expected ranges come from the case
+  table, the tiling is pinned there, so delete the counter.
+- After a shared-fake change the report the coordinator wants is the RED MAP, not the log: run the full
+  `npm --prefix fe test`, then `grep -E "^ FAIL  src/" <log> | sort | uniq -c` plus the
+  `Test Files`/`Tests` lines. LS1 part 1: 4 red files left (Gpu6 35, Gpu7 10, strings 1 with the 5
+  part-2 `model-profile-gpu-blocks*` keys, HearthTokens 1), 47 of 2840.
+
+## Adjudicating a coder's report of reds left in the tests (J1, 2026-11-22)
+
+- A test the coder says is red: reproduce it SOLO first, in the tree as it stands, and read the panic line.
+  Four of the five claims were real reds whose fix is TEST code (the coder is right, the test is stale), the
+  fifth was a test that never runs. None of them needed production code, so all five were mine.
+- An attribute glued to the end of a doc comment (`/// ... accepted value.#[tokio::test]`) is prose: the
+  test is NOT registered, so it never runs, and its `async fn` trips clippy `dead_code` ("function is never
+  used" at the `async fn` line). A green file hides it. Prove a test EXISTS with
+  `cargo test -p <crate> --test <file> -- --list | grep -c "^<name>:"` (0 = not registered), never by
+  running it.
+- When a design moves a key ONTO the web list, TWO test-side pins go stale in the same slice: the bff's
+  off-list 400 loop (drop the key), and core's exclusion test, whose NAME carries the count
+  (`web_model_profile_keys_exclude_the_seven_..`): rename it to the new count and update its comment to
+  name the slice and the test that now pins the moved key. Grep `exclude_the_` to find it, it is not
+  mentioned in the design.
+- A facts fixture over a GGUF the test itself writes must list EVERY tensor the writer writes: the manager
+  answers the file's whole row list, so a fixture that names 6 of the 7 tensors (the writer's
+  `output.weight`) reds as a row-by-row `assert_eq!` on the whole `ModelFacts`. Count the writer's rows, do
+  not copy the reader's example.
+- The canonical `override-tensor` value the web sends is rules joined by `,` with NO space (the INI value of
+  the design), so the old taken value `blk\.1\.attn=CPU, ffn_.*_exps=ROCm1` is now a refusal
+  (`override-tensor-space` naming the rule). Any older "this value is taken" pin must drop the space.

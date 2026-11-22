@@ -390,14 +390,18 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // suggested under the pill) adds tag-options. Brief 17, slice U17a (the
 // skeleton while a page's
 // first read is pending), adds the eighth and ninth: skeleton (a line of the
-// shape to come) and skeleton-box (the same, a box tall). A class beside these
-// is a look no brief asked for.
+// shape to come) and skeleton-box (the same, a box tall). Brief 19 slice LS1
+// (the block slider, 19 G.12: at least 24 px, accent-coloured, native track)
+// adds the tenth: blocks-slider. Its LS1 review (D1, 2026-11-22) adds the
+// eleventh: gpu-blocks-line, the shared class of the budget, Auto and
+// malformed line, so the 720 px grid can place them beside the GPU list. A
+// class beside these is a look no brief asked for.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2 and brief 17 U17a amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list and the two of brief 17 U17a, and the only id a selector names is the mount point #root', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, and the ids a selector names are the mount point #root and the GPU fieldset the LS1 review places in the grid', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -407,12 +411,12 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2 and brief 17 
     }
   expect(
     [...used].sort(),
-    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class) and the skeleton of brief 17 U17a, tags-save gone, and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
+    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, tags-save gone, and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(
     [...ids].sort(),
-    'no rule selects an element by an id, beside the #root the app mounts on (R1.8)',
-  ).toEqual(['#root'])
+    'the ids a rule selects by: #root, the mount point, and #model-profile-gpu-devices, the GPU fieldset the LS1 review (D1) places in the 720 px grid: no other (R1.8)',
+  ).toEqual(['#model-profile-gpu-devices', '#root'])
 })
 
 // ── 12 T1 layout: the tile's facts break (brief 12 section 3, T1 review) ───
@@ -478,4 +482,78 @@ test('15 C2 review D2: .tag-options declares min-width: 0 and .tag-options li de
     ),
     'D2 (brief 15 section 11): the label has no break point inside the line, so the line is as wide as the label: overflow-wrap',
   ).toBe('anywhere')
+})
+
+// ── 19 LS1 review (the designer, 2026-11-22): D1, the GPU fieldset's grid ───
+
+test('19 LS1 review D1: in the 720 px media rule that makes .field a 200px + 1fr grid, #model-profile-gpu-devices > .gpu-blocks-line and #model-profile-gpu-devices > .check-list are grid-column: 2, so the budget, Auto and malformed line and the GPU list sit in the control column, and Auto and Even flow onto the row after the list', () => {
+  // The GPU list's fieldset is a `.field`, so from 720 px its children place
+  // themselves in the two-column grid (index.css 1388): the budget, Auto or
+  // malformed paragraph of 19 G.4 and 19 G.5 takes the second cell of the
+  // first row, the list drops into the 200 px label column, and Auto and Even
+  // stretch to the list's whole height
+  // (build/ux-review/ls1/firefox-1280-dark.png). The review's fix: the three
+  // paragraphs share one class, and this block puts that class and the list in
+  // column 2, so row 1 is the as-of line beside the budget, the list goes
+  // under the budget, and Auto and Even land on the row after it. The markup
+  // half (the class on each of the three paragraphs) is ModelProfileGpu8.
+  const blocks = atRanges('@media (min-width: 720px)')
+  expect(blocks.length, 'the sheet has 720 px media blocks').toBeGreaterThan(0)
+  const inside = (open: number, end: number) =>
+    RULES.filter((r) => r.depth > 0 && r.at > open && r.at < end)
+  // The block that styles `.field`: the two rules of D1 must sit in the same
+  // block, so they apply wherever the grid does.
+  const grids = blocks
+    .map(([open, end]) => ({
+      open,
+      end,
+      field: inside(open, end).filter((r) => r.compact === '.field'),
+    }))
+    .filter((b) => b.field.length > 0)
+  expect(
+    grids.length,
+    'exactly one 720 px block styles .field, the two-column grid of index.css 1389: a second block would place the rules where the grid is not',
+  ).toBe(1)
+  const grid = grids[0]!
+  expect(
+    norm(
+      prop(
+        single(grid.field, 'the 720 px .field rule').body,
+        'grid-template-columns',
+      ),
+    ),
+    'the grid D1 is about: a 200px label column and a control column',
+  ).toBe('200px minmax(0, 1fr)')
+  // A rule of that block, by one of its selectors: the two may be written as
+  // one comma group or as two rules, the sheet's own style for a shared
+  // declaration (index.css 1399).
+  const inGrid = (sel: string): Rule =>
+    single(
+      RULES.filter(
+        (r) =>
+          r.depth > 0 &&
+          r.at > grid.open &&
+          r.at < grid.end &&
+          r.sel
+            .split(',')
+            .some((p) => p.replace(/\s+/g, '') === sel.replace(/\s+/g, '')),
+      ),
+      `the 720 px rule placing "${sel}"`,
+    )
+  for (const sel of [
+    '#model-profile-gpu-devices > .gpu-blocks-line',
+    '#model-profile-gpu-devices > .check-list',
+  ]) {
+    const rule = inGrid(sel)
+    expect(
+      norm(prop(rule.body, 'grid-column')),
+      `D1: ${sel}: the column beside the 200px label, where the field's control is`,
+    ).toBe('2')
+    // The three paragraphs come and go with the state (blocks, Auto,
+    // malformed), so the rows are placed by the flow, never by hand.
+    expect(
+      norm(prop(rule.body, 'grid-row')),
+      `D1: ${sel}: no grid-row: the lines above the list appear and go, so a hand-placed row breaks with them`,
+    ).toBe('')
+  }
 })

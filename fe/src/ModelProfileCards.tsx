@@ -46,7 +46,7 @@ import {
   SelectField,
   TextField,
 } from './Field.tsx'
-import { GpuFieldset, type GpuCardProps } from './GpuSplit.tsx'
+import { GpuFieldset, factsLine, type GpuCardProps } from './GpuSplit.tsx'
 import { t } from './strings.ts'
 
 /** A select's option: the value the file holds, the text the user reads. */
@@ -179,6 +179,12 @@ type DeviceRow = RowBase & { kind: 'device'; empty: string }
  *  nothing at the page's `onEdit` and sits beside the draft's keys. */
 type GpuRow = RowBase & { kind: 'gpu' }
 
+/** The model file's facts line of the GPU distribution card (brief 19, 19 G.2):
+ *  one muted paragraph of the card, after its intro and before its first field,
+ *  saying what the read of the model file answered. It reads no key of the
+ *  file, and holds no control: its `key` is only the list's. */
+type FactsRow = { kind: 'facts'; key: string }
+
 /** A note between fields (criterion 90): the GUI's muted paragraph. Its `key`
  * is only the list's: a note reads no key of the file. `shownWithout` is the
  * key of 177's rule: the note speaks for the controls the `file` rule of 176
@@ -228,6 +234,7 @@ type Row =
   | CheckboxRow
   | DeviceRow
   | GpuRow
+  | FactsRow
   | NoteRow
   | GroupRow
 
@@ -347,6 +354,7 @@ const CARDS: CardFields[] = [
     title: t('model-profile-gpu-distribution'),
     introLines: t('model-profile-gpu-distribution-intro').split('\n'),
     rows: [
+      { kind: 'facts', key: 'model-info' },
       {
         kind: 'select',
         key: 'split-mode',
@@ -1907,6 +1915,15 @@ function ModelProfileField({
     // control's description.
     return <p className="note">{row.text}</p>
   }
+  if (row.kind === 'facts') {
+    // Brief 19 (fe/briefs/19-layer-sliders.md), 19 G.2: what the model file is,
+    // the page's one read of it. A plain muted paragraph in reading order, after
+    // the card's intro and before its first field, never a live region and never
+    // a control's description.
+    return gpu === undefined ? null : (
+      <p className="muted">{factsLine(gpu.modelInfo)}</p>
+    )
+  }
   if (row.kind === 'gpu') {
     // Brief 14: the GPUs fieldset. Its state is the page's (the device read,
     // the rows' weights, the last move), and the fieldset composes the `device`
@@ -1914,10 +1931,12 @@ function ModelProfileField({
     return gpu === undefined ? null : (
       <GpuFieldset
         probe={gpu.probe}
+        modelInfo={gpu.modelInfo}
         device={values[row.key] ?? null}
         loadedDevice={gpu.loadedDevice}
         mode={values['split-mode'] ?? null}
         tensorSplit={values['tensor-split'] ?? null}
+        layers={gpu.layers}
         weights={gpu.weights}
         deviceError={errors[row.key]}
         splitError={errors['tensor-split']}
@@ -1925,6 +1944,10 @@ function ModelProfileField({
         onToggle={gpu.onToggle}
         onMove={gpu.onMove}
         onWeight={gpu.onWeight}
+        onBlock={gpu.onBlock}
+        onBlockCommit={gpu.onBlockCommit}
+        onBlockBase={gpu.onBlockBase}
+        onBlockRelease={gpu.onBlockRelease}
         onAuto={gpu.onAuto}
         onEven={gpu.onEven}
         moved={gpu.moved}
@@ -2232,15 +2255,18 @@ export function fieldPlace(
   for (const card of CARDS) {
     for (const row of card.rows) {
       if (row.key === key) {
-        // A note and a group carry no field: neither has a label to name.
-        return row.kind === 'note' || row.kind === 'group'
+        // A note, a facts line and a group carry no field: none has a label to
+        // name.
+        return row.kind === 'note' ||
+          row.kind === 'facts' ||
+          row.kind === 'group'
           ? null
           : { card: card.title, label: row.label }
       }
       if (row.kind === 'group') {
         for (const inner of row.rows) {
           if (inner.key === key) {
-            return inner.kind === 'note'
+            return inner.kind === 'note' || inner.kind === 'facts'
               ? null
               : { card: card.title, label: inner.label }
           }

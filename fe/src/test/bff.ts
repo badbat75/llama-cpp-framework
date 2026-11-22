@@ -581,7 +581,7 @@ export const EN: Record<string, string> = {
   // Every English is the brief's, the web text of the column that says "web".
   'model-profile-gpu-distribution': 'GPU distribution',
   'model-profile-gpu-distribution-intro':
-    "Which GPUs run THIS model and how much each holds, saved to models.ini. Check nothing to let llama.cpp choose. With two GPUs of different sizes, check both and give the bigger one more weight; left blank, the split follows free VRAM at load, not an even cut. The weights are ratios: 3 and 1 give 75% and 25%. The checked GPUs, top to bottom, are the split order: Move up and Move down change it; the first one is llama.cpp's main GPU.\nKeys: split-mode, device, tensor-split.",
+    "Which GPUs run THIS model and how much each holds, saved to models.ini. Check nothing to let llama.cpp choose. With two GPUs of different sizes, check both and give the bigger one more; left on Auto, the split follows free VRAM at load, not an even cut. Under split mode layer, once the model file is read, each GPU takes a number of blocks: the model's blocks and its output layer, shared out top to bottom. Otherwise the weights are ratios: 3 and 1 give 75% and 25%. The checked GPUs, top to bottom, are the split order: Move up and Move down change it; the first one is llama.cpp's main GPU.\nKeys: split-mode, device, tensor-split.",
   'model-profile-split-mode': 'GPU split mode',
   'model-profile-split-mode-hint':
     'How THIS model is divided between GPUs. Does nothing with one GPU checked. Same on CUDA and ROCm.\nlayer (default): each GPU takes a consecutive run of blocks, in the proportion of its weight. Fastest prefill; copes with a slow link between GPUs.\nnone: one GPU, the first checked row; other checked rows go unused.\ntensor (experimental): the GPUs act as one device, and all weights and the KV cache are divided by the ratio (blank = even). Fastest decode, needs a fast link. Flash attention must not be off, Fit to VRAM is skipped (set Context size yourself), some architectures refuse to load, and llama.cpp tunes it for CUDA with no guarantees on other backends.\nrow (deprecated, use tensor): weights are split by rows by the ratio (CUDA/ROCm; Vulkan falls back to layer). The KV cache follows the layer cut.\nFlag: --split-mode',
@@ -619,6 +619,38 @@ export const EN: Record<string, string> = {
     "This profile's tensor-split {0} applies to every GPU llama.cpp finds, in its order. Checking GPUs here replaces it.",
   'api-tensor-split-format':
     'tensor-split = `{0}` is not a list of up to 15 numbers of 0 or more, separated by , or /',
+  // Brief 19 (fe/briefs/19-layer-sliders.md), section 2, sub-slice LS1: the
+  // model facts read and the per-GPU block controls. LS1 adds the keys from
+  // model-profile-model-facts-reading to model-profile-gpu-output-layer and
+  // changes the card's intro; the rest of the table is LS2's.
+  'model-profile-model-facts-reading': 'Reading the model file…',
+  'model-profile-model-facts': 'Model file: {0} blocks.',
+  'model-profile-model-facts-moe':
+    'Model file: {0} blocks, with experts: {1} per layer, {2} used per token.',
+  'model-profile-model-facts-moe-plain':
+    'Model file: {0} blocks, with experts.',
+  'model-profile-model-facts-none':
+    'No layer counts: {0}. The GPU weights stay ratios, and the layer fields have no slider.',
+  'model-profile-model-facts-failed':
+    "The model file's layer counts could not be read. The GPU weights stay ratios, and the layer fields have no slider; open the page again to retry.",
+  'api-model-info-fetched':
+    'its model is fetched at startup (`{0}`), so its layer facts are unknown until it is downloaded',
+  'api-model-info-missing': 'the model file `{0}` is not there',
+  'api-model-info-unreadable': '`{0}` is not a readable model file',
+  'model-profile-gpu-blocks': 'Blocks',
+  'model-profile-gpu-blocks-budget':
+    'The checked GPUs share {0} places: {1} blocks and the output layer.',
+  'model-profile-gpu-blocks-auto':
+    'Auto: llama.cpp shares the {0} places by free memory at load. Choose Even to set the blocks yourself.',
+  'model-profile-gpu-blocks-malformed':
+    'tensor-split {0} is not a list of numbers of 0 or more. Choose Even to set the blocks yourself, or Auto.',
+  'model-profile-gpu-blocks-value': '{0} of {1}: {2}',
+  'model-profile-gpu-blocks-nothing': 'nothing',
+  'model-profile-gpu-block-one': 'block {0}',
+  'model-profile-gpu-blocks-range': 'blocks {0}-{1}',
+  'model-profile-gpu-block-plus-output': 'block {0} + output',
+  'model-profile-gpu-blocks-plus-output': 'blocks {0}-{1} + output',
+  'model-profile-gpu-output-layer': 'output layer',
   // Slice 2e.5 (fe/briefs/02e-model-profile-cards.md, criterion 116): the Speculative
   // decoding card. Every English is the en_US.toml line the criterion names
   // (367 to 397), unchanged.
@@ -1014,6 +1046,51 @@ export const DEVICES: DeviceProbe = {
   ],
 }
 
+/** The `model` path of `modelProfileDoc()`'s default section. */
+export const MODEL_FILE =
+  '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf'
+
+/**
+ * The `<arch>.block_count` and expert counts of one model file, as
+ * GET /api/profiles/model/{id}/model-info answers them (fe/briefs/19-layer-sliders.md
+ * section 0): `blockCount` every block of the GGUF (the nextn/MTP ones included),
+ * `expertCount` and `expertUsed` 0 when the header has none. A real answer can
+ * leave a key out or spell it badly, as the device probe's can (GD1.7).
+ */
+export type ModelFile = {
+  blockCount?: number | string | null
+  moe?: boolean | null
+  expertCount?: number | null
+  expertUsed?: number | null
+}
+
+/**
+ * One GET /api/profiles/model/{id}/model-info answer (brief 19 section 0): the
+ * `model` the manager read (null when the section names none), the file's facts
+ * (null exactly when `reason` is set), and the reason there are none, as a
+ * strings key and its arguments: `model-info-fetched` `[key]`,
+ * `model-profile-no-model` `[id]`, `model-info-missing` `[path]`,
+ * `model-info-unreadable` `[path]`.
+ */
+export type ModelInfo = {
+  model?: string | null
+  info?: ModelFile | null
+  reason?: { key?: string; args?: (string | number)[] } | null
+}
+
+/**
+ * What the route answers for a test that says nothing about the model file: no
+ * layer counts, the file missing. The page then shows
+ * `model-profile-model-facts-none` and keeps brief 14's weight fields
+ * (brief 19 decision 2: blocks need a positive block count), so every GD1 and
+ * GD2 test is as it was.
+ */
+export const MODEL_INFO: ModelInfo = {
+  model: MODEL_FILE,
+  info: null,
+  reason: { key: 'model-info-missing', args: [MODEL_FILE] },
+}
+
 /** One model profile as GET /api/profiles/model lists it (fe/briefs/api-contract.md). */
 export type ModelProfile = {
   id: string
@@ -1173,6 +1250,14 @@ export type BffOptions = {
    * every other card stays as today (brief 14, section 6, decision 5).
    */
   devices?: DeviceProbe | Record<string, unknown> | Answer
+  /**
+   * GET /api/profiles/model/{id}/model-info (brief 19 section 0): the facts body
+   * to answer 200 with, or the reply. A test names one (`MODEL_INFO`, no layer
+   * counts, is exported for it). Where it names none the route answers
+   * `MODEL_INFO`, so a page that says nothing about the model file keeps brief
+   * 14's weight fields and its layer fields as they are (brief 19, section 6).
+   */
+  modelInfo?: ModelInfo | Record<string, unknown> | Answer
   /** GET /api/instances: the instances, or the reply. Default INSTANCES. */
   instances?: Instance[] | Answer
   /** GET /api/profiles/model: the model profiles, or the reply. Default MODEL_PROFILES. */
@@ -1359,6 +1444,19 @@ export function fakeBff(options: BffOptions = {}) {
       const p = options.serverProfiles ?? SERVER_PROFILES
       if (Array.isArray(p)) return Promise.resolve(reply(200, p))
       return answer(p, init)
+    }
+    const modelInfo = /^GET \/api\/profiles\/model\/([^/]+)\/model-info$/.exec(
+      route,
+    )
+    if (modelInfo) {
+      // Only a test that names no `modelInfo` gets the default: a test that
+      // names a literal `null`, an array or a string body means that body, so
+      // the shape checks of 19 G.1 are testable.
+      const m = options.modelInfo === undefined ? MODEL_INFO : options.modelInfo
+      // An object is the body of the 200, as the device probe's is.
+      if (typeof m === 'function' || m instanceof Response)
+        return answer(m, init)
+      return Promise.resolve(reply(200, m))
     }
     const modelProfileSwitch =
       /^PUT \/api\/profiles\/model\/([^/]+)\/enabled$/.exec(route)

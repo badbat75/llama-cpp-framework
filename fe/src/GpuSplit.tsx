@@ -6,8 +6,15 @@
 // this state and never typed (GD1.10, GD2.5), so they are no field of the
 // cards' table and the page composes them with the keys the form sends.
 // Every text is a key of en_US.json.
+import { useState } from 'react'
 import { t } from './strings.ts'
-import { isRecord } from './api.ts'
+import {
+  isRecord,
+  type ApiError,
+  type ModelFacts,
+  type ModelInfoRead,
+} from './api.ts'
+import { blockCounts, blockRanges, layout, type Layout } from './gpuBlocks.ts'
 
 /** One GPU of the engine's probe. `name` is null when the answer carries none
  * the page can show; the memory figures when it carries them. */
@@ -106,6 +113,14 @@ export function gpuFileIds(device: string | null): string[] {
  * probe's are the same GPU when they differ only in case. */
 export function gpuHas(ids: string[], id: string): boolean {
   return ids.some((one) => one.toLowerCase() === id.toLowerCase())
+}
+
+/** Where `id` sits among the checked ids, read as `gpuHas` reads them (the
+ * probe's spelling and the file's differ in case): -1 when it is not one. A
+ * row's block count is read out of the vector at this place (19 G.5), and the
+ * page writes it back at the same one (19 G.6). */
+export function gpuIndexOf(ids: string[], id: string): number {
+  return ids.findIndex((one) => one.toLowerCase() === id.toLowerCase())
 }
 
 /** The list's ids: the ids the file names, in its order, then the probe's GPUs
@@ -244,6 +259,54 @@ export function gpuWeightsShown(mode: string | null, checked: string[]) {
   return splits(mode) && checked.length >= 2
 }
 
+/** The split mode the file spells as its own layer mode (brief 19, 19 G.4):
+ * the key absent, empty, or the word `layer` exactly as the file writes it. Any
+ * other spelling, an added option like `Layer` included, is a mode the fe does
+ * not know how to cut into blocks, so its rows keep their weights. */
+function gpuLayerMode(mode: string | null): boolean {
+  const raw = (mode ?? '').trim()
+  return raw === '' || raw === 'layer'
+}
+
+/** GPU layers as the layout reads it (brief 19, 19 G.4): the default box,
+ * `auto`, `all` and anything that is not a whole number are every layer, and a
+ * whole number of 0 or more is that number, 0 with it. */
+function gpuLayersCount(layers: string | null): number {
+  const text = (layers ?? '').trim()
+  return /^\d+$/.test(text) ? Number(text) : -1
+}
+
+/** The model file's layer facts, when the read answered them (brief 19,
+ * 19 G.4): `null` while it runs and for a read that answered a reason, the two
+ * states that leave the rows as brief 14 built them. */
+function gpuFacts(read: ModelInfoRead | undefined): ModelFacts | null {
+  if (read === undefined || read === null) return null
+  return 'reason' in read ? null : read.facts
+}
+
+/** What a row's count is worth of the places, in GD2.2's share (brief 19,
+ * 19 G.5): the count over the places the layout has, rounded to a percent. */
+function gpuCountShare(count: number, places: number): string {
+  return t('model-profile-gpu-share', `${Math.round((count * 100) / places)}%`)
+}
+
+/** The layout the blocks are cut over (brief 19, 19 G.4): GPU layers of the
+ * model file with the blocks the facts read counted, when the mode is the
+ * file's own and two rows are checked. `null` is not blocks mode: a read that
+ * runs or answered a reason, a mode the fe cuts no blocks with, a split of one
+ * row, an offload of no layer. The page reads it too, so the counts a row shows
+ * and the counts a save writes are the same cut. */
+export function gpuLayout(
+  modelInfo: ModelInfoRead | undefined,
+  layers: string | null,
+  mode: string | null,
+  rows: number,
+): Layout | null {
+  const facts = gpuFacts(modelInfo)
+  if (facts === null || !gpuLayerMode(mode) || rows < 2) return null
+  return layout(facts.blockCount, gpuLayersCount(layers))
+}
+
 /** What each checked row's weight is worth, as the text beside the field
  * (GD2.2): with `none`, the first row is all of it and the rest go unused;
  * with one row, that row is all of it; a vector of nothing is `even` under
@@ -338,6 +401,15 @@ export type GpuDirection = 'up' | 'down'
 export type GpuCardProps = {
   /** The device read: `undefined` while it runs, `null` when it failed. */
   probe: GpuProbe | null | undefined
+  /** The model file's layer facts, read once per arrival beside the device
+   * read (brief 19, 19 G.1): `undefined` while it runs. The card's facts line
+   * speaks it (19 G.2), and blocks mode needs it, so a read that answered
+   * nothing leaves the weights as ratios (19 G.4). */
+  modelInfo: ModelInfoRead | undefined
+  /** The `n-gpu-layers` the blocks are cut over, as the field holds it (brief
+   * 19, 19 G.11): `''` is its default, every block. Changing it re-projects the
+   * rows, and writes nothing of its own. */
+  layers: string
   /** The rows' weights, by id, dropped when its row is unchecked. */
   weights: Record<string, string>
   /** The ids of the weights that fail the fe's check; `null` marks every
@@ -346,6 +418,14 @@ export type GpuCardProps = {
   onToggle: (id: string) => void
   onMove: (id: string, dir: GpuDirection) => void
   onWeight: (id: string, value: string) => void
+  /** A blocks slider moved (19 G.6): the page writes the new counts into the
+   * weights, from the base `onBlockBase` took. */
+  onBlock: (id: string, raw: string) => void
+  /** A blocks number applied (19 G.7): Enter or blur, clamped to the places. */
+  onBlockCommit: (id: string, raw: string) => void
+  /** The weights a drag starts from, kept until it ends. */
+  onBlockBase: () => void
+  onBlockRelease: () => void
   onAuto: () => void
   onEven: () => void
   /** The `device` as the read gave it: its ids are the list's, so a row the
@@ -355,8 +435,61 @@ export type GpuCardProps = {
   moved: string
 }
 
+/** The reason a facts read answered, in its own sentence: the strings key the
+ * read names, filled with its args, inside `model-profile-model-facts-none`.
+ * One literal `t()` call per key, as the save refusals do. A key outside the
+ * four of section 0 is a read that answered nothing. */
+function factsReason(reason: ApiError): string {
+  const args = reason.args
+  switch (reason.key) {
+    case 'model-info-fetched':
+      return t(
+        'model-profile-model-facts-none',
+        t('api-model-info-fetched', ...args),
+      )
+    case 'model-profile-no-model':
+      return t(
+        'model-profile-model-facts-none',
+        t('api-model-profile-no-model', ...args),
+      )
+    case 'model-info-missing':
+      return t(
+        'model-profile-model-facts-none',
+        t('api-model-info-missing', ...args),
+      )
+    case 'model-info-unreadable':
+      return t(
+        'model-profile-model-facts-none',
+        t('api-model-info-unreadable', ...args),
+      )
+    default:
+      return t('model-profile-model-facts-failed')
+  }
+}
+
+/** What the GPU card's facts line says for `read` (brief 19, 19 G.2): the file
+ * is being read while the read runs, the blocks it counted when it answered,
+ * the reason there are none when the file has none, and the failed line for a
+ * read that answered nothing. A MoE file with no expert counts says it has
+ * experts and no numbers. */
+export function factsLine(read: ModelInfoRead | undefined): string {
+  if (read === undefined) return t('model-profile-model-facts-reading')
+  if (read === null) return t('model-profile-model-facts-failed')
+  if ('reason' in read) return factsReason(read.reason)
+  const facts = read.facts
+  if (!facts.moe) return t('model-profile-model-facts', `${facts.blockCount}`)
+  return facts.expertCount > 0
+    ? t(
+        'model-profile-model-facts-moe',
+        `${facts.blockCount}`,
+        `${facts.expertCount}`,
+        `${facts.expertUsed}`,
+      )
+    : t('model-profile-model-facts-moe-plain', `${facts.blockCount}`)
+}
+
 export type GpuFieldProps = GpuCardProps & {
-  /** The draft's three keys, as the file spells them. */
+  /** The draft's keys the fieldset reads, as the file spells them. */
   device: string | null
   mode: string | null
   tensorSplit: string | null
@@ -376,10 +509,12 @@ export type GpuFieldProps = GpuCardProps & {
  * a live region (GD1.3, GD1.7, GD2.9). */
 export function GpuFieldset({
   probe,
+  modelInfo,
   device,
   loadedDevice,
   mode,
   tensorSplit,
+  layers,
   weights,
   deviceError,
   splitError,
@@ -387,6 +522,10 @@ export function GpuFieldset({
   onToggle,
   onMove,
   onWeight,
+  onBlock,
+  onBlockCommit,
+  onBlockBase,
+  onBlockRelease,
   onAuto,
   onEven,
   moved,
@@ -430,6 +569,30 @@ export function GpuFieldset({
   // are.
   const fields = gpuWeightsShown(mode, checked)
   const splitButtons = fields
+  // 19 G.4: blocks mode. The layout is the facts read and GPU layers, the
+  // vector is the checked rows' weights: a vector of numbers projects to block
+  // counts, which replace the weight fields; a vector of nothing is Auto's, and
+  // says the way in; a vector with a word in it is malformed, and says that.
+  // The three states are read from the file's `device` order, the same vector
+  // the page composes `tensor-split` from, so the counts the rows show are the
+  // counts a save writes.
+  const lay = gpuLayout(modelInfo, layers, mode, checked.length)
+  const vec = checked.map((id) => gpuWeight(weights, id))
+  // A vector with a word in it: `tensor-split` as no number can be cut into
+  // blocks, so the rows show no editor (19 G.4).
+  const malformed = vec.some((w) => w !== '' && !GPU_WEIGHT_RULE.test(w))
+  // Auto's vector: nothing written, or the zeros Auto leaves in the file. The
+  // shares read auto for it too (GD2.2). A word the rule refuses is read first:
+  // `Number` sees 0 in `0x0` and `0e1`, so a vector can be Auto's only in
+  // words, and the malformed line wins over Auto's.
+  const autoSplit = !malformed && vec.every((w) => w === '' || Number(w) === 0)
+  const counts =
+    lay === null || autoSplit || malformed ? null : blockCounts(vec, lay)
+  const ranges = counts === null || lay === null ? [] : blockRanges(counts, lay)
+  // The all-zero vector is Auto's, and a facts read that has not answered (or
+  // a checked row of a split, while it runs) shows no editor at all: only a
+  // settled read outside blocks mode leaves brief 14's weight fields.
+  const weightFields = fields && lay === null && modelInfo !== undefined
   return (
     <fieldset className="field" id="model-profile-gpu-devices">
       <legend>{t('model-profile-gpus')}</legend>
@@ -450,6 +613,31 @@ export function GpuFieldset({
           {t('model-profile-gpu-split-without-device', tensorSplit!)}
         </p>
       ) : null}
+      {counts === null && lay !== null && malformed ? (
+        // 19 G.4: a vector with a word in it. Its own sentence says the state,
+        // and the rows show no editor: Even is the way out.
+        <p className="muted gpu-blocks-line">
+          {t('model-profile-gpu-blocks-malformed', vec.join(','))}
+        </p>
+      ) : null}
+      {counts === null && lay !== null && autoSplit ? (
+        // 19 G.4: Auto. llama.cpp spreads the places by free memory at load, so
+        // the fe has no counts to show: Even sets them.
+        <p className="muted gpu-blocks-line">
+          {t('model-profile-gpu-blocks-auto', `${lay.count}`)}
+        </p>
+      ) : null}
+      {counts !== null ? (
+        // 19 G.5: what the checked rows share, so a count typed in a row reads
+        // against it.
+        <p className="muted gpu-blocks-line">
+          {t(
+            'model-profile-gpu-blocks-budget',
+            `${lay!.count}`,
+            `${lay!.count - 1}`,
+          )}
+        </p>
+      ) : null}
       <ul role="list" className="check-list">
         {all.map((row, i) => {
           // One list, keyed by id, holding the GPU rows and nothing else
@@ -457,6 +645,9 @@ export function GpuFieldset({
           // same element, so the check keeps its focus through the move
           // (GD1.8) and a move moves the row, not a new one.
           const onRow = i < on.length
+          // 19 G.5: the row's block count, range and share, read out of the
+          // vector the page composes, in the file's order.
+          const at = counts === null ? -1 : gpuIndexOf(checked, row.id)
           return (
             <GpuRowItem
               key={row.id}
@@ -470,10 +661,24 @@ export function GpuFieldset({
               deviceError={deviceError}
               splitError={splitError}
               splitErrorIds={splitErrorIds}
-              weightsShown={onRow ? fields : false}
+              weightsShown={onRow ? weightFields : false}
+              blocks={
+                onRow && at >= 0 && lay !== null && at < counts!.length
+                  ? {
+                      lay,
+                      count: counts![at]!,
+                      range: ranges[at]!,
+                      share: gpuCountShare(counts![at]!, lay.count),
+                    }
+                  : null
+              }
               onToggle={onToggle}
               onMove={onMove}
               onWeight={onWeight}
+              onBlock={onBlock}
+              onBlockCommit={onBlockCommit}
+              onBlockBase={onBlockBase}
+              onBlockRelease={onBlockRelease}
             />
           )
         })}
@@ -524,8 +729,19 @@ export function GpuFieldset({
   )
 }
 
+/** What a checked row shows in blocks mode (brief 19, 19 G.5): the layout's
+ * places, the row's count of them, the range of blocks it takes, and the share
+ * of that count. `null` is brief 14: the weight field. */
+type GpuBlocks = {
+  lay: Layout
+  count: number
+  range: string
+  share: string
+}
+
 /** One row of the list: its checkbox and name, its memory line, its weight and
- * share, and its two Move buttons (GD1.5 to GD1.9, GD2.1). */
+ * share, and its two Move buttons (GD1.5 to GD1.9, GD2.1). In blocks mode the
+ * weight field is the row's block count, with a slider beside it (19 G.5). */
 function GpuRowItem({
   row,
   probe,
@@ -538,9 +754,14 @@ function GpuRowItem({
   splitError,
   splitErrorIds,
   weightsShown,
+  blocks,
   onToggle,
   onMove,
   onWeight,
+  onBlock,
+  onBlockCommit,
+  onBlockBase,
+  onBlockRelease,
 }: {
   row: GpuRow
   probe: GpuProbe | null | undefined
@@ -553,9 +774,14 @@ function GpuRowItem({
   splitError: string | undefined
   splitErrorIds: string[] | undefined
   weightsShown: boolean
+  blocks: GpuBlocks | null
   onToggle: (id: string) => void
   onMove: (id: string, dir: GpuDirection) => void
   onWeight: (id: string, value: string) => void
+  onBlock: (id: string, raw: string) => void
+  onBlockCommit: (id: string, raw: string) => void
+  onBlockBase: () => void
+  onBlockRelease: () => void
 }) {
   const { id } = row
   const box = `model-profile-gpu-box-${id}`
@@ -564,11 +790,32 @@ function GpuRowItem({
     memory === null ? undefined : `model-profile-gpu-memory-${id}`
   const shareId = `model-profile-gpu-share-${id}`
   const weightId = `model-profile-gpu-weight-${id}`
+  const blocksId = `model-profile-gpu-blocks-${id}`
+  const blocksLabelId = `model-profile-gpu-blocks-label-${id}`
+  const sliderId = `model-profile-gpu-blocks-slider-${id}`
+  const rangeId = `model-profile-gpu-blocks-text-${id}`
   const weightError = weightErrorOf(id, splitError, splitErrorIds)
   const describedBy = [
     ...(memoryId !== undefined ? [memoryId] : []),
     ...(deviceError && checked ? ['model-profile-device'] : []),
   ]
+  // 19 G.7: what is typed, until Enter or blur applies it and the count comes
+  // back. A row is no state the page keeps: the count is the weight's own.
+  const [typed, setTyped] = useState<string | null>(null)
+  // Leaving blocks mode (Auto, a mode that hides the weights, the row
+  // unchecked) drops what is typed: the editor is gone, so a focus event that
+  // reaches this row later finds no stale count to apply. Dropped as the row
+  // renders, the same render that leaves no editor.
+  if (blocks === null && typed !== null) setTyped(null)
+  const commitBlocks = () => {
+    if (typed === null || blocks === null) return
+    setTyped(null)
+    // 19 G.7: the count the row already shows is no edit: nothing is written,
+    // so the ratio the file has survives and a save sends no `tensor-split`.
+    const text = typed.trim()
+    if (/^\d+$/.test(text) && Number(text) === blocks.count) return
+    onBlockCommit(id, typed)
+  }
   // The share line: in the weight's group where the group shows, and an item
   // of the row on its own where it does not (a mode that hides the weights
   // still gives a share to a checked row: GD2.2).
@@ -607,7 +854,72 @@ function GpuRowItem({
           {memory}
         </p>
       )}
-      {weightsShown ? (
+      {blocks !== null ? (
+        // 19 G.5: the block count in place of the weight, a slider of the
+        // layout's places beside it, and the range and the share in one plain
+        // text item after them. The field answers to `tensor-split` as the
+        // weight does (19 G.10), so it carries the same mark and the same
+        // place in the focus order.
+        <>
+          <span className="weight-group">
+            <label htmlFor={blocksId} id={blocksLabelId}>
+              {t('model-profile-gpu-blocks')}{' '}
+              <span className="visually-hidden">{id}</span>
+            </label>
+            <input
+              type="text"
+              className="gpu-weight"
+              size={4}
+              inputMode="numeric"
+              id={blocksId}
+              data-gpu-weight=""
+              value={typed ?? `${blocks.count}`}
+              aria-invalid={weightError ? 'true' : undefined}
+              aria-describedby={[
+                shareId,
+                rangeId,
+                ...(weightError ? ['model-profile-tensor-split'] : []),
+              ].join(' ')}
+              onChange={(event) => setTyped(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  commitBlocks()
+                }
+              }}
+              onBlur={commitBlocks}
+            />
+          </span>
+          <input
+            className="blocks-slider"
+            type="range"
+            id={sliderId}
+            aria-labelledby={blocksLabelId}
+            min={0}
+            max={blocks.lay.count}
+            step={1}
+            value={blocks.count}
+            aria-valuetext={t(
+              'model-profile-gpu-blocks-value',
+              `${blocks.count}`,
+              `${blocks.lay.count}`,
+              blocks.range,
+            )}
+            onChange={(event) => {
+              // A drag keeps the focus on the slider (19 G.6): the counts of
+              // every row move under it, and the row it sits in is re-drawn.
+              event.currentTarget.focus({ preventScroll: true })
+              onBlock(id, event.target.value)
+            }}
+            onPointerDown={onBlockBase}
+            onPointerUp={onBlockRelease}
+            onPointerCancel={onBlockRelease}
+          />
+          <span className="muted" id={rangeId}>
+            {blocks.range} <span id={shareId}>{blocks.share}</span>
+          </span>
+        </>
+      ) : weightsShown ? (
         // The label, the field and the share in one span (DESIGN.md 5.2 "GPU
         // list"): the row's wrapping flex sees ONE item there, so it breaks
         // around the weight and never between its label and its field.

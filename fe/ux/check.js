@@ -69,6 +69,11 @@ const MISSING_ID = 'No-Such-Model-Profile'
 // probe's moment in the browser's own locale, so no state can name the whole
 // sentence. The stub's probe answers, so the line lands.
 const AS_OF = S['model-profile-gpu-probed-at'].split('{0}')[0]
+// The start of the GPU card's budget line (brief 19, 19 G.5): the sentence of
+// `model-profile-gpu-blocks-budget` up to its `{0}`, which the page fills with
+// the places the facts read gives. Absent from the strings file until LS1
+// lands, where the state's marker is the slider alone.
+const BUDGET = S['model-profile-gpu-blocks-budget']?.split('{0}')[0]
 
 // The states to look at: the stub's /__set query, the route, the expect: the
 // selectors (with the text they carry) only that state shows, the optional
@@ -237,6 +242,22 @@ const STATES = [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       { selector: 'h3', text: S['model-profile-assets'] },
       { selector: 'p', text: AS_OF },
+    ],
+  },
+  {
+    name: 'model-profile-blocks',
+    // Brief 19, 19 G.4 and 19 G.5: the same page with the split in the file's
+    // mode and a ratio the facts read projects to block counts (stub.py
+    // `split=layer`, and the model-info read with 64 blocks), so the GPU rows
+    // carry a block number field, a range slider, and the range and share text
+    // beside them, under the budget line. The text is the budget's sentence up
+    // to its `{0}`, whose places come from the facts read.
+    set: 'session=admin&split=layer',
+    hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
+    expect: [
+      { selector: '#page-heading', text: MODEL_PROFILE_ID },
+      { selector: 'p', text: BUDGET },
+      { selector: 'input[type="range"]' },
     ],
   },
   {
@@ -475,12 +496,16 @@ async function hovered(page, state) {
  *  the default list of instances, the default tags, the fast reads and the
  *  answering node: the two tile states ask for list=many themselves, the tags
  *  state for tags=long, the loading ones for load=session or load=slow and the
- *  node states for node=down or node=long, and a state that ran before them
- *  leaves none of them behind for the pages after it. A hash change does
- *  not reload the app, so every state starts from a blank page. */
+ *  node states for node=down or node=long, the blocks state for split=layer,
+ *  and a state that ran before them leaves none of them behind for the pages
+ *  after it. A hash change does not reload the app, so every state starts from
+ *  a blank page. */
 async function load(page, state) {
   const found = []
-  for (const q of ['list=one&tags=few&load=fast&node=ok', state.set]) {
+  for (const q of [
+    'list=one&tags=few&load=fast&node=ok&split=tensor',
+    state.set,
+  ]) {
     const res = await fetch(`${BASE}/__set?${q}`)
     if (!res.ok) {
       found.push(`set request: ${res.status} ${res.statusText}`)

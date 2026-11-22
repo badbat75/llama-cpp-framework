@@ -1190,5 +1190,9 @@ test('18 AN.14: the sheet needs no rule for a GPU: the Value list breaks anywher
   expect(
     RULES.filter((r) => /\bgpu\b/.test(r.sel)).map((r) => r.sel),
     'the sheet gains no rule for the GPU blocks: the only selectors naming a gpu are the Models page check-list, there before this slice. The blocks ride on the lists of 13 (18 AN.8, 13 N.12).',
-  ).toEqual(['.check-list .gpu-id', '.check-list .gpu-weight'])
+  ).toEqual([
+    '#model-profile-gpu-devices > .gpu-blocks-line, #model-profile-gpu-devices > .check-list',
+    '.check-list .gpu-id',
+    '.check-list .gpu-weight',
+  ])
 })

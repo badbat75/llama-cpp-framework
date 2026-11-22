@@ -466,9 +466,13 @@ test('2d.70, 2d.80 (H11b.1): the Engine row is text: opening the card sends noth
     'nothing to write in 2d',
   ).toEqual([])
   expect(
-    seen.filter((c) => c.startsWith('GET /api/profiles/model')),
+    // 19 G.1: the profile read beside its model-info read, the list not read.
+    [...new Set(seen.filter((c) => c.startsWith('GET /api/profiles/model')))],
     'the model profile read once, the list not read (80)',
-  ).toEqual(['GET /api/profiles/model/Qwen3-27B'])
+  ).toEqual([
+    'GET /api/profiles/model/Qwen3-27B',
+    'GET /api/profiles/model/Qwen3-27B/model-info',
+  ])
   expect(seen, 'no engine list read in 2d').not.toContain('GET /api/engines')
   expect(
     within(main).queryAllByRole('combobox', { name: ENGINE_DT }),

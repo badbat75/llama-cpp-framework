@@ -108,6 +108,20 @@ function modelProfileCalls(bff: ReturnType<typeof fakeBff>) {
   return bff.calls.filter((c) => c.path.startsWith('/api/profiles/model'))
 }
 
+/** `method path` for every call under /api/profiles/model, sorted: an arrival
+ * sends the profile read and the model-info read beside it (19 G.1), and the
+ * brief does not pin which one goes first. */
+function modelProfileTexts(bff: ReturnType<typeof fakeBff>): string[] {
+  return modelProfileCalls(bff)
+    .map((c) => `${c.method} ${c.path}`)
+    .sort()
+}
+
+/** The two reads an arrival at `path` sends (19 G.1). */
+function arrivalReads(path: string): string[] {
+  return [`GET ${path}`, `GET ${path}/model-info`].sort()
+}
+
 // List-page helpers (criteria 60, 62).
 async function table(main: HTMLElement): Promise<HTMLElement> {
   return within(main).findByRole('table', { name: en('model-profiles-title') })
@@ -531,10 +545,12 @@ test('2d.59a: only exactly . and .. are refused: ... and a.b read as usual, with
       within(main).queryByText(en('model-profile-not-found', id)),
       id,
     ).toBeNull()
-    expect(
-      modelProfileCalls(bff).map((c) => `${c.method} ${c.path}`),
-      id,
-    ).toEqual([`GET /api/profiles/model/${id}`])
+    expect(modelProfileTexts(bff), id).toEqual(
+      arrivalReads(`/api/profiles/model/${id}`),
+    )
+    expect(modelProfileReads(bff, id), id).toBe(
+      1,
+    ) /* 19 G.1: the profile read once */
     cleanup()
     vi.unstubAllGlobals()
   }
@@ -579,10 +595,10 @@ test('2d.56: the address reads GET /api/profiles/model/<id>, the id percent-enco
     // waited for, the way the switch tests wait for their write.
     await waitFor(() => expect(modelProfileReads(bff, id), id).toBe(1))
     // Criterion 80: the page reads only this, not the list, not the engines.
-    expect(
-      modelProfileCalls(bff).map((c) => `${c.method} ${c.path}`),
-      id,
-    ).toEqual([`GET /api/profiles/model/${encoded}`])
+    // 19 G.1: beside it, one model-info read of the same id.
+    expect(modelProfileTexts(bff), id).toEqual(
+      arrivalReads(`/api/profiles/model/${encoded}`),
+    )
     cleanup()
     vi.unstubAllGlobals()
   }

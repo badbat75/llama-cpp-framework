@@ -107,6 +107,9 @@ Lessons only: the rules are in `AGENTS.md`.
 - A wrapping chip list capped by `max-width: 100%` on the chip is capped by its PARENT, so the `ul` of a flex row
   needs `min-width: 0` too: with the list uncapped the widest item grows the document's `scrollWidth` and the
   ux check reports `overflow: scrollWidth N > 320`.
+- The full `npm --prefix fe test` (102 files, one jsdom worker each) loses one `SignInOnly.test.tsx`
+  timing test about 1 run in 10 here (`09 S1a.10`, a `findByRole` on the nav after sign-in); a detached
+  HEAD worktree with the same `node_modules` is green 6/6. State the rate in the report, do not chase it.
 - React: `flushSync` (from `react-dom`) is the only way a committed state is readable in the next statement, and a
   `startWrite` nested inside `flushSync` does not commit. A `useOptimistic` overlay ENDS a task after the answer
   resolves, so a test that focuses an item the answer restored cannot be written with it.
@@ -115,6 +118,12 @@ Lessons only: the rules are in `AGENTS.md`.
   derivation, no effect, no setter cascade. A plain index survives a poll that moves a label, and
   then `aria-selected` marks the label nobody walked onto and Enter writes it. So the two rules pair:
   every key that hides the list (Escape as much as Tab) clears the active option too.
+- `fe`'s lint (`eslint-plugin-react-hooks` recommended) answers `react-hooks/set-state-in-effect` for a
+  synchronous `setState` in an effect body, so "clear this row's typed text when its editor goes away"
+  cannot be an effect. The render-time guard passes the linter and the tests: `if (blocks === null &&
+  typed !== null) setTyped(null)` beside the `useState` (React's adjust-state-during-render, the same
+  render that drops the field). The pure derivation `blocks === null ? null : typed` also lints, but the
+  text reappears when the row re-enters the mode (Auto, then Even).
 - `cargo clippy -p <crate> --all-targets -- -D warnings` builds the lib WITHOUT the tests, so a
   `pub(crate)` item of a private module that only `#[cfg(test)]` code calls is dead there. Split it: keep
   the production function, mark the wrapper the tests call `#[cfg(test)]` (a fn simply stops being built,
@@ -478,6 +487,9 @@ Lessons only: the rules are in `AGENTS.md`.
   and a doc comment naming the cap is no needle.
 - A value check the manager answers needs an arm in the bff's 422 field map beside `override-no-*`
   (`tensor-split-format` marks `tensor-split`, `moe-cache-with-tensor-split` marks `moe-cache-mib`).
+  The map's fallback arm is `args[0]`, so a refusal whose args start with the profile's name
+  (`model-profile-device-outside` is `[profile, instance, key, device]`) marks the profile id and not
+  the control until a keyed arm reads `args.get(2)`; the test's `assert_refused(.., field)` is the pin.
   Since ruling (a) the device keys carry NO marker exemption in `parse_body`: `checks::device_list` and
   `tensor_split` judge `RawSection::get` (the value the preset reader cuts at the first `;`/`#`), so a
   marker never reaches them and every body key goes through the generic `checks::comment_markers`.
@@ -558,6 +570,33 @@ Lessons only: the rules are in `AGENTS.md`.
   (`save_no_changes_with_no_record_restarts_nothing_and_asks_no_state`). The earlier
   `None if !changed => client.list_instances()` arm is ruled out (slice 15 "As built"): the save's limit is
   never spent on the state of an instance the record never named.
+
+## Slices L3 / L4 (2026-11-22): a key onto the web, and the device bound
+
+- A key that moves INTO `WEB_MODEL_PROFILE_KEYS` reddens the bff's exhaustive off-list test:
+  `model_profile_save.rs`'s `save_key_outside_the_web_list_is_400_and_reaches_no_manager` names the key in
+  its array (comment and all), and no production rule answers 400 and 200 for one body. Grep the bff tests
+  for the key name BEFORE promising a key move green, and report the stale array entry.
+- `MODEL_PROFILE_INT_KEYS` is a const-generic array: the length literal grows by hand beside the new
+  entry. `config/src/form.rs`'s `int_fields` reads its ranges and lists only the GUI's TEXT int fields,
+  so a key whose GUI control is a SpinBox int with a `<name>_auto` box (`n_cpu_moe`) needs no form entry
+  and `every_integer_field_is_checked` (which walks `ui/types.slint`'s `_default` companions) stays green.
+- Device names in the device bound are EXACT names compared case-insensitively, the rule of
+  `ggml_backend_dev_by_name` (`striequals` over `ggml_backend_dev_name`,
+  `ggml/src/ggml-backend-reg.cpp:345`): there is NO index matching, so `ROCm1` is outside
+  `Devices = ROCm0,CUDA1`. A fixture that reads "a `ROCm0,CUDA1` profile where `ROCm1` passes" is
+  counting indices, and it collapses into the phase beside it that pins an already-outside device as no
+  news: the same shape, opposite expectation, one rule.
+- The manager refuses a `[*]` section in a model profile file: `checks::model_profile_sections` runs
+  `model_profile_id` on every changed section and `*` is outside the id charset, so
+  `write_file("models.ini", ..)` with a `[*]` answers `invalid-model-profile-id ["*"]`. A `[*]` cascade
+  therefore exists on disk only from a write the manager did not do, and the cascade judgement is reachable
+  only on the paths that read the pool FROM DISK (`set_model_profile`, `set_server_profile`, an in-use
+  server profile save, a `models.ini.disabled` save), never at the `models.ini` write that carries it.
+- Proof of a fixture defect, with no test file touched: `cp <file> /tmp/opencode/<x>.bak`, patch by exact
+  text in python, run, `cp` back, `diff -q` the pair. A refusal's own `kept(&before)` then trips on your
+  scratch write, which is itself the proof the verb wrote nothing: read that panic as the assertion above
+  it passing.
 
 ### Slice AN4 (2026-11-22): `/api/version` and the node's host facts
 
@@ -1575,9 +1614,125 @@ Lessons only: the rules are in `AGENTS.md`.
 - A name imported and then used by its full path (`crate::vulkan::Status::Failed`) is `unused_imports`
   under `-D warnings`: import it and write the short path.
 
+## Slice LS1 (2026-11-22): the model facts read beside the model profile read
+
+- `fe/src/test/bff.ts` answers a route as `options.X ?? DEFAULT`, so a test that names a literal `null`
+  body (`{ modelInfo: null }`) is answered the DEFAULT fixture: no production reader can tell "the body
+  is null" from "the test named no body", so such a case is red by construction. Report the line.
+- A new GET under an existing prefix reddens every pin whose helper filters by PREFIX:
+  `ProfilesNav.test.tsx`'s `profileReads` is `path.startsWith('/api/profiles/model')` compared with an
+  exact one-item list, so the facts GET of the same id counts and the test demands no facts read for the
+  ids `19 G.1` demands it for. `bff.to(method, path)` is exact, `bff.calls.filter(startsWith)` is not:
+  grep the suite for `startsWith('<the route>')` equality pins before promising a sub-route green.
+- The test mirror of the strings, `EN` in `fe/src/test/bff.ts`, is what the text tests read, and
+  `App.test.tsx` pins `en_US.json` to it key by key, so a production string can never lead it: a brief
+  table and a test that counts the lines of the same value (`split('\n').length`) must agree first.
+- To keep a read's answer from outliving the row it belongs to, store `{ id, read }` and gate in render
+  (`facts?.id === id ? facts.read : undefined`): a `setX(initial)` at the top of the read effect is the
+  eslint error `react-hooks/set-state-in-effect`, and the gate needs no effect at all.
+- Whether a file was prettier-clean at HEAD: `git show HEAD:fe/src/x.tsx | npx --prefix fe prettier
+  --stdin-filepath fe/src/x.tsx --check`. A copy in `/tmp` finds no config and reddens every file.
+
+## Slice J1 (2026-11-22): `tensors` in the model info, `override-tensor` on the web
+
+- llama.cpp v1.0.0 trims NOTHING on the `-ot` path: `parse_tensor_buffer_overrides` (`common/arg.cpp:239`)
+  does `string_split(value, ',')`, `find('=')`, `substr` on both sides, and looks the RIGHT side up
+  EXACTLY in a map keyed by `ggml_backend_buft_name` (so `CPU` is the name, `ggml-backend.cpp:1185`):
+  `"a= CPU"` throws `unknown buffer type`, the model never loads; `"a=CPU, b=ROCm0"` does NOT throw,
+  because only the device part is looked up, and `llama-model-loader.cpp:1334` compiles `" b"` with
+  `std::regex` + `std::regex_search` and matches no tensor name: silent, the rule is dead. So a space rule
+  must be judged on the RAW text on each side of the first `=` (the `,` split adds the space to the pattern
+  of every rule after the first), and the `, ` separator the GUI's `render` never emits makes a `", "`
+  value a hand-written line. (There is no `parse_patterns`: a name from a summary, not in this tree.)
+- That rule and HEAD's `every_override_tensor_rule_names_a_pattern_and_a_device` are unsatisfiable
+  together: its case wants `"blk\.1\.attn=CPU, ffn_.*_exps=ROCm1"` Ok with `changed = true` and J1's wants
+  the structurally identical `"a=CPU, b=ROCm0"` refused as `override-tensor-space [2]` (same device
+  spellings, same `changed`). Quote both lines, keep the design's rule.
+- `checks::override_tensor` takes `changed: bool`. The two call sites in `pai-app` pass `false`
+  (`model_profiles::validate_for_save` rewrites EVERY key of the profile, so no line there is "the save's
+  own", and `tensor_override::validate`'s table trims the device and sanitizes the pattern): the new rules
+  are the web save's, and the GUI's behaviour is untouched, which is what the app's 577 tests pin.
+- Two array-length literals grow by hand when a refusal key joins a test list: `EXPECTED_KEYS: [&str; 13]`
+  in `checks.rs`'s module (E0308 names the size), beside `MODEL_PROFILE_INT_KEYS`. Both are test data:
+  a key a test names is required by that test's own acceptance.
+- The model-info row travels as a tuple in TWO copies (`ModelInfoRow` in `crates/core/src/client/dbus.rs`
+  and `crates/manager/src/manager/dbus.rs`): widen both, and the inner nested tuple renders in zbus's
+  signature as `(bsstta(sst)b)` for `ModelFacts` + `(as)` for the key and args. The pipe reply is strict,
+  so a new key is a new `parse_doc_line` arm and every document fixture (both transports' test modules,
+  the manager's `tests/`) must carry it: a fixture that omits it is answered `Other`.
+- The manager's `model_info` reads the shards ONCE (`gguf_shape::read_shards`) and feeds the same shards
+  to `shape_of` and `tensor_rows`; a reader failure maps to `model-info-unreadable [path]` and drops the
+  reader's text, so a path the pool names travels in the reply and no byte of the file does.
+  `tensor_rows` answers `(rows, truncated)` with `MAX_TENSOR_ROWS` inclusive (20 001 tensors answer 20 000
+  rows and the flag).
+- The byte bound counts each row as `serde_json::to_string(<row>).len() + 1`, and that length is the SAME
+  whatever the key order (`{"name":X,"bytes":N}` and `{"bytes":N,"name":X}` differ by zero bytes: the keys
+  and values are the same text), so `json!({"name","bytes"})` in `pai-core` matches the test's `row_bytes`
+  and the `preserve_order` flip of the build cannot move the cut. Cut at the FIRST row past either bound
+  (a labelled `break 'shards`: the rows past it never travel, in any shard) and set the flag there; the
+  test pins the tightness, so a per-row count 1 byte off the test's shifts `fits` and reddens the list.
+- A 20 000-row fixture prints a 745 KB assertion line: the message ("7340 fit") is at its HEAD and the
+  kept list is the whole rest, so read the failure with `sed -n '<line>p' | cut -c1-200`, and never `cat`
+  the log (the tool showed only the tail of that one line).
+- A fixture that hands the same file to two pins can be self-inconsistent: `service.rs`'s `plain_facts`
+  lists 6 tensor rows while `write_gguf_kv` writes 7 for `plain.gguf` (the missing one is
+  `output.weight`), and its sibling `moe_facts` does list its `output.weight`. The design says every
+  tensor, so the fixture is the red, not the reader.
+- `got.info.unwrap_or_else(|| panic!("no facts: {got:?}"))` is E0382 (the closure borrows `got` after the
+  partial move): `got.info.as_ref().unwrap_or_else(..)` loses no assertion, apply it and name it.
+- A test attribute glued to the tail of the doc-comment line above it
+  (`/// ... accepted value.#[tokio::test]`, `crates/bff/tests/model_profile_save.rs:3202`) is a doc
+  comment, so the test never runs and `--all-targets` clippy reddens the file with `dead_code` on the
+  function and its const. Report the line, it is the tester's.
+
 ## Stop every stub you start
 
 Probing the UI with `fe/ux/stub.py` by hand left eleven stubs running detached for the U17b slice
 (2026-11-21). Start a stub in the foreground of one command that kills its pid on exit (`python3 -I
 fe/ux/stub.py ... & pid=$!; ...; kill $pid`), and check `ps -eo pid,ppid,cmd | grep stub.py` is empty
 before you report.
+
+## Slice 19 LS1 (2026-11-23): the per-GPU block editor
+
+- A model profile number field's text is NOT in the page's `values`/draft: while its default box is
+  ticked the draft carries no key at all, and the text a user typed lives in `boxed[key]`
+  (`boxText` from `fe/src/boxed.ts`, `''` when ticked). A card that reads a sibling number field
+  (blocks mode reads `n-gpu-layers`) must read `boxed`, and `values[key]` answers `null` forever: proof
+  is a dump of `boxed['n-gpu-layers']` next to `values`, in the scratch test.
+- jsdom moves no focus: `fireEvent.change` and `fireEvent.keyDown` leave `document.activeElement` on
+  `body`. A test that asserts a control "keeps the focus" while its row re-renders (`19 G.6` on the
+  block slider) is green only if the handler focuses it: `event.currentTarget.focus({ preventScroll:
+  true })` before the state write, which is a no-op in a real browser, where the drag owns the focus.
+- A vector of ZEROS is the same state as an empty one (`tensor-split: 0,0` is Auto's, not a cut of
+  nothing): a rule keyed on "every weight empty" must read `w === '' || Number(w) === 0`, the shape
+  `gpuShares` already uses for the `*-share-auto` text.
+- Two reds of `ModelProfileGpu6/7.test.tsx` are the tests', not the code's, proved by the helpers:
+  `blockValues` returns `[id, blocks input value, slider value]`, so the Escape test's
+  `input.value === '20'` and `[[A,'29','29'],..]` ask one element for two texts at once; and the
+  19 G.9 uncheck test expects the row order `[CUDA0, ROCm0, Vulkan0]` where brief 14 GD1.5/GD1.8
+  ("first the checked rows, then the unchecked at its GD1.5 place") and that file's own green
+  `GD1.8: unchecking one moves it back among the unchecked rows` answer `[CUDA0, Vulkan0, ROCm0]`.
+- `Reflow.test.ts`'s `CLASSES` needs the new class (`blocks-slider`) and brief 19 section 6 names only
+  `HearthTokens.test.ts` H1a.12 among the files that change, so a brief that briefs a CSS class (19
+  G.12's 24 px + `accent-color`) must name the R1.8 list too.
+
+## Slice 19 LS1 review (2026-11-22): D1 the fieldset's grid, D2 Auto vs malformed
+
+- A GPU fieldset is a `.field`, so from 720 px (`index.css` 1388) its children place themselves in the
+  200px + 1fr grid: a paragraph that appears and goes (budget, Auto, malformed) takes the second cell of
+  row 1 and the list drops into the label column. The review's fix, in that same media block, puts the
+  three paragraphs (one shared class) and the list in `grid-column: 2`, and needs NO `grid-row`: the
+  auto-placement cursor sits at the last explicitly-placed cell, so the un-placed `.check-list-actions`
+  (Auto, Even) lands on the row after the list, in the control column, and the card's
+  `p[role='status']` takes no cell because `.visually-hidden` is `position: absolute` (an abspos child of
+  a grid container is not a grid item).
+- A CSS rule naming a `gpu` selector reddens TWO exhaustive lists, and brief 19 section 6 names neither:
+  `Reflow.test.ts` R1.8 (the classes the sheet selects, and the ids: `#root` plus
+  `#model-profile-gpu-devices`) and `NodePage.test.tsx` 1191, every rule whose selector matches
+  `/\bgpu\b/`, IN SHEET ORDER (a rule of the 720 px block at ~1405 comes before `.check-list .gpu-id` at
+  ~1712). That helper folds the selector's whitespace, so a two-line comma group reads as `A, B`: write
+  the expected entry with one space after the comma.
+- `fe`'s eslint config sets no `argsIgnorePattern`, so the `_` prefix saves nothing: an unused LAST
+  parameter of a `test.each` callback (`async (vector, _why)`) is `@typescript-eslint/no-unused-vars`
+  (the `after-used` default spares `_what` when a later parameter is used). Drop the parameter, it loses
+  no assertion: the title's `%s` comes from the tuple, not from the callback's list.

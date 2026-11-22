@@ -1402,6 +1402,21 @@ legend.field-label {
   .field-error {
     grid-column: 2;
   }
+
+  /* The GPU list's fieldset (brief 19, its LS1 review D1, 2026-11-22): the
+     fieldset is a `.field`, so its children place themselves in these two
+     columns. The budget, Auto and malformed line of 19 G.4 and 19 G.5 come and
+     go with the state, so the three share one class and sit in the control
+     column beside the line above them, and the list goes under them: left
+     alone, the line took the second cell of the first row and the list dropped
+     into the 200 px label column, stretching Auto and Even to its whole height.
+     Nothing names a grid-row: the lines above the list appear and go, so a
+     hand-placed row breaks with them, and Auto and Even, which carry no
+     grid-column, flow onto the row after the list. */
+  #model-profile-gpu-devices > .gpu-blocks-line,
+  #model-profile-gpu-devices > .check-list {
+    grid-column: 2;
+  }
 }
 
 /* The disclosure in the Assets card's heading (08-hearth-h10-h11.md H11a.9):
@@ -1721,6 +1736,18 @@ ul.check-list {
 .check-list .gpu-weight {
   flex: 0 1 7ch;
   width: 7ch;
+}
+
+/* The block slider of a GPU row (brief 19, 19 G.5, 19 G.12): a direct item of
+   the wrapping row, taking the free width, so the label, the slider and the
+   range text wrap inside the li at 320 px and at 200 % text. It is at least
+   24 px high (2.5.8) and keeps the native track and thumb, coloured by the
+   accent, so a forced-colours palette keeps its drawing. */
+.check-list .blocks-slider {
+  flex: 1 1 12rem;
+  min-height: 24px;
+  min-width: 0;
+  accent-color: var(--accent);
 }
 
 .check-list-actions {

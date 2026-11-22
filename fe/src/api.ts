@@ -64,6 +64,97 @@ export function sessionEnded(reply: Reply): boolean {
   return reply.status === 401
 }
 
+/** The layer facts of one model file, as the model-info route answers them
+ * (brief 19 section 0): `blockCount` every block of the file, `moe` whether it
+ * has experts, and the two expert counts, 0 when the header carries none. */
+export type ModelFacts = {
+  blockCount: number
+  moe: boolean
+  expertCount: number
+  expertUsed: number
+}
+
+/** One model-info read: the file's facts, the reason there are none (the key of
+ * section 0's four and its args), or `null` for a read that answered nothing. */
+export type ModelInfoRead = { facts: ModelFacts } | { reason: ApiError } | null
+
+/** The reason keys of section 0. A reply naming any other is a failed read. */
+const MODEL_INFO_REASONS = [
+  'model-info-fetched',
+  'model-profile-no-model',
+  'model-info-missing',
+  'model-info-unreadable',
+]
+
+/** A whole number, `null` for anything else. */
+function whole(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) ? value : null
+}
+
+/** An expert count of 0 or more: any other value reads as 0 (19 G.1). */
+function count(value: unknown): number {
+  const n = whole(value)
+  return n === null || n < 0 ? 0 : n
+}
+
+/** The `info` of a reply, read: `null` for anything that is not the object of
+ * section 0. */
+function modelFacts(value: unknown): ModelFacts | null {
+  if (!isRecord(value)) return null
+  const blockCount = whole(value.blockCount)
+  if (blockCount === null || blockCount <= 0) return null
+  if (typeof value.moe !== 'boolean') return null
+  return {
+    blockCount,
+    moe: value.moe,
+    expertCount: count(value.expertCount),
+    expertUsed: count(value.expertUsed),
+  }
+}
+
+/** The `reason` of a reply, read: its key and args when the key is one of the
+ * four of section 0, `null` for anything else. */
+function modelReason(value: unknown): ApiError | null {
+  if (!isRecord(value) || typeof value.key !== 'string') return null
+  if (!MODEL_INFO_REASONS.includes(value.key)) return null
+  if (!Array.isArray(value.args)) return null
+  return { key: value.key, args: value.args.map(String) }
+}
+
+/** A model-info body, read (19 G.1): `info` is set exactly when `reason` is
+ * not, so a reply with both, or with neither, is a read that answered nothing,
+ * as is a body that is no object at all or carries no `model`. */
+export function parseModelInfo(body: unknown): ModelInfoRead {
+  if (
+    !isRecord(body) ||
+    !(typeof body.model === 'string' || body.model === null)
+  )
+    return null
+  const facts = body.info === null ? null : modelFacts(body.info)
+  const reason = body.reason === null ? null : modelReason(body.reason)
+  if ((facts === null) === (reason === null)) return null
+  return facts === null ? { reason: reason! } : { facts }
+}
+
+/**
+ * The layer facts of one model profile's model file (brief 19, 19 G.1):
+ * `GET /api/profiles/model/<id>/model-info`, the id encoded as the profile read
+ * encodes it, within the GET limit. `null` is a read that answered nothing: no
+ * session, no manager, a body that is not of that shape, no answer in time, no
+ * network. It is no session-ended answer: a page that cannot read its model
+ * file keeps its session (decision 1).
+ */
+export async function readModelInfo(id: string): Promise<ModelInfoRead> {
+  try {
+    const reply = await call(
+      `/api/profiles/model/${encodeURIComponent(id)}/model-info`,
+    )
+    return reply.status === 200 ? parseModelInfo(reply.body) : null
+  } catch {
+    return null
+  }
+}
+
 /** The key and args of an error body, or null when the body is not one. */
 export function apiError(body: unknown): ApiError | null {
   if (typeof body !== 'object' || body === null) return null

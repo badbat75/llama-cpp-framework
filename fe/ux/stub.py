@@ -41,6 +41,10 @@ STATE = {
     "tags": "few",
     "load": "fast",
     "node": "ok",
+    # The GPU distribution card's split mode (brief 14 GD1.2, brief 19 section 7):
+    # `tensor` as the document carries it, `layer` with the key removed, the file's
+    # mode where the block controls show.
+    "split": "tensor",
 }
 
 # How long a held read stays open, for the loading states of brief 17 U17a:
@@ -138,6 +142,15 @@ MODEL_PROFILE_DOC = {
         "device": "CUDA0,ROCm0",
         "tensor-split": "0.6,0.4",
     },
+}
+
+# GET /api/profiles/model/<id>/model-info (brief 19, section 7): the facts of the
+# profile's model file, read: 64 blocks and a Mixture of Experts with 8 of 128
+# experts used, so the GPU card is in blocks mode and the MoE pair is enabled.
+MODEL_INFO = {
+    "model": "/m/qwen/Qwen3-27B-Q8_0.gguf",
+    "info": {"blockCount": 64, "moe": True, "expertCount": 128, "expertUsed": 8},
+    "reason": None,
 }
 
 # GET /api/node/devices (brief 14, GD): the engine's probe, in probe order, the
@@ -349,10 +362,27 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json(200, SERVER_PROFILES)
         if p == "/api/profiles/model":
             return self.json(200, MODEL_PROFILES)
+        # The facts of a model file (brief 19, section 0): the block counts and the
+        # experts, read by the manager from the GGUF.
+        if p.startswith("/api/profiles/model/") and p.count("/") == 5:
+            pid = unquote(p.split("/")[4])
+            if p.split("/")[5] == "model-info":
+                if pid == MODEL_PROFILE_DOC["id"]:
+                    return self.json(200, MODEL_INFO)
+                return self.json(404, {"key": "no-model-profile-named", "args": [pid]})
         if p.startswith("/api/profiles/model/") and p.count("/") == 4:
             pid = unquote(p.split("/")[4])
             if pid == MODEL_PROFILE_DOC["id"]:
-                return self.json(200, MODEL_PROFILE_DOC)
+                doc = dict(MODEL_PROFILE_DOC)
+                if STATE["split"] == "layer":
+                    # The file's mode: `split-mode` absent, and a ratio of 40 and
+                    # 25 the facts read projects to block counts (19 G.4).
+                    values = {
+                        k: v for k, v in doc["values"].items() if k != "split-mode"
+                    }
+                    values["tensor-split"] = "40,25"
+                    doc["values"] = values
+                return self.json(200, doc)
             return self.json(404, {"key": "no-model-profile-named", "args": [pid]})
         return super().do_GET()
 

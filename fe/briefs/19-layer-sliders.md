@@ -385,3 +385,58 @@ both themes, 200 % text. Both added by the tester with LS1 (the stub) and LS2 (n
   server profile `Devices` of an instance the profile is assigned to? Recommended: not now; the save's
   refusal names the GPU and the instance (19 G.18), and the warning comes cheaply with R4/R5, when the
   page reads the server profile's `Devices` for the GPU rows anyway.
+
+## LS1 review (designer, 2026-11-22)
+
+Read `fe/src/gpuBlocks.ts`, the LS1 diff of `GpuSplit.tsx`, `ModelProfilePage.tsx`, `ModelProfileCards.tsx`,
+`api.ts`, `index.css`, `en_US.json`; driven in Chromium, Firefox and WebKit with the `fe/ux` stub
+(`split=layer`) and Playwright routes (`build/ux-review/ls1.js facts|act|layout`, `ls1shot.js`; shots in
+`build/ux-review/ls1/`). **Verdict: accepted after re-check (D1, D2 below fixed and re-checked
+2026-11-22); everything else met.**
+
+- 19 G.1 met: one read per arrival (`ModelProfilePage.tsx` 300), shape check and failed reads
+  (`api.ts` 67-157): a 500, a body of no shape and an unknown reason key all give the failed line.
+- 19 G.2 met in all three engines: pending, dense, MoE with and without expert counts, the four reasons,
+  failed; plain `p.muted` after the intro, before split mode; a 190-character path wraps (no sideways
+  scroll at 320).
+- 19 G.3 met (`gpuBlocks.ts`, BigInt projection).
+- 19 G.4 met except D1 and D2: pending shows no editor, a reason shows the weight fields, GPU layers 0
+  leaves blocks mode.
+- 19 G.5 met: label item, slider, range plus share; names "Blocks CUDA0" on textbox and slider;
+  `aria-describedby` share first; `aria-valuetext` "40 of 65: blocks 0-39"; no `aria-value*` attributes.
+- 19 G.6 met: a drag to 64 and back leaves 40, 25; a track click sets the count; arrows, Home, End from
+  the current counts; a pointer released off the slider ends the drag (the next arrow on another row
+  works from the current counts); the sum is always the places.
+- 19 G.7 met: typing moves nothing; Enter and blur apply; `x` puts the count back; 99 clamps to 65;
+  Escape leaves the typed text, applied on blur (as the brief says); the count already shown writes
+  nothing (`GpuSplit.tsx` 812).
+- 19 G.8 met: Even gives 33, 32 (22, 22, 21 with three GPUs), Auto shows the Auto line, the focus stays
+  on the button. 19 G.9 met: the new row takes its share, Move down carries the count, one GPU leaves
+  blocks mode with the focus kept on the checkbox. 19 G.10 met: no save button while untouched; typed 20
+  saves only `{"tensor-split": "20,45"}`. 19 G.11 met: GPU layers 10 gives "10 places", counts 7, 3.
+- 19 G.12 met except D1: Tab order checkbox, Blocks, slider, Move up, Move down; sliders 24 px high,
+  native track with `accent-color`; no sideways scroll at 320 px and 200 % with three rows and a
+  64-character id, both themes. The unfilled track is drawn by the engine (1.44:1 in WebKit, 2.09:1 in
+  Chromium light): UA-drawn appearance is outside 1.4.11, the thumb and the value text carry the state.
+
+**D1 (must fix).** At 720 px and wider, `.field` is a two-column grid (`index.css` 1388-1404) and the
+GPU fieldset's children place themselves in it. The new budget, Auto or malformed paragraph
+(`GpuSplit.tsx` 614-638) takes the second cell of the first row, so the list (639) drops into the 200 px
+label column and Auto and Even sit in the second column, stretched to the whole list's height
+(`build/ux-review/ls1/firefox-1280-dark.png`; `ls1shot.js` logs the x positions). Fix: give the three
+blocks paragraphs one class (e.g. `gpu-blocks-line`), and in the 720 px rule place
+`#model-profile-gpu-devices > .gpu-blocks-line` and `#model-profile-gpu-devices > .check-list` in
+`grid-column: 2`, so row 1 is the as-of line beside the budget, the list goes under the budget, and Auto
+and Even land on the row after it as today. Pin it with a test that reads the CSS (as `Reflow.test.ts`
+does).
+
+**D2 (small).** `GpuSplit.tsx` 583: `Number('0x0')` and `Number('0e1')` are 0, so a weight like that is
+Auto and malformed at once, and both paragraphs show. Fix: `const autoSplit = !malformed && ...`
+(move 586 above 583), with a test.
+
+**Re-check (2026-11-22): D1 and D2 fixed.** `build/ux-review/ls1fix.js`, all three engines at 1280 and
+760 px, light and dark: in blocks, Auto and malformed states the as-of line sits in column 1 beside the
+blocks line in column 2, the list is under it in column 2 (430 or 462 px wide), and Auto and Even are
+on the row after it, 40 px high. The tensor state is as before. `0x0,0e1` shows only the malformed line.
+No sideways scroll. `npm --prefix fe/ux run check` (132 states per browser): only the 8 known
+`instance-server` target-size findings (Chromium, Firefox); `model-profile-blocks` clean in all three.

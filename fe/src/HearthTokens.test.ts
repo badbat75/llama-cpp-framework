@@ -685,8 +685,18 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
       const v = prop(r.body, n)
       if (v) sizes.push(`${r.sel.replace(/\s+/g, ' ')}: ${n}: ${v}`)
     }
+  // Brief 19, 19 G.12 (fe/briefs/19-layer-sliders.md): the block slider of a
+  // GPU row is at least 24 px high (2.5.8) and shrinks to the row, so it names
+  // its own two sizes under a class that says blocks (the coder names the
+  // class, this pins the name says it). The rest of the sheet is unchanged.
+  const sliderSizes = sizes.filter((s) => /\bblocks\b/.test(s))
   expect(
-    sizes,
+    sliderSizes.map((s) => s.slice(s.indexOf(': ') + 2)),
+    '19 G.12: the block slider carries min-height 24px and min-width 0 in the sheet, under a class whose name says blocks, and nothing else of its own',
+  ).toEqual(['min-height: 24px', 'min-width: 0'])
+  const rest = sizes.filter((s) => !/\bblocks\b/.test(s))
+  expect(
+    rest,
     'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9), and the fact row of a tile and its value cell shrink below their content (17b), and the tag suggestion list shrinks to the field (15 section 11 D2)',
   ).toEqual([
     '#root: min-height: 100vh',
