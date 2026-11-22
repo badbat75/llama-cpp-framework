@@ -573,6 +573,16 @@ Each is one React component, reused by every page.
     removed, so focus never drops; the result is said by one visually hidden `role="status"`
     region ("ROCm0: position 1 of 2"). Never a drag handle alone
     ([2.5.7](https://www.w3.org/TR/WCAG22/#dragging-movements)) **(preference: buttons only)**.
+- **Rule list** (an ordered list of small records edited in place: the model profile page's Tensor
+  placement, brief 21): a `fieldset` Field whose content after the legend sits in one wrapper `div`
+  (one grid cell at 720 px), holding a `ul role="list"` of `li`, each one `fieldset` named by a
+  visible numbered legend ("Rule 2"), its controls in a wrapping flex row (label and control one
+  item), a full-width line for a long control (a regex) and for its error. Rows keyed by an id the
+  page gives them, never by index. Add appends and focuses the new row's first control; Remove (a
+  secondary button, "Remove" plus the hidden legend) moves focus to the next row, else the previous,
+  else Add; no Confirm, Discard puts it back. Named choices are the editor; the raw value stays
+  editable in a text Field applied on Enter or blur **(preference: no reorder buttons while the raw
+  text can reorder)**.
 - **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
   (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
   the label on one line, cut with an ellipsis where the row is narrower than it (the chip at most the row's width; the x's name carries the full label; a cut chip, on hover or focus, shows a temporary `.chip-full` pill over it with the whole label, wrapping, leaving the x uncovered, hidden by Escape: WCAG 1.4.13; profile chips are focusable for it), wrapping anywhere only under `@media (max-width: 15em)`, the user's large text on a narrow screen (user, 2026-11-21) and, when it can be removed, a 24 px

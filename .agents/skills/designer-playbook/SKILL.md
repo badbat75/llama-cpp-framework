@@ -128,6 +128,10 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   in Playwright (`build/ux-review/an5.js`: About, Node info, muted words, held read, Tab order,
   320 menu, 3 engines x 1280/320 x themes x 200 %, about 9 minutes: run it in the foreground with a
   generous timeout, or it is moved to the background and must be waited on).
+- `-ot` devices match exactly (llama.cpp looks buffer types up by exact name), unlike `device`,
+  `device-draft` and `mmproj-device` (case-insensitive): brief 21 decision 4. The browser's `RegExp`
+  is a newer ECMAScript than `std::regex` (ES3: no lookbehind, no named groups, cppreference), so
+  counts made in the page are advice. The GUI's per-row `,`/`=` stripping is a refusal at Save on the web.
 - The nav's structure (brief 20): a node group always shown, its instance links inside it, so a
   link never vanishes with a failed read. A link whose visible words need a word of context to be
   heard right (`default · qwen-27b`) keeps the visible part `aria-hidden` and a visually hidden phrase
