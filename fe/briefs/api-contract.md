@@ -63,8 +63,8 @@ exist yet. Change this file first when a shape changes.
 
 | Route | Who | Slice | Success |
 | --- | --- | --- | --- |
-| `GET /api/version` | anyone | exists | `{"version"}` |
-| `GET /api/node` | signed in | 13, being built (bff slice 13) | `{"name", "api", "version", "engines"}` |
+| `GET /api/version` | signed in | exists; `name`, `os` AN4, served (e52480d) | `{"version", "name", "os"}` |
+| `GET /api/node` | signed in | 13; `os`, `vulkan`, `gpus`, `nodeInfo` AN4, served (e52480d) | `{"name", "api", "version", "engines", "os", "vulkan", "gpus"}` (+ `nodeInfo` on a manager failure) |
 | `GET /api/node/devices` | signed in | GD (bff slice G2, served 66b2bb3), `ramMib`/`cpuThreads` served (a1a3458) | `{"probedAt", "ramMib", "cpuThreads", "devices"}` |
 | `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13; `removable` 16, served (e262708) | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
@@ -131,11 +131,21 @@ state. The fe offers Remove only where it is true: the removal refuses a running
 ([below](#as-designed-after-4b), "Instances"; `crates/bff/README.md` "Creating and removing an
 instance").
 
-### `GET /api/node` (13, being built)
+### `GET /api/version` (`name` and `os`: AN4, served e52480d)
 
 Behind a session: 401 `session-required` without one; it asks the manager nothing and does not move the
-idle deadline, as `GET /api/version`. No other error: a missing or unreadable version file is left out.
-200:
+idle deadline. 200:
+
+    {"version": "2.99.1", "name": "gpu-box",
+     "os": {"name": "Ubuntu", "version": "26.04", "kernel": "7.0.0-43-generic"}}
+
+`name` is the host name, as `GET /api/node` answers it; `os` is the machine the bff runs on, read by
+the bff itself (os-release's `NAME` and `VERSION_ID`, the kernel release), each field a string or `null`.
+
+### `GET /api/node` (13; the host's facts AN4, served e52480d)
+
+Behind a session: 401 `session-required` without one; it does not move the idle deadline, as
+`GET /api/version`. A missing or unreadable version file is left out. 200:
 
     {"name": "gpu-box", "api": "/api", "version": "2.99.1",
      "engines": [{"engine": "llama.cpp", "version": "1:1.0.0+pai2",
@@ -149,6 +159,25 @@ idle deadline, as `GET /api/version`. No other error: a missing or unreadable ve
 CPU-only engine, sorted by name; a backend's `name` is the package suffix (`cuda`, `rocm`, `vulkan`),
 its display name the fe's string. Read at each request. The fe does not read `api` yet. Source:
 `ARCHITECTURE.md` "Slice 13's decisions".
+
+Since AN4 the reply also carries the host's facts, asked of the manager's `NodeInfoAs` as the
+signed-in user within 10 s (`ARCHITECTURE.md` "About and node info"):
+
+    "os": {"name": "Ubuntu", "version": "26.04", "kernel": "7.0.0-43-generic"},
+    "vulkan": "ok",
+    "gpus": [{"pci": "0000:03:00.0", "vendor": "1002", "name": "AMD Radeon AI PRO R9700",
+              "driver": "amdgpu", "version": null,
+              "vulkan": {"driver": "radv", "info": "Mesa 26.0.8-1ubuntu0.3"}}]
+
+Every text is a string or `null`; `vulkan` is `ok`, `none` or `failed`; rows in the manager's order, at
+most 32, sent as the manager answered them. A row's `version` `null` means the driver module sets no
+version (an in-tree driver), `driver` `null` no driver bound; a row's `vulkan` `null` with
+`"vulkan": "ok"` means Vulkan did not see that device, its `driver` and `info` both `null` a device
+below Vulkan 1.2 without `VK_KHR_driver_properties`; a Vulkan device not joined by bus id is its own
+row with `pci`, `driver` and `version` `null`. When the manager is not there or does not answer within
+10 s, still 200 with `os`, `vulkan` and `gpus` `null` and `"nodeInfo": {"key": "client-unavailable",
+"args": []}`; any other client failure the same with `client-other`; with no failure `nodeInfo` is
+absent. The manager refusing the user is 403 `session-not-administrator`, and the session ends.
 
 ### `GET /api/node/devices` (GD, bff slice G2, served 66b2bb3; the inventory fields a1a3458)
 

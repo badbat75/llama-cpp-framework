@@ -20,7 +20,7 @@ administrators only, members of the group `pai` (user, 2026-11-15): a right pass
 member signs in, a right password of anyone else is 403 `session-not-administrator`
 (`fe/briefs/api-contract.md`). Behind
 sign-in it has the Overview (version, instances), the About page (the framework's version and the operating system),
-a Node info page (this host's name and each installed engine's version and backends, [below](#the-node)), an instance page (the server file, Start, Stop, Restart, start at boot: all served)
+a Node info page (this host's name, OS and kernel, each installed engine's version and backends, and each GPU's drivers, [below](#the-node)), an instance page (the server file, Start, Stop, Restart, start at boot: all served)
 and the Model profiles page (the model profile list, the on/off switch per model profile and one model profile's own
 page, read and saved: all served, [below](#the-model-profile-routes)); on that page four cards are editable and the
 rest read-only, the fe's save being the open `PLAN.md` item 2h ([below](#the-web-ui-fe)).
@@ -120,11 +120,11 @@ runtime (axum).
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/version` | `{"version": "<framework version>"}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
+| `GET /api/version` | `{"version": "<framework version>", "name": "<host name>", "os": {"name": <text|null>, "version": <text|null>, "kernel": <text|null>}}` (e52480d: `name` as `GET /api/node` answers it, `os` read by the bff itself with `pai_core::host::os`, the machine the bff runs on), for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
 | `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "serverProfile": "<profile>|null", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>, "removable": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the server profiles, the ports, the tags and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
 | `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, each a string: 201 `{"id"}` with the id the body sent, once the manager wrote the instance, for a signed-in user, as that user, under the write's 15 s. A body that is not those three strings is 400 `instance-malformed`, the manager not connected to; every rule of the instance itself is the manager's and keeps its key ([below](#creating-and-removing-an-instance)) |
 | `DELETE /api/instances/{id}` | 204 with no body once the manager took the instance away, for a signed-in user, as that user, under the write's 15 s: 409 `instance-protected` `[id]` for `default` and `instance-running` `[id]` for one that is up, 404 `client-no-instance` for an id the record does not name ([below](#creating-and-removing-an-instance)) |
-| `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}]}`, for a signed-in user; 401 `session-required` with no session, the manager not asked. Like `GET /api/version`, the read asks the manager nothing and leaves the session's idle deadline where it was ([below](#the-node)) |
+| `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}], "os": {...}|null, "vulkan": "ok"|"none"|"failed"|null, "gpus": [...]|null}`, for a signed-in user, the last three from the manager's `NodeInfoAs` as that user (e52480d); 401 `session-required` with no session, the manager not asked. It leaves the session's idle deadline where it was ([below](#the-node)) |
 | `GET /api/node/devices` | `{"probedAt": "<UTC text>|null", "ramMib": <int>, "cpuThreads": <int>, "devices": [{"id", "name", "backend", "totalMib", "freeMib"}]}`: the node's compute devices beside the host's RAM and logical CPUs, asked of the manager as the signed-in user, on a bound long enough for the engine probe it runs (35 s); 401 `session-required` with no session, the manager not asked ([below](#the-node)) |
 | `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
 | `GET /api/session` | `{"user"}` of the cookie's session, for anyone |
@@ -278,9 +278,15 @@ session is checked first, so no request reaches the manager without one.
 ## The node
 
 `GET /api/node` (`crates/bff/src/node.rs`) answers what this host is and what its packages installed.
-Like `GET /api/version` it is gated by a session, asks the manager nothing and leaves the session's
-idle deadline where it was: 401 `session-required` with no live session, and no other answer. The web
-UI reads it for the Node info page ([below](#the-web-ui-fe)).
+Like `GET /api/version` it is gated by a session and leaves the session's idle deadline where it was:
+401 `session-required` with no live session. Unlike it, it asks the manager for the host's facts
+(e52480d, slice AN4): `NodeInfoAs` as the signed-in user, in a blocking task, within
+`NODE_INFO_TIMEOUT` (10 s, `lib.rs`; the manager's Vulkan child has 8 s of its own). A manager that is
+not there or answers past the bound is still 200, `os`, `vulkan` and `gpus` `null` and
+`"nodeInfo": {"key": "client-unavailable", "args": []}`; any other client failure the same with
+`client-other`; the manager refusing the user is 403 `session-not-administrator`, and the session
+ends. With no failure `nodeInfo` is absent. The web UI reads it for the Node info page
+([below](#the-web-ui-fe)).
 
 | Field | From |
 | --- | --- |
@@ -288,6 +294,9 @@ UI reads it for the Node info page ([below](#the-web-ui-fe)).
 | `api` | `/api`, a constant: the fe builds a route out of it |
 | `version` | The framework's version, the same one `GET /api/version` answers |
 | `engines` | `pai_core::versions::installed` of the versions folder, read at every request, so an engine upgrade shows without a restart of the service |
+| `os` | `{"name", "version", "kernel"}` of the manager's `NodeInfo` (os-release's `NAME` and `VERSION_ID`, the kernel release), each a string or `null` |
+| `vulkan` | The manager's Vulkan word: `ok`, `none` (no loader or no GPU driver) or `failed` (the child timed out, crashed or printed what does not parse) |
+| `gpus` | One `{"pci", "vendor", "name", "driver", "version", "vulkan": {"driver", "info"}\|null}` per GPU in the manager's order (at most 32), sent as the manager answered them: the bff renames, caps and judges nothing ([crates/config/README.md](../config/README.md#through-the-manager-linux-windows), `NodeInfo`) |
 
 - **The versions are the packages' own files**, one per package at `versions/<package>`
   ([docs/build-packaging.md](../../docs/build-packaging.md)): the engine's `llama.cpp` and one per
@@ -1071,8 +1080,7 @@ fe slices N and AN5) and the route's page, whose heading takes the focus and nam
 change. Each page reads
 its data once when it opens and never shows a reply's text. The shell reads `GET /api/version` once per
 session (`readVersionInfo` in `fe/src/version.ts`, since fe slice AN5): the host name it answers names the nav's instance group and the
-Overview's section, the plain words standing when the read has nothing to say (today always: the bff's
-`/api/version` answers only `version`, the `name` field being planned, `PLAN.md` slice AN4), and a failure signs
+Overview's section, the plain words standing when the read has nothing to say, and a failure signs
 nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark is rewritten to
 `#/profiles/model` (`legacyHref`, 05b.8 and 05b.9), the rest of the address copied byte for byte.
 
@@ -1083,8 +1091,8 @@ nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark i
 | `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and `PUT /api/instances/<id>/boot`, both behind the session), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) | signed in; otherwise the sign-in form in its place |
-| `#/node` | Node info (`fe/src/NodePage.tsx`, fe slice AN5, `fe/briefs/18-about-node-info.md`), read again at every arrival from `GET /api/node` (an engine upgrade does not restart the web service): the host name, the operating system and kernel, the framework's version, one section per installed engine with its version and a row per GPU runtime package (the three known suffixes by their own word, any other as sent; a `null` version as Unknown, an engine with no runtime as None, CPU only, `engines: []` as a paragraph that there is no engine), then one block per GPU (vendor, PCI address, driver, Vulkan driver). The page reads `os`, `vulkan`, `gpus` and `nodeInfo`, which the bff does not answer yet (planned, `PLAN.md` slices AN3 and AN4): until then the OS and kernel show as Unknown and the GPU section as the paragraph that the manager could not read them (read in `NodePage.tsx`, not run against a bff). A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
-| `#/about` | The framework's version and the operating system with its version (`fe/src/About.tsx`, fe slice AN5), read again at every arrival from `GET /api/version`; the bff answers no `os` yet (`PLAN.md` slice AN4), so that row shows Unknown. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
+| `#/node` | Node info (`fe/src/NodePage.tsx`, fe slice AN5, `fe/briefs/18-about-node-info.md`), read again at every arrival from `GET /api/node` (an engine upgrade does not restart the web service): the host name, the operating system and kernel, the framework's version, one section per installed engine with its version and a row per GPU runtime package (the three known suffixes by their own word, any other as sent; a `null` version as Unknown, an engine with no runtime as None, CPU only, `engines: []` as a paragraph that there is no engine), then one block per GPU (vendor, PCI address, driver, Vulkan driver). When the reply carries `nodeInfo` (the manager did not answer), the OS and kernel show as Unknown and the GPU section is a paragraph saying the manager did not answer or could not read them. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
+| `#/about` | The framework's version and the operating system with its version (`fe/src/About.tsx`, fe slice AN5), read again at every arrival from `GET /api/version`. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200
