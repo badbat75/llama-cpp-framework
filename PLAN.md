@@ -1100,7 +1100,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     node info"): the manager reads the node facts (new `NodeInfo`/`NodeInfoAs`, which the director
     will call too), the Vulkan driver per GPU included (a `pai-manager vulkan-probe` child; its first
     run on this machine needs the user's go-ahead), About reads `/api/version` with `os`. Slices AN1 to
-    AN5 (brief 18 for AN5, split AN5a and AN5b). Built: AN1. In progress: AN5a and AN2 (2026-11-22). Left for AN2's round: two doc fixes in host.rs (the Linux-only "kernel driver bound" wording at :63, the real sysfs driver link in the comment at :349 and the fixtures).
+    AN5 (brief 18 for AN5, split AN5a and AN5b). Built: AN1. In progress: AN5 (AN5b folded into AN5a, one slice) and AN2 (2026-11-22). Left for AN2's round: two doc fixes in host.rs (the Linux-only "kernel driver bound" wording at :63, the real sysfs driver link in the comment at :349 and the fixtures).
     **Tags on model profiles** (user, 2026-11-22): a model profile carries tags too, as chips with the
     same suggestions (C1, C2), for three uses: labels and a filter on the Models page, routing (the router
     and the director pick a model by tag, step 14 and item 14), and shown to clients in the model list
