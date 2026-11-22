@@ -556,7 +556,7 @@ may download, over which channel and identity, integrity checks, storage and quo
 director, resumable transfers, how it relates to a node's own Hugging Face downloads), then a
 slice after 9; the done-when gains: a node downloads a model from the director into its models
 folder and an instance serves it.
-Decided (user, 2026-11-21): **the director is the name** (since 2026-11-22 a role of `pai-manager`, `pai-manager director`, not a binary of its own: above); **its links
+Decided (user, 2026-11-21): **the director is the name** (since 2026-11-22 a role of `pai-manager`, `pai-manager director`, not a binary of its own: above; started by its own unit under its own account, not as a child of the manager, which without root could only give it the manager's account and so the CA key: confirmed by the user on 2026-11-22); **its links
 with the nodes are secured by a private CA in the director**: at the join (one-time code) a node sends a
 CSR and gets a short-lived certificate (about 30 days) renewed by itself over the mutual TLS channel;
 the director's own certificate comes from the same CA; revocation is a refused renewal plus a deny list.
