@@ -453,6 +453,48 @@ impl GpuTotals for NoGpus {
     }
 }
 
+/// The node's own facts the node-info read answers (AN3, `ARCHITECTURE.md`
+/// "About and node info"): the operating system the host runs, the kernel's GPU
+/// rows, and what the node's Vulkan read answered. The three readings are the
+/// host's, so the manager itself opens no `os-release`, walks no `/sys` and
+/// loads no Vulkan driver: a test hands its fake a fixture tree and a scripted
+/// child, and a manager wired with no seam answers a hole and spawns nothing.
+pub trait NodeFacts {
+    /// The operating system: os-release's `NAME` and `VERSION_ID`, and the
+    /// kernel's release (`uname(2)`), each `None` when the host answered none.
+    fn os(&self) -> pai_core::host::OsInfo;
+    /// The kernel's display devices, in bus id order, at most
+    /// `pai_core::host::MAX_GPU_ROWS` of them.
+    fn gpus(&self) -> Vec<pai_core::host::GpuDriver>;
+    /// The node's Vulkan drivers as the child answered them, the answer kept
+    /// for [`VULKAN_CACHE_SECONDS`].
+    fn vulkan(&self) -> pai_core::vulkan::Probe;
+}
+
+/// The node's facts answered as nothing: no OS, no kernel row, and a Vulkan
+/// read that gave nothing to trust. The default of [`Manager::new`], so a
+/// manager that wires no seam spawns no child and answers a hole.
+pub struct NoNodeFacts;
+
+impl NodeFacts for NoNodeFacts {
+    fn os(&self) -> pai_core::host::OsInfo {
+        pai_core::host::OsInfo {
+            name: None,
+            version: None,
+            kernel: None,
+        }
+    }
+    fn gpus(&self) -> Vec<pai_core::host::GpuDriver> {
+        Vec::new()
+    }
+    fn vulkan(&self) -> pai_core::vulkan::Probe {
+        pai_core::vulkan::Probe {
+            status: pai_core::vulkan::Status::Failed,
+            devices: Vec::new(),
+        }
+    }
+}
+
 /// How long the engine probe of `--list-devices` is given before it is
 /// killed (ARCHITECTURE.md (b) 2, "The GPUs").
 pub const GPU_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -756,6 +798,45 @@ impl VulkanProbe {
     }
 }
 
+/// The node's own facts, read from the host the manager runs on (AN3):
+/// `pai_core::host` reads the operating system and the kernel's GPU rows, and
+/// the Vulkan answer comes from the cached child of [`VulkanProbe`], so a page
+/// polled inside the cache window spawns no child. A fact the host does not
+/// answer is `None` and a child that answers nothing is `Failed`: the read
+/// stays a hole in the page, never an error the caller has to answer.
+pub struct HostNodeFacts {
+    vulkan: VulkanProbe,
+}
+
+impl HostNodeFacts {
+    /// The facts of this node: the Vulkan child is this executable, asked for
+    /// its drivers under [`VULKAN_PROBE_TIMEOUT`].
+    pub fn for_node() -> Self {
+        Self {
+            vulkan: VulkanProbe::for_node(),
+        }
+    }
+}
+
+impl NodeFacts for HostNodeFacts {
+    fn os(&self) -> pai_core::host::OsInfo {
+        // `/` is the real host: the root the fixture trees stand in place of.
+        pai_core::host::os(std::path::Path::new("/"))
+    }
+    fn gpus(&self) -> Vec<pai_core::host::GpuDriver> {
+        pai_core::host::gpu_drivers(std::path::Path::new("/"))
+    }
+    fn vulkan(&self) -> pai_core::vulkan::Probe {
+        // The caller's clock, the same Unix second `probed_at` uses.
+        self.vulkan.probe(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_secs())
+                .unwrap_or_default(),
+        )
+    }
+}
+
 /// Replace `path` with `contents` atomically (a temp file beside it, synced,
 /// then renamed over it). On Unix the temp file has `file_mode(file)` before
 /// any byte is written and, for an instance file, its group set to
@@ -884,6 +965,8 @@ pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     passwords: Box<dyn PasswordChecker + Send + Sync>,
     /// The GPU totals the memory check of a model profile measure against.
     gpus: Box<dyn GpuTotals + Send + Sync>,
+    /// The node's own facts the node-info read answers (AN3).
+    node: Box<dyn NodeFacts + Send + Sync>,
     /// Records every guarded call, done or refused, through [`ActionLog`].
     action_log: Box<dyn ActionLog + Send + Sync>,
     /// Held by a write from its address check to its rename, so a check
@@ -902,6 +985,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             group: Box::new(SystemGroup),
             passwords: Box::new(SystemPasswords),
             gpus: Box::new(NoGpus),
+            node: Box::new(NoNodeFacts),
             action_log: Box::new(NoActionLog),
             writing: std::sync::Mutex::new(()),
         }
@@ -928,6 +1012,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// [`GpuTotals::gpus`] answers, in place of [`NoGpus`].
     pub fn with_gpus(mut self, gpus: impl GpuTotals + Send + Sync + 'static) -> Self {
         self.gpus = Box::new(gpus);
+        self
+    }
+
+    /// This manager answering the node-info read (AN3) from `node`, in place of
+    /// [`NoNodeFacts`].
+    pub fn with_node_facts(mut self, node: impl NodeFacts + Send + Sync + 'static) -> Self {
+        self.node = Box::new(node);
         self
     }
 
@@ -1943,6 +2034,35 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     pub fn devices(&self, who: &Requester) -> Result<pai_core::client::NodeDevices, ManagerError> {
         self.authorize_quietly(who, Action::Control)?;
         Ok(self.gpus.devices())
+    }
+
+    /// The node's own info (AN3, `ARCHITECTURE.md` "About and node info"): its
+    /// operating system and kernel, what its Vulkan read answered, and one row
+    /// per GPU with the kernel's driver and the Vulkan one joined onto it. The
+    /// gate is the gate of [`Self::devices`], because this read may spawn the
+    /// Vulkan child: the caller's own read is `control` asked WITHOUT
+    /// interaction, the `As` form is the bff's account vouching for a current
+    /// member of `pai`, and every refusal is [`ManagerError::NotAuthorized`]
+    /// with no child spawned and no host read: a caller with no right must not
+    /// make the manager spawn the child. A read, so it records no action and
+    /// reaches no service manager. The three parts are read in the page's
+    /// order, the OS, the kernel's rows, the child's answer, and the join is
+    /// the core's ([`pai_core::vulkan::join`]), so the director's node gets
+    /// the same rows; a Vulkan read of `none` or `failed` joins nothing and
+    /// keeps the kernel's rows, which is a hole in the page, never an error.
+    pub fn node_info(
+        &self,
+        who: &Requester,
+    ) -> Result<pai_core::client::NodeInfoReply, ManagerError> {
+        self.authorize_quietly(who, Action::Control)?;
+        let os = self.node.os();
+        let kernel_rows = self.node.gpus();
+        let probe = self.node.vulkan();
+        Ok(pai_core::client::NodeInfoReply {
+            os,
+            vulkan: probe.status,
+            gpus: pai_core::vulkan::join(&kernel_rows, &probe),
+        })
     }
 
     /// L1 of "Layers, MoE and tensor placement on the web model profile page"
@@ -3614,6 +3734,102 @@ pub(crate) mod fakes {
                     cpu_threads,
                     devices: vec![],
                 })
+        }
+    }
+
+    /// The node's own facts (AN3), every one written by the test: the
+    /// operating system, the kernel's GPU rows, and the Vulkan child's answer.
+    /// The fake reads no `os-release`, no `/sys` and no Vulkan driver, and it
+    /// spawns no child, so a reply carrying these figures is the fake's answer
+    /// and nothing else. Every reading is recorded (`os`, `gpus`, `vulkan`), so
+    /// a test pins that a refusal read nothing and spawned nothing.
+    pub struct FakeNodeFacts {
+        pub os: pai_core::host::OsInfo,
+        pub rows: Vec<pai_core::host::GpuDriver>,
+        pub vulkan: pai_core::vulkan::Probe,
+        pub asked: std::sync::Arc<Mutex<Vec<String>>>,
+    }
+
+    /// One text of a fixture row: `""` is a text the host did not answer, kept
+    /// as `None`.
+    fn text(one: &str) -> Option<String> {
+        (!one.is_empty()).then(|| one.to_string())
+    }
+
+    impl FakeNodeFacts {
+        /// A node whose os-release answers `name` and `version` and whose
+        /// kernel is `kernel`, with no kernel row and a Vulkan read that gave
+        /// nothing to trust.
+        pub fn new(name: &str, version: &str, kernel: &str) -> Self {
+            Self {
+                os: pai_core::host::OsInfo {
+                    name: text(name),
+                    version: text(version),
+                    kernel: text(kernel),
+                },
+                rows: Vec::new(),
+                vulkan: pai_core::vulkan::Probe {
+                    status: pai_core::vulkan::Status::Failed,
+                    devices: Vec::new(),
+                },
+                asked: std::sync::Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+        /// This node answering the kernel's rows as `rows`, each
+        /// `(pci, vendor, name, driver, version)`, the bus id as sysfs names it
+        /// and `""` for a text the host did not answer.
+        pub fn with_kernel_rows(mut self, rows: &[(&str, &str, &str, &str, &str)]) -> Self {
+            self.rows = rows
+                .iter()
+                .map(
+                    |(pci, vendor, name, driver, version)| pai_core::host::GpuDriver {
+                        pci: (*pci).to_string(),
+                        vendor: text(vendor),
+                        name: text(name),
+                        driver: text(driver),
+                        version: text(version),
+                    },
+                )
+                .collect();
+            self
+        }
+        /// This node's Vulkan read answering `status` with `devices`, each
+        /// `(pci, name, cpu, driver, info)`, `pci` in sysfs' form and `""` for
+        /// a text the child printed none of.
+        pub fn with_vulkan(
+            mut self,
+            status: pai_core::vulkan::Status,
+            devices: &[(&str, &str, bool, &str, &str)],
+        ) -> Self {
+            self.vulkan = pai_core::vulkan::Probe {
+                status,
+                devices: devices
+                    .iter()
+                    .map(|(pci, name, cpu, driver, info)| pai_core::vulkan::Device {
+                        pci: text(pci),
+                        name: text(name),
+                        driver: text(driver),
+                        info: text(info),
+                        cpu: *cpu,
+                    })
+                    .collect(),
+            };
+            self
+        }
+    }
+
+    impl NodeFacts for FakeNodeFacts {
+        fn os(&self) -> pai_core::host::OsInfo {
+            self.asked.lock().unwrap().push("os".to_string());
+            self.os.clone()
+        }
+        fn gpus(&self) -> Vec<pai_core::host::GpuDriver> {
+            self.asked.lock().unwrap().push("gpus".to_string());
+            self.rows.clone()
+        }
+        fn vulkan(&self) -> pai_core::vulkan::Probe {
+            self.asked.lock().unwrap().push("vulkan".to_string());
+            self.vulkan.clone()
         }
     }
 

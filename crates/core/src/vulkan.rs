@@ -57,6 +57,28 @@ pub const STATUS_NONE: &str = "none";
 /// A read that gave nothing to trust answers this.
 pub const STATUS_FAILED: &str = "failed";
 
+/// The word a status answers: the one the child prints, the one the node's
+/// info carries over the stream, and the one the bus carries in its place
+/// (the bus has no null, and the word is text).
+pub fn word(status: Status) -> &'static str {
+    match status {
+        Status::Ok => STATUS_OK,
+        Status::None => STATUS_NONE,
+        Status::Failed => STATUS_FAILED,
+    }
+}
+
+/// The status a word answers: `None` for a text that is not one of the
+/// three, which is a document that says nothing about the node.
+pub fn status_of(word: &str) -> Option<Status> {
+    match word {
+        STATUS_OK => Some(Status::Ok),
+        STATUS_NONE => Some(Status::None),
+        STATUS_FAILED => Some(Status::Failed),
+        _ => None,
+    }
+}
+
 /// What the child's read of the node is: the loader and its ICDs answered
 /// (`Ok`), there is no loader or no ICD at all (`None`), or the read gave
 /// nothing to trust (`Failed`): killed at its bound, crashed, printing text
@@ -137,11 +159,13 @@ pub fn parse(text: &str) -> Probe {
     };
     // The status is one of the contract's three words, exactly: `"OK"`, a
     // number, a `null` and a missing key all say nothing about the node.
-    let status = match value.get("vulkan").and_then(serde_json::Value::as_str) {
-        Some(STATUS_OK) => Status::Ok,
-        Some(STATUS_NONE) => Status::None,
-        Some(STATUS_FAILED) => Status::Failed,
-        _ => return failed(),
+    let status = match value
+        .get("vulkan")
+        .and_then(serde_json::Value::as_str)
+        .and_then(status_of)
+    {
+        Some(status) => status,
+        None => return failed(),
     };
     // A `gpus` that is not a list is no device list; one the child left out is
     // an empty one (a node whose every device is of type `cpu`).

@@ -5,7 +5,7 @@
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
 //! `CreateServerProfile`, `DeleteServerProfile` and
-//! `SetInstanceTags` and `ModelInfo` go as the
+//! `SetInstanceTags` and `ModelInfo` and `NodeInfo` go as the
 //! `As` form of the same method, with the user's name as its first argument
 //! (the manager answers a principal for the bff's account alone) and answers
 //! the plain method's shape. The methods that need no right are unchanged,
@@ -26,6 +26,8 @@
 //!                                    t expert_count, t expert_used),
 //!                          (s key, as args))
 //! ModelInfoAs(s principal, s profile)    (the same reply)
+//! NodeInfo() -> (s name, s version, s kernel, s vulkan, a(sssssbss) gpus)
+//! NodeInfoAs(s principal)                (the same reply)
 //! Instances() -> a(sssqasas)          (id, engine, port, profile tags, instance tags)
 //! ServerProfiles() -> a(ssqass)       (id, engine, port, tags, instance)
 //! Version() -> (s version, u protocol)
@@ -33,8 +35,11 @@
 
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, Reason, ServerProfileInfo,
+    ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, NodeInfoReply, Reason,
+    ServerProfileInfo,
 };
+use crate::host::OsInfo;
+use crate::vulkan::{status_of, Driver, NodeGpu, Status};
 use zbus::blocking::Connection;
 use zbus::export::serde::Serialize;
 use zbus::message::Message;
@@ -185,6 +190,25 @@ fn error(e: zbus::Error) -> ClientError {
         zbus::Error::InputOutput(_) => ClientError::Unavailable,
         other => ClientError::Other(other.to_string()),
     }
+}
+
+/// The row of the node's GPU list (AN3, `ARCHITECTURE.md` "About and node
+/// info") as the client reads it: `(s pci, s vendor, s name, s driver,
+/// s version, b has_vulkan, s v_driver, s v_info)`. The bus has no null, so
+/// an absent text is the empty string, and the Vulkan pair travels only with
+/// its flag: an empty driver name is not no Vulkan device.
+type NodeGpuRow = (String, String, String, String, String, bool, String, String);
+
+/// The whole `NodeInfo` reply as the client reads it: `(s name, s version,
+/// s kernel, s vulkan, a(sssssbss) gpus)`, the kernel's rows first, then a
+/// Vulkan device no kernel row carries.
+type NodeInfoRow = (String, String, String, String, Vec<NodeGpuRow>);
+
+/// The text of the wire, `None` when it is empty: the bus carries no null, so
+/// the empty string is the fact the host did not answer, the way the stream's
+/// `null` says it.
+fn text(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
 }
 
 /// The body of `reply`; one that is not `T` is [`ClientError::Other`].
@@ -423,12 +447,68 @@ impl ManagerClient for DbusClient {
     fn authenticate(&self, user: &str, password: &str) -> Result<(bool, bool), ClientError> {
         body(self.call("Authenticate", &(user, password))?)
     }
+    fn node_info(&self) -> Result<NodeInfoReply, ClientError> {
+        // `(s name, s version, s kernel, s vulkan, a(sssssbss) gpus)`: the
+        // three OS texts, the Vulkan word, the rows (AN3). The bus has no
+        // null: an empty text is a fact the host did not answer, the way the
+        // stream reads its `null`, and a row's Vulkan pair travels only with
+        // its flag. A word that is not one of the three is a manager of
+        // another protocol, read as `failed`, the way the child's parser
+        // reads a document with no contract word.
+        let (name, version, kernel, vulkan, rows): NodeInfoRow = match self.acting() {
+            Some(principal) => body(self.call("NodeInfoAs", &(principal,))?)?,
+            None => body(self.call("NodeInfo", &())?)?,
+        };
+        Ok(NodeInfoReply {
+            os: OsInfo {
+                name: text(name),
+                version: text(version),
+                kernel: text(kernel),
+            },
+            vulkan: status_of(&vulkan).unwrap_or(Status::Failed),
+            gpus: rows
+                .into_iter()
+                .map(
+                    |(pci, vendor, name, driver, version, has_vulkan, v_driver, v_info)| NodeGpu {
+                        pci: text(pci),
+                        vendor: text(vendor),
+                        name: text(name),
+                        driver: text(driver),
+                        version: text(version),
+                        vulkan: has_vulkan.then_some(Driver {
+                            driver: text(v_driver),
+                            info: text(v_info),
+                        }),
+                    },
+                )
+                .collect(),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{DeviceRow, InstanceRow};
     use zbus::zvariant::Type;
+
+    /// The row of the node's GPU list (AN3, `ARCHITECTURE.md` "About and node
+    /// info"), as the client reads it: `pci` (the bus id to join the Vulkan
+    /// device onto, empty when the row is a Vulkan device no kernel row
+    /// carries), `vendor` (the 4 hex digits), the product `name`, the kernel
+    /// `driver` and its `version`, then the Vulkan pair: `has_vulkan`, its
+    /// `driver` and its `info`.
+    ///
+    /// The bus has no null, so an absent text is the empty string and the
+    /// Vulkan pair carries its own flag, the way `ModelInfoRow` says which
+    /// half of its reply is there: a driver name the host did not answer is
+    /// `""` on the bus and `None` in the reply, and `has_vulkan` false answers
+    /// the pair empty, never a row with a Vulkan driver of nothing.
+    type NodeGpuRow = (String, String, String, String, String, bool, String, String);
+
+    /// The whole document: `os` name, version and kernel, the `vulkan` word
+    /// (`ok`, `none` or `failed`), then the rows. The kernel is the host's own
+    /// `uname(2)`, so it travels as text like the other two.
+    type NodeInfoRow = (String, String, String, String, Vec<NodeGpuRow>);
 
     /// The row `Instances` answers, as the client reads it: one D-Bus struct
     /// `(s id, s engine, s server_profile, q port, as profile_tags,
@@ -471,6 +551,33 @@ mod tests {
             <(u64, Vec<DeviceRow>, u64, u32) as Type>::SIGNATURE.to_string(),
             "(ta(ssstt)tu)",
             "the probe's moment, the rows, the MiB of RAM, the thread count"
+        );
+    }
+
+    /// The row of the node's GPU list (AN3, `ARCHITECTURE.md` "About and node
+    /// info"): `(s pci, s vendor, s name, s driver, s version, b has_vulkan,
+    /// s v_driver, s v_info)`, the list `a(sssssbss)`. Every text is `s` and
+    /// never a variant: the bus has no null, so the empty string carries "the
+    /// host did not answer this", and the Vulkan pair needs its own `b`
+    /// because an empty driver name is not the same as no Vulkan device.
+    #[test]
+    fn the_node_gpu_row_is_the_struct_of_the_wire() {
+        assert_eq!(
+            <NodeGpuRow as Type>::SIGNATURE.to_string(),
+            "(sssssbss)",
+            "the five texts, the Vulkan flag, the Vulkan driver and its info"
+        );
+    }
+
+    /// The whole `NodeInfo()` reply: `(s name, s version, s kernel,
+    /// s vulkan, a(sssssbss) gpus)`. The three OS texts, the one Vulkan word
+    /// (`ok`, `none` or `failed`), then the rows in the manager's order.
+    #[test]
+    fn the_node_info_reply_is_the_document_of_the_wire() {
+        assert_eq!(
+            <NodeInfoRow as Type>::SIGNATURE.to_string(),
+            "(ssssa(sssssbss))",
+            "the OS, the Vulkan word, the GPU rows"
         );
     }
 }

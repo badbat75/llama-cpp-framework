@@ -1510,6 +1510,34 @@ Lessons only: the rules are in `AGENTS.md`.
   is the link, and `checks::KEYS` needs no entry for such a key.
 
 
+## Slice 18 AN3 (2026-11-22): the node's info over the two transports
+
+- Two reds of the tester's AN3 set, both proved as the tester's, no production change:
+  - `client/pipe.rs`'s `a_node_info_reply_of_the_wrong_shape_is_other` opens with
+    `client_on(input(&[node_info_document()]))`, the document as the FRAME, while every other reply in the
+    file is `json!({"ok": ...})`: `call_value` answers a frame with no `ok` / `error` at
+    `reply.get("ok").cloned().ok_or_else(other)`, so that `.expect("the fixture's document")` can never be
+    Ok. Proof it is that one line: a scratch copy of the test (same module, renamed, only that line wrapped
+    in `{"ok": ...}`) passes whole, every shape loop included. Extract it by brace counting, run it with
+    its own filter, delete it, `grep -c scratch` the file.
+  - `manager/src/tests/node_info.rs`'s `a_vulkan_read_of_none_answers_the_word_and_no_rows_vulkan` asserts
+    `name: Some("")` where its own comment says "the name is a hole, never a guess": the file's `row()`
+    writes `name: Some(name.to_string())` unconditionally, and the fixture hands it `""`. The seam cannot
+    carry `""` to the join (`fakes::text` maps `""` to `None`), `vulkan::join` leaves the kernel's name
+    `None` when the child answered `none`, and `Some("")` is unreadable over D-Bus, where `""` IS the
+    client's `None`.
+- The AN3 wire: `NodeInfo() -> (s name, s version, s kernel, s vulkan, a(sssssbss) gpus)`; a row's Vulkan
+  pair travels with its own `b` flag (the bus has no null, an empty text is the fact the host did not
+  answer), and the pipe document writes EVERY key, so the client reads a missing key as a shape
+  (`ClientError::Other`) and only a `null` as a hole. One `pai_core::vulkan::word` / `status_of` pair
+  carries the three words for the child's parser, the pipe document and the bus, so no transport spells them.
+- `ManagerClient::node_info` rides the trait's `Other` default, so the 15 fakes in `crates/app` and
+  `crates/bff/tests` need nothing for AN3 (its "Done when" asks no bff route; AN4 adds them). The
+  production wiring is two sites: `.with_node_facts(HostNodeFacts::for_node())` beside
+  `.with_gpus(ProbedGpus::for_node())` in `manager/dbus.rs::serve` and `manager/windows/entry.rs`.
+- A name imported and then used by its full path (`crate::vulkan::Status::Failed`) is `unused_imports`
+  under `-D warnings`: import it and write the short path.
+
 ## Stop every stub you start
 
 Probing the UI with `fe/ux/stub.py` by hand left eleven stubs running detached for the U17b slice

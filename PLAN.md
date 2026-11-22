@@ -1101,7 +1101,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     will call too), the Vulkan driver per GPU included (a `pai-manager vulkan-probe` child; its first
     run on this machine needs the user's go-ahead), About reads `/api/version` with `os`. Slices AN1 to
     AN5 (brief 18 for AN5, split AN5a and AN5b). Built: AN1, AN2 (the Vulkan child and join; its first real run on
-    this machine still waits for the user's go-ahead). Built: AN5, the About and Node info pages (2026-11-22; they show real node facts once AN3 and AN4 land). First real Vulkan run (user's go-ahead, 2026-11-22): 3 rows, PCI ids as lspci, radv, Mesa 26.0.8, 2.2 s. In progress: AN3 (2026-11-22). Next: AN4.
+    this machine still waits for the user's go-ahead). Built: AN5, the About and Node info pages (2026-11-22; they show real node facts once AN3 and AN4 land). First real Vulkan run (user's go-ahead, 2026-11-22): 3 rows, PCI ids as lspci, radv, Mesa 26.0.8, 2.2 s. Built: AN3, the manager's `NodeInfo`/`NodeInfoAs` (2026-11-22). Next: AN4.
     **Tags on model profiles** (user, 2026-11-22): a model profile carries tags too, as chips with the
     same suggestions (C1, C2), for three uses: labels and a filter on the Models page, routing (the router
     and the director pick a model by tag, step 14 and item 14), and shown to clients in the model list

@@ -2271,3 +2271,229 @@ fn the_dbus_client_reads_the_node_devices() {
         "a forged pair runs no engine"
     );
 }
+
+// ── The node's own info over the bus (AN3, ARCHITECTURE.md "About and node
+// info") ──────────────────────────────────────────────────────────────────
+//
+// One read answers the node's document: `os` (name, version, kernel), `vulkan`
+// (the word the node's Vulkan read answered) and `gpus` (the kernel's rows with
+// the Vulkan driver joined onto the row whose bus id the device names).
+// `NodeInfo()` is the caller's own read, gated on `control` asked WITHOUT
+// interaction, exactly as `Devices()` is; `NodeInfoAs(s)` is the bff's, for a
+// current member of `pai`. A refused read runs no Vulkan child: the seam's
+// counter stays empty. The bus carries no null, so every text the host did not
+// answer is the empty string, and a row's Vulkan pair carries its own flag; the
+// row's signature is pinned in `pai_core::client::dbus`. Names the tests
+// assume, the contract for the coder: `ManagerClient::node_info()`, the
+// interface's `NodeInfo` and `NodeInfoAs`, and the `(s, s, s, s, a(sssssbss))`
+// reply of the design.
+
+/// The node the seam answers: Ubuntu 26.04 on a kernel no real host runs, two
+/// kernel rows (an amdgpu with its module's version, an nvidia with no version
+/// and no name, as the Linux kernel names nothing) and the child answering `ok`
+/// with a device on each row's bus id, one device with no bus id (its own row)
+/// and a CPU device, which is no driver of a card.
+fn node_facts() -> crate::manager::service::fakes::FakeNodeFacts {
+    crate::manager::service::fakes::FakeNodeFacts::new("Ubuntu", "26.04", "6.14.0-24-generic")
+        .with_kernel_rows(&[
+            ("0000:03:00.0", "1002", "", "amdgpu", "2.5.0"),
+            ("0000:08:00.0", "10de", "", "nvidia", ""),
+        ])
+        .with_vulkan(
+            pai_core::vulkan::Status::Ok,
+            &[
+                (
+                    "0000:03:00.0",
+                    "AMD Radeon AI PRO R9700",
+                    false,
+                    "RADV",
+                    "Mesa 25.2.0",
+                ),
+                (
+                    "0000:08:00.0",
+                    "NVIDIA GeForce RTX 4070 SUPER",
+                    false,
+                    "NVIDIA",
+                    "560.35.03",
+                ),
+                ("", "Asus Vega", false, "RADV", "Mesa 25.1.0"),
+                ("", "llvmpipe", true, "llvmpipe", "Mesa 25.2.0"),
+            ],
+        )
+}
+
+/// One GPU row of the answer, `None` texts written out.
+fn gpu_row(
+    pci: Option<&str>,
+    vendor: Option<&str>,
+    name: &str,
+    driver: Option<&str>,
+    version: Option<&str>,
+    vulkan: Option<(&str, &str)>,
+) -> pai_core::vulkan::NodeGpu {
+    let text = |one: Option<&str>| one.map(str::to_string);
+    pai_core::vulkan::NodeGpu {
+        pci: text(pci),
+        vendor: text(vendor),
+        name: Some(name.to_string()),
+        driver: text(driver),
+        version: text(version),
+        vulkan: vulkan.map(|(driver, info)| pai_core::vulkan::Driver {
+            driver: Some(driver.to_string()),
+            info: Some(info.to_string()),
+        }),
+    }
+}
+
+/// The document the client must hand back for [`node_facts`]: the kernel's rows
+/// with the Vulkan driver joined onto the row whose bus id the device names,
+/// their names filled from `deviceName`, and the device with no bus id appended
+/// as its own row. The CPU device is not a row.
+fn node_document() -> pai_core::client::NodeInfoReply {
+    pai_core::client::NodeInfoReply {
+        os: pai_core::host::OsInfo {
+            name: Some("Ubuntu".into()),
+            version: Some("26.04".into()),
+            kernel: Some("6.14.0-24-generic".into()),
+        },
+        vulkan: pai_core::vulkan::Status::Ok,
+        gpus: vec![
+            gpu_row(
+                Some("0000:03:00.0"),
+                Some("1002"),
+                "AMD Radeon AI PRO R9700",
+                Some("amdgpu"),
+                Some("2.5.0"),
+                Some(("RADV", "Mesa 25.2.0")),
+            ),
+            gpu_row(
+                Some("0000:08:00.0"),
+                Some("10de"),
+                "NVIDIA GeForce RTX 4070 SUPER",
+                Some("nvidia"),
+                None,
+                Some(("NVIDIA", "560.35.03")),
+            ),
+            gpu_row(
+                None,
+                None,
+                "Asus Vega",
+                None,
+                None,
+                Some(("RADV", "Mesa 25.1.0")),
+            ),
+        ],
+    }
+}
+
+/// A core answering the node facts of [`node_facts`], with `bff` as the bff's
+/// account over the fake accounts (alice a member of `pai`, bob not), and
+/// polkit allowing the quiet check as `quiet`.
+fn node_info_core(bff: &str, quiet: bool) -> (Arc<Core>, Arc<std::sync::Mutex<Vec<String>>>) {
+    use crate::manager::service::fakes::{FakeGroup, FakePasswords};
+    let seam = node_facts();
+    let asked = seam.asked.clone();
+    let core = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true)
+            .quietly(quiet)
+            .bff(&Caller(bff.into())),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new())
+    .with_passwords(FakePasswords::new())
+    .with_node_facts(seam);
+    (Arc::new(core), asked)
+}
+
+/// The seam's `asked` list after `calls` accepted reads: each one reads the OS,
+/// the kernel's rows and the Vulkan answer, in that order.
+fn read_parts(calls: usize) -> Vec<String> {
+    (0..calls)
+        .flat_map(|_| ["os", "gpus", "vulkan"])
+        .map(str::to_string)
+        .collect()
+}
+
+/// pai-core's `node_info` against the interface: the bff's own read, the
+/// member's read vouched for, and the refusals. The reply crosses as the
+/// document of the design, the empty string read back as no value.
+#[test]
+fn the_dbus_client_reads_the_node_info() {
+    let bff = ":1.9";
+    let other = ":1.42";
+
+    // The bff's own read, and the member's read it vouches for.
+    let (c, asked) = node_info_core(bff, true);
+    let (_server, client) = connect(&c, Some(bff));
+    let client = Arc::new(client);
+    assert_eq!(
+        on("node info", &client, |c| c.node_info()),
+        Ok(node_document()),
+        "the document of the fakes, joined and in bus id order"
+    );
+    assert_eq!(
+        *c.authority().asked_quietly.lock().unwrap(),
+        vec![(Caller(bff.into()), Action::Control)],
+        "control asked without interaction, as `Devices` asks it"
+    );
+    assert_eq!(
+        *c.authority().asked.lock().unwrap(),
+        Vec::<(Caller, Action)>::new(),
+        "never asked with a prompt"
+    );
+    let member = Arc::new(client.acting_for("alice"));
+    assert_eq!(
+        on("node info as alice", &member, |c| c.node_info()),
+        Ok(node_document()),
+        "the member's read, vouched for by the bff"
+    );
+    let outsider = Arc::new(client.acting_for("bob"));
+    assert_eq!(
+        on("node info as bob", &outsider, |c| c.node_info()),
+        Err(ClientError::NotAuthorized),
+        "bob is no member of `pai`"
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        read_parts(2),
+        "one read of each part per accepted call, none for the refusal"
+    );
+    assert_eq!(
+        *c.service().calls.lock().unwrap(),
+        Vec::<Call>::new(),
+        "the read reaches no service manager"
+    );
+
+    // A caller polkit refuses the quiet check: refused, and no child.
+    let (c, asked) = node_info_core(other, false);
+    let (_server, client) = connect(&c, Some(other));
+    let client = Arc::new(client);
+    assert_eq!(
+        on("node info", &client, |c| c.node_info()),
+        Err(ClientError::NotAuthorized),
+        "no control, no node info"
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        Vec::<String>::new(),
+        "a refused read spawns no Vulkan child"
+    );
+
+    // A caller that is not the bff, vouching for a member: refused, no child.
+    let (c, asked) = node_info_core(bff, true);
+    let (_server, client) = connect(&c, Some(other));
+    let client = Arc::new(client);
+    assert_eq!(
+        on("node info as alice", &client, |c| c
+            .acting_for("alice")
+            .node_info()),
+        Err(ClientError::NotAuthorized),
+        "only the bff's account vouches"
+    );
+    assert_eq!(
+        *asked.lock().unwrap(),
+        Vec::<String>::new(),
+        "a forged pair spawns no Vulkan child"
+    );
+}

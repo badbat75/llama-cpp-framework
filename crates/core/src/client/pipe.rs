@@ -22,6 +22,7 @@
 //! {"method":"Devices"}
 //! {"method":"Authenticate","user":"alice","password":"..."}
 //! {"method":"ModelInfo","profile":"qwen3"}
+//! {"method":"NodeInfo"}
 //! {"method":"Version"}
 //! ```
 //!
@@ -90,8 +91,11 @@
 
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, Reason, ServerProfileInfo,
+    ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, NodeInfoReply, Reason,
+    ServerProfileInfo,
 };
+use crate::host::OsInfo;
+use crate::vulkan::{status_of, Driver, NodeGpu};
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
 use std::sync::{Arc, Mutex};
@@ -624,6 +628,65 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             reason,
         })
     }
+    fn node_info(&self) -> Result<NodeInfoReply, ClientError> {
+        let v = self.call(self.guarded("NodeInfo", &[]))?;
+        let bad = || ClientError::Other(v.to_string());
+        // The manager writes every key of this document, so a key that is not
+        // there is the shape of no manager, not a fact the host left out: each
+        // text is read strictly, and the one that is answered with nothing is
+        // the `null`, which arrives as `None`. A client that guessed at a
+        // missing key would show a driver the node does not have.
+        let text = |o: &serde_json::Map<String, Value>,
+                    key: &str|
+         -> Result<Option<String>, ClientError> {
+            match o.get(key) {
+                None => Err(bad()),
+                Some(Value::Null) => Ok(None),
+                Some(one) => Ok(Some(one.as_str().ok_or_else(&bad)?.to_string())),
+            }
+        };
+        let os = v.get("os").and_then(Value::as_object).ok_or_else(&bad)?;
+        let os = OsInfo {
+            name: text(os, "name")?,
+            version: text(os, "version")?,
+            kernel: text(os, "kernel")?,
+        };
+        // The word the node's Vulkan read answered, exactly one of the three:
+        // a `null`, `"OK"` with its capitals, a number or a word the contract
+        // does not know say nothing about the node, and a client that guessed
+        // `none` from them would hide a probe that failed.
+        let vulkan = v
+            .get("vulkan")
+            .and_then(Value::as_str)
+            .and_then(status_of)
+            .ok_or_else(&bad)?;
+        let rows = v.get("gpus").and_then(Value::as_array).ok_or_else(&bad)?;
+        let mut gpus = Vec::with_capacity(rows.len());
+        for row in rows {
+            let row = row.as_object().ok_or_else(&bad)?;
+            // The row's Vulkan driver: null (no Vulkan device on this card),
+            // or the pair with both of its texts, each a string or null. An
+            // object of one key, an object of none, a text and a list are all
+            // a shape the manager never answers.
+            let vulkan = match row.get("vulkan") {
+                None => return Err(bad()),
+                Some(Value::Null) => None,
+                Some(one) => Some(Driver {
+                    driver: text(one.as_object().ok_or_else(&bad)?, "driver")?,
+                    info: text(one.as_object().ok_or_else(&bad)?, "info")?,
+                }),
+            };
+            gpus.push(NodeGpu {
+                pci: text(row, "pci")?,
+                vendor: text(row, "vendor")?,
+                name: text(row, "name")?,
+                driver: text(row, "driver")?,
+                version: text(row, "version")?,
+                vulkan,
+            });
+        }
+        Ok(NodeInfoReply { os, vulkan, gpus })
+    }
 }
 
 /// Why a frame could not be read.
@@ -747,6 +810,9 @@ pub fn connect() -> Result<PipeClient<std::fs::File>, ClientError> {
 mod tests {
     use super::*;
     use crate::checks::Refusal;
+    use crate::client::NodeInfoReply;
+    use crate::host::OsInfo;
+    use crate::vulkan::{NodeGpu, Status};
     use serde_json::{json, Value};
     use std::io::{Cursor, ErrorKind};
     use std::sync::Arc;
@@ -846,10 +912,11 @@ mod tests {
         vec!["edge".to_string(), "v2".to_string()]
     }
 
-    const EVERY_METHOD: [(&str, Call); 16] = [
+    const EVERY_METHOD: [(&str, Call); 17] = [
         ("list_instances", |c| c.list_instances().err()),
         ("instances", |c| c.instances().err()),
         ("devices", |c| c.devices().err()),
+        ("node_info", |c| c.node_info().err()),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
         ("stop", |c| c.stop("default").err()),
@@ -1290,6 +1357,314 @@ mod tests {
         assert_eq!(
             sent_frames(&sent),
             vec![json!({"method": "DevicesAs", "principal": "alice"})],
+            "the refusal answers the As call"
+        );
+    }
+
+    // ── The node's info (AN3, ARCHITECTURE.md "About and node info") ──────
+    //
+    // The document the design answers: `os` (`name`, `version`, `kernel`),
+    // `vulkan` (one of `ok`, `none`, `failed`) and `gpus` (rows of `pci`,
+    // `vendor`, `name`, `driver`, `version` and the `vulkan` pair `driver`,
+    // `info`), every text a string or null. Names the tests assume, the
+    // contract for the coder: the stream's `NodeInfo` / `NodeInfoAs` and
+    // `ManagerClient::node_info()`. The manager's serializer writes every key,
+    // so a key that is not there is the shape of no manager, not a fact the
+    // host left out: the one that is answered with nothing is the `null`.
+
+    /// The document of a node with two kernel GPUs, one of them carrying a
+    /// Vulkan device, and a third row of a Vulkan device no kernel row carries
+    /// (no bus id, so nothing to join it onto).
+    fn node_info_document() -> Value {
+        json!({
+            "os": {"name": "Ubuntu", "version": "26.04", "kernel": "6.14.0-24-generic"},
+            "vulkan": "ok",
+            "gpus": [
+                {"pci": "0000:03:00.0", "vendor": "1002", "name": "AMD Radeon AI PRO R9700",
+                 "driver": "amdgpu", "version": "2.5.0",
+                 "vulkan": {"driver": "RADV", "info": "Mesa 25.2.0"}},
+                {"pci": "0000:08:00.0", "vendor": "10de", "name": null, "driver": "nvidia",
+                 "version": null, "vulkan": null},
+                {"pci": null, "vendor": null, "name": "NVIDIA GeForce RTX 4070 SUPER",
+                 "driver": null, "version": null,
+                 "vulkan": {"driver": "NVIDIA", "info": "560.35.03"}},
+            ],
+        })
+    }
+
+    /// The node's info `NodeInfo` answers, read as it is: the OS the host
+    /// named, the Vulkan word the child answered, and every row in the
+    /// manager's order with its bus id, its vendor, its name, its kernel
+    /// driver and version, and the Vulkan driver joined onto it. A `null` of
+    /// the document is a fact the host did not answer, so it arrives as `None`
+    /// (the page shows a hole, never a guess).
+    #[test]
+    fn the_node_info_reply_is_the_document_the_manager_answers() {
+        let (client, sent) = client_on(input(&[json!({"ok": node_info_document()})]));
+        assert_eq!(
+            client.node_info().expect("the node's info"),
+            NodeInfoReply {
+                os: OsInfo {
+                    name: Some("Ubuntu".into()),
+                    version: Some("26.04".into()),
+                    kernel: Some("6.14.0-24-generic".into()),
+                },
+                vulkan: Status::Ok,
+                gpus: vec![
+                    NodeGpu {
+                        pci: Some("0000:03:00.0".into()),
+                        vendor: Some("1002".into()),
+                        name: Some("AMD Radeon AI PRO R9700".into()),
+                        driver: Some("amdgpu".into()),
+                        version: Some("2.5.0".into()),
+                        vulkan: Some(crate::vulkan::Driver {
+                            driver: Some("RADV".into()),
+                            info: Some("Mesa 25.2.0".into()),
+                        }),
+                    },
+                    NodeGpu {
+                        pci: Some("0000:08:00.0".into()),
+                        vendor: Some("10de".into()),
+                        name: None,
+                        driver: Some("nvidia".into()),
+                        version: None,
+                        vulkan: None,
+                    },
+                    NodeGpu {
+                        pci: None,
+                        vendor: None,
+                        name: Some("NVIDIA GeForce RTX 4070 SUPER".into()),
+                        driver: None,
+                        version: None,
+                        vulkan: Some(crate::vulkan::Driver {
+                            driver: Some("NVIDIA".into()),
+                            info: Some("560.35.03".into()),
+                        }),
+                    },
+                ],
+            },
+            "every field of the document, in the manager's order"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "NodeInfo"})],
+            "the plain method, with no argument"
+        );
+    }
+
+    /// The three words of the contract, each read as itself: a node with no
+    /// loader and no ICD answers `none` and no row, a read that gave nothing to
+    /// trust answers `failed`, and the OS of a node that reads nothing is all
+    /// `null`. None of them is an error the caller has to answer: the page
+    /// shows what the node is.
+    #[test]
+    fn the_three_vulkan_words_and_their_nulls_are_answers() {
+        for (word, status) in [
+            ("ok", Status::Ok),
+            ("none", Status::None),
+            ("failed", Status::Failed),
+        ] {
+            let (client, sent) = client_on(input(&[json!({"ok": {
+                "os": {"name": null, "version": null, "kernel": null},
+                "vulkan": word,
+                "gpus": [],
+            }})]));
+            let info = client.node_info().expect("the empty node info");
+            assert_eq!(info.vulkan, status, "`{word}` is the word of the contract");
+            assert!(info.gpus.is_empty(), "`{word}` with no row");
+            assert_eq!(
+                info.os,
+                OsInfo {
+                    name: None,
+                    version: None,
+                    kernel: None,
+                },
+                "`{word}`: a null OS field is no value, never a guessed one"
+            );
+            assert_eq!(
+                sent_frames(&sent),
+                vec![json!({"method": "NodeInfo"})],
+                "`{word}` asked plainly"
+            );
+        }
+    }
+
+    /// A reply of the wrong shape is Other, like every other reply: a client
+    /// that guessed at a missing key would show a driver the node does not
+    /// have. The whole reply, the `os` object, the `vulkan` word, the `gpus`
+    /// list, one row and the `vulkan` pair of a row, are each judged.
+    #[test]
+    fn a_node_info_reply_of_the_wrong_shape_is_other() {
+        // Positive control first: the document of the fixture IS read, so a
+        // refusal below is the shape's fault and not the method's absence.
+        // Like every reply in this file, it rides as the value of `ok`.
+        let (client, _) = client_on(input(&[json!({"ok": node_info_document()})]));
+        let good = client.node_info().expect("the fixture's document");
+        assert_eq!(good.gpus.len(), 3, "the fixture has three rows");
+        assert_eq!(good.vulkan, Status::Ok, "the fixture reads `ok`");
+        // The whole reply.
+        for reply in [
+            json!({"ok": null}),
+            json!({"ok": []}),
+            json!({"ok": {"vulkan": "ok", "gpus": []}}),
+            json!({"ok": {"os": {}, "gpus": []}}),
+            json!({"ok": {"os": {}, "vulkan": "ok"}}),
+            json!({"ok": {"os": {}, "vulkan": "ok", "gpus": {}}}),
+        ] {
+            let (client, _) = client_on(input(std::slice::from_ref(&reply)));
+            let got = client.node_info();
+            assert!(
+                matches!(got, Err(ClientError::Other(_))),
+                "{reply}: a reply of the wrong shape is refused: {got:?}"
+            );
+        }
+        // The `os` object and the `vulkan` word.
+        for os in [
+            json!(null),
+            json!("Ubuntu"),
+            json!({"version": "26.04", "kernel": "6.14.0"}),
+            json!({"name": "Ubuntu", "kernel": "6.14.0"}),
+            json!({"name": "Ubuntu", "version": "26.04"}),
+            json!({"name": 1, "version": "26.04", "kernel": "6.14.0"}),
+            json!({"name": "Ubuntu", "version": ["26.04"], "kernel": "6.14.0"}),
+        ] {
+            let (client, _) = client_on(input(&[json!({"ok": {
+                "os": os, "vulkan": "ok", "gpus": [],
+            }})]));
+            let got = client.node_info();
+            assert!(
+                matches!(got, Err(ClientError::Other(_))),
+                "os {os}: refused: {got:?}"
+            );
+        }
+        for vulkan in [
+            json!(null),
+            json!("OK"),
+            json!("unknown"),
+            json!(1),
+            json!([]),
+        ] {
+            let (client, _) = client_on(input(&[json!({"ok": {
+                "os": {"name": null, "version": null, "kernel": null},
+                "vulkan": vulkan,
+                "gpus": [],
+            }})]));
+            let got = client.node_info();
+            assert!(
+                matches!(got, Err(ClientError::Other(_))),
+                "`vulkan` {vulkan}: not one of the three words, refused: {got:?}"
+            );
+        }
+        // One row, and the `vulkan` pair of a row.
+        let good_row = json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null,
+                             "driver": "amdgpu", "version": null, "vulkan": null});
+        let keys = |v: &Value| -> Vec<String> {
+            let mut k: Vec<String> = v
+                .as_object()
+                .expect("a row is an object")
+                .keys()
+                .cloned()
+                .collect();
+            k.sort();
+            k
+        };
+        // Every row of the fixture carries exactly the keys this loop cuts, so
+        // a cut row is a fixture row with one thing broken, not a shape the
+        // manager never answers.
+        for (n, fixture) in node_info_document()["gpus"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(
+                keys(fixture),
+                keys(&good_row),
+                "row {n} of the fixture answers these six keys"
+            );
+        }
+        for row in [
+            json!("not a row"),
+            json!(null),
+            // A key of the row missing, whatever it is: the manager answers all
+            // of them, so a missing one is no shape to read a row out of.
+            json!({"vendor": "1002", "name": null, "driver": "amdgpu", "version": null, "vulkan": null}),
+            json!({"pci": "0000:03:00.0", "name": null, "driver": "amdgpu", "version": null, "vulkan": null}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "driver": "amdgpu", "version": null, "vulkan": null}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null, "version": null, "vulkan": null}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null, "driver": "amdgpu", "vulkan": null}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null, "driver": "amdgpu", "version": null}),
+            // A text that is neither a string nor null.
+            json!({"pci": 3, "vendor": "1002", "name": null, "driver": "amdgpu", "version": null, "vulkan": null}),
+            json!({"pci": "0000:03:00.0", "vendor": 0x1002, "name": null, "driver": "amdgpu", "version": null, "vulkan": null}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": {"a": 1}, "driver": "amdgpu", "version": null, "vulkan": null}),
+            // The `vulkan` of a row: null, an object of the two texts, nothing else.
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null, "driver": "amdgpu", "version": null, "vulkan": "RADV"}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null, "driver": "amdgpu", "version": null, "vulkan": {}}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null, "driver": "amdgpu", "version": null, "vulkan": {"driver": "RADV"}}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null, "driver": "amdgpu", "version": null, "vulkan": {"driver": "RADV", "info": 25}}),
+            json!({"pci": "0000:03:00.0", "vendor": "1002", "name": null, "driver": "amdgpu", "version": null, "vulkan": []}),
+        ] {
+            let (client, _) = client_on(input(&[json!({"ok": {
+                "os": {"name": null, "version": null, "kernel": null},
+                "vulkan": "ok",
+                "gpus": [row],
+            }})]));
+            let got = client.node_info();
+            assert!(
+                matches!(got, Err(ClientError::Other(_))),
+                "{row}: a row of the wrong shape is refused: {got:?}"
+            );
+        }
+    }
+
+    /// A client acting for the signed-in user asks `NodeInfoAs`, with the
+    /// principal: the bff always asks this way, and the manager reads the node
+    /// for a current member of `pai`.
+    #[test]
+    fn an_acting_client_asks_the_node_info_for_the_signed_in_user() {
+        let (client, sent) = client_on(input(&[json!({"ok": {
+            "os": {"name": null, "version": null, "kernel": null},
+            "vulkan": "none",
+            "gpus": [],
+        }})]));
+        let bound = client.acting_for("alice");
+        assert_eq!(
+            bound.node_info().map(|i| i.vulkan).ok(),
+            Some(Status::None),
+            "the empty node info, answered to the As form"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "NodeInfoAs", "principal": "alice"})],
+            "the As form, with the principal as given"
+        );
+    }
+
+    /// The refusals of the node's info cross the wire like every other
+    /// method's: the gate's `NotAuthorized` for a caller without quiet
+    /// `control`, and the same word for a `NodeInfoAs` principal who is no
+    /// member of `pai` (the bff answers that 403 and ends the session). The
+    /// read may spawn a child, so a refusal is the caller's last word: the
+    /// client answers the error and nothing else.
+    #[test]
+    fn a_node_info_refusal_is_the_error_the_manager_sent() {
+        let (client, _) = client_on(input(&[error_reply("NotAuthorized", "NotAuthorized")]));
+        assert_eq!(
+            client.node_info(),
+            Err(ClientError::NotAuthorized),
+            "the plain form, refused by the quiet `control` check"
+        );
+        let (client, sent) = client_on(input(&[error_reply("NotAuthorized", "NotAuthorized")]));
+        let bound = client.acting_for("alice");
+        assert_eq!(
+            bound.node_info(),
+            Err(ClientError::NotAuthorized),
+            "the As form, refused for a principal outside `pai`"
+        );
+        assert_eq!(
+            sent_frames(&sent),
+            vec![json!({"method": "NodeInfoAs", "principal": "alice"})],
             "the refusal answers the As call"
         );
     }

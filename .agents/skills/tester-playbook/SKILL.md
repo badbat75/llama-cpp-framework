@@ -79,6 +79,11 @@ future` of a non-async block), run it, then delete it and write the real tests. 
   `[Bff] Hosts` set, nothing is re-read", "`localhost` never asks the machine") is green on day one, and
   the rule that adds an action ("re-read on an unknown name") is the red. Report each test's day-one state
   by name, and say which green tests are guards, not reds the coder needs.
+- A new verb added to a client trait WITH a default body keeps every other crate's fake compiling (no
+  shared fake to extend), and the e2e blocks that call a transport not yet wired fail with the default
+  body's OWN error text, not a compile red. That is the red to expect and report; it is not vacuous when
+  the assertion compares a whole fixture document, and it names the missing wire, so the coder sees the
+  transport to build.
 - A prove loop rewrites the real source while it runs: run nothing else with cargo on that crate
   meanwhile (the target-dir lock serialises, and a concurrent run judges the scratch copy).
 - `cargo test -p <crate>` runs no target when one target fails to compile (`--no-fail-fast` only unrolls
@@ -493,6 +498,14 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   and passes the day it is written, so report it as the wire guard beside the round trip's red.
   Write that literal in zvariant's form, NO commas between a struct's members: a pin whose own string
   carries commas is a red the coder can never pass (the sibling row pin `(ssstt)` shows the form).
+- A pipe client's positive control sends the fixture as the VALUE of `ok`
+  (`client_on(input(&[json!({"ok": doc()})]))`), never the document as the whole frame: `call_value`
+  refuses a frame with no `ok` at the frame layer, so the control's red reads as the method's absence.
+  A row()/fixture helper must take `Option<&str>` for every field the design lets be a hole: a `&str`
+  parameter forced to `Some(..)` cannot express the hole, and on D-Bus `Some("")` IS `None`
+  (`unwrap_or_default` out, empty text in), so an expected `Some("")` splits the pipe's e2e from the
+  bus's. A seam fixture writing `""` for "the host did not answer" (`fakes::text` → `None`) decides
+  the expected value: the hole is `None` (ARCHITECTURE.md 3492).
 - A test that asserts a struct of hardware readings for EXACT equality (the probe box of
   `pai-manager/src/tests/gpu_probe.rs` answering `NodeDevices`) cannot name the machine's RAM and CPU
   count, so a new figure of that kind forces the reading to be a seam the test hands in. Leave those

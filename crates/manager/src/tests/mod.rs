@@ -26,6 +26,10 @@ mod vulkan_probe;
 // The Vulkan child's extension and version plan (manager/vulkan_child.rs
 // `chain_plan`): a pure decision, no loader opened, so it runs on every OS.
 mod vulkan_chain;
+// The node's own info of slice AN3 (manager/service.rs `node_info`): its gate
+// and its document, every figure from a fake seam. No `paths::`, so these plain
+// `#[test]`s run beside the e2e below.
+mod node_info;
 
 #[test]
 fn data_root_e2e() {

@@ -12,8 +12,8 @@ use super::action_log::WriterLog;
 use super::pipe::PROTOCOL;
 pub use super::service::state_name;
 use super::service::{
-    Action, Authority, Caller, Manager, ManagerError, Principal, ProbedGpus, Requester, Resolver,
-    ServiceControl, ServiceError, SystemResolver, UnitState,
+    Action, Authority, Caller, HostNodeFacts, Manager, ManagerError, Principal, ProbedGpus,
+    Requester, Resolver, ServiceControl, ServiceError, SystemResolver, UnitState,
 };
 use std::sync::Arc;
 use zbus::blocking::{Connection, Proxy};
@@ -197,6 +197,54 @@ fn model_info_row(reply: pai_core::client::ModelInfoReply) -> ModelInfoRow {
     (reply.model.unwrap_or_default(), facts, reason)
 }
 
+/// One row of `NodeInfo`'s GPU list, as the bus answers it: `(s pci, s vendor,
+/// s name, s driver, s version, b has_vulkan, s v_driver, s v_info)`, the list
+/// `a(sssssbss)`. The bus has no null, so every text the host did not answer
+/// is the empty string, and the Vulkan pair carries its own flag, the way
+/// `ModelInfoRow` flags its facts: an empty driver name is not no Vulkan
+/// device.
+type NodeGpuRow = (String, String, String, String, String, bool, String, String);
+
+/// The `NodeInfo` reply as the bus answers it: `(s name, s version, s kernel,
+/// s vulkan, a(sssssbss) gpus)`: the three OS texts, the Vulkan word (`ok`,
+/// `none` or `failed`), then the rows in the manager's order, kernel rows
+/// first.
+type NodeInfoRow = (String, String, String, String, Vec<NodeGpuRow>);
+
+fn node_info_row(info: pai_core::client::NodeInfoReply) -> NodeInfoRow {
+    (
+        info.os.name.unwrap_or_default(),
+        info.os.version.unwrap_or_default(),
+        info.os.kernel.unwrap_or_default(),
+        pai_core::vulkan::word(info.vulkan).to_string(),
+        info.gpus
+            .into_iter()
+            .map(|g| {
+                // The pair travels only with its flag: no Vulkan device is
+                // the flag false and the texts empty.
+                let (has_vulkan, driver, v_info) = match g.vulkan {
+                    Some(d) => (
+                        true,
+                        d.driver.unwrap_or_default(),
+                        d.info.unwrap_or_default(),
+                    ),
+                    None => (false, String::new(), String::new()),
+                };
+                (
+                    g.pci.unwrap_or_default(),
+                    g.vendor.unwrap_or_default(),
+                    g.name.unwrap_or_default(),
+                    g.driver.unwrap_or_default(),
+                    g.version.unwrap_or_default(),
+                    has_vulkan,
+                    driver,
+                    v_info,
+                )
+            })
+            .collect(),
+    )
+}
+
 #[zbus::interface(name = "org.privateai.Manager1")]
 impl<S, A, R> ManagerInterface<S, A, R>
 where
@@ -312,6 +360,34 @@ where
         Ok(model_info_row(
             self.core(move |m| m.model_info(&who, &profile)).await?,
         ))
+    }
+
+    /// `NodeInfo`: the node's own info, `(s name, s version, s kernel,
+    /// s vulkan, a(sssssbss) gpus)` (AN3, ARCHITECTURE.md "About and node
+    /// info"): the three OS texts, the word the node's Vulkan read answered,
+    /// and one row per GPU with the kernel's driver and the Vulkan one joined
+    /// onto it, kernel rows first. `control` asked of polkit WITHOUT
+    /// interaction, as `Devices` asks it: the read may spawn the Vulkan child,
+    /// and a node's drivers are worth no challenge over the caller's own
+    /// session.
+    async fn node_info(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> Result<NodeInfoRow, Error> {
+        let who = requester_of(&header)?;
+        Ok(node_info_row(self.core(move |m| m.node_info(&who)).await?))
+    }
+
+    /// `NodeInfoAs`: the same document, asked as a principal the caller
+    /// vouches for: the bff's account, and a current member of `pai`. No
+    /// polkit question at all: the pair is the right.
+    async fn node_info_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+    ) -> Result<NodeInfoRow, Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(node_info_row(self.core(move |m| m.node_info(&who)).await?))
     }
 
     async fn status(&self, id: String) -> Result<String, Error> {
@@ -952,7 +1028,10 @@ pub fn serve() -> zbus::Result<Connection> {
             std::io::stderr(),
         ))))
         // The memory check measures against the node's own cards.
-        .with_gpus(ProbedGpus::for_node()),
+        .with_gpus(ProbedGpus::for_node())
+        // The node-info read answers the host: os-release, the kernel, the PCI
+        // tree, and the cached Vulkan child.
+        .with_node_facts(HostNodeFacts::for_node()),
     );
     // The instances read `models@<id>.ini`, so the pool on disk is rendered
     // before anyone can ask for it. A render that fails leaves the files as

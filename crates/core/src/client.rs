@@ -3,7 +3,9 @@
 //! Linux the client speaks D-Bus ([`dbus`]).
 
 use crate::checks::Refusal;
+use crate::host::OsInfo;
 use crate::strings;
+use crate::vulkan::{NodeGpu, Status};
 
 /// The prefix of the manager's error names, `<prefix><Kind>`.
 const ERROR_PREFIX: &str = "org.privateai.Manager1.Error.";
@@ -300,6 +302,20 @@ pub struct ModelInfoReply {
     pub reason: Option<Reason>,
 }
 
+/// The node's own info, as [`ManagerClient::node_info`] answers it
+/// (`ARCHITECTURE.md`, "About and node info", slice AN3): the operating system
+/// the host runs, what the node's Vulkan read answered, and one row per GPU
+/// with the kernel's driver and the Vulkan one. The three parts are the
+/// readers' own types ([`OsInfo`], [`Status`] and [`NodeGpu`]), so the reply is
+/// the host's answer with nothing added to it: a fact the host did not answer
+/// is `None`, and a Vulkan read that gave nothing to trust is [`Status::Failed`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeInfoReply {
+    pub os: OsInfo,
+    pub vulkan: Status,
+    pub gpus: Vec<NodeGpu>,
+}
+
 /// What the configurator asks the manager.
 pub trait ManagerClient {
     fn list_instances(&self) -> Result<Vec<String>, ClientError>;
@@ -502,6 +518,22 @@ pub trait ManagerClient {
         let _ = profile;
         Err(ClientError::Other(
             "this transport of the manager has no ModelInfo".into(),
+        ))
+    }
+    /// The node's own info ([`NodeInfoReply`]): its operating system and kernel,
+    /// what its Vulkan read answered, and one row per GPU with both drivers.
+    /// The manager reads the host and, for the Vulkan part, runs a child of its
+    /// own executable, so the read is guarded exactly as `devices` is: `control`
+    /// asked without interaction, and as every `As` method for the bff's read
+    /// for a signed-in user, who must be a current member of `pai`; a caller
+    /// with no right is [`ClientError::NotAuthorized`] with no child spawned.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn node_info(&self) -> Result<NodeInfoReply, ClientError> {
+        Err(ClientError::Other(
+            "this transport of the manager has no NodeInfo".into(),
         ))
     }
     /// Whether `password` is `user`'s OS password, and whether that user may
@@ -1187,6 +1219,89 @@ mod tests {
     #[test]
     fn a_client_of_the_default_body_answers_no_model_info() {
         match Bare.model_info("Qwen3.8-27B") {
+            Err(ClientError::Other(detail)) => {
+                assert!(!detail.is_empty(), "the detail says why: {detail:?}")
+            }
+            other => panic!("the trait's default body: {other:?}"),
+        }
+    }
+
+    /// `node_info()` is a verb of the manager as its siblings are: the same
+    /// `Result<_, ClientError>` shape, and a verb of the trait object, so every
+    /// transport has it (AN3, `ARCHITECTURE.md` "About and node info"). Its
+    /// reply is the document of the design: `os` with `name`, `version` and
+    /// `kernel`, `vulkan` one of the three words, `gpus` rows of `pci`, `vendor`,
+    /// `name`, `driver`, `version` and the `vulkan` pair (`driver`, `info`).
+    /// Every text is optional: a fact the host did not answer is `None`, and
+    /// these are the names the bff's `/api/node` JSON answers.
+    #[test]
+    fn node_info_is_a_verb_of_the_manager() {
+        let ask: fn(&dyn ManagerClient) -> Result<NodeInfoReply, ClientError> = |c| c.node_info();
+        let _ = ask;
+        let info = NodeInfoReply {
+            os: OsInfo {
+                name: Some("Ubuntu".into()),
+                version: Some("26.04".into()),
+                kernel: Some("6.14.0-24-generic".into()),
+            },
+            vulkan: Status::Ok,
+            gpus: vec![NodeGpu {
+                pci: Some("0000:03:00.0".into()),
+                vendor: Some("1002".into()),
+                name: Some("AMD Radeon AI PRO R9700".into()),
+                driver: Some("amdgpu".into()),
+                version: Some("2.5.0".into()),
+                vulkan: Some(crate::vulkan::Driver {
+                    driver: Some("RADV".into()),
+                    info: Some("Mesa 25.2.0".into()),
+                }),
+            }],
+        };
+        assert_eq!(info.os.name.as_deref(), Some("Ubuntu"));
+        assert_eq!(info.os.version.as_deref(), Some("26.04"));
+        assert_eq!(info.os.kernel.as_deref(), Some("6.14.0-24-generic"));
+        assert_eq!(info.gpus.len(), 1, "one GPU, one row");
+        let row = &info.gpus[0];
+        assert_eq!(row.pci.as_deref(), Some("0000:03:00.0"));
+        assert_eq!(
+            row.vendor.as_deref(),
+            Some("1002"),
+            "4 lower-case hex digits"
+        );
+        assert_eq!(row.driver.as_deref(), Some("amdgpu"));
+        assert_eq!(row.version.as_deref(), Some("2.5.0"));
+        assert_eq!(
+            row.vulkan.as_ref().and_then(|v| v.driver.as_deref()),
+            Some("RADV")
+        );
+        assert_eq!(
+            row.vulkan.as_ref().and_then(|v| v.info.as_deref()),
+            Some("Mesa 25.2.0")
+        );
+        // A node that answered nothing is a reply of `None`s, never an error:
+        // the page shows a hole, and the three Vulkan words are all answers.
+        for status in [Status::Ok, Status::None, Status::Failed] {
+            let empty = NodeInfoReply {
+                os: OsInfo {
+                    name: None,
+                    version: None,
+                    kernel: None,
+                },
+                vulkan: status,
+                gpus: Vec::new(),
+            };
+            assert_eq!(empty.os.name, None);
+            assert!(empty.gpus.is_empty(), "{status:?}: no row");
+        }
+    }
+
+    /// A transport that speaks no `NodeInfo` (a manager of an older protocol)
+    /// says so and answers no node: a page that read a default body must not
+    /// show a node with no OS and no GPU, which is the shape of a node with
+    /// neither.
+    #[test]
+    fn a_client_of_the_default_body_answers_no_node_info() {
+        match Bare.node_info() {
             Err(ClientError::Other(detail)) => {
                 assert!(!detail.is_empty(), "the detail says why: {detail:?}")
             }

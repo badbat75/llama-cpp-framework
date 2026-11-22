@@ -30,7 +30,8 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// `DeleteServerProfile`, each with its `As` form, and `ServerProfiles`, the
 /// list of the node's profiles, and `CreateInstance` and `RemoveInstance`,
 /// each with its `As` form, and `ModelInfo` with its `As` form, the layer
-/// facts of one saved model profile.
+/// facts of one saved model profile, and `NodeInfo` with its `As` form, the
+/// node's own info.
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -74,6 +75,8 @@ enum Request {
     Devices(Option<Principal>),
     /// `profile`: the layer facts of one saved model profile's model.
     ModelInfo(String, Option<Principal>),
+    /// The node's own info: its OS and kernel, the Vulkan word and the rows.
+    NodeInfo(Option<Principal>),
     Authenticate(String, String),
 }
 
@@ -226,6 +229,10 @@ impl Request {
             // `models.ini` is, because the manager reads the model file.
             "ModelInfo" => Request::ModelInfo(arg("profile")?, None),
             "ModelInfoAs" => Request::ModelInfo(arg("profile")?, principal().map(Some)?),
+            // The node's own info: guarded as `Devices` is, because the read
+            // may spawn the Vulkan child. It takes no argument.
+            "NodeInfo" => Request::NodeInfo(None),
+            "NodeInfoAs" => Request::NodeInfo(principal().map(Some)?),
             "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
@@ -404,6 +411,39 @@ where
                     "reason": reply
                         .reason
                         .map(|r| json!({"key": r.key, "args": r.args})),
+                })
+            }),
+        // The node's own info, the document of the design: `os` its three
+        // texts, `vulkan` the word the child answered, `gpus` one row per GPU
+        // with the kernel's driver and the Vulkan one joined onto it. Every
+        // text is a string or null, and the serializer writes every key: a
+        // fact the host did not answer is `null`, and the row's `vulkan` is
+        // the pair or null, never a pair of nothing.
+        Request::NodeInfo(principal) => requester(caller, principal)
+            .and_then(|who| manager.node_info(&who))
+            .map(|reply| {
+                json!({
+                    "os": {
+                        "name": reply.os.name,
+                        "version": reply.os.version,
+                        "kernel": reply.os.kernel,
+                    },
+                    "vulkan": pai_core::vulkan::word(reply.vulkan),
+                    "gpus": reply
+                        .gpus
+                        .iter()
+                        .map(|g| json!({
+                            "pci": g.pci,
+                            "vendor": g.vendor,
+                            "name": g.name,
+                            "driver": g.driver,
+                            "version": g.version,
+                            "vulkan": g.vulkan.as_ref().map(|d| json!({
+                                "driver": d.driver,
+                                "info": d.info,
+                            })),
+                        }))
+                        .collect::<Vec<_>>(),
                 })
             }),
         // The empty caller too goes to the core, which answers only the bff.
