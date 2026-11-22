@@ -347,7 +347,8 @@ where
 
     /// `ModelInfo`: the layer facts of one saved model profile's `model` file,
     /// `(s model, (b has_info, t block_count, b moe, t expert_count,
-    /// t expert_used), (s key, as args))`, the parts of `model_info_row`. The
+    /// t expert_used, a(st) tensors, b tensors_truncated), (s key, as args))`,
+    /// the parts of `model_info_row`. The
     /// gate of reading `models.ini`: `control` asked of polkit WITHOUT
     /// interaction, and a refused read opens nothing. An id the pool has no
     /// section for, and `*`, are the keyed `no-model-profile-named`.

@@ -851,8 +851,8 @@ refuses nothing and `Devices = none` refuses every GPU; a `[*]` value counts for
 inherit it. It runs at a model profile save, an assignment, a server profile switch and a server
 profile save that narrows `Devices`, and only a pair newly outside is refused, so a profile already
 outside does not block an unrelated write. The answer is 422 `model-profile-device-outside`, args the
-model profile, the instance, the key and the device; through the save its `field` is `args[0]`, the
-model profile's id, not the key (`field_of` in `model_profiles.rs` has no case for it).
+model profile, the instance, the key and the device; through the save its `field` is `args[2]`, the
+key (`field_of` in `model_profiles.rs`).
 
 ### The model info
 

@@ -718,7 +718,9 @@ fn switch_failure(
 /// position of the rule inside the value), and
 /// `moe-cache-with-tensor-split`, which carries no args, and
 /// `tensor-split-format`, whose `args[0]` is the whole value: each marks the
-/// key of its own value. A refusal about the model profile's name (`invalid-model-profile-id`,
+/// key of its own value. `model-profile-device-outside` names the model profile,
+/// the instance, the key and the device, so it marks `args[2]`, the key.
+/// A refusal about the model profile's name (`invalid-model-profile-id`,
 /// `model-profile-name-taken`), and the memory check (its `args` are the model
 /// profile, an instance and two memory figures), have no key of the section to
 /// mark, so the answer carries no field at all.
@@ -734,6 +736,7 @@ fn field_of(key: &str, args: &[String]) -> Option<String> {
         | "override-tensor-space"
         | "override-bad-device" => Some("override-tensor".to_string()),
         "tensor-split-format" => Some("tensor-split".to_string()),
+        "model-profile-device-outside" => args.get(2).cloned(),
         "moe-cache-with-tensor-split" => Some("moe-cache-mib".to_string()),
         "invalid-model-profile-id" | "model-profile-name-taken" | "model-profile-over-memory" => {
             None

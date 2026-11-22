@@ -606,8 +606,7 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   max) and `-unlimited` (count); `model` for `model-profile-no-model` (id); `override-tensor` for
   `override-no-pattern` (position) and `override-no-device` (position, pattern), and from J1
   `override-tensor-space` (position) and `override-bad-device` (position, device); from L4,
-  `model-profile-device-outside` (profile, instance, key, device), its `field` `args[0]`, the profile's
-  id (`field_of` has no case for it); from G1, `args[0]`
+  `model-profile-device-outside` (profile, instance, key, device), its `field` `args[2]`, the key; from G1, `args[0]`
   (`device`, `device-draft` or `mmproj-device`) for `device-bad-name` (key, entry) and `tensor-split`
   for `tensor-split-format` (value); neither is judged against the probed GPUs; **no `field`** for
   `invalid-model-profile-id` and `model-profile-name-taken` (id). `bind-all-with-others` cannot come from a

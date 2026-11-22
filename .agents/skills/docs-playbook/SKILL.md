@@ -578,5 +578,4 @@ Lessons only: the rules are in `AGENTS.md`.
   "(the planned parts <date>)" instead of moving the date.
 - A new manager refusal reaching the model profile save gets its 422 `field` from `field_of` in
   `crates/bff/src/model_profiles.rs`, which falls back to `args[0]`: check that a new key has a case
-  there before writing which field it marks (`model-profile-device-outside` has none, so its `field`
-  is the profile's id).
+  there before writing which field it marks.

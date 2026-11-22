@@ -2262,6 +2262,46 @@ async fn save_the_managers_check_marks_the_field_of_its_rule() {
     }
 }
 
+/// The device bound's refusal (`model-profile-device-outside`, 4cfa909 L4, J1)
+/// carries four args: the model profile, the instance, the key and the device. The
+/// key is the third of them, so the 422 marks that key, the control the page shows
+/// (`device-draft`, `mmproj-device` or `override-tensor`), and not the model
+/// profile id the first arg carries. One case per key; the section is never
+/// written, no state is asked, and the session lives.
+#[tokio::test]
+async fn save_the_device_outside_refusal_marks_the_key_of_its_third_arg() {
+    for key in ["device-draft", "mmproj-device", "override-tensor"] {
+        let args = [QWEN, "default", key, "ROCm1"];
+        let app = app_holding(FILE_ON, FILE_OFF);
+        app.set_write_outcome(Outcome::Invalid {
+            key: "model-profile-device-outside",
+            values: args.iter().map(|a| a.to_string()).collect(),
+        });
+        let cookie = app.sign_in().await;
+        let rep = app
+            .save(
+                ALPHA,
+                &save_body(&alpha_revision(), json!({ "ctx-size": "8192" })),
+                Some(&cookie),
+            )
+            .await;
+        rep.assert_refused("model-profile-device-outside", &args, key);
+        assert_eq!(
+            app.calls(),
+            vec![format!("read {MODELS}"), format!("write-if alice {MODELS}")],
+            "{key}: the answer is the write's refusal, and no state is asked"
+        );
+        assert_eq!(
+            app.file_text(MODELS).as_deref(),
+            Some(FILE_ON),
+            "{key}: the manager wrote nothing"
+        );
+        app.get("/api/session", Some(&cookie))
+            .await
+            .assert_signed_in_as("alice");
+    }
+}
+
 /// The two refusals about the model profile's name mark no field: there is no key of
 /// the section beside them, so the answer carries no `field` member at all.
 #[tokio::test]
