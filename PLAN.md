@@ -27,7 +27,7 @@ as the column says. A requirement still open must be covered by a step.
 | R11 | A backend-for-frontend (`bff`) running as a local service beside `private-ai-manager`, in the same packages: the web UI of the configurator (a `fe` it serves), a gateway in front of the llama-server instances (one OpenAI-compatible endpoint, authentication, routing across instances and later engines), and the benchmark portal over `bench.db` (decided with the user on 2026-11-14) | Open: step 10 |
 | R12 | The framework is built and versioned apart from its engines: each engine (llama.cpp today, Strata later) is named explicitly and has its own package at the engine's version, the framework's packages carry only the framework's version and a minimum-version dependency on the engine (decided with the user on 2026-11-14) | Open: step 11 |
 | R13 | The director (formerly the super-manager): an optional component, installed on its own server, that governs several `private-ai-manager`s on other machines (nodes) and hosts the models they download (user, 2026-11-21); a bff connected to it also offers the management of the nodes (user, 2026-11-15) | Open: step 14 |
-| R14 | A minimal install image (like the appliance images hypervisors ship) with only the node's `private-ai-manager` installed; that manager then installs the packages the node needs (the engines: llama.cpp, Strata). Asked by the user on 2026-11-22, last in the order; also a Docker image with every package and only the manager running. | Not started: step 15. |
+| R14 | A minimal install image (like the appliance images hypervisors ship) with only the node's `private-ai-manager` installed; that manager then installs the packages the node needs (the engines: llama.cpp, Strata). Asked by the user on 2026-11-22, last in the order. | Not started: step 15. |
 
 ### How we work
 
@@ -1274,13 +1274,6 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
 (P1 to P6); the GPU drivers and runtimes the engines need; how the first administrator is created
 (the group `pai`) and how the node is reached before the web UI is installed.
 
-A second deliverable of the same step (user, 2026-11-22): a Docker image with every package installed
-and only the manager running. Open, for then: a container has no systemd and no SCM, while the manager
-runs each instance as a systemd unit (`llama.cpp@<id>`), so the image needs an instance runner of its
-own (the manager spawning and supervising llama-server, as the configurator does on macOS) or an init
-in the container; GPU access (`--device /dev/kfd /dev/dri` for ROCm, the NVIDIA Container Toolkit for
-CUDA); who the `pai` administrators are inside the container and how polkit is replaced; the models
-and config as volumes.
 
 ## Waiting for the user
 
@@ -1322,6 +1315,13 @@ and config as volumes.
 - Steps 5 and 9 partly need the RTX 4070 SUPER back in the test machine.
 
 ## Later, not planned yet
+
+- **A Docker image with every package and only the manager running** (user, 2026-11-22, kept pending):
+  a container has no systemd or SCM, while the manager runs each instance as a systemd unit, so it needs
+  an instance runner of its own (the manager spawning llama-server, as on macOS) or an init in the
+  container; open as well: GPU passthrough (`/dev/kfd`, `/dev/dri`; the NVIDIA Container Toolkit), the
+  `pai` administrators and polkit inside the container, models and config as volumes. Decide after
+  step 15's install image.
 
 - **TypeScript 7 for the web UI:** `fe/` stays on TypeScript 6.0.x (user, 2026-11-14) because
   typescript-eslint supports `>=4.8.4 <6.1.0` and TS 7.0 has no API for external tools (expected
