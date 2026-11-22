@@ -363,7 +363,7 @@ verifies only the calling user's own password, and the bff runs unprivileged.</f
 log reads, through new manager methods and bff routes.</li>
 <li><span class="planned">Item 14, the router</span>: one OpenAI-compatible endpoint in the bff that sends
 each request to the instance serving the model, logging every request.</li>
-<li><span class="planned">Step 14, the director</span>: formerly the super-manager; nodes governed over mutual TLS (certificates from its private CA) with the
+<li><span class="planned">Step 14, the director</span>: nodes governed over mutual TLS (certificates from its private CA) with the
 manager protocol unchanged; the bff in hub mode; a model store the nodes pull from (accepted 2026-11-21). Since 2026-11-22
 (accepted) a role of the one <code>pai-manager</code> binary, not a crate or binary of its own: <code>pai-manager director</code>,
 its own unit <code>private-ai-director.service</code> under the unprivileged account <code>private-ai-director</code>, its state 0700;
@@ -371,7 +371,7 @@ its own unit <code>private-ai-director.service</code> under the unprivileged acc
 <code>pai node demote</code> undoes it, keeping the CA. A dedicated director, a small machine that runs no models, is the
 recommended setup; promoting a node that runs instances stays allowed. The web UI gets a Nodes page with
 <b>+ Add node</b> (planned).</li>
-<li><span class="planned">The node's manager without root or LocalSystem</span> (proposed 2026-11-22, slices P1 to P6 at
+<li><span class="planned">The node's manager without root or LocalSystem</span> (accepted 2026-11-22, slices P1 to P6 at
 the head of step 14): the manager runs as <code>private-ai-manager</code> (Windows: <code>NT SERVICE\private-ai-manager</code>),
 a small privileged helper, <code>pai-manager helper</code>, keeping the few verbs that cannot be scoped.</li>
 <li><span class="planned">N1, the side menu as Nodes and Profiles</span> (planned, <code>fe/briefs/20-nodes-menu.md</code>):

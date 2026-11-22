@@ -296,7 +296,7 @@ up to the MiB: they hold the same files as then. The framework's packages and `l
 
 Designed for `PLAN.md` step 14, not built ([ARCHITECTURE.md](../ARCHITECTURE.md) part 2): `-core` will also ship
 the director's unit `private-ai-director.service`, disabled, and its user `private-ai-director`, the director
-being a role of `pai-manager` with no package of its own (accepted 2026-11-22); and, proposed, the manager's own
+being a role of `pai-manager` with no package of its own (accepted 2026-11-22); and, also accepted, the manager's own
 user `private-ai-manager` and a privileged helper `pai-manager helper` with its socket.
 
 **The engine carries its own version, the framework packages only the framework's.** `llama.cpp` is
