@@ -81,6 +81,7 @@ exist yet. Change this file first when a shape changes.
 | `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244); `restart` 15 | `{"enabled", "running", "restart"}` |
 | `GET /api/profiles/model/{id}` | administrator | 2d, served (36a892d) | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
 | `PUT /api/profiles/model/{id}` | administrator (`configure`) | 2h, served (3eb24b2); `restart` 15 | `{"revision", "running", "restart"}` |
+| `GET /api/profiles/model/{id}/model-info` | administrator | L2, served (e1de6be); `tensors` J1 (6570557) | `{"model", "info", "reason"}`: [crates/bff/README.md](../../crates/bff/README.md#the-model-info) |
 | `PUT /api/instances/{id}/profiles/server` | administrator (`configure`) | 15, served (2d9a4c8) | `{"running"}` |
 | `GET /api/instances/{id}/profiles/model` | administrator | 15, served (2d9a4c8) | `{"all", "profiles": [rows]}` |
 | `PUT /api/instances/{id}/profiles/model/{profile}` | administrator (`configure`) | 15, served (2d9a4c8) | `{"effective", "running"}` |
@@ -558,7 +559,7 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   `spec-type` (Assets, until 2i), `n-cpu-moe`, `moe-cache-mib` (MoE, until 2g), `device`,
   `split-mode`, `tensor-split` (GPU distribution, until 2f), `override-tensor` (Tensor placement,
   until 2j). **From bff slice G1** `device`, `split-mode` and `tensor-split` move to the
-  accepted list (68 keys, seven left out), for the GPU distribution card (`fe/briefs/14-gpu-distribution.md`). A slice that makes one editable moves it to the list in the same commit. **Body keys
+  accepted list (68 keys, seven left out), for the GPU distribution card (`fe/briefs/14-gpu-distribution.md`); `n-cpu-moe` (0 to 4096) from L3 (4cfa909) and `override-tensor` from J1 (6570557): 70 keys, five left out. A slice that makes one editable moves it to the list in the same commit. **Body keys
   match in exact case** (`CTX-SIZE` is 400): the fe sends each key as 02e's tables spell it.
 - **400 `model-profiles-malformed`**, `args: []`: a non-JSON body or another content type; `revision` not
   a string or `values` not an object; a key outside the list; a value neither a string nor `null`;
@@ -603,7 +604,10 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   marked); `fit-target` for `fit-target-format` (value, `MiB`); `moe-cache-mib` for
   `moe-cache-with-tensor-split` (no args); `load-on-startup` for `load-on-startup-over-max` (count,
   max) and `-unlimited` (count); `model` for `model-profile-no-model` (id); `override-tensor` for
-  `override-no-pattern` (position) and `override-no-device` (position, pattern); from G1, `args[0]`
+  `override-no-pattern` (position) and `override-no-device` (position, pattern), and from J1
+  `override-tensor-space` (position) and `override-bad-device` (position, device); from L4,
+  `model-profile-device-outside` (profile, instance, key, device), its `field` `args[0]`, the profile's
+  id (`field_of` has no case for it); from G1, `args[0]`
   (`device`, `device-draft` or `mmproj-device`) for `device-bad-name` (key, entry) and `tensor-split`
   for `tensor-split-format` (value); neither is judged against the probed GPUs; **no `field`** for
   `invalid-model-profile-id` and `model-profile-name-taken` (id). `bind-all-with-others` cannot come from a

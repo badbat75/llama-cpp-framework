@@ -603,7 +603,8 @@ never removed on a record read failure. A retried delete after a 503 is 404.
 
 `GET /api/profiles/model`, `GET /api/profiles/model/{id}`, `PUT /api/profiles/model/{id}` and
 `PUT /api/profiles/model/{id}/enabled`
-(`crates/bff/src/model_profiles.rs`, built 2026-11-17; `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
+(`crates/bff/src/model_profiles.rs`, built 2026-11-17; the fifth, the model's facts
+`GET /api/profiles/model/{id}/model-info`, [below](#the-model-info); `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
 designs "The switch on and off (item 11b)" and "Saving a preset from the web" in `ARCHITECTURE.md`):
 the Model profiles page's list and switch, and the read and the save of one model profile. All four are behind
 sign-in and all four ask `private-ai-manager` on **one connect as the signed-in user**, so it is
@@ -781,7 +782,10 @@ key to remove, and the section is rewritten in place: the keys the body does not
 and the rest of the file stand. The keys the body may touch are `checks::WEB_MODEL_PROFILE_KEYS`: the
 GPU distribution keys `device`, `split-mode` and `tensor-split` joined them at 66b2bb3 (the design's
 G1), the page
-having no control for them yet (`fe/briefs/14-gpu-distribution.md`).
+having no control for them yet (`fe/briefs/14-gpu-distribution.md`); `n-cpu-moe` at 4cfa909 (L3, an
+integer 0 to 4096, `checks::MODEL_PROFILE_INT_KEYS`) and `override-tensor` at 6570557 (J1). Only
+`model`, `mmproj`, `model-draft`, `spec-type` and `moe-cache-mib` are still refused
+(`checks::MODEL_PROFILE_KEYS_NOT_ON_WEB`).
 
 The body is read in full before a file is opened, and is refused whole:
 
@@ -831,9 +835,56 @@ the safe answer after a write that stands, as the switch's.
 | 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
 | 409 | `model-profile-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
 | 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
-| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node), `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB those GPUs have, no `field`: a model profile the write makes larger does not fit the usable memory of the GPUs the instance's server profile names, 5fb7b0e), `device-bad-name` (args the key and the entry, `field` the key: a `device`, `device-draft` or `mmproj-device` entry llama.cpp's parser throws on, judged on the value the preset reader sees, never against the node's probe) and `tensor-split-format` (args the whole value, `field` `tensor-split`: weights the engine's parser throws on) |
+| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node), `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB those GPUs have, no `field`: a model profile the write makes larger does not fit the usable memory of the GPUs the instance's server profile names, 5fb7b0e), `device-bad-name` (args the key and the entry, `field` the key: a `device`, `device-draft` or `mmproj-device` entry llama.cpp's parser throws on, judged on the value the preset reader sees, never against the node's probe) and `tensor-split-format` (args the whole value, `field` `tensor-split`: weights the engine's parser throws on); `override-no-pattern`, `override-no-device`, and on a changed line `override-tensor-space` (a space at the ends of a rule's pattern or device) and `override-bad-device` (a device not of letters, digits and `_`, or the CPU not spelled `CPU`), args the rule's position first, `field` `override-tensor`; `model-profile-device-outside` (args the model profile, the instance, the key and the device, 4cfa909: see [the device bound](#the-device-bound)) |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
+| 502 | `client-other` | anything else, never the manager's detail |
+
+### The device bound
+
+The manager refuses a model profile that names a GPU outside the `Devices` of the server profile of an
+instance the profile is effective on (4cfa909, L4; `pai-core` `checks::devices_outside`): the entries of
+`device-draft` and `mmproj-device`, and the device of each `override-tensor` rule (since 6570557, J1),
+a buffer type such as `CUDA_Host` judged as a device name like any other, so refused unless `Devices`
+names it. Names compare case-insensitively; `CPU` and `none` name no GPU and pass; an unset `Devices`
+refuses nothing and `Devices = none` refuses every GPU; a `[*]` value counts for the sections that
+inherit it. It runs at a model profile save, an assignment, a server profile switch and a server
+profile save that narrows `Devices`, and only a pair newly outside is refused, so a profile already
+outside does not block an unrelated write. The answer is 422 `model-profile-device-outside`, args the
+model profile, the instance, the key and the device; through the save its `field` is `args[0]`, the
+model profile's id, not the key (`field_of` in `model_profiles.rs` has no case for it).
+
+### The model info
+
+`GET /api/profiles/model/{id}/model-info` (`model_profiles.rs` `model_info`, e1de6be slice L2, the
+tensor list 6570557 slice J1; the design "Layers, MoE and tensor placement on the web model profile
+page" in `ARCHITECTURE.md`) relays the manager's `ModelInfoAs` asked as the signed-in user on one
+connect: the layer facts of the GGUF file the model profile names
+([crates/config/README.md](../config/README.md), the `ModelInfo` bullet, says how the manager finds and
+reads it). No page calls it yet in a commit. The 200 is always one shape, each part `null` where the
+manager answered none:
+
+    {"model": "<the resolved path>",
+     "info": {"blockCount", "moe", "expertCount", "expertUsed",
+              "tensors": [{"name", "bytes"}], "tensorsTruncated"} | null,
+     "reason": {"key", "args"} | null}
+
+`reason` is the why of a read that found no facts (`model-info-fetched`, `model-profile-no-model`,
+`model-info-missing`, `model-info-unreadable`). `tensors` is every tensor of every shard, each shard's
+in data-offset order, shard after shard, `bytes` the span from its data offset to the next one's; the
+manager cuts the list at the first row past 20 000 rows or 917 504 bytes of the rows' JSON
+(`gguf_shape::MAX_TENSOR_ROWS`, `MAX_TENSOR_LIST_BYTES`, so the reply fits the pipe's 1 MiB frame) and
+sets `tensorsTruncated`. The bff relays the list as it comes: it sorts, filters and caps nothing. The
+read moves the session's idle deadline, as a user read does.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | the document above | the manager answered |
+| 401 | `session-required` | no session, the manager not asked |
+| 403 | `session-not-administrator` | the manager refused that user; the session ends |
+| 404 | `no-model-profile-named` | no section of that name in either file, or `*`; the session kept |
+| 422 | `{"key", "args"}` | another keyed refusal of the manager; the session kept |
+| 503 | `client-unavailable` | no manager, or one that outlives the 5 s read deadline |
 | 502 | `client-other` | anything else, never the manager's detail |
 
 ### A model profile in both files
