@@ -58,12 +58,24 @@ Criteria are numbered **20 N.n**; test names cite them so (`20 N.4`). One slice,
    runs (preference; question Q2).
 6. **Profiles holds only pages that exist**: Model profiles today. Server profiles joins as its first
    item with slice 17a, which builds its page (principle 4; question Q1).
-7. **No new class, token, colour or CSS rule** (preference: smallest design). The host label reuses
-   `.nav-label`; the host's list reuses `.nav ul[aria-labelledby]` (indent and 2 px `--line` rule), so
-   the instances sit one indent deeper than the Nodes list. The visible profile has no colour of its
-   own (no new contrast pair on `--accent-soft`). Measured in the review, not pinned: at 224 px an
-   instance pill is about 164 px wide, so `default · qwen-27b` may wrap to two lines; wrapping is
-   allowed (`overflow-wrap: anywhere` on plain entries, 1.4.10).
+7. **Icons on the Nodes entries, as on the Profiles entries** (user, 2026-11-22, symmetry). The host
+   label gets Lucide `computer` (a machine; distinct from Server profiles' `server`, which is a file
+   of settings, and from `hard-drive`, a disk); each instance link one shared `box` (one running unit
+   on the host); Node info keeps `cpu`. All decorative (`aria-hidden`), first child, before the text.
+   The group labels "Nodes" and "Profiles" stay text only (preference): they name categories, not
+   places, and the symmetry the user asked for is entry to entry; an icon on a label would also put
+   two icons in a row at the host (`Nodes` then `computer`).
+8. **Smallest style** (preference): no token or colour. The host label reuses `.nav-label`; the
+   host's list reuses `.nav ul[aria-labelledby]` (indent and 2 px `--line` rule), so the instances sit
+   one indent deeper. The visible profile has no colour of its own (no new contrast pair on
+   `--accent-soft`). Two rules are needed by the icons: the host label lays its icon out as the
+   entries do, and the instance text keeps breaking anywhere (an entry with an icon takes
+   `break-word`, `.nav a:has(> .icon)`, which leaves a 40-character id one unbreakable word: the
+   min-content trap of `fe/DESIGN.md` 4). Measured in the review, not pinned: an instance pill is
+   about 164 px wide at 1280 px and 244 px at 320 px; after the icon and its gap
+   `default · qwen-27b` wraps to two lines in the 224 px column and to two or three at 320 px with
+   200 % text, the profile on its own line beside the icon, never under it; wrapping is allowed,
+   sideways scroll is not (1.4.10).
 
 ## 2. The texts
 
@@ -100,17 +112,20 @@ No `button` and no `aria-expanded` inside the nav.
 
 **20 N.4 The host label.** `p#nav-host` reads the host name once the shell's read answered with one,
 and `nav-this-node` before that and after any failure (the five failures of 13 N.3's
-`HOST_FAILURES`); its list's accessible name follows it. It is text: no link, no icon, no button. It
+`HOST_FAILURES`), after a first child `svg.icon` of `computer` (`aria-hidden`); its list's accessible
+name is the text alone (`gpu-box`, the icon adding nothing). It is text: no link, no button, no
+Tab stop. It
 moves from the fallback to the name when the read lands, the links unchanged. Sign out and a sign-in
 as another user bring the fallback back until that session's read answers (13 N.3, unchanged).
 
 **20 N.5 The instance links.** One link per instance of the latest successful list, in the
-manager's order, `href` `instanceHref(id)`, no icon, `aria-current="page"` on that instance's page
-only. With `serverProfile` `"qwen-27b"` the link holds, in order: the id as text; a
+manager's order, `href` `instanceHref(id)`, `aria-current="page"` on that instance's page only.
+The link holds two children: a first `svg.icon` of `box` (`aria-hidden`), then `span.nav-instance`.
+With `serverProfile` `"qwen-27b"` that span holds, in order: the id as text; a
 `span.visually-hidden` reading `nav-instance-profile` with `{0}` the profile; a space; a
 `span[aria-hidden="true"]` reading `nav-instance-profile-shown` with `{0}` the profile. Its
 accessible name is `default, server profile qwen-27b`; its visible text (the hidden span left out) is
-`default · qwen-27b`. With `serverProfile` `null` the link holds the id only and its name is the id.
+`default · qwen-27b`. With `serverProfile` `null` the span holds the id only and the link's name is the id.
 A 40-character id with no break point and a 40-character profile wrap inside the pill (no sideways
 scroll at 320 px).
 
@@ -136,9 +151,14 @@ profiles, About, then the page. Labels take no focus. Below 960 px the Menu butt
 with the same links in the same order; a click on any of them (an instance, Node info, Model
 profiles, About) closes it; Escape closes it with the focus on the Menu button (unchanged rules).
 
-**20 N.11 No new style.** `index.css` gains no class, rule or custom property: the nested host list
-takes `.nav ul[aria-labelledby]`, the host label `.nav-label`. `HearthTokens.test.ts` H1a.12 and
-brief 10 R1.8's class list are unchanged.
+**20 N.11 Two rules, no token.** `index.css` gains exactly two rules and no custom property:
+`.nav-label:has(> .icon)` with `display: flex`, `align-items: center`, `gap: var(--space-2)` (the
+entries' layout, H8a.5), and `.nav-instance` with `min-width: 0` and `overflow-wrap: anywhere`. The
+nested host list takes `.nav ul[aria-labelledby]`. `HearthTokens.test.ts` H1a.12 is unchanged (no
+size); brief 10 R1.8's class list gains `nav-instance`. `Icon.tsx` gains `computer` and `box`, the
+path data of lucide-static 1.74.0 `icons/computer.svg` and `icons/box.svg`
+(`https://unpkg.com/lucide-static@1.74.0/icons/<name>.svg`, both answer 200), each with a comment
+citing 20 N.4 or N.5.
 
 **20 N.12 Signed out and the Overview.** Signed out, or while the session is read, there is no nav
 (S1a.4, unchanged). The Overview's `h2` over the tiles still reads the host name or
@@ -149,6 +169,8 @@ brief 10 R1.8's class list are unchanged.
 - Groups are lists named by visible labels, the hosts a list of their own, so a reader hears the
   hierarchy: "Nodes, list, 1 item; gpu-box; gpu-box, list, 3 items; default, server profile
   qwen-27b, link; ..." ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)).
+- The new icons are decorative and hidden, so names are unchanged by them
+  ([1.1.1](https://www.w3.org/TR/WCAG22/#non-text-content)).
 - Instance names: decision 5 ([2.4.4](https://www.w3.org/TR/WCAG22/#link-purpose-in-context),
   [2.5.3](https://www.w3.org/TR/WCAG22/#label-in-name)).
 - The current page keeps `aria-current="page"` and its weight cue
@@ -173,7 +195,9 @@ becomes "Nodes" and the host label): `App.test.tsx` 91 to 119, 273 to 330 (the l
 stay), 488 (no button, still true), 561 (13 N.6: the last `ul` holds About only), 663 and 697 (13 N.11
 order); `NodePage.test.tsx` (18 AN.6 order); `ProfilesNav.test.tsx`; `ModelProfiles.test.tsx` 566, 583,
 894; `ModelProfilesFilter.test.tsx` 526; `ModelProfileContent.test.tsx` 670; `InstancePage.test.tsx`
-1149; `HearthIcons.test.tsx` 283 to 325 (the `cpu` icon now inside the host list). Tests that find
+1149; `HearthIcons.test.tsx` 283 to 325 (H8a.2's list of nav icons gains `computer` on the host label and
+`box` on each instance link; "instance links get none" is reversed; the `cpu` icon now inside the
+host list); `Reflow.test.ts` (R1.8's class list gains `nav-instance`). Tests that find
 an instance link by the name `default` keep working only while the fixture's item has no
 `serverProfile`: `fe/src/test/bff.ts` leaves it out by default (the tester's call, as brief 18
 section 6 advised for `name`) and adds it where a test asks for N.5.

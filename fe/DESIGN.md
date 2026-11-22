@@ -112,8 +112,9 @@ Decided with the user on 2026-11-14.
   web UI are one interface, the director showing more). Signed in, in order: **Overview** (`house`
   icon) in a `ul` of its own with no label, outside every group (the landing page; in hub mode the
   view of every node). Then **Nodes**: a `p.nav-label` "Nodes" and a `ul` labelled by it with one
-  `li` per host; each `li` holds the host's label and a `ul` labelled by it with one link per
-  instance, from `GET /api/instances`, in the manager's order, then **Node info** (`cpu` icon). The
+  `li` per host; each `li` holds the host's label (`computer` icon) and a `ul` labelled by it with
+  one link per instance (`box` icon, the same for each), from `GET /api/instances`, in the manager's
+  order, then **Node info** (`cpu` icon); the group labels "Nodes" and "Profiles" carry no icon. The
   host label is the `name` of `GET /api/version`, read once per session by the shell, and "This
   node" while that read is pending or after it failed (the shell's read never signs out); the
   Overview's `h2` over the tiles reads the host name or "Instances". With one host the host label is
@@ -123,8 +124,8 @@ Decided with the user on 2026-11-14.
   read gave instances and keep the last success through a failed read. An instance link is its id
   then its server profile (`serverProfile` of the list), seen as `default · qwen-27b` and heard as
   "default, server profile qwen-27b" (the `·` and the visible profile `aria-hidden`, a visually
-  hidden phrase in their place: brief 20 decision 5); no profile, the id alone; no icon (ids are
-  data). Then the **Profiles** group: a `p.nav-label` and a `ul` labelled by it, with "Server
+  hidden phrase in their place: brief 20 decision 5); no profile, the id alone; the id and
+  profile sit in `span.nav-instance`, which keeps `overflow-wrap: anywhere` beside the icon. Then the **Profiles** group: a `p.nav-label` and a `ul` labelled by it, with "Server
   profiles" (`server` icon, from slice 17a, which builds its page) then "Model profiles" (`layers`).
   Last, in a `ul` of its own with no label, **About** (`info` icon), one for the framework. Each
   group label is text, not a link; nested labelled lists take the same indent and rule, one level
@@ -240,7 +241,8 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   forced colours. Every icon is decorative, the first child of a host that holds the same words as
   text, at `--space-2` from them. In the shell: Menu (`menu`), the theme button (`moon`, kept at
   1.25rem by `.theme-switch svg`), Sign in (`log-in`), Sign out (`log-out`), the nav's Overview
-  (`house`), Model profiles (`layers`) and About (`info`, brief 13); instance links get none (their ids are data). The icon
+  (`house`), Model profiles (`layers`), About (`info`, brief 13), Node info (`cpu`), the host label
+  (`computer`) and every instance link (`box`, brief 20). The icon
   hosts are `.menu-button` (a class: an id would outweigh the wide screen's hide rule) and
   `.session button` as `inline-flex`; a nav entry with an icon wraps its label whole under the icon
   rather than mid-word (`:has(> .icon)`, brief 08 H8a.5). Measured 2026-11-19: 21.3 px beside the
