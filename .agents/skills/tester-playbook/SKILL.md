@@ -266,6 +266,20 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   ends at the navigation timeout), and the reset query in `load()` must carry EVERY key a state can set,
   since the stub keeps keys a `/__set` did not carry: a key missing from the reset leaves every later
   state with a held read, and each of them reports `not rendered`.
+- A `fe/ux` state's `expect` markers are read BEFORE its `click`/`open`/`hover`, and below 960 px the
+  nav is `display: none` (index.css 627), so a state that reads the NAV at 320 px cannot ride `open`:
+  it needs the `menu: true` field (check.js `menuOpened`, run between `load` and `rendered` in `check`
+  AND in `textPass`), which clicks `#menu-button`, awaits its `aria-expanded="true"`, and returns at
+  1280 px where the button is `display: none` and the nav is the column.
+- Playwright's `locator.waitFor()` default state is `visible`, and a `.visually-hidden` (1x1, clipped)
+  IS visible to it, so a marker can pin a run the eye does not read; `hasText` is a normalized
+  case-insensitive substring of `textContent` (the hidden run included), so a 40-character id or
+  profile matches inside the pill's span. One marker cannot pin a `count` of N together with a `text`
+  only ONE element carries: the filter leaves 1, `nth(N-1)` never appears, and the state reds
+  `not rendered` naming the count, not the defect. Split them into two markers.
+- `read` can render a repeated-character literal one character longer than the file's bytes (stub.py's
+  `LONG_TAG` reads as 32 characters, it is 31), so a literal whose LENGTH the fixture depends on is
+  verified with `python3` `len`, and an `edit` that will not match is re-aimed at a block that excludes it.
 - The UX check (`npm --prefix fe run build` then `npm --prefix fe/ux run check`, ~2 min) prints one line per
   browser x width x theme (x text mode), so ONE unmet `expect` of one state is 18 lines: report the unique
   lines (`sed 's/^chromium //..' | sort | uniq -c`), not the summary's count. A missing selector reads
@@ -289,11 +303,43 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   pill's icons 32 px) wants entries ADDED, and all three lists are compared with `toEqual`, so a ruling
   that adds a class (`chip-full`), a declaration (`.chip-full { overflow-wrap: anywhere }`) or a size is a
   test edit of the same slice, never a "leave it for the coder".
+- A brief that rules one new CSS rule naming the row's class usually moves BOTH Reflow lists: R1.8's
+  `CLASSES` and R1.1's `sets('overflow-wrap')` (20 N.11's `.nav-instance { min-width: 0; overflow-wrap:
+  anywhere }`). The brief's section 5 often names only R1.8: amend both in the same edit, the reds then
+  name the missing rule in their own messages, and the coder changes no test.
+- A brief that adds a DECLARATION to an existing rule (N1 review D1: `flex: 1 1 4rem` to `.nav-instance`)
+  lands on the `declared(rule.body).sort()` "declares nothing else" allowlist of the file that pins that
+  rule (20 N.11 in `NodesMenu2.test.tsx`), not on the three Reflow/Hearth lists, and on that test's TITLE
+  ("declares the two properties"). The value assert sits BEHIND the list, so prove the teeth in a scratch
+  css + scratch test pair (`cp` both, one string swap of `'index.css'`, `-t '<unique title words>'`):
+  cut the declaration line (the list red names the missing property), swap its value (`1 1 auto`: the
+  value red names it), add a `--nav-run: 1` (the list red names `--nav-run`; the custom-property loop is
+  a guard behind it). `rm` both, prove with `ls fe/src | grep -c -i scratch` answering 0.
+- Amending an ORDER pin for a MOVE: inserting your entry beside the existing pair keeps the pin green
+  today and red AFTER the fix (20 N.10: adding `nav-model-profiles` in front of the old
+  `nav-node, nav-about` pair matched today's order, so ModelProfilesFilter passed the red run). Rewrite
+  the whole moved sequence, and read each edited order pin's diff: the red must print the `-`/`+` swap of
+  the two names, never just a length change.
+- The `- Expected` / `+ Received` lines of a long-array diff are in the DEFAULT reporter's output (strip
+  the colour with `sed -e 's/\x1b\[[0-9;]*m//g'`); the json reporter's `failureMessages` truncate the
+  arrays to `…(N)`, which is enough to map reds to files, not to read a swap.
 - Those allowlist arrays are in a fixed order: the H1a.12 list is the order the rules appear in
   `index.css`, R1.1's is sorted by selector. Run the test and read the diff's insertion point, do not
   guess: a well-aimed entry in the wrong slot reds as a whole-list mismatch that names nothing.
   `HearthH2a.test.ts`'s sizes are a `test.each`, so a new entry reports as
   `section 1 sizes: <selector>`, one line naming the selector.
+- A brief note "H1a.12 is unchanged (no size)" is the brief's arithmetic gap when its own criterion
+  mandates `min-width` (20 N.11's `.nav-instance { min-width: 0 }`): H1a.12 pins every min-height AND
+  min-width in the sheet, so the entry joins the list. The rule wins over the note; report the gap.
+- The nav arrives with the session and its instance links with the list read: a shared `open()` that
+  waits for a link by the name `default` hangs the whole test on a fixture carrying a server profile
+  (its name is "default, server profile qwen-27b", brief 20 section 5), and a nav ICON COUNT taken
+  right after the nav appears misses the boxes of the links (H8a.8 read 5 for 7). Wait by address
+  (`ul[aria-labelledby="nav-host"] a[href^="#/instances/"]` in a `waitFor`), and await the links
+  before any count over them. `waitFor` is safe in these files only where no fake clock runs.
+- "The icon is the only element in the label" is `el.children.length === 1`, never
+  `querySelectorAll('*').length`: a lucide icon carries its own children (computer 5, cpu 14), so a
+  descendant count is 1 + N and the red reads "expected 6 to be 1" on correct markup.
 - `App.test.tsx`'s `1a strings` compares the test helper's `EN` map (`src/test/bff.ts`) against
   `en_US.json`, so putting a brief's new strings in `EN` (which `en()` needs to name them) reds that
   test naming exactly the keys the sheet lacks. Report it as the strings criterion's red, never as
@@ -453,6 +499,9 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   merges with the line below) and breaks an `as` cast on a multi-line type argument: read the diff it
   makes, a joined comment is cosmetic, a reformatted type assertion is not. Prettier, ESLint and `tsc -b`
   print nothing on a pass, so quote the command line, not an output line.
+- A test assert's message is the SECOND argument of `expect`, never of `toEqual` (two arguments there is
+  `TS2554: Expected 1 arguments, but got 2`). Prettier turns a trailing message on a multi-line array into
+  the `toEqual(array, 'msg')` shape, so run `tsc` AFTER `prettier --write`, not only before.
 - Prettier ignores `fe/ux/` (`.prettierignore`: its own npm package, "checked by its own hand"), so
   `npx prettier --write fe/ux/check.js` writes nothing and says nothing about it: match the fe style by
   hand there, and judge a ux edit by reading its diff.

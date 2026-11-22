@@ -521,9 +521,11 @@ test('2b.35, 2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab 
   // 17c.2: the header buttons sit in the table's thead, so after the filter's
   // Clear and before the first row's link.
   const order = tabbable().map(nameOf)
-  expect(order.slice(-8)).toEqual([
-    // 18 AN.6: Node info sits before About, both before the filter.
+  expect(order.slice(-9)).toEqual([
+    // 20 N.10: Node info rides the host list so it comes with the instances,
+    // then Model profiles, then About, all before the filter.
     en('nav-node'),
+    en('nav-model-profiles'),
     en('nav-about'),
     en('model-profiles-filter-label'),
     en('model-profiles-filter-clear'),

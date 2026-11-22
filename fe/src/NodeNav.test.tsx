@@ -1,13 +1,14 @@
 // Slice 13, the host in the navigation (fe/briefs/13-node-about.md, 13 N.3,
-// 13 N.4, 13 N.6, 13 N.11), as slice 18 reads it (fe/briefs/18-about-node-info.md,
-// 18 AN.6, 18 AN.15): the shell reads GET /api/version once per session and the
-// host name becomes the label over the instance links; Node info joins the
-// nav's last list, before About which stays last; the tab order and the closed
+// 13 N.4, 13 N.6, 13 N.11), as slice 18 read it (fe/briefs/18-about-node-info.md,
+// 18 AN.6, 18 AN.15) and brief 20 reorganises it (fe/briefs/20-nodes-menu.md,
+// 20 N.4, N.6, N.9, N.10): the shell reads GET /api/version once per session and
+// the host name becomes the label of the host's list; Node info sits at the end
+// of that list, About alone in the nav's last list; the tab order and the closed
 // menu hold. "13 N.3" and "18 AN.6" are the briefs' criteria.
 //
 // The shell's read moved off GET /api/node (AN.15), and the fake answers
 // GET /api/node only when a test asks for it (brief section 6), so every other
-// suite keeps the fallback label "Instances".
+// suite keeps the fallback label "This node" (20 N.4).
 import {
   cleanup,
   fireEvent,
@@ -19,8 +20,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { StrictMode } from 'react'
 import App from './App.tsx'
 import {
+  HOST_FAILURES,
   MODEL_PROFILES,
-  VERSION,
   VERSION_HOST,
   en,
   fakeBff,
@@ -331,7 +332,7 @@ test('13 N.3: a sign-out then a sign-in as the same user is a new session: one m
   expect(
     await hostLabel(nav),
     "the old session's name does not carry over: the fallback while the new read is open",
-  ).toBe(en('nav-instances'))
+  ).toBe(en('nav-this-node'))
   second.resolve(reply(200, VERSION_HOST))
   expect(await hostLabel(nav), 'and the host once it answers').toBe(
     VERSION_HOST.name,
@@ -355,7 +356,7 @@ test('13 N.3: a sign-in in a page dialog as the same user while the host read is
     name: MODEL_PROFILES[0]!.id,
   })
   expect(await hostLabel(nav), 'the fallback while the read is open').toBe(
-    en('nav-instances'),
+    en('nav-this-node'),
   )
   fireEvent.click(box)
   fireEvent.click(
@@ -375,30 +376,6 @@ test('13 N.3: a sign-in in a page dialog as the same user while the host read is
     'the read that was already on its way names the nav: the sign-in drops nothing',
   ).toBe(VERSION_HOST.name)
 })
-
-// Every way the host read can go wrong. None of them ends the session, and
-// none of them moves the labels off their fallback (13 N.3, 18 AN.15).
-const HOST_FAILURES: Array<[string, () => Response | Promise<Response>]> = [
-  [
-    '401 session-required',
-    () => reply(401, { key: 'session-required', args: [] }),
-  ],
-  [
-    '403 session-not-administrator',
-    () => reply(403, { key: 'session-not-administrator', args: [] }),
-  ],
-  ['500', () => reply(500, 'a manager detail')],
-  [
-    '503 client-unavailable',
-    () => reply(503, { key: 'client-unavailable', args: [] }),
-  ],
-  ['a network failure', () => Promise.reject(new TypeError('failed to fetch'))],
-  ['a body that is not json', () => reply(200, 'not json')],
-  ['a body that is not an object', () => reply(200, [])],
-  ['the reply of 13 N.10, with no name', () => reply(200, VERSION)],
-  ['a name that is not a string', () => reply(200, { ...VERSION, name: 7 })],
-  ['a name that is empty', () => reply(200, { ...VERSION, name: '' })],
-]
 
 test.each(HOST_FAILURES)(
   '13 N.3: a host read answering %s signs nobody out, keeps the page, and leaves the labels at their fallback',
@@ -422,7 +399,7 @@ test.each(HOST_FAILURES)(
       `${what}: no sign-in form`,
     ).toBeNull()
     expect(await hostLabel(nav), `${what}: the nav label`).toBe(
-      en('nav-instances'),
+      en('nav-this-node'),
     )
     expect(hostReads(bff), `${what}: one read, no retry`).toBe(1)
     expect(
@@ -473,24 +450,33 @@ test('13 N.4: once the read answered, the label over the instance links is the h
   expect(list.getAttribute('aria-label'), 'not by an aria-label').toBeNull()
   expect(
     Array.from(list.querySelectorAll('a')).map((a) => a.textContent?.trim()),
-    'the links are the instances, in the order of the list',
-  ).toEqual(['default', 'coder'])
+    'the links are the instances, in the order of the list, then Node info (20 N.7)',
+  ).toEqual(['default', 'coder', en('nav-node')])
   expect(
     Array.from(list.querySelectorAll('a')).map((a) => a.getAttribute('href')),
-    'their addresses are the instance pages',
-  ).toEqual(['#/instances/default', '#/instances/coder'])
+    'their addresses are the instance pages, and #/node',
+  ).toEqual(['#/instances/default', '#/instances/coder', '#/node'])
   expect(
     within(nav).getAllByRole('list', { name: VERSION_HOST.name }).length,
-    'one list carries the host name: the instance group',
+    'one list carries the host name: the host list (20 N.4)',
   ).toBe(1)
 })
 
-test('13 N.4: the label is text, no link, no icon, no button, and the nav holds no disclosure of its own', async () => {
+test('13 N.4: the label is text, no link and no button, its one icon decorative (20 N.4), and the nav holds no disclosure of its own', async () => {
   const { nav } = await open({ version: VERSION_HOST })
   const { label } = await instanceList(nav)
   expect(label?.querySelector('a'), 'the host is not a link').toBeNull()
   expect(label?.querySelector('button'), 'not a button').toBeNull()
-  expect(label?.querySelector('svg'), 'no icon beside it').toBeNull()
+  const icon = label?.querySelector('svg')
+  expect(icon, '20 N.4: the computer icon beside the host').not.toBeNull()
+  expect(icon?.classList.contains('icon'), 'the class the sheet sizes').toBe(
+    true,
+  )
+  expect(icon?.getAttribute('aria-hidden'), 'decorative').toBe('true')
+  expect(
+    label?.firstElementChild,
+    'the icon is the first child, before the text',
+  ).toBe(icon)
   expect(
     nav.querySelectorAll('button').length,
     'no button in the nav: one host has nothing to fold',
@@ -500,14 +486,14 @@ test('13 N.4: the label is text, no link, no icon, no button, and the nav holds 
   )
 })
 
-test('13 N.4: before the answer the label is "Instances", and the same list and links carry it; when the answer arrives the label moves', async () => {
+test('13 N.4: before the answer the label is "This node" (20 N.4), and the same list and links carry it; when the answer arrives the label moves', async () => {
   const h = held()
   const { nav } = await open({ version: h.answer })
   const before = await instanceList(nav)
   expect(
     (before.label?.textContent ?? '').trim(),
     'the fallback while the read is open',
-  ).toBe(en('nav-instances'))
+  ).toBe(en('nav-this-node'))
   h.resolve(reply(200, VERSION_HOST))
   // The host name lands in the nav label and, on the Overview, in the h2 over
   // the tiles: the nav is the place this test watches.
@@ -518,8 +504,8 @@ test('13 N.4: before the answer the label is "Instances", and the same list and 
     Array.from(after.list.querySelectorAll('a')).map((a) =>
       a.textContent?.trim(),
     ),
-    'the same links',
-  ).toEqual(['default', 'coder'])
+    'the same links, Node info included (20 N.7)',
+  ).toEqual(['default', 'coder', en('nav-node')])
   expect(after.label, 'the same label element').toBe(before.label)
   expect(
     (after.label?.textContent ?? '').trim(),
@@ -527,7 +513,7 @@ test('13 N.4: before the answer the label is "Instances", and the same list and 
   ).toBe(VERSION_HOST.name)
 })
 
-test('13 N.4: no instances, no label and no instance list, host name or not', async () => {
+test('20 N.6: no instances to show, the Nodes label, the host label and the Node info entry stay, no instance link', async () => {
   // `open` waits for an instance link, and there is none here: the nav arrives
   // with the session, and the Overview with its own read.
   fakeBff({ version: VERSION_HOST, instances: [] })
@@ -538,48 +524,49 @@ test('13 N.4: no instances, no label and no instance list, host name or not', as
     name: en('overview-title'),
   })
   expect(
-    within(nav).queryByText(VERSION_HOST.name),
-    'no host label over an empty list',
-  ).toBeNull()
+    within(nav).getByText(VERSION_HOST.name),
+    'the host label is there (20 N.6)',
+  ).toBeTruthy()
   expect(
-    within(nav).queryByText(en('nav-instances')),
-    'no fallback label either',
+    within(nav).getByText(en('nav-nodes')),
+    'and so is the Nodes label',
+  ).toBeTruthy()
+  expect(
+    within(nav).queryByRole('link', { name: 'default' }),
+    'no instance link',
   ).toBeNull()
   expect(
     navLinks(nav).map((a) => a.textContent?.trim()),
-    'Overview, the model profiles, Node info, About',
+    'Overview, Node info (alone in the host list), the model profiles, About',
   ).toEqual([
     en('nav-overview'),
-    en('nav-model-profiles'),
     en('nav-node'),
+    en('nav-model-profiles'),
     en('nav-about'),
   ])
 })
 
-// ── 13 N.6 (18 AN.6): the last list of the nav ──────────────────────────────
+// ── 13 N.6 (18 AN.6, now 20 N.9): the last list of the nav ──────────────────
 
-test('13 N.6: signed in, the nav last list holds the Node info link then the About link, after the Profiles list, each with its icon first, About still last', async () => {
+test('20 N.9: signed in, the nav last list holds the About link only, with its icon first, About still last', async () => {
   const { nav } = await open({ version: VERSION_HOST })
   const groups = Array.from(nav.querySelectorAll(':scope > ul'))
   const last = groups[groups.length - 1]
-  expect(last, 'Node info and About sit in the last list').not.toBeNull()
+  expect(last, 'About sits in the last list').not.toBeNull()
   expect(
     last.hasAttribute('aria-labelledby'),
-    'and the list has no label: these are not a group of many',
+    'and the list has no label: one entry is not a group of many',
   ).toBe(false)
   const links = Array.from(last.querySelectorAll('a'))
   expect(
     links.map((a) => a.textContent?.trim()),
-    'Node info first, About last (18 AN.6)',
-  ).toEqual([en('nav-node'), en('nav-about')])
+    'About alone (20 N.9: Node info moved into the host list, 20 N.7)',
+  ).toEqual([en('nav-about')])
   expect(
     links.map((a) => a.getAttribute('href')),
-    'their addresses',
-  ).toEqual(['#/node', '#/about'])
-  const pairs: [HTMLAnchorElement, string][] = [
-    [links[0], en('nav-node')],
-    [links[1], en('nav-about')],
-  ]
+    'its address',
+  ).toEqual(['#/about'])
+  const pairs: [HTMLAnchorElement, string][] = [[links[0], en('nav-about')]]
   for (const [link, name] of pairs) {
     const icon = link?.firstElementChild
     expect(
@@ -670,7 +657,7 @@ test('13 N.11: at #/about the Tab path is the shell and its links with About las
   expect(document.activeElement, 'the page takes the focus on its h1').toBe(h1)
   expect(
     tabbable().map(nameOf),
-    'the shell order, About the last stop (18 AN.6: Node info precedes it)',
+    'the shell order, About the last stop (20 N.10: Node info follows the instances, Model profiles after it)',
   ).toEqual([
     en('skip-to-content'),
     en('app-name'),
@@ -680,8 +667,8 @@ test('13 N.11: at #/about the Tab path is the shell and its links with About las
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-model-profiles'),
     en('nav-node'),
+    en('nav-model-profiles'),
     en('nav-about'),
   ])
   expect(
@@ -708,13 +695,13 @@ test('13 N.11: the Menu button opens the nav, its links read in the same order w
   ).toBe(true)
   expect(
     navLinks(nav).map((a) => a.textContent?.trim()),
-    'the same links, in the same order, Node info before About, About last (18 AN.6)',
+    'the same links, in the same order, About last (20 N.10)',
   ).toEqual([
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-model-profiles'),
     en('nav-node'),
+    en('nav-model-profiles'),
     en('nav-about'),
   ])
   const about = navLinks(nav).at(-1)!

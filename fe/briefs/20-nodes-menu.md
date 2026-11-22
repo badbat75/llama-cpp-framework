@@ -73,9 +73,11 @@ Criteria are numbered **20 N.n**; test names cite them so (`20 N.4`). One slice,
    `break-word`, `.nav a:has(> .icon)`, which leaves a 40-character id one unbreakable word: the
    min-content trap of `fe/DESIGN.md` 4). Measured in the review, not pinned: an instance pill is
    about 164 px wide at 1280 px and 244 px at 320 px; after the icon and its gap
-   `default · qwen-27b` wraps to two lines in the 224 px column and to two or three at 320 px with
-   200 % text, the profile on its own line beside the icon, never under it; wrapping is allowed,
-   sideways scroll is not (1.4.10).
+   `default · qwen-27b` wraps to two lines in the 224 px column, the profile on its own line beside
+   the icon, never under it, at 100 % text; at 200 % text, where the run's `4rem` basis no longer fits
+   beside the icon, it moves whole under the icon as every entry does (H8a.5). Wrapping is allowed,
+   sideways scroll is not (1.4.10). (Amended in the N1 review: without a flex basis the run, a flex
+   item of the wrapping pill, moved under the icon at 1280 px and 100 % too.)
 
 ## 2. The texts
 
@@ -153,9 +155,11 @@ profiles, About) closes it; Escape closes it with the focus on the Menu button (
 
 **20 N.11 Two rules, no token.** `index.css` gains exactly two rules and no custom property:
 `.nav-label:has(> .icon)` with `display: flex`, `align-items: center`, `gap: var(--space-2)` (the
-entries' layout, H8a.5), and `.nav-instance` with `min-width: 0` and `overflow-wrap: anywhere`. The
-nested host list takes `.nav ul[aria-labelledby]`. `HearthTokens.test.ts` H1a.12 is unchanged (no
-size); brief 10 R1.8's class list gains `nav-instance`. `Icon.tsx` gains `computer` and `box`, the
+entries' layout, H8a.5), and `.nav-instance` with `flex: 1 1 4rem`, `min-width: 0` and `overflow-wrap: anywhere` (the
+basis keeps the run beside the icon at 100 % text, decision 8). The nested host list takes
+`.nav ul[aria-labelledby]`. `HearthTokens.test.ts` H1a.12's list of every `min-height` and `min-width`
+gains `.nav-instance: min-width: 0` (ruling of the N1 review: H1a.12 pins every min-width, so the rule
+this criterion mandates joins it); brief 10 R1.8's class list gains `nav-instance`. `Icon.tsx` gains `computer` and `box`, the
 path data of lucide-static 1.74.0 `icons/computer.svg` and `icons/box.svg`
 (`https://unpkg.com/lucide-static@1.74.0/icons/<name>.svg`, both answer 200), each with a comment
 citing 20 N.4 or N.5.
@@ -197,7 +201,7 @@ order); `NodePage.test.tsx` (18 AN.6 order); `ProfilesNav.test.tsx`; `ModelProfi
 894; `ModelProfilesFilter.test.tsx` 526; `ModelProfileContent.test.tsx` 670; `InstancePage.test.tsx`
 1149; `HearthIcons.test.tsx` 283 to 325 (H8a.2's list of nav icons gains `computer` on the host label and
 `box` on each instance link; "instance links get none" is reversed; the `cpu` icon now inside the
-host list); `Reflow.test.ts` (R1.8's class list gains `nav-instance`). Tests that find
+host list); `HearthTokens.test.ts` H1a.12 (gains `.nav-instance: min-width: 0`, 20 N.11); `Reflow.test.ts` (R1.8's class list gains `nav-instance`). Tests that find
 an instance link by the name `default` keep working only while the fixture's item has no
 `serverProfile`: `fe/src/test/bff.ts` leaves it out by default (the tester's call, as brief 18
 section 6 advised for `name`) and adds it where a test asks for N.5.
@@ -226,3 +230,54 @@ section 6 advised for `name`) and adds it where a test asks for N.5.
   page.
 - **Q2** An instance whose server profile has its own id (`default · default`): (recommended) show it
   anyway, the same form for every instance; or show the profile only when it differs from the id.
+
+## N1 review (designer, 2026-11-22)
+
+I read the N1 diff (`App.tsx` 474-484 and 585-663, `Instances.tsx`, `index.css` 559-610, `Icon.tsx`,
+`en_US.json`, `HearthTokens.test.ts` 709-714). I drove it in Chromium, Firefox and WebKit with the `fe/ux`
+stub (`list=many`, a Playwright route adding `serverProfile`: `default` `qwen-27b`, `coder` null, the
+40-character id with a 40-character profile), at 1280 and 320 px, light and dark, 100 % and 200 % text
+(`build/ux-review/n1r.js`, `n1flex.js`; shots in `build/ux-review/n1r/`). **Verdict: accepted after the
+re-check below (D1 and D2 fixed).**
+
+**Ruling on H1a.12.** The tester was right: H1a.12 pins every `min-height` and `min-width`, so the
+`min-width: 0` that 20 N.11 mandates joins it. 20 N.11 and section 5 now say so.
+
+- 20 N.1 to N.4 met: the four keys, `nav-instances` gone. `serverProfile` is read. The structure is
+  Overview / Nodes > host > instances and Node info / Profiles / About, with no button and no
+  `aria-expanded`. The host label shows `computer` and "gpu-box", or "This node" while the version read
+  is held and after a 500. The lists are named "Nodes" and "gpu-box".
+- 20 N.5 met except D1: the names are "default, server profile qwen-27b" ("coder" alone with no
+  profile), `aria-current="page"` is on the open instance, and `box` comes first.
+- 20 N.6 to N.10 met. Node info is last in the host list and never vanishes; Profiles holds Model
+  profiles only; About is last. Tab order: Skip, home, theme, Sign out, Overview, the instances in order,
+  Node info, Model profiles, About. At 320 px a link click closes the menu, and Escape closes it with the
+  focus on Menu.
+- 20 N.11 met as built; the icon paths match lucide-static 1.74.0 (checked with curl). 20 N.12 is
+  unchanged. No sideways scroll anywhere, the 40-character id and profile included.
+
+**D1 (must fix): the instance text drops under its icon.** `.nav a:has(> .icon)` wraps its items
+(`index.css` 565), and `.nav-instance` (573-576) has no flex basis, so the run moves to a line of its own
+under the icon whenever it is wider than the space beside it. At 1280 px and 100 % text,
+`default · qwen-27b` takes 90 px under its icon (`n1r/chromium-1280-light.png`), against decision 8's
+"beside the icon, never under it". Fix: add `flex: 1 1 4rem` to `.nav-instance`. Measured in all three
+engines with the rule injected: beside the icon at 1280 and 320 px at 100 % (61 px, two lines); at
+200 % it moves whole under the icon at 1280 px, as every entry does (H8a.5); no sideways scroll.
+Decision 8 and 20 N.11 are amended. Pin it in the CSS test that reads the rule (Reflow or HearthTokens).
+
+**D2 (must fix): section 6 not built.** `fe/ux/stub.py` gives no `serverProfile` and `fe/ux/check.js`
+has no `nav-open` state, so the UX check never sees the new nav open at 320 px, nor the instance links
+with profiles or the long id and profile. The tester adds both, as section 6 says.
+- `npm --prefix fe/ux run check` (132 states per browser): only the 8 known `instance-server`
+  target-size findings. Every page's nav at 1280 px passes, but the check does not open the 320 px
+  menu (D2).
+
+**Re-check (2026-11-22): D1 and D2 fixed.** `.nav-instance` has `flex: 1 1 4rem` (`index.css` 573-577).
+In all three engines, light and dark: at 1280 px and 100 % text `default · qwen-27b` sits beside its icon
+on two lines (61 px), the long id beside its icon too. At 200 % text, in the 1280 px column, the runs move
+whole under their icons as every entry does (decision 8 as amended). At 320 px they stay beside it, at
+100 % and 200 %. No sideways scroll. `fe/ux/stub.py` gives the section 6 profiles (`qwen-27b`, `null`,
+missing key, the 40-character profile on the 40-character id), and `check.js` has `nav-open` (`list=many`,
+`#/`, Menu clicked in the narrow layout, markers `#nav-nodes`, `#nav-host`, the four links, the two shown
+profiles, the long id), as section 6 asks. `npm --prefix fe/ux run check`, now 138 states per browser,
+about 12 minutes: only the 8 known `instance-server` target-size findings, and `nav-open` is clean.

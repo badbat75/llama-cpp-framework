@@ -64,6 +64,17 @@ const SETTLE_MS = 400
 const USER = 'abcdefghijklmnopqrstuvwxyz012345'
 const MODEL_PROFILE_ID = 'Qwen3-27B'
 const MISSING_ID = 'No-Such-Model-Profile'
+// The host's name (stub.py `VERSION`), which the nav's host label reads (20 N.4).
+const HOST = 'gpu-box'
+// The instances of stub.py `list=many`, as the stub spells them (brief 20
+// section 6): the 40-character id with no break point, its server profile of
+// the same length, and the short profile of `default`.
+const MANY_ID = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890123'
+const LONG_SERVER_PROFILE = 'QWEN327BTHIRTYCHARACTERSPROFILE012345678'
+// The host's list, where the nav's instance links live (20 N.3), and
+// `shownProfile`, the profile as an instance link shows it beside the id (N.5).
+const NAV_HOST = '#nav ul[aria-labelledby="nav-host"]'
+const shownProfile = (p) => S['nav-instance-profile-shown'].replace('{0}', p)
 // The start of the GPU card's as-of line (brief 14 GD1.7): the sentence of
 // `model-profile-gpu-probed-at` up to its `{0}`, which the page fills with the
 // probe's moment in the browser's own locale, so no state can name the whole
@@ -80,7 +91,11 @@ const BUDGET = S['model-profile-gpu-blocks-budget']?.split('{0}')[0]
 // click: selectors clicked in order once the state is rendered (each one only
 // when it is visible, and then awaited open), the optional open: one control
 // clicked and the element its click brings awaited, the optional hover: the
-// pointer entering one element and the element its cut text brings awaited, and
+// pointer entering one element and the element its cut text brings awaited, the
+// optional menu: the Menu button clicked before the markers are read, for a
+// state that reads the nav in the narrow layout, where the nav is `display:
+// none` until it opens (at 1280 px the nav is the column, the button is not
+// there, and the markers are read as they stand), and
 // the optional hold: the stub keeps its reads open (stub.py `load=`) so the
 // state is the page while it waits, where no idle network exists to wait for. A page
 // that is blank, still loading, showing an error or the wrong route has no axe
@@ -171,6 +186,60 @@ const STATES = [
         selector: '.tile .chip',
         count: 13,
         message: 'the 13 chips of the four tiles: 3 + 2 + 0 + 8',
+      },
+    ],
+  },
+  {
+    // Brief 20 section 6 (the N1 review, D2): the nav with the menu opened. At
+    // 1280 px the nav is the column and its markers are read as they stand; at
+    // 320 px the nav is `display: none` until it opens (index.css 627), so
+    // `menu: true` clicks the Menu button first. `list=many` gives the links
+    // the server profiles of section 6, the `null` and the missing key
+    // included, and the 40-character id with its 40-character profile, so the
+    // check reads the open menu, its profiles and the long id at 320 px in both
+    // themes (axe and the scrollWidth), and again at 200 % text, where the text
+    // pass runs every state.
+    name: 'nav-open',
+    set: 'session=admin&list=many',
+    hash: '#/',
+    menu: true,
+    expect: [
+      { selector: '#nav-nodes', text: S['nav-nodes'] },
+      { selector: '#nav-host', text: HOST },
+      {
+        selector: `${NAV_HOST} a[href^="#/instances/"]`,
+        count: 4,
+        message: 'one link per instance of list=many, in the manager order',
+      },
+      {
+        selector: `${NAV_HOST} .nav-instance`,
+        count: 4,
+        message: 'the id run of each link: coder answers null and embed has no key, so both are the id alone',
+      },
+      {
+        selector: `${NAV_HOST} .nav-instance [aria-hidden="true"]`,
+        count: 2,
+        message: 'the profile shown beside the id, on the two links that have one',
+      },
+      {
+        selector: `${NAV_HOST} .nav-instance [aria-hidden="true"]`,
+        text: shownProfile('qwen-27b'),
+        message: 'the short profile as the pill shows it: "default . qwen-27b"',
+      },
+      {
+        selector: `${NAV_HOST} .nav-instance`,
+        text: MANY_ID,
+        message: 'the 40-character id, unbroken, inside its pill',
+      },
+      {
+        selector: `${NAV_HOST} .nav-instance [aria-hidden="true"]`,
+        text: shownProfile(LONG_SERVER_PROFILE),
+        message: 'its 40-character profile, which has no break point to find',
+      },
+      {
+        selector: `${NAV_HOST} .nav-instance .visually-hidden`,
+        text: S['nav-instance-profile'].replace('{0}', LONG_SERVER_PROFILE),
+        message: 'the run only the reader says, naming what the second word is',
       },
     ],
   },
@@ -420,6 +489,28 @@ async function rendered(page, state) {
   return null
 }
 
+/** The state's `menu`: the Menu button, clicked before the markers are read.
+ *  Below 960 px the nav is `display: none` until the menu opens (index.css
+ *  627), so a state that reads the nav at 320 px has to open it first, and its
+ *  markers are the open nav. From 960 px the button is `display: none` (index.css
+ *  668) and the nav is the column, so the click is left alone there. A visible
+ *  button that never reports `aria-expanded="true"` is a finding, as in
+ *  `clicked`. */
+async function menuOpened(page, state) {
+  if (state.menu !== true) return []
+  const loc = page.locator('#menu-button')
+  if (!(await loc.isVisible())) return []
+  try {
+    await loc.click()
+    await page
+      .locator('#menu-button[aria-expanded="true"]')
+      .waitFor({ timeout: RENDER_MS })
+  } catch {
+    return ['menu: "#menu-button" visible, never aria-expanded="true"']
+  }
+  return []
+}
+
 /** The state's `click` list, in order: a selector is clicked only when it is
  *  visible (the jump toggle is `display: none` from 1280 px, where the list
  *  shows whatever its class) and its `aria-expanded="true"` is then awaited. A
@@ -602,6 +693,7 @@ async function textPass(browser, name, lines) {
     for (const [mode, css] of TEXT_MODES) {
       for (const state of STATES) {
         const found = await load(page, state)
+        found.push(...(await menuOpened(page, state)))
         const missing = await rendered(page, state)
         if (missing !== null) {
           found.push(missing)
@@ -668,6 +760,7 @@ async function check(browser, name, lines) {
           const page = await ctx.newPage()
           for (const state of states) {
             const found = await load(page, state)
+            found.push(...(await menuOpened(page, state)))
             const missing = await rendered(page, state)
             if (missing !== null) {
               found.push(missing)

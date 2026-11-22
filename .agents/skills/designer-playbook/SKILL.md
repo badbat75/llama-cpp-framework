@@ -111,8 +111,9 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   by pattern), and start none in the background that you would wait on: on 2026-11-21 three stubs
   (`build/ux-review/n1stub.py`, two `fe/ux/stub.py`) were left running for up to a day, and the
   review task stayed "running" for hours after its last report.
-- The UX check now runs 102 states per browser and takes about 10 minutes (2026-11-21): a
-  `timeout 400` killed it with no output. Send it to a file (`> build/ux-review/<slice>/check.txt`),
+- The UX check runs 138 states per browser and takes about 12 minutes (2026-11-22): longer than the
+  600 s foreground limit, so run it with `run_in_background` and `timeout 1500`, then wait for its
+  notification (a `timeout 590` killed it during WebKit). Send it to a file (`> build/ux-review/<slice>/check.txt`),
   read the lines without a leading space (the stub's BrokenPipe tracebacks are noise). `u17c-box.js`
   measures the Model profiles table's scroll box overflow at 320 px, with and without a CSS change.
 - `.field-control` is a wrapping flex row: anything a brief puts "under the row" inside it needs
@@ -137,3 +138,10 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   heard right (`default · qwen-27b`) keeps the visible part `aria-hidden` and a visually hidden phrase
   in its place, every visible word still in the name in order (2.5.3). Fixtures that leave the new
   field out keep the tests that find a link by its old name green.
+- In a wrapping flex pill (`.nav a:has(> .icon)`), a text item with no flex basis drops whole onto
+  its own line under the icon as soon as its max-content is wider than the space left; `min-width: 0`
+  alone does not stop it. `flex: 1 1 4rem` keeps it beside the icon at 100 % and lets it move under
+  at 200 %, as H8a.5 does (brief 20 D1; `build/ux-review/n1flex.js` compares bases by injection).
+- The blocks, Auto and malformed lines of the GPU card sit in a `.field` grid of two columns from
+  720 px: a new direct child of a fieldset that is a `.field` takes a grid cell and can push the list
+  into the 200 px label column. Measure the children's x at 1280 px (`build/ux-review/ls1shot.js`).

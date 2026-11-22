@@ -40,6 +40,27 @@ import {
 type Shape = [tag: string, attrs: Record<string, string>]
 
 const SHAPES: Record<string, Shape[]> = {
+  // 20 N.5: every instance link of the host list. lucide-static 1.74.0
+  // icons/box.svg.
+  box: [
+    [
+      'path',
+      {
+        d: 'M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z',
+      },
+    ],
+    ['path', { d: 'm3.3 7 8.7 5 8.7-5' }],
+    ['path', { d: 'M12 22V12' }],
+  ],
+  // 20 N.4: the host label of the Nodes group. lucide-static 1.74.0
+  // icons/computer.svg.
+  computer: [
+    ['path', { d: 'M12 18h6' }],
+    ['path', { d: 'M6 18h.01' }],
+    ['path', { d: 'M8 6h1' }],
+    ['rect', { x: '2', y: '14', width: '20', height: '8', rx: '2' }],
+    ['rect', { x: '4', y: '2', width: '16', height: '12', rx: '2' }],
+  ],
   // 18 AN.6: the Node info entry. The path data is lucide-static 1.74.0
   // icons/cpu.svg, as the brief names it.
   cpu: [
@@ -305,7 +326,7 @@ test.each(NAMES)(
 
 // ── H8a.2: the nav ────────────────────────────────────────────────────────
 
-test('H8a.2: the Overview link holds Icon house then its text, the Model profiles link Icon layers, the Node info link Icon cpu, the About link Icon info, the instance links hold no icon, and the names by role are unchanged', async () => {
+test('H8a.2: the Overview link holds Icon house then its text, the Model profiles link Icon layers, the Node info link Icon cpu, the About link Icon info, each instance link Icon box, the host label Icon computer, and the names by role are unchanged', async () => {
   openApp()
   const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'default' })
@@ -328,22 +349,23 @@ test('H8a.2: the Overview link holds Icon house then its text, the Model profile
   expect(text(about), 'and its name').toBe(en('nav-about'))
   expect(
     before(node, about),
-    'Node info comes before About, as the brief orders the last group',
+    'Node info comes before About: it is in the host list, About in the last one (20 N.7, 20 N.9)',
   ).toBe(true)
+  const host = nav.querySelector('#nav-host')
+  expect(host, '20 N.4: the host label of the Nodes group').not.toBeNull()
+  expectIcon(host!, 'computer', 'the host label (20 N.4)')
   for (const id of ['default', 'coder']) {
     const link = within(nav).getByRole('link', { name: id })
     expect(text(link), `the instance link ${id} keeps its id as its text`).toBe(
       id,
     )
-    expect(
-      link.querySelector('svg'),
-      `the instance link ${id} holds no icon: its id is data`,
-    ).toBeNull()
+    // 20 N.5: the icon is what an instance link gains; its text stays the id.
+    expectIcon(link, 'box', `the instance link ${id} (20 N.5)`)
   }
   expect(
     nav.querySelectorAll('svg.icon').length,
-    'four icons in the nav: the four named entries (Overview, Model profiles, Node info 18 AN.6, About 13 N.6), no icon on an instance id',
-  ).toBe(4)
+    'seven icons in the nav: Overview, the host label, the two instance links, Node info, Model profiles, About (20 N.4, N.5, N.7, N.8, N.9)',
+  ).toBe(7)
 })
 
 // ── H8a.3: the banner ─────────────────────────────────────────────────────
@@ -468,7 +490,10 @@ test('H8a.3: ThemeSwitch.tsx renders Icon and holds no drawing of its own (comme
 // ── H8a.8: the sweep, and the mark of H8a.9 ───────────────────────────────
 
 test.each([
-  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 4 },
+  // Brief 20 (20 N.4, N.5): the nav gains the host label's computer and one
+  // box per instance link, so the signed-in nav draws seven: Overview, the
+  // host, its two instances, Node info, Model profiles, About (as H8a.2).
+  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 7 },
   // 09 S1a.4: signed out there is no nav, so the nav has no icon to sweep and
   // the banner has the theme icon only.
   {
@@ -490,7 +515,13 @@ test.each([
         name: en('signin-title'),
       })
     } else {
-      await screen.findByRole('navigation', { name: en('nav-label') })
+      const nav = await screen.findByRole('navigation', {
+        name: en('nav-label'),
+      })
+      // The instance links arrive with the list read, after the nav: their
+      // icons (20 N.5) are part of the count below, so the read must land
+      // first, as H8a.2 does.
+      await within(nav).findByRole('link', { name: 'default' })
     }
     const banner = screen.getByRole('banner')
     const nav = screen.queryByRole('navigation', { name: en('nav-label') })

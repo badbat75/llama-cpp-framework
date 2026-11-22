@@ -165,7 +165,7 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
   // these that sets it is a break no brief asked for.
   expect(
     sets('overflow-wrap'),
-    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, the rest are unchanged',
+    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, the rest are unchanged',
   ).toEqual(
     [
       'body = break-word',
@@ -201,6 +201,9 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
       // 320 px and 200 % text scrolls the page sideways, the option line's
       // unbroken label is the flex item's min-content; the break splits it.
       '.tag-options li = anywhere',
+      // Brief 20 20 N.11: the text run of an instance link breaks a 40-character
+      // id and server profile with no break point, inside the pill, at 320 px.
+      '.nav-instance = anywhere',
     ].sort(),
   )
   for (const r of RULES.filter((r) => prop(r.body, 'overflow-wrap') !== ''))
@@ -394,14 +397,16 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // (the block slider, 19 G.12: at least 24 px, accent-coloured, native track)
 // adds the tenth: blocks-slider. Its LS1 review (D1, 2026-11-22) adds the
 // eleventh: gpu-blocks-line, the shared class of the budget, Auto and
-// malformed line, so the 720 px grid can place them beside the GPU list. A
-// class beside these is a look no brief asked for.
+// malformed line, so the 720 px grid can place them beside the GPU list. Brief
+// 20 slice N1 (the nodes menu, 20 N.11) adds the twelfth: nav-instance, the
+// text run of an instance link, the span that lets the pill shrink and the long
+// id wrap. A class beside these is a look no brief asked for.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, and the ids a selector names are the mount point #root and the GPU fieldset the LS1 review places in the grid', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, and brief 20 N.11 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, and the ids a selector names are the mount point #root and the GPU fieldset the LS1 review places in the grid', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -556,4 +561,28 @@ test('19 LS1 review D1: in the 720 px media rule that makes .field a 200px + 1fr
       `D1: ${sel}: no grid-row: the lines above the list appear and go, so a hand-placed row breaks with them`,
     ).toBe('')
   }
+})
+
+// ── 20 N1 review (the designer, 2026-11-22): D1, the instance text under its icon ──
+
+test('20 N1 review D1: .nav-instance declares flex: 1 1 4rem, so "default · qwen-27b" stays beside its box icon at 1280 px and 100 % text (20 N.11, decision 8)', () => {
+  // An instance pill is a wrapping flex row (`.nav a:has(> .icon)`, index.css
+  // 565), and the run of words is one of its items. A flex item with no basis
+  // is sized to its content, so the run (90 px measured at 1280 px and 100 %)
+  // is wider than the room left beside the icon in the 224 px column and moves
+  // whole to a line under it, where decision 8 says it never goes at 100 %
+  // text. A grow of 1 and a 4rem basis give it the room beside the icon and it
+  // wraps inside itself (`overflow-wrap: anywhere`, pinned by R1.1 above, and
+  // `min-width: 0`, pinned by H1a.12, which let it shrink at all); at 200 %
+  // text the basis no longer fits beside the icon and the run moves whole
+  // under it, as every entry does (H8a.5). Measured in the three engines with
+  // the rule injected (the review), so this pins the declaration only.
+  const run = topBy(
+    '.nav-instance',
+    'the run of words of an instance link (20 N.5, 20 N.11)',
+  )
+  expect(
+    norm(prop(run.body, 'flex')),
+    'D1 (brief 20, N1 review): the run is an item of the wrapping pill with no flex basis, so it takes its content width and drops under the icon at 1280 px and 100 % text: flex',
+  ).toBe('1 1 4rem')
 })

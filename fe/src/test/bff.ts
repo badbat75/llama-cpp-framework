@@ -17,7 +17,14 @@ export const EN: Record<string, string> = {
   'nav-menu': 'Menu',
   'theme-dark': 'Dark theme',
   'nav-overview': 'Overview',
-  'nav-instances': 'Instances',
+  // Brief 20 section 2 (slice N1): "Nodes" replaces "Instances" (nav-instances
+  // is removed with that slice), the host entry falls back to "This node", and
+  // an instance link carries its server profile twice, once for the reader and
+  // once for the eye.
+  'nav-nodes': 'Nodes',
+  'nav-this-node': 'This node',
+  'nav-instance-profile': ', server profile {0}',
+  'nav-instance-profile-shown': '· {0}',
   loading: 'Loading…',
   'not-found': 'There is no page at this address.',
   'not-found-home': 'Go to the overview',
@@ -866,6 +873,11 @@ export function held(): {
  * server profile's tags and its own, `instanceTags` the ones its page edits.
  * Brief 13 (13 N.1): `boot` is that instance's start at boot, `null` when the
  * manager's read of that one failed; the tile shows a row only for a boolean.
+ * Brief 20 (20 N.2): `serverProfile` is the name of the server profile the
+ * record carries, `null` when it names none; the nav's link shows it, the tile
+ * does not. The default fixtures leave it out on purpose: every test that finds
+ * an instance link by the name `default` (1a.4) stays green, and a test that
+ * wants the profile writes it.
  * A real answer can leave any of them out or spell it badly: the page reads
  * them forgivingly.
  */
@@ -877,6 +889,7 @@ export type Instance = {
   tags?: string[]
   instanceTags?: string[]
   boot?: boolean | null | string | number
+  serverProfile?: string | null | number
 }
 
 export const INSTANCES: Instance[] = [
@@ -1015,6 +1028,36 @@ export const VERSION_HOST: VersionBody & { name: string } = {
   ...VERSION,
   name: NODE.name,
 }
+
+/**
+ * Every way the shell's one host read (GET /api/version) can go wrong. None of
+ * them ends the session and none of them moves a label off its fallback:
+ * 13 N.3 and 18 AN.15 pin that, 20 N.4 pins the same for the host entry of the
+ * Nodes group. Kept here so both suites walk the same list.
+ */
+export const HOST_FAILURES: Array<
+  [string, () => Response | Promise<Response>]
+> = [
+  [
+    '401 session-required',
+    () => reply(401, { key: 'session-required', args: [] }),
+  ],
+  [
+    '403 session-not-administrator',
+    () => reply(403, { key: 'session-not-administrator', args: [] }),
+  ],
+  ['500', () => reply(500, 'a manager detail')],
+  [
+    '503 client-unavailable',
+    () => reply(503, { key: 'client-unavailable', args: [] }),
+  ],
+  ['a network failure', () => Promise.reject(new TypeError('failed to fetch'))],
+  ['a body that is not json', () => reply(200, 'not json')],
+  ['a body that is not an object', () => reply(200, [])],
+  ['the reply of 13 N.10, with no name', () => reply(200, VERSION)],
+  ['a name that is not a string', () => reply(200, { ...VERSION, name: 7 })],
+  ['a name that is empty', () => reply(200, { ...VERSION, name: '' })],
+]
 
 /**
  * One GPU as GET /api/node/devices lists it (fe/briefs/14-gpu-distribution.md

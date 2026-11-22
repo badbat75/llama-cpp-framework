@@ -237,13 +237,13 @@ function keepButton(d: HTMLElement): HTMLElement {
 
 // ── 5b.1, 5b.2: the nav's Profiles group ────────────────────────────────
 
-test('5b.1: signed in, the nav holds a Profiles group: a p#nav-profiles.nav-label and a ul labelled by it, with one Model profiles link to #/profiles/model, after Overview and the Instances group', async () => {
+test('5b.1: signed in, the nav holds a Profiles group: a p#nav-profiles.nav-label and a ul labelled by it, with one Model profiles link to #/profiles/model, after Overview and the host list', async () => {
   const { main } = open()
   await table(main)
   const n = await navReady()
   const label = profilesLabel()
   expect(label, 'the group has a label element with the id').not.toBeNull()
-  expect(label!.tagName, 'a paragraph, as the Instances group').toBe('P')
+  expect(label!.tagName, 'a paragraph, as the host list').toBe('P')
   expect(label!.textContent).toBe(PROFILES)
   expect(label!.classList.contains('nav-label'), 'the nav-label class').toBe(
     true,
@@ -256,23 +256,25 @@ test('5b.1: signed in, the nav holds a Profiles group: a p#nav-profiles.nav-labe
   expect(links, 'one entry').toHaveLength(1)
   expect(links[0]!.textContent).toBe(ENTRY)
   expect(links[0]!.getAttribute('href')).toBe(LIST_HASH)
-  // DOM order: the Overview list, the Instances list, the label, the list.
+  // DOM order: the Overview list, the Nodes list with the host inside it, the
+  // Profiles label, the list.
   const lists = within(n).getAllByRole('list')
-  const instances = within(n).getByRole('list', { name: en('nav-instances') })
+  const instances = within(n).getByRole('list', { name: en('nav-this-node') })
   expect(lists[0], 'Overview first').not.toBe(instances)
-  expect(before(lists[0]!, instances), 'Overview, then Instances').toBe(true)
-  expect(before(instances, label!), 'the Instances group comes first').toBe(
+  expect(before(lists[0]!, instances), 'Overview, then the host list').toBe(
     true,
   )
+  expect(before(instances, label!), 'the host list comes first').toBe(true)
   expect(before(label!, list), 'the label right above its list').toBe(true)
   expect(n.contains(label), 'the group is inside the nav').toBe(true)
-  // The screen reader's nav reads Overview, each instance, Model profiles.
+  // The screen reader's nav reads Overview, each instance, Node info under
+  // them, Model profiles (20 N.3, 20 N.7).
   expect(navLinks()).toEqual([
     en('nav-overview'),
     'default',
     'coder',
-    ENTRY,
     NODE_INFO,
+    ENTRY,
     ABOUT,
   ])
   expect(
@@ -281,7 +283,7 @@ test('5b.1: signed in, the nav holds a Profiles group: a p#nav-profiles.nav-labe
   ).toBeNull()
 })
 
-test('5b.1: the Profiles group shows whatever the instances read gives: loading, empty or failed, and sits right after Overview when there is no Instances group', async () => {
+test('5b.1: the Profiles group shows whatever the instances read gives: loading, empty or failed, and the host list stays with its Node info entry (20 N.6)', async () => {
   // Loading: the group is there while the instances read is pending.
   const pending = deferred()
   open({ instances: () => pending.promise })
@@ -291,17 +293,18 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
   })
   cleanup()
   vi.unstubAllGlobals()
-  // Empty: no Instances group, the Profiles group right after Overview.
+  // Empty: the host list is there, holding Node info only, and the Profiles
+  // group follows the Nodes group.
   open({ instances: [] })
   expect(await profilesList(), 'empty').toBeTruthy()
   expect(
-    within(nav()).queryByRole('list', { name: en('nav-instances') }),
-    'no Instances group',
-  ).toBeNull()
+    within(nav()).getByRole('list', { name: en('nav-this-node') }),
+    'the host list is there (20 N.6)',
+  ).toBeTruthy()
   expect(before(within(nav()).getAllByRole('list')[0]!, profilesLabel()!)).toBe(
     true,
   )
-  expect(navLinks()).toEqual([en('nav-overview'), ENTRY, NODE_INFO, ABOUT])
+  expect(navLinks()).toEqual([en('nav-overview'), NODE_INFO, ENTRY, ABOUT])
   cleanup()
   vi.unstubAllGlobals()
   // Failed: the same, read on the Overview: the failure text belongs to the
@@ -322,14 +325,14 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
   expect(failedLinks[0]!.textContent).toBe(ENTRY)
   expect(failedLinks[0]!.getAttribute('href')).toBe(LIST_HASH)
   expect(
-    within(nav()).queryByRole('list', { name: en('nav-instances') }),
-    'no Instances group',
-  ).toBeNull()
+    within(nav()).getByRole('list', { name: en('nav-this-node') }),
+    'the host list is there after a failed read too (20 N.6)',
+  ).toBeTruthy()
   expect(
     before(within(nav()).getAllByRole('list')[0]!, profilesLabel()!),
-    'the group comes right after Overview',
+    'the group comes after the Overview list',
   ).toBe(true)
-  expect(navLinks()).toEqual([en('nav-overview'), ENTRY, NODE_INFO, ABOUT])
+  expect(navLinks()).toEqual([en('nav-overview'), NODE_INFO, ENTRY, ABOUT])
 })
 
 test('5b.1: signed out there is no nav at all: no Profiles label, no Profiles list, no Model profiles link (09 S1a.4)', async () => {

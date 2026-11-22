@@ -471,12 +471,17 @@ export default function App() {
                 </a>
               </li>
             </ul>
-            <NavInstances
-              key={session.user}
-              route={route}
-              store={store}
-              host={host}
-            />
+            <p id="nav-nodes" className="nav-label">
+              {t('nav-nodes')}
+            </p>
+            <ul aria-labelledby="nav-nodes">
+              <NavHost
+                key={session.user}
+                route={route}
+                store={store}
+                host={host}
+              />
+            </ul>
             <p id="nav-profiles" className="nav-label">
               {t('nav-profiles')}
             </p>
@@ -500,19 +505,10 @@ export default function App() {
                 </a>
               </li>
             </ul>
-            {/* The nav's last entries, in a list of its own with no label of
-                its own: one place, not a group of many (13 N.6). The Node info
-                page comes first, About last (18 AN.6). */}
+            {/* The nav's last entry, in a list of its own with no label of its
+                own: one place, not a group of many (13 N.6, 20 N.9: Node info
+                moved into the host's list, About stays last). */}
             <ul>
-              <li>
-                <a
-                  href="#/node"
-                  aria-current={route.page === 'node' ? 'page' : undefined}
-                >
-                  <Icon name="cpu" />
-                  {t('nav-node')}
-                </a>
-              </li>
               <li>
                 <a
                   href="#/about"
@@ -586,10 +582,13 @@ function SessionBar({
 }
 
 /**
- * One nav link per instance, under the label of the host that holds them: the
- * latest list a read gave since the session started; none until one succeeds.
+ * The one host of the Nodes group, the `li` of its list: the host's label
+ * (20 N.4) and the host's list (20 N.5, N.7), with one link per instance of
+ * the latest list a read gave since the session started, and Node info at the
+ * end. The group is shown even with no instance to show (20 N.6): the host
+ * entry is always there, so Node info never vanishes.
  */
-function NavInstances({
+function NavHost({
   route,
   store,
   host,
@@ -597,8 +596,8 @@ function NavInstances({
   route: Route
   store: InstancesStore
   /** The host's name, from the shell's one read (fe/briefs/13-node-about.md,
-   * 13 N.4): it names the group. null before the answer and after a failure,
-   * when the words of today stand. */
+   * 13 N.4, and fe/briefs/20-nodes-menu.md, 20 N.4): it names the host's list.
+   * null before the answer and after a failure, when `nav-this-node` stands. */
   host: string | null
 }) {
   const [instances, setInstances] = useState<Instance[]>([])
@@ -611,13 +610,13 @@ function NavInstances({
     return unwatch
   }, [store])
 
-  if (instances.length === 0) return null
   return (
-    <>
-      <p id="nav-instances" className="nav-label">
-        {host ?? t('nav-instances')}
+    <li>
+      <p id="nav-host" className="nav-label">
+        <Icon name="computer" />
+        {host ?? t('nav-this-node')}
       </p>
-      <ul aria-labelledby="nav-instances">
+      <ul aria-labelledby="nav-host">
         {instances.map((i) => (
           <li key={i.id}>
             <a
@@ -628,12 +627,38 @@ function NavInstances({
                   : undefined
               }
             >
-              {i.id}
+              <Icon name="box" />
+              {/* The id, then its server profile twice (20 N.5, decision 5): a
+                  run only the reader says, naming what the second word is, and
+                  a run only the eye reads. The profile is the manager's
+                  spelling, so it is never translated. */}
+              <span className="nav-instance">
+                {i.id}
+                {i.serverProfile !== null && (
+                  <>
+                    <span className="visually-hidden">
+                      {t('nav-instance-profile', i.serverProfile)}
+                    </span>{' '}
+                    <span aria-hidden="true">
+                      {t('nav-instance-profile-shown', i.serverProfile)}
+                    </span>
+                  </>
+                )}
+              </span>
             </a>
           </li>
         ))}
+        <li>
+          <a
+            href="#/node"
+            aria-current={route.page === 'node' ? 'page' : undefined}
+          >
+            <Icon name="cpu" />
+            {t('nav-node')}
+          </a>
+        </li>
       </ul>
-    </>
+    </li>
   )
 }
 

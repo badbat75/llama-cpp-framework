@@ -548,12 +548,12 @@ test('2a.1: signed out there is no nav, so no Model profiles link', async () => 
   expect(screen.queryByRole('navigation', { name: en('nav-label') })).toBeNull()
 })
 
-test('2a.1: signed in, the nav holds Overview, the instance links, then Model profiles to #/profiles/model, outside the Instances group', async () => {
+test('2a.1: signed in, the nav holds Overview, the instance links, then Model profiles to #/profiles/model, outside the host list', async () => {
   startAt('#/')
   open()
   // 09 S1a.3: the nav comes with the session.
   const n = await navReady()
-  const list = await within(n).findByRole('list', { name: en('nav-instances') })
+  const list = await within(n).findByRole('list', { name: en('nav-this-node') })
   const models = await within(n).findByRole('link', {
     name: en('nav-model-profiles'),
   })
@@ -562,27 +562,30 @@ test('2a.1: signed in, the nav holds Overview, the instance links, then Model pr
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-model-profiles'),
-    // 18 AN.6: Node info, then About.
+    // 20 N.7: Node info is in the host list, after its instances.
     en('nav-node'),
+    en('nav-model-profiles'),
+    // 13 N.6: About, last.
     en('nav-about'),
   ])
   expect(list.contains(models)).toBe(false)
   expect(before(list, models)).toBe(true)
 })
 
-test('2a.1: a failed instances read leaves out the Instances group, not Model profiles', async () => {
+test('2a.1: a failed instances read leaves out the instance links, not Model profiles', async () => {
   startAt('#/')
   open({ instances: () => reply(503, { key: 'client-unavailable', args: [] }) })
   await screen.findByText(en('instances-manager-unavailable'))
   await within(nav()).findByRole('link', { name: en('nav-model-profiles') })
   expect(
-    within(nav()).queryByRole('list', { name: en('nav-instances') }),
+    within(nav()).queryByRole('link', { name: 'default' }),
+    // 20 N.6: the group and its labels stay, the links are what is missing.
+    'no instance link',
   ).toBeNull()
   expect(navLinks()).toEqual([
     en('nav-overview'),
-    en('nav-model-profiles'),
     en('nav-node'),
+    en('nav-model-profiles'),
     en('nav-about'),
   ])
 })
@@ -882,7 +885,7 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
   // U17c puts the sortable headers' buttons after the field, in the table's head.
   const { main } = open()
   await table(main)
-  await within(nav()).findByRole('list', { name: en('nav-instances') })
+  await within(nav()).findByRole('list', { name: en('nav-this-node') })
   expect(tabbable().map(nameOf)).toEqual([
     en('skip-to-content'),
     en('app-name'),
@@ -893,9 +896,10 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-model-profiles'),
-    // 18 AN.6: Node info, then About, both before the page.
+    // 20 N.7: Node info is in the host list, after its instances.
     en('nav-node'),
+    en('nav-model-profiles'),
+    // 13 N.6: About, last, both before the page.
     en('nav-about'),
     en('model-profiles-filter-label'),
     en('model-profiles-column-name'),

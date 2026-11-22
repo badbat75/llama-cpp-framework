@@ -89,6 +89,16 @@ Lessons only: the rules are in `AGENTS.md`.
   that name them are per-selector (`Reflow.test.ts` R1.5 on `.model-profiles th`/`td:nth-child(2)`/
   `td:last-child`, `HearthH9a.test.ts` on `.jump ul button`, `HearthAssets.test.tsx` on the toggle and the
   h3 button), and a rule's declaration count is pinned only for the selectors the brief counts.
+- A brief AMENDED to add a declaration to a rule reddens that rule's per-selector "declares nothing
+  else" list, which the amendment never names: brief 20 N.11 gained `flex: 1 1 4rem` on
+  `.nav-instance` and its own count test (`NodesMenu2.test.tsx` 20 N.11, `declared(instance.body)
+  .sort()` == `['min-width', 'overflow-wrap']`, its title and message saying "two properties") is the
+  stale pin. When a rule gains a property, grep `declared(` over every `fe/src/*.test.*` that names
+  the selector, and report the list as the tester's. (A value pin is order-free: `prop()` takes the
+  LAST declaration of a property in the block.)
+- `format:check` can be red in the tester's new test file alone (a double-quoted string Prettier
+  wants single). Prove your own file clean with `npx --prefix fe prettier --check fe/src/index.css`
+  and report the test file; a quote change moves no assertion, so it is the tester's to make.
 - `strings.test.ts`'s "every value is used" scans source text for `t(` + a string literal, so a key that reaches
   `t` as a VARIABLE, or as one arm of a ternary in the first argument, counts as unused and reddens that test
   with no code change of its own. Write one `t('<key>')` literal per key, at a call site, and pass the value on.
@@ -1766,3 +1776,59 @@ before you report.
   helper called as `form({})` whose body asserts the values of `form()`'s OWN default (`{...AS_LOADED}`),
   and a 422 test that types a value outside the range the same brief requires the client to check, so
   `save-invalid` refuses it and no PUT is ever sent (typing a value the client accepts reaches the 422).
+
+## Slice N1a (2026-11-22): the nav's Nodes group, and the four shapes of red there
+
+- **A nav link that comes from a read cannot be read synchronously after the nav appears.** The store
+  read starts in the nav's own effect, so its answer lands a few microtasks AFTER the nav paints;
+  `await screen.findByRole('navigation')` resolves on the mutation that inserts the nav, so a
+  `getByRole('link', {name: <id>})` on the instance links right after it is a race production cannot
+  win. Proof at HEAD 43dd658 with the OLD nav: right after the nav, its links are
+  `['#/', '#/profiles/model', '#/node', '#/about']` (no instance link at all), and ONE
+  `findByRole('link', {name:'default'})` later they are all there. So `NodesMenu1` 20 N.2 and the
+  second 20 N.5 (`navOf()` then synchronous `getByRole`) are test-side; every suite that reads the
+  links uses `open()`, which awaits one link first.
+- **A count of elements inside a label that carries an icon contradicts the icon suite.** 20 N.4 asks
+  `#nav-host.querySelectorAll('*').length` to be 1; `HearthIcons.test.tsx` H8a.1/H8a.2 ask the same
+  element's first child to be `svg.icon` whose children ARE the five shapes of lucide `computer`, so
+  the answer is 6. `querySelectorAll('*')` counts svg children.
+- **One file can pin two icon counts.** `HearthIcons.test.tsx` H8a.2 (amended for brief 20) counts 7
+  `svg.icon` in the nav; H8a.8's case table still says `nav: 4` (the pre-brief-20 nav), so it reddens
+  on any code that satisfies H8a.2.
+- **A helper that waits for a link by its bare id reddens every test whose fixture gives that instance
+  a server profile.** `NodesMenu2.test.tsx`'s `open()` awaits `findByRole('link', {name:'default'})`;
+  20 N.5 names that link `default, server profile qwen-27b`, so the five tests that open with `TWO`
+  die at the 1000 ms `findByRole` timeout. Their bodies, with that name in the wait, are green (a
+  scratch with the three bodies proves it, `isHidden` included in `tabbable`).
+- **A CSS rule a brief mandates reddens the sheet inventories the tester did not amend.** Brief 20
+  20 N.11's `.nav-instance { min-width: 0; overflow-wrap: anywhere }` is listed by `Reflow.test.ts`
+  R1.1 (the rules that set `overflow-wrap`) and R1.8 (the frozen class list), and MISSING from
+  `HearthTokens.test.ts` H1a.12 (every rule declaring `min-width`/`min-height`), which reads the
+  declaration AS THE SHEET WRITES IT: `.nav-instance: min-width: 0`. `gap` is not one of its watched
+  properties, so `.nav-label:has(> .icon)` reddens nothing there.
+- **`vi.useFakeTimers()` with the DEFAULT `toFake` fakes what React's scheduler uses**: a scratch that
+  renders `App` under it hangs at the first `findByRole` and dies at the 5 s test timeout. The suites
+  that fake the clock fake `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`, `Date` only
+  (`NodesMenu1.test.tsx`'s `fakeClock`), which is why they pass.
+- **Prove a test-side red against the committed tree, in seconds**: `git worktree add
+  /tmp/opencode/<x> HEAD`, `ln -s <repo>/fe/node_modules <x>/fe/node_modules`, drop the scratch in
+  `<x>/fe/src/`, `npm --prefix <x>/fe test -- <name>`, then `git worktree remove --force <x>`. No
+  install, and the tester's uncommitted edits stay out of the proof.
+
+## Slice N1b (2026-11-22): a whole part with no production red, and the copy that proves it
+
+- **A file red at its own helper proves nothing about the code**: all six `NodesMenu2` reds die in
+  `open()`'s `findByRole('link', {name:'default'})`, so N.7 to N.12 assertions never run. With that one
+  name widened to `/^default/` in a copy, all six go green on the SHIPPED code: the proof a part needs
+  no production change is the copy, not a new assertion.
+- **A whole-`fe` copy, and the one file outside `fe` a test reads**: `rsync -a --exclude node_modules
+  --exclude dist --exclude ux --exclude briefs fe/ <x>/fe/`, symlink `fe/node_modules` in, and copy
+  `crates/core/strings/` to `<x>/crates/core/` (`HearthTiles.test.tsx` 369 reads
+  `../../crates/core/strings/en_US.toml`, ENOENT in a copy of `fe` alone). 3.9 MB, the full 107-file
+  suite in 32 s, `npm --prefix <x>/fe test`.
+- **`HearthIcons.test.tsx` H8a.8's nav icon count is a race, and its right number is 7** (house,
+  computer, a box per instance, cpu, layers, info): the signed-in case awaits only the nav, so it reads
+  5 when the list has not landed and 7 when it has. The wait must be `within(nav)` (the Overview tile is
+  also a link named `default`, and a screen-level find answers "multiple elements").
+- The 20 N.5 race (part a's list) is INVISIBLE in a filtered run: green alone, red only in a full-suite
+  run. State the run you measured.

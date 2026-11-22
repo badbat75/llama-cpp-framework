@@ -57,7 +57,7 @@ test('H5b.7: one nav landmark named Main, each group named by a .nav-label above
   const groups = Array.from(nav.querySelectorAll(':scope > ul'))
   expect(
     groups.length,
-    'four groups: Overview, the instances, the model profiles, and the last one with Node info and About (13 N.6, 18 AN.6)',
+    'four groups: Overview, Nodes, the model profiles, and the last one with About only (13 N.6, 18 AN.6, 20 N.3: the host list is inside the Nodes list, so it is not a group of the nav)',
   ).toBe(4)
   expect(
     groups[0].hasAttribute('aria-labelledby'),
@@ -87,18 +87,18 @@ test('H5b.7: one nav landmark named Main, each group named by a .nav-label above
   }
   expect(
     named,
-    'the groups are named in the order they read: Instances, then Profiles',
-  ).toEqual([EN['nav-instances'], EN['nav-profiles']])
+    'the groups are named in the order they read: Nodes, then Profiles (brief 20 20 N.3; the host label is inside the Nodes list, so this walk does not see it)',
+  ).toEqual([EN['nav-nodes'], EN['nav-profiles']])
   const links = navLinks(nav)
   expect(
     links.map((a) => a.textContent),
-    'the tab order follows the list: Overview, the instances, the model profiles, Node info, About (13 N.11, 18 AN.6)',
+    'the tab order follows the list: Overview, the instances, Node info under them, the model profiles, About (13 N.11, 18 AN.6, 20 N.7)',
   ).toEqual([
     'Overview',
     'default',
     'coder',
-    EN['nav-model-profiles'],
     EN['nav-node'],
+    EN['nav-model-profiles'],
     EN['nav-about'],
   ])
 })

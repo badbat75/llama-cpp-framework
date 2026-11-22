@@ -23,6 +23,11 @@ export type IconName =
   | 'info'
   // 18 AN.6 (fe/briefs/18-about-node-info.md): the Node info nav entry.
   | 'cpu'
+  | 'computer'
+  // 20 N.4 (fe/briefs/20-nodes-menu.md): the host label of the Nodes group. The
+  // citation follows its name, where 20 N.11 reads the text after it.
+  | 'box'
+  // 20 N.5 (fe/briefs/20-nodes-menu.md): every instance link of the host list.
   | 'triangle-alert'
   | 'lock-open'
   | 'circle-alert'
@@ -108,6 +113,27 @@ const SHAPES: Record<IconName, ReactNode> = {
       <path d="M7 2v2" />
       <rect x="4" y="4" width="16" height="16" rx="2" />
       <rect x="8" y="8" width="8" height="8" rx="1" />
+    </>
+  ),
+  // 20 N.4 (fe/briefs/20-nodes-menu.md): the host label. The path data is
+  // lucide-static 1.74.0 icons/computer.svg, the machine the brief's decision 7
+  // picks for the host entry.
+  computer: (
+    <>
+      <path d="M12 18h6" />
+      <path d="M6 18h.01" />
+      <path d="M8 6h1" />
+      <rect x="2" y="14" width="20" height="8" rx="2" />
+      <rect x="4" y="2" width="16" height="12" rx="2" />
+    </>
+  ),
+  // 20 N.5 (fe/briefs/20-nodes-menu.md): each instance link, one running unit on
+  // the host. The path data is lucide-static 1.74.0 icons/box.svg.
+  box: (
+    <>
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
     </>
   ),
   'triangle-alert': (

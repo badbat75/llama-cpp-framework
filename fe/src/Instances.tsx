@@ -18,8 +18,9 @@ import { t } from './strings.ts'
 /**
  * An instance (fe/briefs/12-instance-tags.md): the id, the engine and the
  * state, plus the port of its server profile (0 when it has none), the two
- * lists of tags, the union and the instance's own, and whether its service
- * starts at boot (fe/briefs/13-node-about.md, 13 N.1).
+ * lists of tags, the union and the instance's own, whether its service
+ * starts at boot (fe/briefs/13-node-about.md, 13 N.1), and the name of its
+ * server profile (fe/briefs/20-nodes-menu.md, 20 N.2).
  */
 export type Instance = {
   id: string
@@ -30,6 +31,10 @@ export type Instance = {
   instanceTags: string[]
   /** The list's answer for that one instance, null when it has none. */
   boot: boolean | null
+  /** The name of the server profile its record carries, null when it names
+   * none (fe/briefs/20-nodes-menu.md, 20 N.2): the nav's link shows it, the
+   * Overview's tile does not. */
+  serverProfile: string | null
 }
 
 /** What the bff answered: the instances, or the key of the message saying why
@@ -93,6 +98,16 @@ function bootIn(item: Item): boolean | null {
   return typeof item.boot === 'boolean' ? item.boot : null
 }
 
+/** `serverProfile` of an item: the name as the manager spells it, null when
+ * the item names none (fe/briefs/20-nodes-menu.md, 20 N.2): missing, null,
+ * empty or not a string is no profile. */
+function serverProfileIn(item: Item): string | null {
+  const { serverProfile } = item
+  return typeof serverProfile === 'string' && serverProfile !== ''
+    ? serverProfile
+    : null
+}
+
 /** The instance an item of the reply describes. */
 function instanceOf(item: Item): Instance {
   return {
@@ -103,6 +118,7 @@ function instanceOf(item: Item): Instance {
     tags: tagsIn(item, 'tags'),
     instanceTags: tagsIn(item, 'instanceTags'),
     boot: bootIn(item),
+    serverProfile: serverProfileIn(item),
   }
 }
 

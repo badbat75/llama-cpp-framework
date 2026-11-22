@@ -477,7 +477,10 @@ test('1a.13: signing in at #/sign-in updates the banner and nav and lands on the
     expect(text, `no ${word} in the banner`).not.toContain(word)
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   expect(
-    await within(nav).findByRole('list', { name: en('nav-instances') }),
+    // Brief 20 (20 N.4): the instance links are the host's list, named by the
+    // host label, here the fallback "This node" (the default reply carries no
+    // host name).
+    await within(nav).findByRole('list', { name: en('nav-this-node') }),
   ).toBeTruthy()
   const h1 = await screen.findByRole('heading', {
     level: 1,

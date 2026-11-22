@@ -706,6 +706,12 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     // square (2.5.8); H5b.2: the nav pills are 32 px (2.5.8 asks 24). The
     // Sign in pill of H5a.4 is gone (09 S1a.12).
     '.nav a: min-height: 32px',
+    // Brief 20, 20 N.11: the text run of an instance link shrinks in the pill
+    // (min-width 0), so a 40-character id wraps instead of scrolling the page
+    // sideways at 320 px (1.4.10). Brief 20 says this list is unchanged "no
+    // size", meaning no height: the rule it mandates carries a min-width, and
+    // this pin is of every min-height AND min-width in the sheet.
+    '.nav-instance: min-width: 0',
     'main: min-width: 0',
     '.theme-switch: min-width: var(--control-h)',
     // 17c.9: the sortable header's text is a button, so it names its own 24 px

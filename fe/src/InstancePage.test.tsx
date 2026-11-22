@@ -1149,10 +1149,10 @@ const TAB_PATH = [
   en('nav-overview'),
   'default',
   'coder',
-  // fe/briefs/02-models.md, 2a criterion 1.
-  en('nav-model-profiles'),
-  // Slice 18 (18 AN.6): Node info joins the last group, About stays last.
+  // Brief 20 (20 N.7): Node info sits in the host list, after its instances,
+  // and fe/briefs/02-models.md 2a criterion 1 keeps Model profiles after it.
   en('nav-node'),
+  en('nav-model-profiles'),
   // Slice 13: About is the nav's last entry, so it precedes the page.
   en('nav-about'),
   // The header's run buttons, inactive ones included, then Start at boot's

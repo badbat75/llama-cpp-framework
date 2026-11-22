@@ -63,13 +63,20 @@ USER = "abcdefghijklmnopqrstuvwxyz012345"
 # port and eight tags of 32 characters, the widest facts at 320 px. The `boot`
 # of brief 13 (13 N.1) is on for two tiles, off for one, and left out for one,
 # the tile with no Start at boot row.
+#
+# The `serverProfile` of brief 20 (20 N.5, section 6) rides the same rows, for
+# the nav's instance links: `default` names one, `coder` answers `null`, `embed`
+# carries no key at all (the reader makes both `null`), and the 40-character id
+# carries a 40-character profile with no break point, so the open nav at 320 px
+# and at 200 % text has to break both inside one pill.
 MANY_ID = "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890123"
+LONG_SERVER_PROFILE = "QWEN327BTHIRTYCHARACTERSPROFILE012345678"  # 40, no break point
 LONG_TAG = "abcdefghijklmnopqrstuvwxyz01234"  # 31 characters
 INSTANCES_MANY = [
-    {"id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": True},
-    {"id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 8580, "tags": ["coding", "fast"], "instanceTags": ["coding"], "boot": False},
+    {"id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": True, "serverProfile": "qwen-27b"},
+    {"id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 8580, "tags": ["coding", "fast"], "instanceTags": ["coding"], "boot": False, "serverProfile": None},
     {"id": "embed", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": []},
-    {"id": MANY_ID, "engine": "strata", "state": "activating", "port": 65535, "tags": [LONG_TAG + str(n) for n in range(8)], "instanceTags": [LONG_TAG + str(n) for n in range(2)], "boot": True},
+    {"id": MANY_ID, "engine": "strata", "state": "activating", "port": 65535, "tags": [LONG_TAG + str(n) for n in range(8)], "instanceTags": [LONG_TAG + str(n) for n in range(2)], "boot": True, "serverProfile": LONG_SERVER_PROFILE},
 ]
 
 # The tags of the one instance the check opens (brief 15 section 7), as
@@ -343,9 +350,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json(200, INSTANCES_MANY)
             # The one instance of the page the check opens: its port, its tags
             # (brief 15, `tags=`) where the profile brings one the instance does
-            # not carry (12), and its boot (13 N.1), on, as its /boot read says.
+            # not carry (12), its boot (13 N.1), on, as its /boot read says, and
+            # its server profile (brief 20 section 6), so the nav's link reads
+            # "default · qwen-27b" on every page the check opens.
             tags, profile = OWN_TAGS[STATE["tags"]]
-            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 8080, "tags": tags, "instanceTags": profile, "boot": True}])
+            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 8080, "tags": tags, "instanceTags": profile, "boot": True, "serverProfile": "qwen-27b"}])
         # The boot row of the tiles and the instance page's boot field
         # (08-hearth-h6-overview.md section 3): on for default, off for every
         # other instance.

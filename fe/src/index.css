@@ -558,14 +558,22 @@ button {
 
 /* An entry that holds an icon (08-hearth-h8-icons.md H8a.5, from the H8a
    review): the label moves whole under the icon when it does not fit beside it,
-   and breaks inside a word only where a whole word has no room. The plain entry
-   keeps `anywhere`, which its long instance id needs: such an id has no break
-   point, and a break-word there makes the whole id one unbreakable word. The
-   rule wins on the entries it names (0,2,1 over 0,1,1), so the plain rule keeps
-   its say on the instance links. */
+   and breaks inside a word only where a whole word has no room. The rule wins on
+   the entries it names (0,2,1 over 0,1,1); the run of an instance link's words
+   keeps `anywhere` (`.nav-instance` below), which a long id with no break point
+   needs. */
 .nav a:has(> .icon) {
   flex-wrap: wrap;
   overflow-wrap: break-word;
+}
+
+/* The run of words of an instance link (20 N.5, 20 N.11): the pill is a flex
+   row, so the run needs `min-width: 0` to shrink at all, and `anywhere` so a
+   long id breaks where it has to (DESIGN.md 4). */
+.nav-instance {
+  flex: 1 1 4rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .nav a:hover {
@@ -590,6 +598,15 @@ button {
   color: var(--muted);
   font-size: var(--fs-xs);
   font-weight: 600;
+}
+
+/* A nav label that holds an icon, the host of the Nodes group (20 N.4,
+   20 N.11): the icon sits beside the words at the entries gap, the way it does
+   in an entry. */
+.nav-label:has(> .icon) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 main {

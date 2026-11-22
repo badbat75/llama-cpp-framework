@@ -85,21 +85,25 @@ test('09 S1a.3 (1a.2): until the session answers, main shows loading and there i
     session.resolve(reply(200, { user: 'alice' }))
   })
   await screen.findByRole('button', { name: en('session-sign-out') })
-  // Signed in, the nav is today's shell: Overview, the Instances links, then
-  // Model profiles (09 S1a.4: "the nav with Overview, Instances, Profiles").
-  expect(navLinks()).toEqual([
+  // Signed in, the nav is today's shell: Overview, the host's instance links
+  // with Node info under them, then Model profiles (09 S1a.4, and brief 20
+  // 20 N.3: the Nodes group holds the host, its instances and Node info).
+  expect(
+    navLinks(),
+    'the nav links once the session answers, in the order of 20 N.3 and 20 N.7',
+  ).toEqual([
     en('nav-overview'),
     'default',
     'coder',
-    en('nav-model-profiles'),
-    // Slice 18 (18 AN.6): Node info joins the last group, and About stays last.
+    // Brief 20 (20 N.7): Node info moved into the host's list, after them.
     en('nav-node'),
+    en('nav-model-profiles'),
     en('nav-about'),
   ])
   expect(bff.to('GET', '/api/session')).toHaveLength(1)
 })
 
-test('1a.4: a failed instances read leaves the list out of the nav, the Overview shows the error', async () => {
+test('1a.4: a failed instances read leaves the instance links out of the nav, the Overview shows the error', async () => {
   fakeBff({
     instances: () => reply(503, { key: 'client-unavailable', args: [] }),
   })
@@ -110,13 +114,16 @@ test('1a.4: a failed instances read leaves the list out of the nav, the Overview
   await screen.findByRole('button', { name: en('session-sign-out') })
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   expect(
-    within(nav).queryByRole('list', { name: en('nav-instances') }),
+    within(nav).queryByRole('link', { name: 'default' }),
+    // Brief 20 (20 N.6): the group is shown, the links are what a failed read
+    // leaves out.
+    'no instance link',
   ).toBeNull()
   // Model profiles stays (fe/briefs/02-models.md, 2a criterion 1).
   expect(navLinks()).toEqual([
     en('nav-overview'),
-    en('nav-model-profiles'),
     en('nav-node'),
+    en('nav-model-profiles'),
     en('nav-about'),
   ])
 })
@@ -267,10 +274,12 @@ test('1a.1: a session reply that still carries canConfigure signs in the same wa
     expect(text, who).toContain(en('session-signed-in-as', 'alice'))
     for (const word of ROLE_WORDS)
       expect(text, `${who}: no ${word}`).not.toContain(word)
-    // Signed in: the nav holds the instances.
+    // Signed in: the nav holds the host's instance links (brief 20 20 N.4: the
+    // host list is named by the host label, here the fallback "This node", the
+    // default reply carrying no host name).
     const nav = screen.getByRole('navigation', { name: en('nav-label') })
     expect(
-      await within(nav).findByRole('list', { name: en('nav-instances') }),
+      await within(nav).findByRole('list', { name: en('nav-this-node') }),
       who,
     ).toBeTruthy()
     cleanup()
@@ -278,7 +287,7 @@ test('1a.1: a session reply that still carries canConfigure signs in the same wa
   }
 })
 
-test('1a.4: signed in, the nav holds Overview then an Instances list with one link per instance, in order', async () => {
+test('1a.4: signed in, the nav holds Overview then the host list with one link per instance, in order', async () => {
   fakeBff({
     instances: [
       { id: 'coder', engine: 'llama.cpp', state: 'active' },
@@ -291,28 +300,31 @@ test('1a.4: signed in, the nav holds Overview then an Instances list with one li
   // nav is taken once the session answers.
   const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   const list = await within(nav).findByRole('list', {
-    name: en('nav-instances'),
+    name: en('nav-this-node'),
   })
   const links = within(list).getAllByRole('link')
   expect(links.map((a) => a.textContent)).toEqual([
     'coder',
     'default',
     'big-model',
+    // Brief 20 (20 N.7): the host list ends with Node info.
+    en('nav-node'),
   ])
   expect(links.map((a) => a.getAttribute('href'))).toEqual([
     '#/instances/coder',
     '#/instances/default',
     '#/instances/big-model',
+    '#/node',
   ])
   expect(navLinks()).toEqual([
     en('nav-overview'),
     'coder',
     'default',
     'big-model',
-    // After the Instances group (fe/briefs/02-models.md, 2a criterion 1).
-    en('nav-model-profiles'),
-    // Slice 18 (18 AN.6): Node info, then About last.
+    // Brief 20 (20 N.7): Node info sits under the instances, in the host list,
+    // before the Profiles group (2a criterion 1 keeps Model profiles there).
     en('nav-node'),
+    en('nav-model-profiles'),
     en('nav-about'),
   ])
   const overview = within(nav).getByRole('link', { name: en('nav-overview') })
@@ -325,7 +337,7 @@ test('1a.5: the link of the current page has aria-current="page"', async () => {
   // 09 S1a.3: the nav is there once the session read answered.
   const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   const list = await within(nav).findByRole('list', {
-    name: en('nav-instances'),
+    name: en('nav-this-node'),
   })
   const overview = within(nav).getByRole('link', { name: en('nav-overview') })
   const defaultLink = within(list).getByRole('link', { name: 'default' })
