@@ -14,6 +14,9 @@ pub mod action_log;
 pub mod dbus;
 pub mod pipe;
 pub mod service;
+// The `vulkan-probe` child: the node's Vulkan drivers, printed by the child the
+// manager spawns to read them.
+pub mod vulkan_child;
 // The Windows side's decisions, OS-neutral (the Win32 glue is cfg(windows)).
 pub mod windows;
 
@@ -30,6 +33,11 @@ pub enum ManagerCommand {
     /// `uninstall-services`: stop and delete every instance's service (the
     /// MSI, when it removes or repairs the manager's files).
     UninstallServices,
+    /// `vulkan-probe`: the child the manager spawns to read the Vulkan driver of
+    /// each GPU, printing one JSON document on stdout (ARCHITECTURE.md "About
+    /// and node info", AN2). A hidden subcommand: the manager runs it, nobody
+    /// types it, so the usage text does not name it.
+    VulkanProbe,
 }
 
 /// Why a command line was refused.
@@ -59,6 +67,12 @@ pub fn parse_args(args: &[String]) -> Result<ManagerCommand, ArgsError> {
             return Err(ArgsError::ExtraArgument(arg.clone()));
         }
         return Ok(ManagerCommand::UninstallServices);
+    }
+    if command == "vulkan-probe" {
+        if let Some(arg) = rest.first() {
+            return Err(ArgsError::ExtraArgument(arg.clone()));
+        }
+        return Ok(ManagerCommand::VulkanProbe);
     }
     if command == "save-slots" {
         let (id, extra) = rest.split_first().ok_or(ArgsError::MissingId)?;
@@ -162,6 +176,13 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
         (2, text)
     })?;
     let id = match command {
+        // The hidden child `service::VulkanProbe` spawns: it prints the node's
+        // Vulkan drivers on stdout and answers nothing else, so the command ends
+        // here.
+        ManagerCommand::VulkanProbe => {
+            vulkan_child::run()?;
+            return Ok(0);
+        }
         ManagerCommand::RunInstance(id) => id,
         // The MSI ignores the outcome (its log keeps what is printed): a
         // service left behind is deleted by the next manager's own sync.
@@ -351,6 +372,45 @@ mod tests {
     #[test]
     fn parse_args_refuses_run_instance_without_id() {
         assert_eq!(parse(&["run-instance"]), Err(ArgsError::MissingId));
+    }
+
+    /// Slice AN2 of `ARCHITECTURE.md` ("About and node info"): the manager
+    /// spawns its own executable as `pai-manager vulkan-probe` to read the
+    /// node's Vulkan drivers, so the subcommand is a command of the parser.
+    #[test]
+    fn parse_args_reads_the_vulkan_probe_child() {
+        assert_eq!(parse(&["vulkan-probe"]), Ok(ManagerCommand::VulkanProbe));
+    }
+
+    /// The child takes no id and no flag: it reads the whole node.
+    #[test]
+    fn parse_args_refuses_the_vulkan_probe_with_an_argument() {
+        for arg in ["default", "--help", "8"] {
+            assert_eq!(
+                parse(&["vulkan-probe", arg]),
+                Err(ArgsError::ExtraArgument(arg.into())),
+                "`vulkan-probe {arg}` is no command"
+            );
+        }
+    }
+
+    /// The subcommand is hidden: the manager spawns it, nobody types it, so the
+    /// usage the manager prints for a bad command line (and the refusal of an
+    /// unknown command, which repeats it) must not offer it. The manager is a
+    /// command line, so its usage lives in the CLI's file: `en_US.toml` carries
+    /// no `manager-*` key at all (the 16 of them are in `cli.toml`).
+    #[test]
+    fn the_usage_never_offers_the_hidden_subcommand() {
+        let table = crate::strings::parse(include_str!("../../core/strings/cli.toml"));
+        for key in ["manager-usage", "manager-unknown-command"] {
+            let text = table
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} in cli.toml"));
+            assert!(
+                !text.contains("vulkan-probe"),
+                "cli.toml: {key} offers the subcommand only the manager spawns:\n{text}"
+            );
+        }
     }
 
     #[test]

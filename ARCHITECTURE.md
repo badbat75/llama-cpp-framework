@@ -3423,6 +3423,18 @@ driver's and the Vulkan driver's, per GPU.
   from `deviceName` when the row has none, as on Linux); an unmatched one is appended as a row with
   `driver` and `version` `null`. The rule lives in the manager (`pai-core`), so the director gets the
   same rows.
+- **The child's document** (accepted at AN2's review, 2026-11-22; `pai_core::vulkan`): one JSON line on
+  stdout, `{"vulkan": "ok"|"none"|"failed", "gpus": [{"pci", "name", "type", "driver", "info"}]}`;
+  `pci` in sysfs' form (`0000:03:00.0`, lower-case hex), `type` Vulkan's device type, a key left out
+  or a text over 256 bytes is `null`, a document over 4 MiB, not JSON, or with another status word
+  is `failed`. A node whose only devices are of type `cpu` (llvmpipe) answers `none`: no GPU has a
+  Vulkan driver, which is what the page needs to say. `VK_EXT_pci_bus_info` and
+  `VK_KHR_driver_properties` are **device** extensions (Vulkan refpages, "Extension Type"), so the
+  child asks `vkEnumerateDeviceExtensionProperties` per device (driver properties are also core from a
+  device `apiVersion` of 1.2) before chaining either struct, and creates its instance with the
+  `apiVersion` (1.1 or more) that lets it call the core `vkGetPhysicalDeviceProperties2`. The child
+  runs as the manager's account (root, LocalSystem), inherits the manager's environment and loads
+  only the platform's loader and the ICDs it names.
 - **Cost and cache.** A child spawn plus loader and ICD start, well under the bound (a guess, not
   measured: the first slice's test run on this machine gives the figure for the README). The Vulkan
   answer (success, `none` or `failed`) is cached for 10 minutes, so a polled page spawns at most one

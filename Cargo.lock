@@ -3597,6 +3597,7 @@ dependencies = [
 name = "pai-manager"
 version = "2.99.1"
 dependencies = [
+ "ash",
  "blocking",
  "nix",
  "pai-core",

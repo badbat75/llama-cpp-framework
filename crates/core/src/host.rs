@@ -49,8 +49,9 @@ pub struct OsInfo {
     pub kernel: Option<String>,
 }
 
-/// One display device of the host with the kernel driver bound to it, the row
-/// shape `ARCHITECTURE.md` ("About and node info") sends.
+/// One display device of the host and the driver it runs under, the row shape
+/// `ARCHITECTURE.md` ("About and node info") sends: the kernel driver bound to
+/// the device on Linux, the INF's provider on Windows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GpuDriver {
     /// The PCI bus id, as sysfs names the device (`0000:03:00.0`).
@@ -60,7 +61,9 @@ pub struct GpuDriver {
     /// The product name. A kernel row on Linux has none: the Vulkan join (AN2)
     /// fills it from `deviceName`.
     pub name: Option<String>,
-    /// The kernel driver bound to the device (`amdgpu`), `None` when unbound.
+    /// The driver of the device: the kernel driver bound to it (`amdgpu`) on
+    /// Linux, `None` when the device is unbound; the INF's provider
+    /// (`Intel Corporation`) on Windows, `None` when the node answers none.
     pub driver: Option<String>,
     /// `/sys/module/<driver>/version`, `None` when the module sets no version
     /// (an in-tree amdgpu, i915, xe) or the driver is unknown.
@@ -130,8 +133,9 @@ fn mib_from_meminfo(text: &str) -> u64 {
 /// At most this many GPU rows: a node has a handful of GPUs, and a list the
 /// reader caps cannot be a reply that grows without bound
 /// (`ARCHITECTURE.md` "About and node info"). The rows kept are the lowest bus
-/// ids, the reader sorting before it truncates.
-const MAX_GPU_ROWS: usize = 32;
+/// ids, the reader sorting before it truncates. The Vulkan join (AN2) caps its
+/// answer at the same count, so the page has one bound for both readings.
+pub(crate) const MAX_GPU_ROWS: usize = 32;
 
 /// The largest an os-release file is: the keys read are a few lines, and a file
 /// over this is not an os-release. The bound is the file's length, the versions
@@ -346,8 +350,8 @@ fn display_rows(root: &std::path::Path) -> Vec<GpuDriver> {
 
 /// The kernel driver bound to a PCI device: sysfs' `driver` symlink names the
 /// module it is bound to, and sysfs writes the link relative
-/// (`../../../module/amdgpu`). No link is an unbound device; a link aimed at a
-/// module dir that is not there still names its driver.
+/// (`../../../bus/pci/drivers/amdgpu`). No link is an unbound device; a link
+/// aimed at a module dir that is not there still names its driver.
 #[cfg(unix)]
 fn bound_driver(dev: &std::path::Path) -> Option<String> {
     let target = std::fs::read_link(dev.join("driver")).ok()?;
@@ -567,8 +571,9 @@ mod an1_host_readers {
 
     /// One PCI device laid out as sysfs does: the `class` and `vendor` files
     /// under `sys/bus/pci/devices/<bdf>`, and when `driver` is `Some` the
-    /// `driver` symlink with the relative path sysfs itself writes
-    /// (`../../../module/<driver>`). The module dir always exists when a driver
+    /// `driver` symlink with the relative path sysfs itself writes, aimed at
+    /// the driver's own folder: `../../../bus/pci/drivers/<driver>`. The
+    /// module dir always exists when a driver
     /// is bound; its `version` file is written only when `version` is `Some`,
     /// which is what an in-tree driver (i915, xe, an amdgpu with no DKMS) is.
     fn pci_device(
@@ -585,7 +590,7 @@ mod an1_host_readers {
         let Some(driver) = driver else { return };
         write_at(root, &format!("sys/module/{driver}/uevent"), "MAJOR=232\n");
         std::os::unix::fs::symlink(
-            format!("../../../module/{driver}"),
+            format!("../../../bus/pci/drivers/{driver}"),
             root.join(&dev).join("driver"),
         )
         .expect("symlink");
@@ -599,13 +604,13 @@ mod an1_host_readers {
     }
 
     /// A device with a `class` and a `vendor` and a `driver` link aimed at a
-    /// module dir that is not there.
+    /// driver folder that is not there.
     fn dangling_device(root: &Path, bdf: &str, class: &str, vendor: &str, driver: &str) {
         let dev = format!("sys/bus/pci/devices/{bdf}");
         write_at(root, &format!("{dev}/class"), &format!("{class}\n"));
         write_at(root, &format!("{dev}/vendor"), &format!("{vendor}\n"));
         std::os::unix::fs::symlink(
-            format!("../../../module/{driver}"),
+            format!("../../../bus/pci/drivers/{driver}"),
             root.join(&dev).join("driver"),
         )
         .expect("symlink");

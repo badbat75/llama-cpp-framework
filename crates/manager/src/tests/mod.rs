@@ -20,6 +20,12 @@ mod windows_sync;
 // name the exe themselves and touch no `paths::`, so they run beside the
 // e2e below; the ones that write a shell script are `#[cfg(unix)]`.
 mod gpu_probe;
+// The Vulkan child of slice AN2 (manager/service.rs `VulkanProbe`). Same
+// shape: the exe is a script the test names, no `paths::`, scripts `#[cfg(unix)]`.
+mod vulkan_probe;
+// The Vulkan child's extension and version plan (manager/vulkan_child.rs
+// `chain_plan`): a pure decision, no loader opened, so it runs on every OS.
+mod vulkan_chain;
 
 #[test]
 fn data_root_e2e() {

@@ -21,6 +21,11 @@ pai-core = { path = "../core" }
 # The manager's protocol over a byte stream (manager/pipe.rs): one JSON
 # message per frame, the frames pai-core's client writes.
 serde_json = "1"
+# The `vulkan-probe` child (manager/vulkan_child.rs): the Vulkan bindings, with
+# the loader opened at run time (`ash::Entry::load`), so the manager's image
+# needs no Vulkan headers, links no Vulkan loader and starts on a node that has
+# none. `loaded` only: `linked` would make the binary need a loader to start.
+ash = { version = "0.38", default-features = false, features = ["loaded"] }
 
 # pai-manager's D-Bus service on the system bus (manager/dbus.rs). The
 # version already in the lock (accesskit, atspi, ashpd), so there is one zbus;

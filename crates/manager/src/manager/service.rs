@@ -643,6 +643,119 @@ impl GpuTotals for ProbedGpus {
     }
 }
 
+/// How long the Vulkan child is given before it is killed (ARCHITECTURE.md
+/// "About and node info", AN2: the child's 8 s, under the bff's 10 s for the
+/// whole node read).
+pub const VULKAN_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// How long one Vulkan answer is kept, success, `none` and `failed` alike: a
+/// polled page spawns at most one child over the window, and a driver upgrade
+/// shows within it (ARCHITECTURE.md "About and node info", "Cost and cache").
+pub const VULKAN_CACHE_SECONDS: u64 = 600;
+
+/// The subcommand the child is asked for: the hidden one of this same
+/// executable, `pai-manager vulkan-probe`.
+const VULKAN_PROBE_COMMAND: &str = "vulkan-probe";
+
+/// The node's Vulkan drivers, read by a child of the manager's own executable
+/// (`pai-manager vulkan-probe`), spawned under `run_hidden_probe_within`, its
+/// document parsed by `pai_core::vulkan` and its answer kept for
+/// [`VULKAN_CACHE_SECONDS`]. A child that hangs or dies is the child's, not the
+/// manager's: the bound frees the caller and the answer is `Failed`. Callers
+/// that arrive together share one run (the serial-probe pattern of
+/// [`ProbedGpus`]).
+pub struct VulkanProbe {
+    exe: std::path::PathBuf,
+    timeout: std::time::Duration,
+    /// The answer of the last child, with the second `probe` was called at then:
+    /// `None` while no child ran yet. The answer is kept whatever it is,
+    /// `Failed` included: a hung ICD costs one child per window, not one per
+    /// poll.
+    cached: std::sync::Mutex<Option<(u64, pai_core::vulkan::Probe)>>,
+    /// Held across the child, so the calls that arrive together run one of it:
+    /// the child opens the loader and every ICD of the node, and two at once
+    /// contend for the cards they are there to read.
+    probing: std::sync::Mutex<()>,
+}
+
+impl VulkanProbe {
+    /// A probe of `exe vulkan-probe`, killed after `timeout`: a test names a
+    /// script and a short bound.
+    pub fn new(exe: impl Into<std::path::PathBuf>, timeout: std::time::Duration) -> Self {
+        Self {
+            exe: exe.into(),
+            timeout,
+            cached: std::sync::Mutex::new(None),
+            probing: std::sync::Mutex::new(()),
+        }
+    }
+
+    /// The probe of a real node: this executable, under [`VULKAN_PROBE_TIMEOUT`].
+    pub fn for_node() -> Self {
+        Self::new(
+            // The child is this same binary asked for its Vulkan drivers, so a
+            // node carries its Vulkan with its manager and nothing is installed
+            // beside it. A node where the path is unknown spawns no child, and
+            // the read is `Failed` as any child that answers nothing.
+            std::env::current_exe().unwrap_or_default(),
+            VULKAN_PROBE_TIMEOUT,
+        )
+    }
+
+    /// The node's Vulkan drivers as the child answered them: the cached answer
+    /// when it is younger than [`VULKAN_CACHE_SECONDS`] of `now`, else one
+    /// child run. `now` is the caller's clock (the unit `probed_at` uses), so a
+    /// test moves the moment and runs no child.
+    pub fn probe(&self, now: u64) -> pai_core::vulkan::Probe {
+        // The window read off the serial lock first: a page polled inside it
+        // takes the answer and never reaches a child.
+        if let Some((ran_at, answer)) = self.kept() {
+            if now.saturating_sub(ran_at) < VULKAN_CACHE_SECONDS {
+                return answer;
+            }
+        }
+        let _serial = self.probing.lock().unwrap_or_else(|e| e.into_inner());
+        // The window read again with the lock held: the child that ran while
+        // this caller waited for the lock is the caller's answer, one child for
+        // every caller that queued behind it.
+        if let Some((ran_at, answer)) = self.kept() {
+            if now.saturating_sub(ran_at) < VULKAN_CACHE_SECONDS {
+                return answer;
+            }
+        }
+        // One run of the child: its document, read under the bound and capped by
+        // `proc`, parsed by `pai_core::vulkan`. A child that cannot start, is
+        // killed at the bound, dies on an ICD or prints text that is not the
+        // document is `Failed`: the node's Vulkan is a hole in the page, never
+        // an error the caller has to answer. The exit status is not asked: a
+        // child that dies prints nothing, and an empty text is no document.
+        let answer = match pai_core::proc::run_hidden_probe_within(
+            &self.exe,
+            [VULKAN_PROBE_COMMAND],
+            self.timeout,
+        ) {
+            // The document is stdout alone: the child prints nothing else, and a
+            // loader that logs does it on stderr, which is not part of it.
+            Some(output) => pai_core::vulkan::parse(&String::from_utf8_lossy(&output.stdout)),
+            None => pai_core::vulkan::Probe {
+                status: pai_core::vulkan::Status::Failed,
+                devices: Vec::new(),
+            },
+        };
+        *self.cached.lock().unwrap_or_else(|e| e.into_inner()) = Some((now, answer.clone()));
+        answer
+    }
+
+    /// The kept answer, whole: a poisoned lock is taken over, every write
+    /// leaves the entry whole.
+    fn kept(&self) -> Option<(u64, pai_core::vulkan::Probe)> {
+        self.cached
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+}
+
 /// Replace `path` with `contents` atomically (a temp file beside it, synced,
 /// then renamed over it). On Unix the temp file has `file_mode(file)` before
 /// any byte is written and, for an instance file, its group set to
