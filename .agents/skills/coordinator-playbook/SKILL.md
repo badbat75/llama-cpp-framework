@@ -152,3 +152,10 @@ for the Vulkan hand run before launching the next slice, and nothing moved until
 "hai bloccato lo sviluppo di questa notte per chiedermi di fare una lettura?"). Launch the next slices
 first, then ask; a go-ahead that only gates an optional check goes in the slice's message as a note,
 not as a blocking question, and the work carries on without it.
+
+## Split a web UI slice the local coder cannot hold
+
+LS1 (brief 19, 12 criteria, four test files over 2000 lines) took the local coder 2 hours of re-reading
+after repeated context compactions with only the arithmetic module written (2026-11-22). Give the coder
+one test file or one criterion group per run, tell it to run the tests and read only failing assertions,
+and stop a run at 2 hours, relaunching from what it saved.
