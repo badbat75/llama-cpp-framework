@@ -19,8 +19,8 @@ a session: any other API route is 401 `session-required`, asking the manager not
 administrators only, members of the group `pai` (user, 2026-11-15): a right password of a `pai`
 member signs in, a right password of anyone else is 403 `session-not-administrator`
 (`fe/briefs/api-contract.md`). Behind
-sign-in it has the Overview (version, instances), the About page (this host's name, the framework's version and each
-installed engine's version and backends, [below](#the-node)), an instance page (the server file, Start, Stop, Restart, start at boot: all served)
+sign-in it has the Overview (version, instances), the About page (the framework's version and the operating system),
+a Node info page (this host's name and each installed engine's version and backends, [below](#the-node)), an instance page (the server file, Start, Stop, Restart, start at boot: all served)
 and the Model profiles page (the model profile list, the on/off switch per model profile and one model profile's own
 page, read and saved: all served, [below](#the-model-profile-routes)); on that page four cards are editable and the
 rest read-only, the fe's save being the open `PLAN.md` item 2h ([below](#the-web-ui-fe)).
@@ -280,8 +280,7 @@ session is checked first, so no request reaches the manager without one.
 `GET /api/node` (`crates/bff/src/node.rs`) answers what this host is and what its packages installed.
 Like `GET /api/version` it is gated by a session, asks the manager nothing and leaves the session's
 idle deadline where it was: 401 `session-required` with no live session, and no other answer. The web
-UI reads it for the labels of the navigation and for the About page
-([below](#the-web-ui-fe)).
+UI reads it for the Node info page ([below](#the-web-ui-fe)).
 
 | Field | From |
 | --- | --- |
@@ -1067,12 +1066,13 @@ and `/assets/`: a skip link, a banner (Sign in, or the user and Sign out, no rol
 1827023), a nav (behind a Menu button below 960px; the instances listed once signed in, under a heading
 named by the host, fe slice N: `nav-instances`; under a **Profiles** heading the **Model profiles**
 entry, fe slice 05b: `nav-profiles`, `nav-model-profiles`; the **Server** entry waits on the server
-profile page, `fe/briefs/05b-profiles-nav.md`; and last the **About** entry, the info icon, `nav-about`,
-fe slice N) and the route's page, whose heading takes the focus and names the document title on a
+profile page, `fe/briefs/05b-profiles-nav.md`; and last, in a list of their own, **Node info**, the cpu icon, `nav-node`, then **About**, the info icon, `nav-about`,
+fe slices N and AN5) and the route's page, whose heading takes the focus and names the document title on a
 change. Each page reads
-its data once when it opens and never shows a reply's text. The shell reads `GET /api/node` once per
-session (`readNode` in `fe/src/node.ts`): the host name it answers names the nav's instance group and the
-Overview's section, the plain words standing when the read has nothing to say, and a failure signs
+its data once when it opens and never shows a reply's text. The shell reads `GET /api/version` once per
+session (`readVersionInfo` in `fe/src/version.ts`, since fe slice AN5): the host name it answers names the nav's instance group and the
+Overview's section, the plain words standing when the read has nothing to say (today always: the bff's
+`/api/version` answers only `version`, the `name` field being planned, `PLAN.md` slice AN4), and a failure signs
 nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark is rewritten to
 `#/profiles/model` (`legacyHref`, 05b.8 and 05b.9), the rest of the address copied byte for byte.
 
@@ -1083,7 +1083,8 @@ nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark i
 | `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and `PUT /api/instances/<id>/boot`, both behind the session), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) | signed in; otherwise the sign-in form in its place |
-| `#/about` | The host and what is installed on it, read again at every arrival from `GET /api/node` (an engine upgrade does not restart the web service, `fe/src/About.tsx`): the page heading "About", the host's name as the section heading, the framework's version, then one section per installed engine with its version and a row per GPU runtime package (the three known suffixes by their own word, any other as sent). A `null` version shows as Unknown, an engine with no runtime as None, CPU only, and `engines: []` as a paragraph that there is no engine; a read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
+| `#/node` | Node info (`fe/src/NodePage.tsx`, fe slice AN5, `fe/briefs/18-about-node-info.md`), read again at every arrival from `GET /api/node` (an engine upgrade does not restart the web service): the host name, the operating system and kernel, the framework's version, one section per installed engine with its version and a row per GPU runtime package (the three known suffixes by their own word, any other as sent; a `null` version as Unknown, an engine with no runtime as None, CPU only, `engines: []` as a paragraph that there is no engine), then one block per GPU (vendor, PCI address, driver, Vulkan driver). The page reads `os`, `vulkan`, `gpus` and `nodeInfo`, which the bff does not answer yet (planned, `PLAN.md` slices AN3 and AN4): until then the OS and kernel show as Unknown and the GPU section as the paragraph that the manager could not read them (read in `NodePage.tsx`, not run against a bff). A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
+| `#/about` | The framework's version and the operating system with its version (`fe/src/About.tsx`, fe slice AN5), read again at every arrival from `GET /api/version`; the bff answers no `os` yet (`PLAN.md` slice AN4), so that row shows Unknown. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
 
 - **The session** (`fe/src/session.ts`) is read once at start from `GET /api/session`: only a 200

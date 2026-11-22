@@ -569,3 +569,6 @@ Lessons only: the rules are in `AGENTS.md`.
   `re.findall(rb'/Type\s*/Page[^s]', pdf)`, look at `pdftoppm -r 60 -png`. A fixed `height: 297mm` with
   `overflow: hidden` hides overflow from the page count: compare the sheet's `scrollHeight` and
   `clientHeight` under `emulateMedia({media: 'print'})` at 794x1123 px.
+- "The README" for a manager fact is `crates/config/README.md` (its "Through the manager" bullets per
+  method, its source map per file): there is no `crates/manager/README.md`. A manager piece no method
+  calls yet goes in the source map row, saying which slice will call it.
