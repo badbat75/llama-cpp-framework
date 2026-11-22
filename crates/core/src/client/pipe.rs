@@ -92,7 +92,7 @@
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
     ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, NodeInfoReply, Reason,
-    ServerProfileInfo,
+    ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu};
@@ -591,20 +591,47 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         let info = facts
             .map(|o| -> Result<ModelFacts, ClientError> {
                 let count = |key: &str| o.get(key).and_then(Value::as_u64);
+                // The tensor list the page places weights from: the manager
+                // writes it with every read, so a `tensors` that is not a list
+                // of `{name, bytes}` rows, or a `tensors_truncated` that is not
+                // a bool, is the shape of no manager.
+                let rows = o
+                    .get("tensors")
+                    .and_then(Value::as_array)
+                    .ok_or_else(&bad)?
+                    .iter()
+                    .map(|row| -> Result<TensorRow, ClientError> {
+                        Ok(TensorRow {
+                            name: row
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .ok_or_else(&bad)?
+                                .to_string(),
+                            bytes: row.get("bytes").and_then(Value::as_u64).ok_or_else(&bad)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 match (
                     count("block_count"),
                     o.get("moe").and_then(Value::as_bool),
                     count("expert_count"),
                     count("expert_used"),
+                    o.get("tensors_truncated").and_then(Value::as_bool),
                 ) {
-                    (Some(block_count), Some(moe), Some(expert_count), Some(expert_used)) => {
-                        Ok(ModelFacts {
-                            block_count,
-                            moe,
-                            expert_count,
-                            expert_used,
-                        })
-                    }
+                    (
+                        Some(block_count),
+                        Some(moe),
+                        Some(expert_count),
+                        Some(expert_used),
+                        Some(tensors_truncated),
+                    ) => Ok(ModelFacts {
+                        block_count,
+                        moe,
+                        expert_count,
+                        expert_used,
+                        tensors: rows,
+                        tensors_truncated,
+                    }),
                     _ => Err(bad()),
                 }
             })
@@ -1671,18 +1698,27 @@ mod tests {
 
     /// The model facts of one saved profile (L1, ARCHITECTURE.md (1)) cross the
     /// stream as the three fields of the design: `model` the resolved absolute
-    /// path (null when the section names none), `info` the four counts, `reason`
-    /// the keyed why. Exactly one of `info` and `reason` is there; the counts are
-    /// read as the manager's own `Shape` fields, in the stream's snake_case, the
-    /// way every row of this protocol is spelled. The frame a plain (not acting)
-    /// client sends is `ModelInfo` with the profile.
+    /// path (null when the section names none), `info` the four counts and the
+    /// tensor list 2j adds (J1: `tensors` rows of `name` and `bytes`, and
+    /// `tensorsTruncated`, in the stream's snake_case `tensors_truncated`),
+    /// `reason` the keyed why. Exactly one of `info` and `reason` is there; the
+    /// counts are read as the manager's own `Shape` fields, the way every row of
+    /// this protocol is spelled. The frame a plain (not acting) client sends is
+    /// `ModelInfo` with the profile.
     #[test]
     fn the_model_info_reply_is_the_facts_or_the_reason_the_manager_answered() {
-        use crate::client::{ModelFacts, ModelInfoReply, Reason};
+        use crate::client::{ModelFacts, ModelInfoReply, Reason, TensorRow};
 
         let (client, sent) = client_on(input(&[json!({"ok": {
             "model": "/var/lib/llama.cpp/models/m.gguf",
-            "info": {"block_count": 40u64, "moe": true, "expert_count": 128u64, "expert_used": 8u64},
+            "info": {
+                "block_count": 40u64, "moe": true, "expert_count": 128u64, "expert_used": 8u64,
+                "tensors": [
+                    {"name": "token_embd.weight", "bytes": 1048576u64},
+                    {"name": "blk.0.ffn_gate_exps.weight", "bytes": 2048u64},
+                ],
+                "tensors_truncated": false,
+            },
             "reason": null,
         }})]));
         assert_eq!(
@@ -1694,10 +1730,22 @@ mod tests {
                     moe: true,
                     expert_count: 128,
                     expert_used: 8,
+                    tensors: vec![
+                        TensorRow {
+                            name: "token_embd.weight".into(),
+                            bytes: 1048576,
+                        },
+                        TensorRow {
+                            name: "blk.0.ffn_gate_exps.weight".into(),
+                            bytes: 2048,
+                        },
+                    ],
+                    tensors_truncated: false,
                 }),
                 reason: None,
             }),
-            "the facts, in the manager's order, with the path it read"
+            "the facts, in the manager's order, with the path it read, and the tensor list \
+             row by row"
         );
         assert_eq!(
             sent_frames(&sent),
@@ -1751,6 +1799,26 @@ mod tests {
             got.reason.map(|r| r.args),
             Some(vec!["/m/x-00002-of-00002.gguf".to_string()])
         );
+
+        // Past the cap: the flag travels as the manager answered it, so the
+        // page knows the list it shows is not the whole model.
+        let (client, _) = client_on(input(&[json!({"ok": {
+            "model": "/m/many.gguf",
+            "info": {
+                "block_count": 1u64, "moe": false, "expert_count": 0u64, "expert_used": 0u64,
+                "tensors": [{"name": "t00000", "bytes": 4096u64}],
+                "tensors_truncated": true,
+            },
+            "reason": null,
+        }})]));
+        assert_eq!(
+            client.model_info("many").map(|r| {
+                let facts = r.info.expect("facts");
+                (facts.tensors.len(), facts.tensors_truncated)
+            }),
+            Ok((1, true)),
+            "the flag is the manager's answer, not the client's guess"
+        );
     }
 
     /// A `ModelInfo` reply of the wrong shape is `Other`, like every other
@@ -1777,6 +1845,31 @@ mod tests {
             // `model` of the wrong type.
             json!({"ok": {"model": 1, "info": null, "reason": {"key": "k", "args": []}}}),
             json!({"ok": {"model": true, "info": null, "reason": {"key": "k", "args": []}}}),
+            // The tensor list 2j adds (J1): the manager writes it with every
+            // read, so a `tensors` that is not a list of `{name, bytes}` rows,
+            // a row missing one of its two, or a `tensors_truncated` that is
+            // not a bool, is the shape of no manager.
+            json!({"ok": {"model": "/m/x.gguf", "reason": null, "info": {
+                "block_count": 1u64, "moe": false, "expert_count": 0u64, "expert_used": 0u64,
+                "tensors_truncated": false,
+            }}}),
+            json!({"ok": {"model": "/m/x.gguf", "reason": null, "info": {
+                "block_count": 1u64, "moe": false, "expert_count": 0u64, "expert_used": 0u64,
+                "tensors": "token_embd.weight", "tensors_truncated": false,
+            }}}),
+            json!({"ok": {"model": "/m/x.gguf", "reason": null, "info": {
+                "block_count": 1u64, "moe": false, "expert_count": 0u64, "expert_used": 0u64,
+                "tensors": [{"name": "token_embd.weight"}], "tensors_truncated": false,
+            }}}),
+            json!({"ok": {"model": "/m/x.gguf", "reason": null, "info": {
+                "block_count": 1u64, "moe": false, "expert_count": 0u64, "expert_used": 0u64,
+                "tensors": [{"name": "token_embd.weight", "bytes": "1024"}],
+                "tensors_truncated": false,
+            }}}),
+            json!({"ok": {"model": "/m/x.gguf", "reason": null, "info": {
+                "block_count": 1u64, "moe": false, "expert_count": 0u64, "expert_used": 0u64,
+                "tensors": [],
+            }}}),
             // `info` of the wrong shape: a field missing, a text count, a
             // negative one, `moe` not a bool, `info` not an object.
             json!({"ok": {"model": null, "info": {"moe": false, "expert_count": 0u64, "expert_used": 0u64}, "reason": null}}),

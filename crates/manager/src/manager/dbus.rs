@@ -181,18 +181,33 @@ fn device_list(list: pai_core::client::NodeDevices) -> (u64, Vec<DeviceRow>, u64
 
 /// The `ModelInfo` reply as the bus answers it:
 /// `(s model, (b has_info, t block_count, b moe, t expert_count,
-/// t expert_used), (s key, as args))`. `model` is the path the read opened,
-/// the empty string when the profile names none; `has_info` is the facts'
-/// part, `key` the keyed why's. The bus has no null, so the flag says which
-/// half of the reply is there, and the half that is not carries zeros and the
-/// empty strings: exactly what the stream's nulls say.
-type ModelInfoRow = (String, (bool, u64, bool, u64, u64), (String, Vec<String>));
+/// t expert_used, a(st) tensors, b tensors_truncated), (s key, as args))`.
+/// `model` is the path the read opened, the empty string when the profile names
+/// none; `has_info` is the facts' part, `key` the keyed why's. The bus has no
+/// null, so the flag says which half of the reply is there, and the half that
+/// is not carries zeros, the empty strings and an empty list: exactly what the
+/// stream's nulls say.
+type ModelInfoRow = (
+    String,
+    (bool, u64, bool, u64, u64, Vec<(String, u64)>, bool),
+    (String, Vec<String>),
+);
 
 fn model_info_row(reply: pai_core::client::ModelInfoReply) -> ModelInfoRow {
     let facts = reply
         .info
-        .map(|f| (true, f.block_count, f.moe, f.expert_count, f.expert_used))
-        .unwrap_or((false, 0, false, 0, 0));
+        .map(|f| {
+            (
+                true,
+                f.block_count,
+                f.moe,
+                f.expert_count,
+                f.expert_used,
+                f.tensors.into_iter().map(|t| (t.name, t.bytes)).collect(),
+                f.tensors_truncated,
+            )
+        })
+        .unwrap_or((false, 0, false, 0, 0, Vec::new(), false));
     let reason = reply.reason.map(|r| (r.key, r.args)).unwrap_or_default();
     (reply.model.unwrap_or_default(), facts, reason)
 }

@@ -30,6 +30,8 @@ pub const KEYS: &[&str] = &[
     "fit-target-format",
     "override-no-pattern",
     "override-no-device",
+    "override-tensor-space",
+    "override-bad-device",
     "moe-cache-with-tensor-split",
     "not-a-number",
     "not-one-of",
@@ -109,6 +111,8 @@ impl Refusal {
             "fit-target-format" => strings::fill("fit-target-format", &[&v(0), &v(1)]),
             "override-no-pattern" => strings::fill("override-no-pattern", &[&v(0)]),
             "override-no-device" => strings::fill("override-no-device", &[&v(0), &v(1)]),
+            "override-bad-device" => strings::fill("override-bad-device", &[&v(0), &v(1)]),
+            "override-tensor-space" => strings::fill("override-tensor-space", &[&v(0)]),
             "moe-cache-with-tensor-split" => strings::t("moe-cache-with-tensor-split"),
             "not-a-number" => strings::fill("not-a-number", &[&v(0), &v(1)]),
             "not-one-of" => strings::fill("not-one-of", &[&v(0), &v(1), &v(2)]),
@@ -331,6 +335,8 @@ pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
     "device",
     "split-mode",
     "tensor-split",
+    // The tensor placement card.
+    "override-tensor",
     // Speculative decoding card.
     "spec-draft-n-max",
     "spec-draft-p-min",
@@ -352,8 +358,8 @@ pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
 
 /// The model profile keys `pai-app` `model_profiles::render_section` writes that no control of
 /// the model profile page enables yet, each with the slice that enables it in the
-/// design's table: the Assets card's file picks, the MoE keys that need the
-/// model's facts and the tensor placement. A body
+/// design's table: the Assets card's file picks and the MoE keys that need the
+/// model's facts. A body
 /// key here is refused like an unknown one. A slice that enables one moves the key
 /// to [`WEB_MODEL_PROFILE_KEYS`], in the same commit as its control.
 pub const MODEL_PROFILE_KEYS_NOT_ON_WEB: &[&str] = &[
@@ -364,8 +370,6 @@ pub const MODEL_PROFILE_KEYS_NOT_ON_WEB: &[&str] = &[
     "spec-type",
     // The MoE keys: they need the model's facts.
     "moe-cache-mib",
-    // The tensor placement.
-    "override-tensor",
 ];
 
 /// The ports a listener can bind.
@@ -527,17 +531,46 @@ pub fn fit_target(v: &str) -> Result<(), Refusal> {
 /// `override-tensor` as llama.cpp splits it: rules on `,`, each at its first
 /// `=` into a pattern and a device; a rule without either is a `throw` while
 /// the arguments are parsed. The position is 1-based.
-pub fn override_tensor(s: &str) -> Result<(), Refusal> {
-    let rules = s.split(',').map(str::trim).filter(|p| !p.is_empty());
-    for (i, rule) in rules.enumerate() {
+///
+/// J1 of "Layers, MoE and tensor placement on the web model profile page"
+/// (ARCHITECTURE.md 5) adds what the web editor is judged on, and only on a key
+/// line the write changed (`changed`, the exemption [`model_profile_rules]`
+/// carries for `comment_markers`): a space at the ends of a pattern or of a
+/// device (`override-tensor-space`, the position of the rule: llama.cpp keeps
+/// the space, so the pattern matches no tensor and
+/// `ggml_backend_dev_by_name` looks a name with a space in it up and finds no
+/// device), and the device's shape (`override-bad-device`: a device id,
+/// `[A-Za-z0-9_]+`, `CPU` only in the spelling llama.cpp uses, the device a card
+/// name and not a description as `--device` takes). The pattern is the caller's:
+/// llama.cpp compiles it as a regex, and a pattern it cannot read is its answer
+/// at load time, not this rule's.
+pub fn override_tensor(s: &str, changed: bool) -> Result<(), Refusal> {
+    for (i, raw) in s.split(',').filter(|r| !r.trim().is_empty()).enumerate() {
         let n = i + 1;
-        let (pattern, device) = rule.split_once('=').unwrap_or((rule, ""));
-        let pattern = pattern.trim();
+        let rule = raw.trim();
+        let (raw_pattern, raw_device) = rule.split_once('=').unwrap_or((rule, ""));
+        let pattern = raw_pattern.trim();
         if pattern.is_empty() {
             return Err(Refusal::new("override-no-pattern", &[&n]));
         }
-        if device.trim().is_empty() {
+        let device = raw_device.trim();
+        if device.is_empty() {
             return Err(Refusal::new("override-no-device", &[&n, &pattern]));
+        }
+        if changed {
+            // The two parts as the rule's own text has them, against what the
+            // reader keeps: a space at the ends of one is in the pattern, or in
+            // the name `ggml_backend_dev_by_name` looks up.
+            let (raw_pattern, raw_device) = raw.split_once('=').unwrap_or((raw, ""));
+            if raw_pattern != pattern || raw_device != device {
+                return Err(Refusal::new("override-tensor-space", &[&n]));
+            }
+            let id = device
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !id || (device.eq_ignore_ascii_case("cpu") && device != "CPU") {
+                return Err(Refusal::new("override-bad-device", &[&n, &device]));
+            }
         }
     }
     Ok(())
@@ -597,9 +630,10 @@ pub fn device_list(key: &str, value: &str) -> Result<(), Refusal> {
 }
 
 /// The first GPU a model profile section names (the entries of `device-draft`
-/// and `mmproj-device`, `CPU` and `none` naming none) that lies outside the
-/// server profile's `Devices` (L4, ARCHITECTURE.md "Layers, MoE and tensor
-/// placement on the web model profile page" (3), slice 3b: the device bound):
+/// and `mmproj-device`, and the device of each `override-tensor` rule, `CPU`
+/// and `none` naming none) that lies outside the server profile's `Devices`
+/// (L4, ARCHITECTURE.md "Layers, MoE and tensor placement on the web model
+/// profile page" (3), slice 3b: the device bound):
 /// the key and the device, compared case-insensitively; `devices` empty (the
 /// key unset) is every GPU, `none` is none of them. Not judged against the
 /// node's probe: an id the probe does not answer is a value llama.cpp takes
@@ -607,8 +641,7 @@ pub fn device_list(key: &str, value: &str) -> Result<(), Refusal> {
 /// `section` is one model profile's key lines, in the order the reader sees
 /// them: a caller judging llama.cpp's `[*]` cascade puts the global section's
 /// lines before the section's own, and the later line of a key is the one the
-/// model profile uses. `override-tensor` devices join with J1, the slice that
-/// puts the key on the web.
+/// model profile uses.
 pub fn devices_outside(section: &str, devices: &str) -> Option<(String, String)> {
     if devices.trim().is_empty() {
         return None;
@@ -623,20 +656,35 @@ pub fn devices_outside(section: &str, devices: &str) -> Option<(String, String)>
             .split(',')
             .map(str::trim)
         {
-            // A GPU name: `CPU` and `none` name none, and llama.cpp refuses an
-            // empty entry (`device_list`).
-            if entry.is_empty()
-                || entry.eq_ignore_ascii_case("CPU")
-                || entry.eq_ignore_ascii_case("none")
-            {
-                continue;
-            }
-            if !allowed.contains(&entry.to_lowercase()) {
+            if outside_bound(entry, &allowed) {
                 return Some((key.to_string(), entry.to_string()));
             }
         }
     }
+    for rule in last_value(section, "override-tensor")
+        .unwrap_or_default()
+        .split(',')
+    {
+        // llama.cpp splits the value at `,` and each rule at its first `=`: the
+        // device is what follows, and a rule without an `=` names none (it
+        // throws while the arguments are parsed).
+        let device = rule.split_once('=').map_or("", |(_, d)| d.trim());
+        if outside_bound(device, &allowed) {
+            return Some(("override-tensor".to_string(), device.to_string()));
+        }
+    }
     None
+}
+
+/// True for a device id the bound `allowed` (the `Devices` entries, lowercased)
+/// does not name: `CPU` and `none` name no GPU and llama.cpp refuses an empty
+/// entry (`device_list`), so neither is judged; a GPU id is compared
+/// case-insensitively, as `ggml_backend_dev_by_name` matches.
+fn outside_bound(entry: &str, allowed: &[String]) -> bool {
+    !entry.is_empty()
+        && !entry.eq_ignore_ascii_case("CPU")
+        && !entry.eq_ignore_ascii_case("none")
+        && !allowed.contains(&entry.to_lowercase())
 }
 
 /// The value of the LAST line of `text` that sets `key`, as the reader sees it
@@ -973,8 +1021,9 @@ fn known_key_line(sections: &[RawSection], id: &str, key: &str, raw: &str) -> bo
 
 /// The rules of one model profile section. `known` are the sections of the model profile
 /// files as they are now: a key line one of them holds identically in the
-/// section of the same id takes no `comment_markers`, every other rule runs on
-/// the whole section.
+/// section of the same id takes no `comment_markers`, and the same exemption
+/// keeps `override_tensor`'s two web rules off a rule line the write did not
+/// touch; every other rule runs on the whole section.
 fn model_profile_section(s: &RawSection, known: &[RawSection]) -> Result<(), Refusal> {
     model_profile_id(&s.id)?;
     model_profile_model(&s.id, &s.get("model").unwrap_or_default())?;
@@ -986,7 +1035,11 @@ fn model_profile_section(s: &RawSection, known: &[RawSection]) -> Result<(), Ref
         }
     }
     fit_target(&s.get("fit-target").unwrap_or_default())?;
-    override_tensor(&s.get("override-tensor").unwrap_or_default())?;
+    let override_rules = s.get("override-tensor").unwrap_or_default();
+    override_tensor(
+        &override_rules,
+        !known_key_line(known, &s.id, "override-tensor", &override_rules),
+    )?;
     for key in DEVICE_LIST_KEYS {
         if let Some(v) = s.get(key) {
             device_list(key, &v)?;
@@ -1136,7 +1189,7 @@ mod tests {
     use crate::server_cfg::{self, ServerConfig};
 
     /// The keys the checks refuse with, by rule.
-    const EXPECTED_KEYS: [&str; 11] = [
+    const EXPECTED_KEYS: [&str; 13] = [
         "not-whole-number-in-range",
         "bind-all-with-others",
         "comment-markers",
@@ -1148,6 +1201,8 @@ mod tests {
         "fit-target-format",
         "override-no-pattern",
         "override-no-device",
+        "override-bad-device",
+        "override-tensor-space",
     ];
     const MOE_TENSOR: &str = "moe-cache-with-tensor-split";
 
@@ -1957,12 +2012,114 @@ top-p = 0.95\r\n";
             )),
             Err(refusal("override-no-pattern", &["2"]))
         );
+        // Two rules, joined by `,` with no space: the shape the web's body
+        // carries (ARCHITECTURE.md 2j "the INI value (rules joined by `,`, no
+        // spaces)"). The `, ` spelling this test used before J1 is a rule whose
+        // pattern starts with a space, refused by `override-tensor-space`, so
+        // it is no longer a taken value: pinned by
+        // `a_space_at_the_ends_of_a_pattern_or_a_device_is_refused`.
         assert_eq!(
             model_profiles(&section(
                 "m",
-                "override-tensor = blk\\.1\\.attn=CPU, ffn_.*_exps=ROCm1\n"
+                "override-tensor = blk\\.1\\.attn=CPU,ffn_.*_exps=ROCm1\n"
             )),
             Ok(())
+        );
+    }
+
+    // J1 of "Layers, MoE and tensor placement on the web model profile page"
+    // (ARCHITECTURE.md 5), the two rules the web editor adds. Both answer the
+    // 1-based position of the rule they refuse, and both are judged only on a
+    // key line the write changed (below). A space at the ends of a pattern is a
+    // pattern that matches no tensor; at the ends of a device it is a name
+    // `ggml_backend_dev_by_name` looks up with the space in it and finds no
+    // device: both load a model that is not what the page shows.
+
+    #[test]
+    fn a_space_at_the_ends_of_a_pattern_or_a_device_is_refused() {
+        for (value, n) in [
+            // A leading space in the second rule's pattern.
+            (r"a=CPU, b=ROCm0", "2"),
+            // A trailing space in the pattern, and a leading one in the device.
+            (r"blk\.0\ =CPU", "1"),
+            (r"blk\.0\.= CPU", "1"),
+            // A trailing space in a device, with a good rule after it.
+            (r"blk\.0\.=CPU ,ffn_.*_exps=ROCm1", "1"),
+        ] {
+            assert_eq!(
+                model_profiles(&section("m", &format!("override-tensor = {value}\n"))),
+                Err(refusal("override-tensor-space", &[n])),
+                "override-tensor = {value:?}"
+            );
+        }
+    }
+
+    /// A device is a device id: `[A-Za-z0-9_]+`, and `cpu` only as llama.cpp
+    /// spells it (`CPU`). A pattern is whatever the caller wants: llama.cpp
+    /// compiles it as a regex, so `x(` is a pattern the engine refuses and not
+    /// this rule's business.
+    #[test]
+    fn an_override_tensor_device_is_a_device_id() {
+        for (value, n, device) in [
+            (r"x=cpu", "1", "cpu"),
+            (r"x=Cpu", "1", "Cpu"),
+            (r"blk\.0\.=CPU,x=cpu", "2", "cpu"),
+            // A space in the middle is no leading/trailing space: the device's
+            // own shape refuses it.
+            (r"x=ROCm 1", "1", "ROCm 1"),
+            (r"x=cpu-x", "1", "cpu-x"),
+        ] {
+            assert_eq!(
+                model_profiles(&section("m", &format!("override-tensor = {value}\n"))),
+                Err(refusal("override-bad-device", &[n, device])),
+                "override-tensor = {value:?}"
+            );
+        }
+        for good in [
+            r"x=CPU",
+            r"x=ROCm0",
+            r"x=cuda_0",
+            r"x=none",
+            r"blk\.0\.=CPU,ffn_.*_exps=ROCm1",
+            // A pattern the regex engine refuses is not this rule's.
+            r"x(=CPU",
+        ] {
+            assert_eq!(
+                model_profiles(&section("m", &format!("override-tensor = {good}\n"))),
+                Ok(()),
+                "override-tensor = {good:?} is a value the key takes"
+            );
+        }
+    }
+
+    // The exemption the two new rules share with `comment_markers` ("Saving a
+    // model profile from the web", decision c1): a key line the file already
+    // holds byte for byte is not news, so a web save of ANOTHER key of the
+    // section lands over it; the moment the line is edited the rule runs.
+
+    /// `[a]` with a rule the web would refuse, as a hand edit writes it.
+    const OT_ON_DISK: &str =
+        "[a]\nmodel = /models/a.gguf\noverride-tensor = a=CPU, b=ROCm0\nctx-size = 4096\n";
+
+    #[test]
+    fn an_override_tensor_rule_already_on_disk_does_not_block_another_key() {
+        let edited =
+            "[a]\nmodel = /models/a.gguf\noverride-tensor = a=CPU, b=ROCm0\nctx-size = 8192\n";
+        assert_eq!(
+            models_file(edited, OT_ON_DISK, "", None),
+            Ok(()),
+            "the rule line is the one on disk, byte for byte: the save of ctx-size lands"
+        );
+    }
+
+    #[test]
+    fn an_override_tensor_rule_the_save_changed_is_refused() {
+        let edited =
+            "[a]\nmodel = /models/a.gguf\noverride-tensor = a=CPU, c=ROCm0\nctx-size = 8192\n";
+        assert_eq!(
+            models_file(edited, OT_ON_DISK, "", None),
+            Err(refusal("override-tensor-space", &["2"])),
+            "the save rewrote the rule line, so the rule runs on it"
         );
     }
 
@@ -2102,17 +2259,18 @@ top-p = 0.95\r\n";
     // pinned against the configurator's writer by `pai-app`'s
     // `web_key_lists_are_exactly_what_render_section_writes`.
     #[test]
-    fn web_model_profile_keys_exclude_the_seven_and_hold_the_named_ones() {
-        // The six the design keeps off the web until the slice it names
+    fn web_model_profile_keys_exclude_the_five_and_hold_the_named_ones() {
+        // The five the design keeps off the web until the slice it names
         // (`n-cpu-moe` moved with L3 of "Layers, MoE and tensor placement on
-        // the web model profile page", pinned by `n_cpu_moe_is_on_the_web`).
+        // the web model profile page", pinned by `n_cpu_moe_is_on_the_web`;
+        // `override-tensor` with J1 of the same design, pinned by
+        // `override_tensor_is_on_the_web`).
         for key in [
             "model",
             "mmproj",
             "model-draft",
             "spec-type",
             "moe-cache-mib",
-            "override-tensor",
         ] {
             assert!(
                 !WEB_MODEL_PROFILE_KEYS.contains(&key),
@@ -2160,6 +2318,22 @@ top-p = 0.95\r\n";
         assert!(
             !MODEL_PROFILE_KEYS_NOT_ON_WEB.contains(&"n-cpu-moe"),
             "n-cpu-moe is on the web, so it must not also be listed as off the web"
+        );
+    }
+
+    // J1 of the same design (ARCHITECTURE.md 5): `override-tensor` moves with
+    // the tensor placement card. The union of the two lists is unchanged, so
+    // `pai-app`'s pin of it against `render_section` stays green.
+    #[test]
+    fn override_tensor_is_on_the_web() {
+        assert!(
+            WEB_MODEL_PROFILE_KEYS.contains(&"override-tensor"),
+            "override-tensor is a key of the tensor placement card, so the web's list must \
+             hold it"
+        );
+        assert!(
+            !MODEL_PROFILE_KEYS_NOT_ON_WEB.contains(&"override-tensor"),
+            "override-tensor is on the web, so it must not also be listed as off the web"
         );
     }
 
@@ -2225,6 +2399,51 @@ top-p = 0.95\r\n";
         assert_eq!(devices_outside("device-draft = ROCm0\n", ""), None);
         // A section that names no GPU: nothing to judge.
         assert_eq!(devices_outside("ctx-size = 4096\n", "none"), None);
+    }
+
+    // J1 of the same design (ARCHITECTURE.md 5): the `override-tensor` devices
+    // join the bound, the slice that puts the key on the web. Each rule of the
+    // value is `pattern=device`; the device is judged as every other device
+    // entry is, and the key named in the answer is `override-tensor`.
+    #[test]
+    fn devices_outside_reads_the_devices_of_override_tensor() {
+        assert_eq!(
+            devices_outside("override-tensor = blk\\.0\\.=ROCm1\n", "ROCm0"),
+            Some(("override-tensor".into(), "ROCm1".into())),
+            "a rule naming a card the server profile does not name is found"
+        );
+        // Every rule is judged, in order.
+        assert_eq!(
+            devices_outside(
+                "override-tensor = blk\\.0\\.=ROCm0,ffn_.*_exps=ROCm2\n",
+                "ROCm0,ROCm1"
+            ),
+            Some(("override-tensor".into(), "ROCm2".into()))
+        );
+        // Compared case-insensitively, as `ggml_backend_dev_by_name` matches.
+        assert_eq!(
+            devices_outside("override-tensor = x=rocm0\n", "ROCm0"),
+            None
+        );
+        // `CPU` and `none` name no GPU, in any case.
+        assert_eq!(devices_outside("override-tensor = x=CPU\n", "ROCm0"), None);
+        assert_eq!(
+            devices_outside("override-tensor = x=cpu\n", "ROCm0"),
+            None,
+            "`cpu` in the case llama.cpp does not spell it is refused by the value's own rule \
+             (`override-bad-device`), not by the bound"
+        );
+        assert_eq!(devices_outside("override-tensor = x=none\n", "ROCm0"), None);
+        // The last line of the key is the one the model profile uses.
+        assert_eq!(
+            devices_outside(
+                "override-tensor = x=ROCm0\noverride-tensor = y=ROCm1\n",
+                "ROCm0"
+            ),
+            Some(("override-tensor".into(), "ROCm1".into()))
+        );
+        // `Devices` unset is every GPU.
+        assert_eq!(devices_outside("override-tensor = x=ROCm1\n", ""), None);
     }
 
     /// The rule of `device_list` (ARCHITECTURE.md "As built" a): it runs on the

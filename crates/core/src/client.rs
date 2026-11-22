@@ -246,18 +246,33 @@ pub struct ServerProfileInfo {
     pub instance: Option<String>,
 }
 
+/// One tensor of a model, as the tensor list of [`ModelFacts`] carries it: the
+/// name the GGUF header spells (`blk.7.ffn_gate_exps.weight`), and the bytes the
+/// tensor occupies in its shard. The page places weights by these.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TensorRow {
+    pub name: String,
+    pub bytes: u64,
+}
+
 /// The layer facts of one saved model profile's `model` file, as
 /// [`ManagerClient::model_info`] answers them: what the model profile page's
 /// sliders run over. The counts are the GGUF header's own (`<arch>.block_count`,
 /// `<arch>.expert_count`, `<arch>.expert_used_count`), the block count falling
 /// back to the blocks the tensor names mention, and an expert count the header
-/// lacks is 0. `moe` is the file having routed-expert tensors.
+/// lacks is 0. `moe` is the file having routed-expert tensors. `tensors` is every
+/// tensor of every shard, each shard's tensors in data-offset order, shard
+/// after shard, at most `gguf_shape::MAX_TENSOR_ROWS` of them and within
+/// `gguf_shape::MAX_TENSOR_LIST_BYTES` of their JSON, and `tensors_truncated`
+/// says the model has more than the list carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelFacts {
     pub block_count: u64,
     pub moe: bool,
     pub expert_count: u64,
     pub expert_used: u64,
+    pub tensors: Vec<TensorRow>,
+    pub tensors_truncated: bool,
 }
 
 /// Why a model profile answers no facts, as the page shows it: a key of the
@@ -1179,6 +1194,8 @@ mod tests {
                 moe: true,
                 expert_count: 128,
                 expert_used: 8,
+                tensors: Vec::new(),
+                tensors_truncated: false,
             }),
             reason: None,
         };

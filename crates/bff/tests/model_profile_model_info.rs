@@ -15,9 +15,12 @@
 //!   call answers the page.
 //! - 200 is the manager's reply, in camelCase, exactly three fields:
 //!   `{"model": <abs path>|null, "info": {"blockCount", "moe", "expertCount",
-//!   "expertUsed"}|null, "reason": {"key", "args"}|null}`. `model` is set only
-//!   with `info`; every reason row answers `model` null, with the path, when
-//!   there is one, as the reason's arg. The counts are numbers, `0` included.
+//!   "expertUsed", "tensors": [{"name", "bytes"}], "tensorsTruncated"}|null,
+//!   "reason": {"key", "args"}|null}`. `model` is set only with `info`; every
+//!   reason row answers `model` null, with the path, when there is one, as the
+//!   reason's arg. The counts are numbers, `0` included, and the tensor list
+//!   and its truncated flag travel inside `info` as the manager answered them
+//!   (J1).
 //! - The manager's refusal of the signed-in user is 403
 //!   `session-not-administrator` and ends that session, as every other `As`
 //!   read; an id with no section is 404 `no-model-profile-named` `[id]`; no
@@ -38,6 +41,7 @@ use pai_bff::{Client, Connect};
 use pai_core::checks::Refusal;
 use pai_core::client::{
     ClientError, InstanceState, ManagerClient, ManagerFile, ModelFacts, ModelInfoReply, Reason,
+    TensorRow,
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -73,7 +77,8 @@ type Log = Arc<Mutex<Vec<String>>>;
 // ── The manager's answers ───────────────────────────────────────────────
 
 /// The facts of a Mixture of Experts model: the counts the GGUF header spells,
-/// and the resolved path the manager read them from.
+/// the tensor list 2j adds (J1), and the resolved path the manager read them
+/// from.
 fn moe_facts() -> ModelInfoReply {
     ModelInfoReply {
         model: Some("/var/lib/llama.cpp/models/Qwen3-27B-Q8_0.gguf".into()),
@@ -82,8 +87,21 @@ fn moe_facts() -> ModelInfoReply {
             moe: true,
             expert_count: 128,
             expert_used: 8,
+            tensors: vec![
+                row("token_embd.weight", 1048576),
+                row("blk.0.ffn_gate_exps.weight", 2097152),
+            ],
+            tensors_truncated: false,
         }),
         reason: None,
+    }
+}
+
+/// One tensor of the list.
+fn row(name: &str, bytes: u64) -> TensorRow {
+    TensorRow {
+        name: name.into(),
+        bytes,
     }
 }
 
@@ -91,7 +109,17 @@ fn moe_facts() -> ModelInfoReply {
 fn moe_facts_document() -> Value {
     json!({
         "model": "/var/lib/llama.cpp/models/Qwen3-27B-Q8_0.gguf",
-        "info": {"blockCount": 64, "moe": true, "expertCount": 128, "expertUsed": 8},
+        "info": {
+            "blockCount": 64,
+            "moe": true,
+            "expertCount": 128,
+            "expertUsed": 8,
+            "tensors": [
+                {"name": "token_embd.weight", "bytes": 1048576},
+                {"name": "blk.0.ffn_gate_exps.weight", "bytes": 2097152},
+            ],
+            "tensorsTruncated": false,
+        },
         "reason": null,
     })
 }
@@ -502,6 +530,8 @@ async fn a_dense_model_answers_moe_false_and_zero_experts_as_numbers() {
             moe: false,
             expert_count: 0,
             expert_used: 0,
+            tensors: vec![row("token_embd.weight", 4096)],
+            tensors_truncated: false,
         }),
         reason: None,
     }));
@@ -512,7 +542,14 @@ async fn a_dense_model_answers_moe_false_and_zero_experts_as_numbers() {
         rep.json(),
         json!({
             "model": "/models/llama-8b.f16.gguf",
-            "info": {"blockCount": 32, "moe": false, "expertCount": 0, "expertUsed": 0},
+            "info": {
+                "blockCount": 32,
+                "moe": false,
+                "expertCount": 0,
+                "expertUsed": 0,
+                "tensors": [{"name": "token_embd.weight", "bytes": 4096}],
+                "tensorsTruncated": false,
+            },
             "reason": null,
         }),
         "{}",
@@ -598,8 +635,58 @@ async fn the_reply_is_the_managers_fields_and_nothing_else() {
     info.sort();
     assert_eq!(
         info,
-        ["blockCount", "expertCount", "expertUsed", "moe"],
+        [
+            "blockCount",
+            "expertCount",
+            "expertUsed",
+            "moe",
+            "tensors",
+            "tensorsTruncated"
+        ],
         "{}",
+        rep.body
+    );
+}
+
+/// The tensor list is what the page places weights on, so every row travels,
+/// in the manager's order, with its bytes as a number, and `tensorsTruncated`
+/// says whether the list is the whole model. The bff sorts, filters, caps and
+/// completes nothing: a list the manager cut at its cap reaches the page cut.
+#[tokio::test]
+async fn the_tensor_list_and_its_truncated_flag_are_relayed_inside_info() {
+    let app = app(Fixture::facts());
+    app.fixture.set(Ok(ModelInfoReply {
+        model: Some("/models/many.gguf".into()),
+        info: Some(ModelFacts {
+            block_count: 64,
+            moe: true,
+            expert_count: 0,
+            expert_used: 0,
+            tensors: (0..3)
+                .map(|i| row(&format!("blk.{i}.attn_q.weight"), 4096 + i as u64))
+                .collect(),
+            tensors_truncated: true,
+        }),
+        reason: None,
+    }));
+    let cookie = app.sign_in().await;
+    let rep = app.model_info("many", Some(&cookie)).await;
+    assert_eq!(rep.status, StatusCode::OK, "{}", rep.body);
+    let doc = rep.json();
+    assert_eq!(
+        doc["info"]["tensors"],
+        json!([
+            {"name": "blk.0.attn_q.weight", "bytes": 4096},
+            {"name": "blk.1.attn_q.weight", "bytes": 4097},
+            {"name": "blk.2.attn_q.weight", "bytes": 4098},
+        ]),
+        "the rows, in the manager's order, the bytes as numbers: {}",
+        rep.body
+    );
+    assert_eq!(
+        doc["info"]["tensorsTruncated"],
+        json!(true),
+        "the manager's flag travels: {}",
         rep.body
     );
 }

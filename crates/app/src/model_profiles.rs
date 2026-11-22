@@ -1479,7 +1479,11 @@ pub(crate) fn validate_for_save(model_profile: &ModelProfile) -> io::Result<()> 
         ));
     }
     checks::fit_target(&model_profile.fit_target).map_err(refused)?;
-    checks::override_tensor(&model_profile.override_tensor).map_err(refused)?;
+    // The configurator's form rewrites every key of the profile at each save, so
+    // no line here is "the save's own": the two rules of a line the page changed
+    // (the space, the device shape) are not judged, as they are not for a value
+    // read out of the file. The grammar rules run.
+    checks::override_tensor(&model_profile.override_tensor, false).map_err(refused)?;
     validate_moe_cache_split(model_profile)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     validate_moe_cache_floor(model_profile)

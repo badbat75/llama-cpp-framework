@@ -81,6 +81,9 @@ fn data_root_e2e() {
     // read shares with this one, so the e2e proves them before this phase ends.
     crate::manager::service::manager_model_info_e2e();
 
+    // ── Manager core: the tensor list of the model info reply (J1) ───────
+    crate::manager::service::manager_model_tensors_e2e();
+
     // ── Manager core: SetServerProfile, the verb that writes instances.ini ─
     crate::manager::service::manager_set_server_profile_e2e();
 

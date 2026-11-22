@@ -36,7 +36,7 @@
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
     ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, NodeInfoReply, Reason,
-    ServerProfileInfo,
+    ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu, Status};
@@ -82,7 +82,11 @@ type DeviceRow = (String, String, String, u64, u64);
 /// the empty string when the profile names none, `has_info` says the four
 /// counts are there, and a non-empty `key` is the keyed why. The half of the
 /// reply that is not there carries zeros and the empty strings.
-type ModelInfoRow = (String, (bool, u64, bool, u64, u64), (String, Vec<String>));
+type ModelInfoRow = (
+    String,
+    (bool, u64, bool, u64, u64, Vec<(String, u64)>, bool),
+    (String, Vec<String>),
+);
 
 /// The manager's client over one D-Bus connection.
 pub struct DbusClient {
@@ -422,8 +426,9 @@ impl ManagerClient for DbusClient {
     }
     fn model_info(&self, profile: &str) -> Result<ModelInfoReply, ClientError> {
         // `(s model, (b has_info, t block_count, b moe, t expert_count,
-        // t expert_used), (s key, as args))`: the path the read opened, the
-        // four counts when there are facts, the keyed why when there are
+        // t expert_used, a(st) tensors, b tensors_truncated),
+        // (s key, as args))`: the path the read opened, the four counts and the
+        // tensor list when there are facts, the keyed why when there are
         // none. The bus has no null and no shape to get wrong: the flags say
         // which half of the reply is there, the way the stream's nulls do,
         // and the manager answers exactly one of the two.
@@ -431,7 +436,8 @@ impl ManagerClient for DbusClient {
             Some(principal) => body(self.call("ModelInfoAs", &(principal, profile))?)?,
             None => body(self.call("ModelInfo", &(profile,))?)?,
         };
-        let (has_info, block_count, moe, expert_count, expert_used) = facts;
+        let (has_info, block_count, moe, expert_count, expert_used, tensors, tensors_truncated) =
+            facts;
         let (key, args) = reason;
         Ok(ModelInfoReply {
             model: (!model.is_empty()).then_some(model),
@@ -440,6 +446,11 @@ impl ManagerClient for DbusClient {
                 moe,
                 expert_count,
                 expert_used,
+                tensors: tensors
+                    .into_iter()
+                    .map(|(name, bytes)| TensorRow { name, bytes })
+                    .collect(),
+                tensors_truncated,
             }),
             reason: (!key.is_empty()).then_some(Reason { key, args }),
         })

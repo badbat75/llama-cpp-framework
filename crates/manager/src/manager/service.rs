@@ -2119,12 +2119,18 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// shards than [`MAX_MODEL_SHARDS`] is `model-info-unreadable` naming the
     /// model, judged from the name with no shard opened. The reader's own text
     /// never travels, so no byte of a file it refused reaches the reply.
+    /// `info` carries the tensor list of 2j (J1) beside the counts: every
+    /// tensor of every shard, each shard's tensors in data-offset order, shard
+    /// after shard, cut at the first row past either bound,
+    /// [`pai_core::gguf_shape::MAX_TENSOR_ROWS`] rows or
+    /// [`pai_core::gguf_shape::MAX_TENSOR_LIST_BYTES`] of their JSON, with
+    /// `tensors_truncated` saying the model has more than the list carries.
     pub fn model_info(
         &self,
         who: &Requester,
         profile: &str,
     ) -> Result<pai_core::client::ModelInfoReply, ManagerError> {
-        use pai_core::client::{ModelFacts, ModelInfoReply, Reason};
+        use pai_core::client::{ModelFacts, ModelInfoReply, Reason, TensorRow};
         self.authorize_quietly(who, Action::Control)?;
         let reason = |key: &str, args: Vec<String>| ModelInfoReply {
             model: None,
@@ -2210,17 +2216,46 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 Ok(_) => {}
             }
         }
-        match pai_core::gguf_shape::local_shape(&path) {
-            Ok(shape) => Ok(ModelInfoReply {
-                model: Some(path.to_string_lossy().into_owned()),
-                info: Some(ModelFacts {
-                    block_count: shape.block_count,
-                    moe: shape.moe,
-                    expert_count: shape.expert_count,
-                    expert_used: shape.expert_used_count,
-                }),
-                reason: None,
-            }),
+        match pai_core::gguf_shape::read_shards(&path) {
+            Ok(shards) => {
+                // The tensor list of 2j (J1): every tensor of every shard, each
+                // shard's tensors in data-offset order, shard after shard, cut
+                // at the first row past either bound, with the flag saying the
+                // list is not the whole model.
+                let (tensors, tensors_truncated) = match pai_core::gguf_shape::tensor_rows(&shards)
+                {
+                    Ok(rows) => rows,
+                    Err(_) => {
+                        return Ok(reason(
+                            "model-info-unreadable",
+                            vec![path.to_string_lossy().into_owned()],
+                        ))
+                    }
+                };
+                match pai_core::gguf_shape::shape_of(&shards) {
+                    Ok(shape) => Ok(ModelInfoReply {
+                        model: Some(path.to_string_lossy().into_owned()),
+                        info: Some(ModelFacts {
+                            block_count: shape.block_count,
+                            moe: shape.moe,
+                            expert_count: shape.expert_count,
+                            expert_used: shape.expert_used_count,
+                            tensors: tensors
+                                .into_iter()
+                                .map(|(name, bytes)| TensorRow { name, bytes })
+                                .collect(),
+                            tensors_truncated,
+                        }),
+                        reason: None,
+                    }),
+                    // The reader's text is dropped: the reply names the path,
+                    // never what the file's bytes spelled.
+                    Err(_) => Ok(reason(
+                        "model-info-unreadable",
+                        vec![path.to_string_lossy().into_owned()],
+                    )),
+                }
+            }
             // The reader's text is dropped: the reply names the path, never
             // what the file's bytes spelled.
             Err(_) => Ok(reason(
@@ -2878,9 +2913,10 @@ fn check_device_bound_of(
 /// The (model profile, key, device) triples of the render `render` naming a GPU
 /// outside the `Devices` value `devices`, in the render's order: every section
 /// of the render's own, the `*` global section skipped, judged by
-/// [`pai_core::checks::devices_outside`] on the section's two device key lines
-/// with the render's `[*]` lines before them, the way llama.cpp cascades the
-/// global section into every model profile.
+/// [`pai_core::checks::devices_outside`] on the section's device key lines, the
+/// `override-tensor` rule line with them (J1, the key on the web), with the
+/// render's `[*]` lines before them, the way llama.cpp cascades the global
+/// section into every model profile.
 fn outside_devices(render: &str, devices: &str) -> Vec<(String, String, String)> {
     let sections = pai_core::ini::parse_sections(render);
     let global = sections.iter().find(|section| section.id == "*");
@@ -2892,10 +2928,14 @@ fn outside_devices(render: &str, devices: &str) -> Vec<(String, String, String)>
         // The cascaded line first and the section's own after it: the reader
         // keeps the last line of a key.
         let mut keys = String::new();
-        for key in &pai_core::checks::DEVICE_LIST_KEYS[1..] {
+        let named = pai_core::checks::DEVICE_LIST_KEYS[1..]
+            .iter()
+            .copied()
+            .chain(std::iter::once("override-tensor"));
+        for key in named {
             for from in [global, Some(section)] {
                 if let Some(value) = from
-                    .and_then(|s| s.keys.get(*key))
+                    .and_then(|s| s.keys.get(key))
                     .map(String::as_str)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
@@ -11167,6 +11207,154 @@ pub(crate) fn manager_device_bound_check_e2e() {
     }
     // DB-PIN-11 END
 
+    // ── DB-PIN-12 BEGIN. the `override-tensor` devices join the bound ─────
+    //
+    // J1 puts `override-tensor` on the web, so its rules' devices are the
+    // page's to write and the bound judges them: the same refusal with
+    // `override-tensor` as the key, at the four points. `CPU` names no GPU.
+    {
+        let ot = |device: &str| {
+            format!("[qwen]\nmodel = {path}\nctx-size = 8\noverride-tensor = blk\\.0\\.={device}\n")
+        };
+
+        // The model profile write.
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &ot("ROCm1"), false);
+        assert!(
+            outside(&answer, "qwen", "default", "override-tensor", "ROCm1"),
+            "a save naming in `override-tensor` a card the instance's server profile does not \
+             name is refused naming the key and the device: {answer:?}"
+        );
+        kept(&before);
+
+        // A rule naming `CPU` names no GPU: the save lands.
+        let m = manager_on(gpus());
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &ot("CPU"), false),
+            Ok(()),
+            "`blk\\.0\\. = CPU` names no GPU: the save lands on a `Devices = ROCm0` profile"
+        );
+        assert!(
+            text_of("models.ini").contains(r"override-tensor = blk\.0\.=CPU"),
+            "the rule landed: {:?}",
+            text_of("models.ini")
+        );
+
+        // The assignment: the profile sits on disk naming ROCm1, `off`; the
+        // `on` puts it in effect on the `ROCm0` instance.
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        pool_files(&ot("ROCm1"), "");
+        assignments("[default]\nqwen = off\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
+        assert!(
+            outside(&answer, "qwen", "default", "override-tensor", "ROCm1"),
+            "an assignment that puts a profile naming ROCm1 on a `ROCm0` instance is refused: \
+             {answer:?}"
+        );
+        kept(&before);
+
+        // The switch to a server profile that leaves the named card outside.
+        record("wide");
+        profile_with("wide", "ROCm0,ROCm1", 8080);
+        profile_with("narrow", "ROCm0", 8090);
+        pool_files(&ot("ROCm1"), "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.set_server_profile(&desktop, "default", "narrow");
+        assert!(
+            outside(&answer, "qwen", "default", "override-tensor", "ROCm1"),
+            "a switch to a `ROCm0` profile leaves the `override-tensor` card outside: {answer:?}"
+        );
+        kept(&before);
+
+        // A save narrowing an in-use server profile past it.
+        record("default");
+        profile_with("default", "ROCm0,ROCm1", 8080);
+        pool_files(&ot("ROCm1"), "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(
+            &desktop,
+            "server@default.ini",
+            &server_text("ROCm0", 8080),
+            false,
+        );
+        assert!(
+            outside(&answer, "qwen", "default", "override-tensor", "ROCm1"),
+            "a save narrowing `Devices` past a card `override-tensor` names is refused: \
+             {answer:?}"
+        );
+        kept(&before);
+    }
+    // DB-PIN-12 END
+
+    // ── DB-PIN-13 BEGIN. an `override-tensor` device already outside ──────
+    //
+    // As DB-PIN-8 for the device lists: a card the render names today that is
+    // already outside the set is no news at the narrowing, so the save lands.
+    {
+        let ot_rocm2 =
+            format!("[qwen]\nmodel = {path}\nctx-size = 8\noverride-tensor = blk\\.0\\.=ROCm2\n");
+        record("default");
+        profile_with("default", "ROCm0,CUDA1", 8080);
+        pool_files(&ot_rocm2, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        assert_eq!(
+            m.write_file(
+                &desktop,
+                "server@default.ini",
+                &server_text("ROCm0", 8080),
+                false
+            ),
+            Ok(()),
+            "ROCm2 is outside the set the instance runs today: the narrowing judges nothing"
+        );
+        assert!(
+            text_of("server@default.ini").contains("Devices = ROCm0\n"),
+            "the narrowing save landed"
+        );
+    }
+    // DB-PIN-13 END
+
+    // ── DB-PIN-14 BEGIN. an `-ot` device named as a host buffer ───────────
+    //
+    // llama.cpp v1.0.0 offers only each device's own buffer type, named as the
+    // device, and refuses every other name, a pinned host buffer's included
+    // (`common/arg.cpp` `parse_tensor_buffer_overrides`: "unknown buffer
+    // type"), so the bound judges an `-ot` right side AS a device and fails
+    // closed: on `Devices = ROCm0`, `CUDA_Host` is a name the set does not
+    // carry, refused with the key and the device, nothing written.
+    {
+        let host = format!(
+            "[qwen]\nmodel = {path}\nctx-size = 8\noverride-tensor = blk\\.0\\.=CUDA_Host\n"
+        );
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &host, false);
+        assert!(
+            outside(&answer, "qwen", "default", "override-tensor", "CUDA_Host"),
+            "an `override-tensor` device named `CUDA_Host` is no device the instance's server \
+             profile names: refused naming the key and the device: {answer:?}"
+        );
+        kept(&before);
+    }
+    // DB-PIN-14 END
+
     // The phase leaves the tree as it found it.
     for entry in std::fs::read_dir(&sys).expect("listing").flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -16998,6 +17186,17 @@ pub(crate) fn manager_model_info_e2e() {
     let models = cwd.join("models");
     std::fs::create_dir_all(&models).expect("models dir");
 
+    // The tensor list of 2j (J1): `[{name, bytes}]`, in the file's order.
+    let rows = |tensors: &[(&str, u64)]| -> Vec<pai_core::client::TensorRow> {
+        tensors
+            .iter()
+            .map(|(name, bytes)| pai_core::client::TensorRow {
+                name: (*name).to_string(),
+                bytes: *bytes,
+            })
+            .collect()
+    };
+
     // A MoE file whose header says 40 blocks, 128 experts, 8 used, while its
     // tensors name only 3 of the blocks: the header's numbers are the reply.
     let moe = models.join("moe.gguf");
@@ -17023,6 +17222,14 @@ pub(crate) fn manager_model_info_e2e() {
         moe: true,
         expert_count: 128,
         expert_used: 8,
+        tensors: rows(&[
+            ("token_embd.weight", 1 << 20),
+            ("blk.0.ffn_gate_exps.weight", 1 << 20),
+            ("blk.1.attn_q.weight", 1 << 20),
+            ("blk.39.ffn_down_exps.weight", 1 << 20),
+            ("output.weight", 1 << 20),
+        ]),
+        tensors_truncated: false,
     };
     // A dense file whose header names NO block count: 5, counted from
     // blk.0..blk.4, and no experts to count.
@@ -17046,6 +17253,16 @@ pub(crate) fn manager_model_info_e2e() {
         moe: false,
         expert_count: 0,
         expert_used: 0,
+        tensors: rows(&[
+            ("token_embd.weight", 1 << 20),
+            ("blk.0.attn_q.weight", 1 << 20),
+            ("blk.1.attn_q.weight", 1 << 20),
+            ("blk.2.attn_q.weight", 1 << 20),
+            ("blk.3.attn_q.weight", 1 << 20),
+            ("blk.4.attn_q.weight", 1 << 20),
+            ("output.weight", 1 << 20),
+        ]),
+        tensors_truncated: false,
     };
     // A split model with only its FIRST shard on disk: the second is missing.
     let shard_one = models.join("split-00001-of-00002.gguf");
@@ -17116,6 +17333,10 @@ pub(crate) fn manager_model_info_e2e() {
         moe: false,
         expert_count: 0,
         expert_used: 0,
+        // The later shards of the set carry no tensor of their own, so the list
+        // is the first shard's.
+        tensors: rows(&[("blk.0.attn_q.weight", 1 << 20)]),
+        tensors_truncated: false,
     };
     // The cap again, with the SECOND shard a directory: were the shard set
     // walked at all, that shard answers `unreadable` naming itself, so the
@@ -17607,6 +17828,262 @@ pub(crate) fn manager_model_info_e2e() {
         listing(&sys),
         before,
         "every read above left the pool and the records as it found them"
+    );
+}
+
+/// The tensor list 2j adds to the model info reply (J1 of "Layers, MoE and
+/// tensor placement on the web model profile page", `ARCHITECTURE.md` 5):
+/// `info.tensors` is every tensor's `{name, bytes}` over EVERY shard, in file
+/// order, at most 20 000 entries; past that the reply carries the first 20 000
+/// and `info.tensorsTruncated` is true. A header of exactly 20 000 is the
+/// boundary: every entry travels and nothing is truncated. The list is bounded
+/// by bytes as well (J1's follow-up, `ARCHITECTURE.md` 5): 917 504 bytes of the
+/// rows' JSON, each row counted as `serde_json::to_string` spells a
+/// `{"name","bytes"}` row plus the `,` after it, so the reply stays under the
+/// pipe's frame. The rows are kept up to the FIRST one that would pass either
+/// bound.
+///
+/// Names the tests assume, the contract for the coder: `pai_core::client::ModelFacts`
+/// gains `tensors` (a `Vec` of rows of `name` and `bytes`) and
+/// `tensors_truncated` (a `bool`).
+#[cfg(test)]
+pub(crate) fn manager_model_tensors_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let cwd = crate::launch::instance_current_dir(
+        cfg!(windows),
+        &crate::paths::data_root(),
+        &crate::paths::instance_state_dir(),
+    );
+    let models = cwd.join("models");
+    std::fs::create_dir_all(&models).expect("models dir");
+
+    // A model split over THREE shards: the list is every shard's tensors, each
+    // shard's after the one before it. Every size a multiple of the page, so
+    // the bytes the header declares are the ones the list answers.
+    let shard = |i: u32| models.join(format!("tensors-{i:05}-of-00003.gguf"));
+    write_gguf_kv(
+        &shard(1),
+        "llama",
+        &[("llama.block_count", 2)],
+        &[
+            ("token_embd.weight", 1 << 20),
+            ("blk.0.attn_q.weight", 1 << 12),
+        ],
+    );
+    write_gguf_kv(
+        &shard(2),
+        "llama",
+        &[],
+        &[
+            ("blk.1.attn_q.weight", 1 << 13),
+            ("blk.1.ffn_up.weight", 1 << 14),
+        ],
+    );
+    write_gguf_kv(
+        &shard(3),
+        "llama",
+        &[],
+        &[("blk.2.attn_q.weight", 1 << 15), ("output.weight", 1 << 16)],
+    );
+
+    // Past the cap, and the boundary: a header of 20 001 tensors, and one of
+    // exactly 20 000.
+    let many = models.join("many.gguf");
+    let exact = models.join("exact.gguf");
+    for (path, n) in [(&many, 20_001usize), (&exact, 20_000)] {
+        let names: Vec<String> = (0..n).map(|i| format!("t{i:05}")).collect();
+        write_gguf_kv(
+            path,
+            "llama",
+            &[("llama.block_count", 1)],
+            &names
+                .iter()
+                .map(|name| (name.as_str(), 4096u64))
+                .collect::<Vec<(&str, u64)>>(),
+        );
+    }
+
+    // Long names: 20 000 tensors of `LONG` characters each, so the rows' JSON
+    // passes the byte bound long before the 20 000th row. No character of a
+    // name is one JSON escapes, so the bound is arithmetic, never an escape.
+    const LONG: usize = 100;
+    let long = models.join("long.gguf");
+    let long_names: Vec<String> = (0..20_000)
+        .map(|i| format!("t{i:05}{}", "w".repeat(LONG - 6)))
+        .collect();
+    write_gguf_kv(
+        &long,
+        "llama",
+        &[("llama.block_count", 1)],
+        &long_names
+            .iter()
+            .map(|name| (name.as_str(), 4096u64))
+            .collect::<Vec<(&str, u64)>>(),
+    );
+
+    std::fs::write(
+        sys.join("models.ini"),
+        format!(
+            "[tensors]\nmodel = {}\n\n[many]\nmodel = {}\n\n[exact]\nmodel = {}\n\n[long]\nmodel = {}\n",
+            shard(1).display(),
+            many.display(),
+            exact.display(),
+            long.display()
+        ),
+    )
+    .expect("models.ini");
+
+    let bff = Caller(":1.9".into());
+    let own_bff = Requester {
+        caller: bff.clone(),
+        principal: None,
+    };
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true).quietly(true).bff(&bff),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new())
+    .with_passwords(FakePasswords::new())
+    .with_log(FakeActionLog::new());
+
+    // One row of the list as the reply spells it, with the `,` that follows it:
+    // the byte count the bound runs on.
+    let row_bytes = |name: &str, bytes: u64| -> usize {
+        serde_json::to_string(&serde_json::json!({ "name": name, "bytes": bytes }))
+            .expect("row json")
+            .len()
+            + 1
+    };
+
+    let listed = |id: &str| -> (Vec<(String, u64)>, bool) {
+        let got = m.model_info(&own_bff, id).expect("the bff's own read");
+        let facts = got
+            .info
+            .as_ref()
+            .unwrap_or_else(|| panic!("no facts: {got:?}"));
+        (
+            facts
+                .tensors
+                .iter()
+                .map(|row| (row.name.clone(), row.bytes))
+                .collect(),
+            facts.tensors_truncated,
+        )
+    };
+
+    // ── Every shard's tensor, in file order ──────────────────────────────
+    let (list, truncated) = listed("tensors");
+    assert_eq!(
+        list,
+        vec![
+            ("token_embd.weight".to_string(), 1 << 20),
+            ("blk.0.attn_q.weight".to_string(), 1 << 12),
+            ("blk.1.attn_q.weight".to_string(), 1 << 13),
+            ("blk.1.ffn_up.weight".to_string(), 1 << 14),
+            ("blk.2.attn_q.weight".to_string(), 1 << 15),
+            ("output.weight".to_string(), 1 << 16),
+        ],
+        "the three shards' tensors, each shard after the one before it, with the bytes \
+         the header declares"
+    );
+    assert!(!truncated, "six tensors are under the cap: {list:?}");
+
+    // ── Past the cap: the FIRST 20 000, and the flag ─────────────────────
+    let (list, truncated) = listed("many");
+    assert_eq!(list.len(), 20_000, "the cap is 20 000 entries");
+    assert!(truncated, "a header of 20 001 tensors answers truncated");
+    assert_eq!(
+        list.first().map(|(name, _)| name.as_str()),
+        Some("t00000"),
+        "the entries kept are the first ones in file order"
+    );
+    assert_eq!(
+        list.last().map(|(name, _)| name.as_str()),
+        Some("t19999"),
+        "the 20 000th tensor is the last one kept"
+    );
+    assert!(
+        list.iter().all(|(_, bytes)| *bytes == 4096),
+        "every row carries the tensor's bytes"
+    );
+    let short: usize = list
+        .iter()
+        .map(|(name, bytes)| row_bytes(name, *bytes))
+        .sum();
+    assert!(
+        short <= pai_core::gguf_shape::MAX_TENSOR_LIST_BYTES,
+        "20 001 short names answer 20 000 rows of {short} bytes: under the byte bound, so the \
+         ROW bound cut this list and the byte bound never touched it"
+    );
+
+    // ── The boundary: 20 000 travel, nothing is truncated ────────────────
+    let (list, truncated) = listed("exact");
+    assert_eq!(list.len(), 20_000, "the cap is inclusive");
+    assert!(
+        !truncated,
+        "a header of exactly 20 000 tensors is at the cap, not past it"
+    );
+    assert_eq!(
+        list.last().map(|(name, _)| name.as_str()),
+        Some("t19999"),
+        "the whole list travels"
+    );
+
+    // ── The byte bound: long names, cut before the row bound ───────────────
+    //
+    // The rows of 20 000 tensors of 100-character names pass 917 504 bytes of
+    // JSON long before the 20 000th row: the reply carries the rows that fit,
+    // from the front, and the flag. The cut is TIGHT: the first row the reply
+    // drops is one that would pass the bound, so the list is never shorted.
+    let (list, truncated) = listed("long");
+    let mut fits = 0usize;
+    let mut kept_bytes = 0usize;
+    for name in &long_names {
+        let row = row_bytes(name, 4096);
+        if kept_bytes + row > pai_core::gguf_shape::MAX_TENSOR_LIST_BYTES {
+            break;
+        }
+        kept_bytes += row;
+        fits += 1;
+    }
+    assert!(
+        (1..pai_core::gguf_shape::MAX_TENSOR_ROWS).contains(&fits),
+        "the fixture's names are long enough for the byte bound to bite before the row \
+         bound: {fits} rows fit in {} bytes",
+        pai_core::gguf_shape::MAX_TENSOR_LIST_BYTES
+    );
+    assert_eq!(
+        list.iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        long_names
+            .iter()
+            .take(fits)
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        "the rows kept are the first ones in file order, up to the byte bound: {} rows \
+         answered, {fits} fit",
+        list.len()
+    );
+    assert!(
+        truncated,
+        "20 000 tensors whose rows pass the byte bound answer the list truncated"
+    );
+    assert!(
+        kept_bytes + row_bytes(&long_names[fits], 4096)
+            > pai_core::gguf_shape::MAX_TENSOR_LIST_BYTES,
+        "the row the list drops, `{}`, would pass the bound: {}, so the cut is the first row \
+         that passes it, not an earlier one",
+        long_names[fits],
+        kept_bytes + row_bytes(&long_names[fits], 4096)
     );
 }
 

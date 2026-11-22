@@ -504,7 +504,10 @@ pub fn set_device(s: &str, index: usize, device: &str) -> String {
 /// name another machine's GPU; `build_rows` flags that as an undetected row
 /// instead, the same way the GPU distribution table does.
 pub fn validate(s: &str) -> Result<(), String> {
-    pai_core::checks::override_tensor(s).map_err(|r| r.text())
+    // The two rules of a line a save changed (the space, the device shape) are
+    // the web page's, and the table sanitizes the pattern and trims the device,
+    // so a value built here has neither: only the grammar rules are judged.
+    pai_core::checks::override_tensor(s, false).map_err(|r| r.text())
 }
 
 /// True when the rules pin the embedding table to a GPU, the one placement whose

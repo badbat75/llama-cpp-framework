@@ -446,6 +446,54 @@ pub fn tensor_bytes(h: &Header, file_size: u64) -> Result<Vec<(&str, u64)>, Stri
         .collect())
 }
 
+/// The cap of a tensor list (J1 of "Layers, MoE and tensor placement on the
+/// web model profile page", `ARCHITECTURE.md` 5): the web page places weights
+/// from the names, and a model with more tensors is placed by its first ones.
+pub const MAX_TENSOR_ROWS: usize = 20_000;
+
+/// The byte bound of the same list (J1 of "Layers, MoE and tensor placement on
+/// the web model profile page", `ARCHITECTURE.md` 5): the rows' JSON, each row
+/// counted as `serde_json::to_string` spells a `{"name","bytes"}` row, plus the
+/// `,` that follows it. A tensor name has no length bound in this reader and
+/// JSON escaping grows it, and the pipe's frame is bounded
+/// (`client::pipe::MAX_FRAME`), so the list is cut by bytes as well as rows.
+pub const MAX_TENSOR_LIST_BYTES: usize = 917_504;
+
+/// One row of a tensor list, counted the way the reply spells it: the JSON of a
+/// `{name, bytes}` row (`client::pipe` writes exactly this), plus the `,` that
+/// follows it. Serializing a name and a count cannot fail, so the text is empty
+/// when it does, which costs one byte of the bound.
+fn row_bytes(name: &str, bytes: u64) -> usize {
+    let row = serde_json::to_string(&serde_json::json!({ "name": name, "bytes": bytes }))
+        .unwrap_or_default();
+    row.len() + 1
+}
+
+/// The tensor list of a shard set: every tensor's name (the GGUF header's own)
+/// and bytes, each shard's tensors in data-offset order (`tensor_bytes`), shard
+/// after shard. The list is cut at the FIRST row that would pass either bound,
+/// [`MAX_TENSOR_ROWS`] rows or [`MAX_TENSOR_LIST_BYTES`] of the rows' JSON, and
+/// the flag says the model has more tensors than the list carries. The row cap
+/// is inclusive: a model of exactly that many tensors, within the bytes,
+/// answers the whole list with the flag false.
+pub fn tensor_rows(shards: &[(Header, u64)]) -> Result<(Vec<(String, u64)>, bool), String> {
+    let mut rows = Vec::new();
+    let mut bytes = 0usize;
+    let mut truncated = false;
+    'shards: for (h, file_size) in shards {
+        for (name, size) in tensor_bytes(h, *file_size)? {
+            let row = row_bytes(name, size);
+            if rows.len() >= MAX_TENSOR_ROWS || bytes + row > MAX_TENSOR_LIST_BYTES {
+                truncated = true;
+                break 'shards;
+            }
+            bytes += row;
+            rows.push((name.to_string(), size));
+        }
+    }
+    Ok((rows, truncated))
+}
+
 /// KV bytes per token (f16, all attention layers), from the attention keys;
 /// `None` when the layout is not readable (no head count, or no key/value
 /// length and no embedding length to take them from). The products saturate:
@@ -674,6 +722,19 @@ pub fn read_local_header(path: &Path, file_size: u64) -> Result<Header, String> 
             Err(ParseError::Invalid(m)) => return Err(strings::fill("gguf-unreadable", &[&m])),
         }
     }
+}
+
+/// The headers of a model's shard set, first shard first, each with the file
+/// size the reader saw (`tensor_bytes` needs it for the last tensor's bytes).
+pub fn read_shards(first: &Path) -> Result<Vec<(Header, u64)>, String> {
+    let mut headers = Vec::new();
+    for p in shard_set(first) {
+        let size = std::fs::metadata(&p)
+            .map_err(|e| format!("{}: {e}", p.display()))?
+            .len();
+        headers.push((read_local_header(&p, size)?, size));
+    }
+    Ok(headers)
 }
 
 /// The `Shape` of a model on disk: `first` and the rest of its shard set

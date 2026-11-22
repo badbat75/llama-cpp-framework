@@ -1930,7 +1930,12 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
     // The read opens a file under this phase's redirect, so it lives here.
     {
         use crate::manager::service::write_gguf_kv;
-        use pai_core::client::{ModelFacts, Reason};
+        use pai_core::client::{ModelFacts, Reason, TensorRow};
+
+        let row = |name: &str, bytes: u64| TensorRow {
+            name: name.into(),
+            bytes,
+        };
 
         let models = dir.path().join("info-models");
         std::fs::create_dir_all(&models).expect("models dir");
@@ -1965,6 +1970,14 @@ pub(crate) fn manager_dbus_client_principal_e2e() {
             moe: true,
             expert_count: 128,
             expert_used: 8,
+            // J1: the bus carries the tensor list beside the counts.
+            tensors: vec![
+                row("token_embd.weight", 1 << 20),
+                row("blk.0.ffn_gate_exps.weight", 1 << 20),
+                row("blk.1.ffn_gate_exps.weight", 1 << 20),
+                row("output.weight", 1 << 20),
+            ],
+            tensors_truncated: false,
         };
         let same = |got: &str, want: &std::path::Path| {
             std::fs::canonicalize(got).ok() == std::fs::canonicalize(want).ok()

@@ -1015,6 +1015,8 @@ model-profile-over-memory = "`{0}` does not fit the GPU memory of instance `{1}`
 model-profile-device-outside = "{2} = {3} names a GPU outside the Devices of instance {1}'s server profile, so model profile {0} may not use it. Pick a GPU of those Devices, or widen the server profile's Devices first"
 override-no-pattern = "tensor override {0} has an empty pattern"
 override-no-device = "tensor override {0} (`{1}`) names no device: a rule is `<pattern>=<device>`, and llama.cpp splits it at the first `=`"
+override-tensor-space = "tensor override {0} has a space at the ends of its pattern or its device: llama.cpp keeps it, so the pattern matches no tensor and the device names none. Remove the space"
+override-bad-device = "tensor override {0} names `{1}`: a device is a card name of letters, digits and `_` (CPU, ROCm0, CUDA1), and llama.cpp spells the CPU device CPU"
 bind-all-with-others = "Hostname lists 0.0.0.0 with other addresses; 0.0.0.0 already covers every address, so bind it alone."
 comment-markers = "{0} contains ';' or '#', which starts a comment in the INI format and cuts the value short; use a value without those characters"
 not-sweepable = "`{0}` is not a sweepable model profile key. Sweepable: {1}"

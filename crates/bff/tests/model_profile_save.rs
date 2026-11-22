@@ -1586,15 +1586,16 @@ async fn save_a_json_content_type_with_a_charset_is_served() {
 
 /// A key the web may not write, in any spelling: the list is exact-case, and a
 /// name it does not hold is as unknown as one no reader knows. 400, and the
-/// manager is not asked.
+/// manager is not asked. `override-tensor` is not here: J1 of "Layers, MoE and
+/// tensor placement on the web model profile page" moved it onto the web, and
+/// its save is pinned by `save_override_tensor_lands_in_the_section`.
 #[tokio::test]
 async fn save_key_outside_the_web_list_is_400_and_reaches_no_manager() {
     let app = app_holding(FILE_ON, FILE_OFF);
     for key in [
-        "model",     // the Assets card, not web-editable
+        "model",  // the Assets card, not web-editable
         "mmproj", // the same
         "moe-cache-mib",
-        "override-tensor",
         "foo",            // a name no reader knows
         "CTX-SIZE",       // the right key, the wrong case
         "ctx-size-draft", // a real key, not this one
@@ -2169,13 +2170,15 @@ async fn save_changed_at_the_write_is_409_and_leaves_the_file() {
 // ---------------------------------------------------------------------------
 
 /// The manager checks the edited section whole, so its refusal can name a key
-/// the page shows read-only (`model`, `moe-cache-mib`, `override-tensor`): the
+/// the page shows read-only (`model`, `moe-cache-mib`): the
 /// 422 still marks the field the design's table gives for that rule, verbatim
 /// with the manager's own `args`. `field` is `args[0]` for the rules that name
 /// their key; `fit-target-format`, the MoE cache pair, the load-on-startup pair,
 /// `model-profile-no-model`, `model-profile-model-missing` (its args are the model
-/// profile, the instance and the file) and the `override-no-*` pair name a
-/// position, a count or nothing, so each maps to the key of its control; the
+/// profile, the instance and the file) and the `override-*` rules
+/// (`override-no-pattern`, `override-no-device`, `override-tensor-space` and
+/// `override-bad-device`, J1) name a position, a count or nothing, so each maps
+/// to the key of its control; the
 /// pair about the model profile's
 /// name marks no field at all (the next test). The section is never written, and
 /// a 422 is the manager's news about the values, not a refusal of the user: the
@@ -2223,6 +2226,10 @@ async fn save_the_managers_check_marks_the_field_of_its_rule() {
             &["2", "llama-expert"],
             "override-tensor",
         ),
+        // J1: the two rules the web editor adds, each naming the position of
+        // the rule it refuses.
+        ("override-tensor-space", &["2"], "override-tensor"),
+        ("override-bad-device", &["1", "cpu"], "override-tensor"),
     ];
     for &(key, args, field) in CASES {
         let app = app_holding(FILE_ON, FILE_OFF);
@@ -3143,6 +3150,51 @@ async fn save_n_cpu_moe_out_of_range_is_422_naming_the_key() {
             "{value}: the refusal wrote nothing"
         );
     }
+}
+
+// ── `override-tensor` on the web (J1, ARCHITECTURE.md "Layers, MoE and tensor
+// placement on the web model profile page", slice 5) ──────────────────────
+//
+// The key moved from `checks::MODEL_PROFILE_KEYS_NOT_ON_WEB` to
+// `WEB_MODEL_PROFILE_KEYS`, so the page's body carries it and the save treats it
+// as every other key: the body check lets it through and the rule of the value
+// is the manager's (its refusals: the test above).
+
+/// `FILE_ON` with `override-tensor` saved on `[alpha]`: the key was not in the
+/// section, so it lands after its last real line, and nothing else moved.
+const ON_OVERRIDE: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+model = C:\\Models\\alpha.gguf\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+override-tensor = blk\\.0\\.=CPU\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";
+
+/// A body carrying one rule is saved: no 400 for a key off the web list, the
+/// line lands inside `[alpha]` as any other key's does, and the bytes the
+/// page wrote are the ones the body gave.
+#[tokio::test]
+async fn save_override_tensor_lands_in_the_section() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.save_on(ALPHA, json!({ "override-tensor": "blk\\.0\\.=CPU" }))
+        .await
+        .assert_saved(&rev(&KEY_A, MODELS, ON_OVERRIDE, ALPHA), false, &[]);
+    assert_eq!(
+        app.file_text(MODELS).as_deref(),
+        Some(ON_OVERRIDE),
+        "the line lands inside [alpha]"
+    );
+    assert_eq!(
+        section_of(&app.file_text(MODELS).expect("models.ini"), QWEN),
+        section_of(FILE_ON, QWEN),
+        "the other section is byte for byte as it was"
+    );
 }
 
 /// The device list a profile names is never judged against the node's probe: a

@@ -713,8 +713,9 @@ fn switch_failure(
 /// total and `ModelsMax`) and `model-profile-no-model` and `model-profile-model-missing`
 /// (their `args` are the model profile's name, the latter's with the instance and
 /// the file), name the key their value belongs to: `load-on-startup` and `model`.
-/// So does the pair `override-no-pattern` and `override-no-device`, whose
-/// `args[0]` is the position of the rule inside the value, and
+/// So does the `override-*` quartet (`override-no-pattern`, `override-no-device`,
+/// `override-tensor-space` and `override-bad-device`: their `args[0]` is the
+/// position of the rule inside the value), and
 /// `moe-cache-with-tensor-split`, which carries no args, and
 /// `tensor-split-format`, whose `args[0]` is the whole value: each marks the
 /// key of its own value. A refusal about the model profile's name (`invalid-model-profile-id`,
@@ -728,7 +729,10 @@ fn field_of(key: &str, args: &[String]) -> Option<String> {
         }
         "model-profile-no-model" | "model-profile-model-missing" => Some("model".to_string()),
         "fit-target-format" => Some("fit-target".to_string()),
-        "override-no-pattern" | "override-no-device" => Some("override-tensor".to_string()),
+        "override-no-pattern"
+        | "override-no-device"
+        | "override-tensor-space"
+        | "override-bad-device" => Some("override-tensor".to_string()),
         "tensor-split-format" => Some("tensor-split".to_string()),
         "moe-cache-with-tensor-split" => Some("moe-cache-mib".to_string()),
         "invalid-model-profile-id" | "model-profile-name-taken" | "model-profile-over-memory" => {
@@ -904,11 +908,14 @@ pub(crate) async fn model_info(
 
 /// The document of [`model_info`]: `{"model", "info", "reason"}`, the three the
 /// manager answers, in camelCase: `model` the path the facts were read from,
-/// resolved, `info` one `{"blockCount", "moe", "expertCount", "expertUsed"}` of
-/// the GGUF header's own counts, and `reason` one `{"key", "args"}`, the why of
-/// a read that worked with no facts to read. Each is `null` where the manager
-/// answered none, so the page has one shape and the bff invents neither a fact
-/// nor a reason; the counts travel as numbers, `0` included.
+/// resolved, `info` one `{"blockCount", "moe", "expertCount", "expertUsed",
+/// "tensors", "tensorsTruncated"}` of the GGUF header's own counts and the
+/// tensor list (`tensors` rows of `name` and `bytes`, in the manager's order),
+/// and `reason` one `{"key", "args"}`, the why of a read that worked with no
+/// facts to read. Each is `null` where the manager answered none, so the page
+/// has one shape and the bff invents neither a fact nor a reason; the counts and
+/// the bytes travel as numbers, `0` included. The list is relayed as the manager
+/// cut it: the bff sorts, filters and caps nothing.
 fn model_info_document(reply: &ModelInfoReply) -> Value {
     json!({
         "model": reply.model,
@@ -921,6 +928,12 @@ fn model_info_document(reply: &ModelInfoReply) -> Value {
                     "moe": facts.moe,
                     "expertCount": facts.expert_count,
                     "expertUsed": facts.expert_used,
+                    "tensors": facts
+                        .tensors
+                        .iter()
+                        .map(|row| json!({"name": row.name, "bytes": row.bytes}))
+                        .collect::<Vec<_>>(),
+                    "tensorsTruncated": facts.tensors_truncated,
                 })
             })
             .unwrap_or(Value::Null),

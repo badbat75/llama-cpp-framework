@@ -393,9 +393,10 @@ where
             }),
         // The layer facts of one saved model profile, the reply of the design:
         // `model` the path it resolved (null when the section names none),
-        // `info` the four counts, `reason` the keyed why. Exactly one of the
-        // two is ever there: an outcome the read could not answer is a success
-        // of the call with `info` null, and the reader's own text never
+        // `info` the four counts with the tensor list (`tensors` rows of `name`
+        // and `bytes`, `tensors_truncated`), `reason` the keyed why. Exactly one
+        // of the two is ever there: an outcome the read could not answer is a
+        // success of the call with `info` null, and the reader's own text never
         // travels, so no byte of a file it refused reaches the frame.
         Request::ModelInfo(profile, principal) => requester(caller, principal)
             .and_then(|who| manager.model_info(&who, &profile))
@@ -407,6 +408,12 @@ where
                         "moe": f.moe,
                         "expert_count": f.expert_count,
                         "expert_used": f.expert_used,
+                        "tensors": f
+                            .tensors
+                            .iter()
+                            .map(|t| json!({"name": t.name, "bytes": t.bytes}))
+                            .collect::<Vec<_>>(),
+                        "tensors_truncated": f.tensors_truncated,
                     })),
                     "reason": reply
                         .reason

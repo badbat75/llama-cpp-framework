@@ -1573,7 +1573,12 @@ pub(crate) fn manager_pipe_client_e2e() {
     // opens a file under this phase's redirect, so it lives here.
     {
         use crate::manager::service::write_gguf_kv;
-        use pai_core::client::{ModelFacts, Reason};
+        use pai_core::client::{ModelFacts, Reason, TensorRow};
+
+        let row = |name: &str, bytes: u64| TensorRow {
+            name: name.into(),
+            bytes,
+        };
 
         let models = dir.path().join("info-models");
         std::fs::create_dir_all(&models).expect("models dir");
@@ -1596,12 +1601,29 @@ pub(crate) fn manager_pipe_client_e2e() {
             ],
         );
         let gone = models.join("gone.gguf");
+        // 20 000 tensors of long names: the reply's tensor list is bounded by
+        // bytes (J1), and the bound exists for THIS stream, whose frame is
+        // `MAX_FRAME`.
+        let long = models.join("long-names.gguf");
+        let long_names: Vec<String> = (0..20_000)
+            .map(|i| format!("t{i:05}{}", "w".repeat(94)))
+            .collect();
+        write_gguf_kv(
+            &long,
+            "llama",
+            &[("llama.block_count", 1)],
+            &long_names
+                .iter()
+                .map(|name| (name.as_str(), 4096u64))
+                .collect::<Vec<(&str, u64)>>(),
+        );
         std::fs::write(
             sys.join("models.ini"),
             format!(
-                "[stream]\nmodel = {}\n\n[fetched]\nhf-repo = the-org/the-model\n\n[gone]\nmodel = {}\n",
+                "[stream]\nmodel = {}\n\n[fetched]\nhf-repo = the-org/the-model\n\n[gone]\nmodel = {}\n\n[longnames]\nmodel = {}\n",
                 gguf.display(),
-                gone.display()
+                gone.display(),
+                long.display()
             ),
         )
         .expect("models.ini");
@@ -1610,6 +1632,15 @@ pub(crate) fn manager_pipe_client_e2e() {
             moe: true,
             expert_count: 128,
             expert_used: 8,
+            // J1: the tensor list crosses the stream with the counts, so the
+            // bff's page has the names to place.
+            tensors: vec![
+                row("token_embd.weight", 1 << 20),
+                row("blk.0.ffn_gate_exps.weight", 1 << 20),
+                row("blk.1.ffn_gate_exps.weight", 1 << 20),
+                row("output.weight", 1 << 20),
+            ],
+            tensors_truncated: false,
         };
         let same = |got: &str, want: &std::path::Path| {
             std::fs::canonicalize(got).ok() == std::fs::canonicalize(want).ok()
@@ -1717,6 +1748,62 @@ pub(crate) fn manager_pipe_client_e2e() {
             "no section named `nope`: the keyed refusal"
         );
         hang_up(server, client);
+
+        // The byte bound of the tensor list, ON the stream (J1's follow-up,
+        // `ARCHITECTURE.md` 5): 20 000 tensors of long names answer the rows
+        // that fit 917 504 bytes of the rows' JSON, and the flag, and the reply
+        // is a frame the client reads: the rows as the pipe spells them leave
+        // 128 KiB of the 1 MiB frame for the reply's other fields.
+        {
+            use pai_core::client::pipe::MAX_FRAME;
+            let (c, _) = devices_core(true);
+            let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+            let got = client
+                .model_info("longnames")
+                .expect("the bounded tensor list crosses the stream in one frame");
+            let facts = got
+                .info
+                .as_ref()
+                .unwrap_or_else(|| panic!("no facts: {got:?}"));
+            assert!(
+                facts.tensors_truncated,
+                "20 000 tensors of long names: the list on the wire is cut, and says so"
+            );
+            assert!(
+                facts.tensors.len() < 20_000,
+                "the byte bound cuts this list before the row bound: {} rows crossed",
+                facts.tensors.len()
+            );
+            assert_eq!(
+                facts
+                    .tensors
+                    .iter()
+                    .map(|row| row.name.as_str())
+                    .collect::<Vec<_>>(),
+                long_names
+                    .iter()
+                    .take(facts.tensors.len())
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                "what crossed is the front of the file's order: {} rows",
+                facts.tensors.len()
+            );
+            let rows = serde_json::to_string(
+                &facts
+                    .tensors
+                    .iter()
+                    .map(|row| serde_json::json!({ "name": &row.name, "bytes": row.bytes }))
+                    .collect::<Vec<_>>(),
+            )
+            .expect("rows json");
+            assert!(
+                rows.len() + 128 * 1024 <= MAX_FRAME as usize,
+                "the rows as the pipe spells them are {} bytes of the {MAX_FRAME} frame: the \
+                 reply's other fields must keep 128 KiB",
+                rows.len()
+            );
+            hang_up(server, client);
+        }
     }
 }
 
