@@ -144,3 +144,11 @@ When a slice starts (user, 2026-11-22), mark it "In progress" on its PLAN.md ite
 the roadmap's Now in the same turn, then commit and publish; when it closes, the commit removes the
 mark and the card moves to Just closed. Run up to three local agents at once: one Rust build, one
 `fe/` user, and a third that builds nothing (a review, docs, a brief).
+
+## Never block the work on a question
+
+A questionnaire waits for the user and stops the turn: on the night of 2026-11-22 the coordinator asked
+for the Vulkan hand run before launching the next slice, and nothing moved until the answer (the user:
+"hai bloccato lo sviluppo di questa notte per chiedermi di fare una lettura?"). Launch the next slices
+first, then ask; a go-ahead that only gates an optional check goes in the slice's message as a note,
+not as a blocking question, and the work carries on without it.
