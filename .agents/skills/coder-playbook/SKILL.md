@@ -45,6 +45,9 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## Running the checks
 
+- A loop that reports `eval "$c" 2>&1 | tail -6; echo EXIT=$?` prints tail's exit (0) for every command:
+  a loop of green lines over red commands. Capture first (`out=$(eval "$c" 2>&1); code=$?`), then print
+  `exit=$code` and the warning count of `$out`.
 - A filtered web UI run is `npm --prefix fe test -- <file> -t '<test name>'`: npm runs the script with `fe/`
   as cwd, and `fe/vite.config.ts`'s `test.environment: 'jsdom'` is read from there. `npx --prefix fe vitest
   run <file>` keeps the repo root as cwd, finds no config, and reddens EVERY test with `window is not defined`.
@@ -555,6 +558,40 @@ Lessons only: the rules are in `AGENTS.md`.
   (`save_no_changes_with_no_record_restarts_nothing_and_asks_no_state`). The earlier
   `None if !changed => client.list_instances()` arm is ruled out (slice 15 "As built"): the save's limit is
   never spent on the state of an instance the record never named.
+
+### Slice AN4 (2026-11-22): `/api/version` and the node's host facts
+
+- `crates/bff/build.rs` embeds the web UI and exports `PAI_BFF_FE_DIR`: `tests/fe.rs` compares the served
+  bytes with the directory the build CHOSE, so with `fe/dist` present (another agent's `npm run build`) the
+  run reads that. Pin the fixture for a whole-crate run:
+  `PAI_BFF_FE_DIR=$PWD/crates/bff/fe-fixture cargo test -p pai-bff`.
+- The bff's test builders hand the router a `timeout` of 200 ms, so a route bound by a LONGER limit (the
+  node's info, `NODE_INFO_TIMEOUT` 10 s) must use its own const: `tests/node.rs` uses the 200 ms builder,
+  and the fake's `node_info()` sleeps, so a route reading `timeout` reddens on the bound and a blocking
+  sleep in the async handler (no `spawn_blocking`) stalls the timer of the bound test next to it.
+- A polled read (idle deadline unmoved) that acts as the signed-in user needs the session's ID to end it on
+  the manager's refusal: `Sessions::peeked` answers `(id, identity)` and `peek` maps it, so the deadline
+  rule stays in one body.
+- `/api/version` now answers `{version, name, os}` and reads os-release itself (`pai_core::host::os(root)`,
+  `name` = `node::name(&listen::hostname())`, the same value `/api/node` answers). Its root is a builder
+  parameter (`router_with_session_and_roots`), and `tests/instances.rs` and `tests/model_profiles.rs` pin
+  the document against the REAL `pai_core::host::os("/")`, so every shipped builder keeps `/`: a builder
+  handing another root reddens those suites. The manager's row and text bounds are the only caps
+  (`NodeInfoReply`'s doc says so): the bff renames, sorts, caps and judges nothing.
+
+## Slice L2 (2026-11-22): `GET /api/profiles/model/{id}/model-info`
+
+- A route that must answer the manager's KEYED refusal beside the shared read failures: let the blocking
+  body return `Result<Value, Response>` and hand that to `read_answer`, whose `answer` closure matches the
+  inner `Result` (`Ok(doc)` / `Err(answer)`). `Result<Value, Response>` passes `clippy::result_large_err`
+  (an enum carrying a `Response` does not), so no box and no `type Outcome` alias are needed.
+- Relay the refusal's own `key` and `values` (`keyed(status, key, args)`, the shape `instances.rs` and
+  `server_profiles.rs` each keep privately): the manager's `model_info` answers one keyed refusal,
+  `no-model-profile-named`, whose arg is the id as the page spelled it, `*` included. The module's own
+  `not_found` cannot stand in: it runs the echo rule of `checks::model_profile_id`, so it drops a `*`.
+- Brief 19's failure line for this route (503 `session-unavailable`, 504 at 5 s) is stale: every `As` read
+  of the bff answers 503 `client-unavailable` at `MANAGER_TIMEOUT` (5 s in the service, 200 ms in the test
+  builders), which is what `tests/model_profile_model_info.rs` pins.
 
 ## Reading the host (core `host.rs`, `versions.rs`)
 

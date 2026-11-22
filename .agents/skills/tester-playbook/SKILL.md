@@ -393,6 +393,9 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   merges with the line below) and breaks an `as` cast on a multi-line type argument: read the diff it
   makes, a joined comment is cosmetic, a reformatted type assertion is not. Prettier, ESLint and `tsc -b`
   print nothing on a pass, so quote the command line, not an output line.
+- Prettier ignores `fe/ux/` (`.prettierignore`: its own npm package, "checked by its own hand"), so
+  `npx prettier --write fe/ux/check.js` writes nothing and says nothing about it: match the fe style by
+  hand there, and judge a ux edit by reading its diff.
 - For a per-file map of failures and the counts of a full run, use
   `npx vitest run --reporter=json --outputFile=<f>` and read `testResults[].name`,
   `assertionResults[].fullName` and `failureMessages` with node (`--reporter=basic` does not exist in
@@ -2119,3 +2122,62 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
 - Pin the registry's facts as the bindings' own constants (`ash`'s `vk::EXT_PCI_BUS_INFO_NAME`,
   `vk::make_api_version(0, 1, 1, 0)`), and check the extension TYPE in the Khronos page: device vs instance
   is the whole defect, and the page states it in its header table.
+
+## A route that gains a manager read (slice AN4, `/api/version` and `/api/node`, 2026-11-22)
+
+- A bound pin with slack ABOVE the fake's delay has NO teeth: `slow = bound + 1s` with
+  `waited < slow + 5s` is passed by a read that never times out (it answers at the fake's delay, inside the
+  slack). Set the fake's delay PAST the bound (`bound + 5s`) and pin the window on both sides:
+  `waited >= bound` (the read did not give up early) and `waited < delay` (it answered at the bound, not
+  when the manager spoke). Prove it in a scratch COPY of the file with the document assert above it cut: the
+  red reads `the read gave up before its bound: 141.17µs`. `node_devices.rs`'s
+  `devices_answered_past_the_deadline_is_503` is the weak shape.
+- A bound the integration test can only reach at wall clock: pin the constant's VALUE in the crate's own
+  unit list (`crates/bff/src/tests/timeouts.rs`) and keep the wall-clock test for the moment of the answer.
+  Check the real ordering before claiming a superlative: `WRITE_TIMEOUT` (15 s) is LONGER than
+  `NODE_INFO_TIMEOUT` (10 s), so an "it is the longest" stub pin reds in the tester's own file.
+- A public builder's new parameter: keep the old signature as a one-line wrapper (`router_with_session_and_
+  versions_dir` delegating with `/`) and add the new one beside it, so the ~49 existing call sites of the
+  slice's crate stay untouched and only the file that needs the fixture names the new builder.
+- A route's whole-document pins are scattered: `GET /api/version` is pinned whole in `tests/instances.rs`
+  (the shared `assert_version`, 3 tests), `tests/model_profiles.rs` and now `tests/version.rs`. Grep the
+  route path AND `CARGO_PKG_VERSION` across `crates/bff/tests` before reporting the red list, and update
+  every one in the same step, so the collateral reds are one named list.
+- A host fact no fixture root can carry (the kernel is `uname(2)`, not a file): pin the texts the fixture
+  decides to literals, and read the machine's own figure FROM the reader
+  (`pai_core::host::os(root).kernel`), never a literal. Gate the fixture-text pins `#[cfg(unix)]`: the
+  Windows reader reads the registry and ignores the root.
+- The manager's reply structs (`OsInfo`, `NodeGpu`, `Driver`) have no serde derives, so the expected JSON is
+  built by hand in the test; a field the fake leaves `None` must appear as `null`, which is what pins the
+  bff sending the row whole.
+- An empty-root failure pin written as `doc["os"]["name"] == Null` is VACUOUS when the member is absent
+  (indexing `Null` answers `Null`). Assert the member exists and its key list first, then the nulls: the
+  red then reads `no operating system object: {..}`, not `an object`.
+
+## A route that relays one manager verb (slice L2, `GET /api/profiles/model/{id}/model-info`, 2026-11-22)
+
+- A verb that already exists on `ManagerClient` with a default body (`model_info`) added to a bff test's own
+  fake is NOT compile red, so unlike the "new verb" case the whole file's first red is the unrouted path:
+  every test, the 401 one included, reads `left: 404, right: <expected>` (the session gate is mounted
+  per route, so a path with no route is not gated). One clean line covers the list: "all N reds are the
+  404 of a path the bff does not route".
+- The nearest read-route fake to copy for a route that asks ONE verb and reads no file:
+  `crates/bff/tests/node_devices.rs` (`Fixture` answer cell + `set()` + `set_pause_ms`, `FakeClock`,
+  `assert_asked_nothing`, the `SHORT`/`PAST` deadline pair). It is 746 lines and self-contained: no shared
+  fake needs touching, so the other 20 test binaries stay green (verified by `--no-fail-fast`).
+- A relay route's failure keys come from the manager's `ClientError`, not from the bff: `Ok` carries the
+  reason as DATA (`{key, args}`, `model` set only with `info`), and `Invalid(Refusal{key: "no-model-
+  profile-named", values:[id]})` is relayed as 404 with the id. Pin each reason key in a loop with a path
+  carrying a space and a non-ASCII name, so a bff that judged, lowercased, trimmed or dropped an arg is red.
+  A whole-document `json!` equality (nulls written out) is the cheapest camelCase pin: it pins every field
+  name, every null and the absence of extras in one assert; keep a sorted-keys pin only where the document
+  is built in a loop.
+- A design line can name keys loosely: L2's says "503 `session-unavailable` and 504 on the deadline", while
+  every SERVED bff read answers 503 `client-unavailable` (a manager past the read's bound included) and keeps
+  504 `client-timeout` for a WRITE whose outcome is unknown. Pin the served convention of the nearest read
+  test and report the wording gap to the coordinator; do not invent a key.
+- The id of the path is decoded once by axum: pin `Alpha%20One` reaching the manager as `Alpha One`
+  (`server.rs`'s `Bad%20Id` is the precedent) and a name in another case travelling UNCHANGED, so the bff
+  is pinned to relay and not to match (the manager matches without case).
+- `cargo fmt -p <crate>` writes EVERY file of the package: run `--check` and grep `^Diff in` first, so an
+  uncommitted slice in the same package is not reformatted by your run.

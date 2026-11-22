@@ -1156,7 +1156,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     the manager refuses `override-tensor`, `device-draft` or `mmproj-device` naming a GPU outside the
     instance's server profile `Devices`; `moe-cache-mib` stays off the web until its floor rule. Slices
     L1 to L4, 2g (brief 19, `fe/briefs/19-layer-sliders.md`, written 2026-11-22: runs LS1 and LS2; LS1 in progress, 2026-11-22; the warning before Save for a Draft device or Vision GPU outside Devices is deferred to R4/R5, the save refusal names the GPU), J1, 2j (designer first). Built: L1, the manager's `ModelInfo`/`ModelInfoAs`
-    (2026-11-22). Next: L2.
+    (2026-11-22); L2, the bff route `GET /api/profiles/model/{id}/model-info` (2026-11-22). Next: L3.
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.

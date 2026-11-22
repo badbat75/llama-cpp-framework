@@ -48,6 +48,9 @@
 //! `PUT /api/profiles/model/{id}/enabled` is the switch of one model profile, the body
 //! `{"enabled": <bool>}`. The section moves, unchanged, between the two files,
 //! the file it LANDS IN written first; see [`set_enabled`].
+//! `GET /api/profiles/model/{id}/model-info` is the layer facts of one model
+//! profile's model, relayed from the manager's `ModelInfoAs`; see
+//! [`model_info`].
 
 use crate::origin::body_refusal;
 use crate::server::{revision, runs, TimedOut, WriteState};
@@ -57,7 +60,7 @@ use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use pai_core::client::{ClientError, ManagerFile};
+use pai_core::client::{ClientError, ManagerFile, ModelInfoReply};
 use pai_core::{assign, checks, ini};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -850,6 +853,111 @@ fn document(
         }
     }
     None
+}
+
+/// The answer to `GET /api/profiles/model/{id}/model-info`: the layer facts of
+/// the model of one model profile (L2 of "Layers, MoE and tensor placement on
+/// the web model profile page", `ARCHITECTURE.md`), relayed from the manager's
+/// `ModelInfoAs`, asked as the signed-in user on one connect and one call, and
+/// answered as [`model_info_document`]. A page read and not a poll: the session
+/// gates it and is its principal, and the read moves the idle deadline
+/// ([`Sessions::current`]), so a model profile page opened late keeps the
+/// sign-in alive.
+///
+/// The failures are the list's and the section read's ([`read_answer`]) beside
+/// one of the model profile reads: the manager's keyed refusal that no model
+/// profile is named is answered by [`model_info_refused`] and keeps the session
+/// (a typo is not a lost sign-in), 403 `session-not-administrator` ends the
+/// session when the manager refuses the signed-in user, 503
+/// `client-unavailable` is a manager that is not there or answers later than
+/// `timeout`, and 502 `client-other` is anything else, the manager's detail
+/// staying out of the body.
+pub(crate) async fn model_info(
+    connect: Connect,
+    timeout: Duration,
+    sessions: Arc<Sessions>,
+    id: String,
+    headers: HeaderMap,
+) -> Response {
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let user = identity.user;
+    let ask = tokio::task::spawn_blocking(move || -> Result<_, ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        Ok(match client.model_info(&id) {
+            Ok(reply) => Ok(model_info_document(&reply)),
+            Err(ClientError::Invalid(refusal)) => Err(model_info_refused(&refusal)),
+            Err(failure) => return Err(failure),
+        })
+    });
+    read_answer(
+        &sessions,
+        &session,
+        tokio::time::timeout(timeout, ask).await,
+        |answered| match answered {
+            Ok(document) => axum::Json(document).into_response(),
+            Err(answer) => answer,
+        },
+    )
+}
+
+/// The document of [`model_info`]: `{"model", "info", "reason"}`, the three the
+/// manager answers, in camelCase: `model` the path the facts were read from,
+/// resolved, `info` one `{"blockCount", "moe", "expertCount", "expertUsed"}` of
+/// the GGUF header's own counts, and `reason` one `{"key", "args"}`, the why of
+/// a read that worked with no facts to read. Each is `null` where the manager
+/// answered none, so the page has one shape and the bff invents neither a fact
+/// nor a reason; the counts travel as numbers, `0` included.
+fn model_info_document(reply: &ModelInfoReply) -> Value {
+    json!({
+        "model": reply.model,
+        "info": reply
+            .info
+            .as_ref()
+            .map(|facts| {
+                json!({
+                    "blockCount": facts.block_count,
+                    "moe": facts.moe,
+                    "expertCount": facts.expert_count,
+                    "expertUsed": facts.expert_used,
+                })
+            })
+            .unwrap_or(Value::Null),
+        "reason": reply
+            .reason
+            .as_ref()
+            .map(|reason| json!({ "key": reason.key, "args": reason.args }))
+            .unwrap_or(Value::Null),
+    })
+}
+
+/// The answer to one of the manager's keyed refusals of a model info read: its
+/// key and its values as the page's answer, 404 for `no-model-profile-named`
+/// (the section read's own answer for a name no file holds, [`not_found`]) and
+/// 422 for any other check the manager runs, the rule of the association routes
+/// (`instance_profiles::refused`). The session lives on: a refusal of a NAME is
+/// not a refusal of the signed-in user.
+fn model_info_refused(refusal: &checks::Refusal) -> Response {
+    let args = refusal
+        .values
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    keyed(
+        if refusal.key == "no-model-profile-named" {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::UNPROCESSABLE_ENTITY
+        },
+        refusal.key,
+        &args,
+    )
+}
+
+/// A keyed answer: `{"key", "args"}` at `status`.
+fn keyed(status: StatusCode, key: &str, args: &[&str]) -> Response {
+    (status, axum::Json(json!({ "key": key, "args": args }))).into_response()
 }
 
 /// A section's revision: the server read's keyed hash (`server::revision`),

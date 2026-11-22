@@ -174,8 +174,9 @@ pub(crate) fn router_with(
 /// `PUT /api/instances/{id}/tags`, the instance create
 /// `POST /api/instances` and the removal `DELETE /api/instances/{id}`
 /// (`instances::routes`), the model-profile list
-/// `GET /api/profiles/model`, the model profile save `PUT /api/profiles/model/{id}` and the model profile
-/// switch `PUT /api/profiles/model/{id}/enabled`. The boot read
+/// `GET /api/profiles/model`, the model profile save `PUT /api/profiles/model/{id}`, the model profile
+/// switch `PUT /api/profiles/model/{id}/enabled` and its layer facts
+/// `GET /api/profiles/model/{id}/model-info`. The boot read
 /// `GET /api/instances/{id}/boot` is gated by a session too, and reads the
 /// flag as the bff's own account (`control::routes`). One sign-in's check is given
 /// [`session::SIGN_IN_TIMEOUT`] to answer (the session routes' seam
@@ -343,6 +344,12 @@ fn router_with_policy(
             )
         }
     };
+    let read_model_info = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
+            model_profiles::model_info(connect.clone(), timeout, sessions.clone(), id, headers)
+        }
+    };
     let read_model_profile = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
@@ -387,6 +394,10 @@ fn router_with_policy(
         .route(
             "/api/profiles/model/{id}/enabled",
             axum::routing::put(set_enabled),
+        )
+        .route(
+            "/api/profiles/model/{id}/model-info",
+            axum::routing::get(read_model_info),
         )
         .merge(control::routes(connect.clone(), timeout, sessions.clone()))
         .merge(instances::routes(

@@ -2780,8 +2780,9 @@ slice, only if asked. (iii) Finding the downloaded file in llama.cpp's cache lay
 signed-in user (`ModelInfoAs`), on `MANAGER_TIMEOUT`; answers
 `{"model":"/abs/x.gguf"|null,"info":{"blockCount":64,"moe":true,"expertCount":128,"expertUsed":8}|null,"reason":{"key":"…","args":[…]}|null}`
 (2j adds `tensors`, `tensorsTruncated` inside `info`). Failures as every `As` read: 401 `session-*`, 403
-and a refusal ending the session, 404 `no-model-profile-named`, 503 `session-unavailable` and 504 on
-the deadline. It moves the idle deadline like any user read (it is asked on open and after a save that
+and a refusal ending the session, 404 `no-model-profile-named` (any other keyed refusal 422), 503 `client-unavailable` for no manager
+and for the deadline alike (the shared `read_answer` rule of the bff's `As` reads, no 504 split: a read
+changes nothing, so an unknown outcome needs no own code), 502 `client-other`. It moves the idle deadline like any user read (it is asked on open and after a save that
 changes `model`, not polled).
 
 **Bounds and caching.** The header read is `local_shape`'s (8 MiB first read, `MAX_HEADER` cap per
