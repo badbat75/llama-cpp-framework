@@ -69,9 +69,12 @@ Lessons only: the rules are in `AGENTS.md` and the role in `.opencode/agents/des
   so a long unbroken value needs `anywhere` on that item (T1: `.tile-facts dd`, 18 px sideways at
   320). `build/ux-review/t1stub.py` (the UX stub plus a scriptable `PUT .../tags`, `/__reqs`) and
   `t1.js`/`t1p.js` drive the tags field and measure the tiles.
-- The web has no model facts (no `block_count`) until 2g, so the GUI's block sliders for
-  `tensor-split` cannot be rebuilt; the GUI itself falls back to raw ratios when no model is read
-  (`crates/config/src/gpu_split.rs` `build_rows`). Brief 14 uses ratio fields with a share text.
+- The GUI's block sliders (`pai-app` `gpu_split.rs` `set_blocks`) write the counts as the
+  `tensor-split` weights and show blocks only under `layer`, a model read and an explicit vector (Auto
+  keeps disabled fields; Even is the way in). A web editor whose kind depends on its own typing (weight
+  field becomes slider once the vector is explicit) loses the focus: brief 19 decision 3 keeps the
+  kind tied to controls elsewhere and hides editors while the facts read is pending. The GUI's
+  `n-gpu-layers` slider is 0..block_count, the Layout's places block_count + 1 (the output layer).
 - In a `display: flex` label, an id span with `overflow-wrap: anywhere` shrinks to one character per
   line before the name beside it wraps ("CUD/A0" at 1280 px, brief 14): put id and name in one inline
   span, or let the label wrap. `build/ux-review/gdstub.py` (devices states, profile keys, scriptable

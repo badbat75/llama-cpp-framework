@@ -499,6 +499,15 @@ Each is one React component, reused by every page.
     but keeps `cursor: default` and its label colour: it turns back by itself in a moment. A field's
     own label (outside a checkbox) stays `--text`: it names the setting, the control
     carries the state (user, 2026-11-17). One set of rules in `index.css`, shared by the model profile page and the Server page.
+  - **Range beside a number field** (a count with a known maximum: GPU layers, MoE CPU layers,
+    brief 19): a native `<input type="range">` after the text input, in the same wrapping control row
+    (`flex: 1 1 12rem; min-width: 0`), at least 24 px high, `accent-color: var(--accent)`, no custom
+    track. The text stays the value (it may hold a word or a number beyond the slider); the slider shows
+    the text read and clamped, keeps its place on a text it cannot read, and writes its value as the
+    text when moved. Named by the field's legend, `aria-valuetext` "N of MAX"; disabled with the
+    default box ticked; shown only while the maximum is known **(preference: the number stays the
+    primary control, the slider the overview)**
+    ([APG Slider](https://www.w3.org/WAI/ARIA/apg/patterns/slider/), [2.5.7](https://www.w3.org/TR/WCAG22/#dragging-movements)).
   - **Dependent field** (enabled only when another is on, e.g. Snapshot folder under Save on
     shutdown): disabled, value kept and written, as in the GUI.
 - **Text input**: `type="text"`, numbers with `inputmode="numeric"` (no `type="number"`: it accepts
@@ -535,6 +544,14 @@ Each is one React component, reused by every page.
     about 6 characters) with its share as plain text ("Share: 75%", described by, not live), and
     **reorder buttons**. Checked rows come first, in their saved order; checking appends a row to
     them, and focus stays on the control the user used through any move (rows keyed by id).
+    **Blocks** (brief 19): under split mode layer with the model file read and two or more rows
+    checked, an explicit vector shows each row's count instead of its weight: a visible "Blocks"
+    label and a short number field (applied on Enter or blur), a native range slider `0..places`
+    (applied as it moves, a pointer drag counted from where it started), then the range text and the
+    share; the slider's `aria-valuetext` says the count, the places and the range ("29 of 34: blocks
+    0-28"). The editor's kind never changes under the focus: it follows only controls elsewhere (split
+    mode, checkboxes, Auto, Even, GPU layers) and the facts read, never the typing in it; Auto shows
+    no editor and a line pointing to Even.
   - **Reorder buttons** (wherever order is a value: the GPU list): Move up and Move down, secondary
     buttons in each orderable row, shown only with two or more such rows; the accessible name is
     the visible text plus the row's name in a visually hidden span ("Move up ROCm0",
