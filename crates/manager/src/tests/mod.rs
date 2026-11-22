@@ -73,6 +73,9 @@ fn data_root_e2e() {
     // ── Manager core: the same check measured on the server profile's cards ─
     crate::manager::service::manager_pair_memory_check_e2e();
 
+    // ── Manager core: the device bound for device-draft and mmproj-device ──
+    crate::manager::service::manager_device_bound_check_e2e();
+
     // ── Manager core: the layer facts of a saved model profile (ModelInfo) ──
     // After the memory checks: those pin `estimated_of`, whose resolution the
     // read shares with this one, so the e2e proves them before this phase ends.

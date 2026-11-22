@@ -201,6 +201,10 @@ pai-bff` fails "the web UI is not built" until `xtask build framework` has run. 
   0..1800 ms (the 10 ms bound of the token probe) under load. Run them alone, then judge:
   `cargo test -p pai-manager --lib -- --test-threads=1 data_root_e2e` (`dbus_client` is a module of that
   test).
+- To run `data_root_e2e` alone (every phase in one test, tree redirects serial): the full path with
+  `--exact`, `cargo test -p pai-manager --lib -- tests::data_root_e2e --exact` (no `--test-threads=1`
+  needed, nothing else runs). `--test '*'` names no target for `pai-manager` (its `src/tests/` compile
+  into `--lib`) and cargo answers by listing other packages' targets.
 - `pai-manager`'s `tests::gpu_probe::an_exe_flooding_its_pipe_past_the_buffer_is_not_stopped_by_it` is the
   other load-sensitive one: seen once red in six full runs (`left: None` at `gpu_probe.rs`, the block lost),
   green solo x3 and in the other five full runs. A run of the whole crate next to a compiling one is the
@@ -2181,3 +2185,21 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
   is pinned to relay and not to match (the manager matches without case).
 - `cargo fmt -p <crate>` writes EVERY file of the package: run `--check` and grep `^Diff in` first, so an
   uncommitted slice in the same package is not reformatted by your run.
+
+## Device-bound fixtures: exact names, and the `[*]` that write_file refuses (L3/L4, 2026-11-22)
+
+- A `Devices` fixture is a set of EXACT names compared case-insensitively, never indices: a pin that
+  "a `device-draft = ROCm1` passes on a `Devices = ROCm0,CUDA1` profile" counts positions and cannot
+  hold; it collapses into the neighbouring pin of an already-outside device (same shape, opposite
+  expectation). The old set of a shrinking pin must literally name the device: `ROCm0,ROCm1` narrowing
+  to `ROCm0`. When such a pin answers `Ok(())` at `SetServerProfile`, read the fixture before the
+  production check: the refusal contract is fine, the wide profile is wrong.
+- A `[*]` section in a model profile file is refused by every manager WRITE (`invalid-model-profile-id`
+  `["*"]`, `checks::model_profile_id`), so a cascade is unreachable at a `write_file("models.ini", ..)`:
+  hand-write the cascaded pool with `std::fs::write` and judge it on a path that reads the pool FROM
+  DISK (`set_model_profile`, `set_server_profile`, an in-use server profile save, a
+  `models.ini.disabled` save). Take the `before` snapshot AFTER every fixture write of the phase, or
+  the refusal's own `kept(&before)` trips on your hand write.
+- A key moving INTO `WEB_MODEL_PROFILE_KEYS` reddens the bff's exhaustive off-list array in
+  `model_profile_save.rs`'s `save_key_outside_the_web_list_is_400_and_reaches_no_manager`: grep the bff
+  tests for the key name before promising a key move green, and delete the stale array entry.

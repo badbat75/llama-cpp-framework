@@ -39,6 +39,7 @@ pub const KEYS: &[&str] = &[
     "model-profile-bad-value",
     "model-profile-model-missing",
     "model-profile-over-memory",
+    "model-profile-device-outside",
     "server-bad-tags",
     "unknown-engine",
     "server-profile-bad-id",
@@ -121,6 +122,10 @@ impl Refusal {
             "model-profile-over-memory" => {
                 strings::fill("model-profile-over-memory", &[&v(0), &v(1), &v(2), &v(3)])
             }
+            "model-profile-device-outside" => strings::fill(
+                "model-profile-device-outside",
+                &[&v(0), &v(1), &v(2), &v(3)],
+            ),
             "server-bad-tags" => {
                 strings::fill("server-bad-tags", &[&v(0), &v(1), &v(2), &v(3), &v(4)])
             }
@@ -152,13 +157,16 @@ pub const NGRAM_HITS: RangeInclusive<i32> = 1..=u16::MAX as i32;
 
 /// Every integer key of a model profile with the values it takes: the Models tab's
 /// form reads each field with the same range (`form::int_fields`).
-pub const MODEL_PROFILE_INT_KEYS: [(&str, RangeInclusive<i32>); 29] = [
+pub const MODEL_PROFILE_INT_KEYS: [(&str, RangeInclusive<i32>); 30] = [
     ("image-min-tokens", INT_POSITIVE),
     ("image-max-tokens", INT_POSITIVE),
     ("spec-draft-n-max", INT_POSITIVE),
     ("spec-draft-n-min", INT_NON_NEGATIVE),
     ("spec-draft-n-ubatch", INT_NON_NEGATIVE),
     ("moe-cache-mib", INT_NON_NEGATIVE),
+    // 0 is "no layer's experts on the CPU"; the top is `gguf_shape::shape_of`'s
+    // block cap, so no real model is refused and a loop value is.
+    ("n-cpu-moe", 0..=4096),
     // 0 is llama.cpp's "the context from the model".
     ("ctx-size", INT_NON_NEGATIVE),
     ("parallel", INT_POSITIVE),
@@ -307,6 +315,7 @@ pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
     "image-max-tokens",
     // Hardware card, the MoE keys of it in `MODEL_PROFILE_KEYS_NOT_ON_WEB`.
     "n-gpu-layers",
+    "n-cpu-moe",
     "n-cpu-ffn",
     "op-offload",
     "repack",
@@ -354,7 +363,6 @@ pub const MODEL_PROFILE_KEYS_NOT_ON_WEB: &[&str] = &[
     "model-draft",
     "spec-type",
     // The MoE keys: they need the model's facts.
-    "n-cpu-moe",
     "moe-cache-mib",
     // The tensor placement.
     "override-tensor",
@@ -586,6 +594,69 @@ pub fn device_list(key: &str, value: &str) -> Result<(), Refusal> {
         }
     }
     Ok(())
+}
+
+/// The first GPU a model profile section names (the entries of `device-draft`
+/// and `mmproj-device`, `CPU` and `none` naming none) that lies outside the
+/// server profile's `Devices` (L4, ARCHITECTURE.md "Layers, MoE and tensor
+/// placement on the web model profile page" (3), slice 3b: the device bound):
+/// the key and the device, compared case-insensitively; `devices` empty (the
+/// key unset) is every GPU, `none` is none of them. Not judged against the
+/// node's probe: an id the probe does not answer is a value llama.cpp takes
+/// ([`device_list`]'s rule), and the key's own value rules run on it there.
+/// `section` is one model profile's key lines, in the order the reader sees
+/// them: a caller judging llama.cpp's `[*]` cascade puts the global section's
+/// lines before the section's own, and the later line of a key is the one the
+/// model profile uses. `override-tensor` devices join with J1, the slice that
+/// puts the key on the web.
+pub fn devices_outside(section: &str, devices: &str) -> Option<(String, String)> {
+    if devices.trim().is_empty() {
+        return None;
+    }
+    let allowed: Vec<String> = devices
+        .split(',')
+        .map(|entry| entry.trim().to_lowercase())
+        .collect();
+    for key in &DEVICE_LIST_KEYS[1..] {
+        for entry in last_value(section, key)
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+        {
+            // A GPU name: `CPU` and `none` name none, and llama.cpp refuses an
+            // empty entry (`device_list`).
+            if entry.is_empty()
+                || entry.eq_ignore_ascii_case("CPU")
+                || entry.eq_ignore_ascii_case("none")
+            {
+                continue;
+            }
+            if !allowed.contains(&entry.to_lowercase()) {
+                return Some((key.to_string(), entry.to_string()));
+            }
+        }
+    }
+    None
+}
+
+/// The value of the LAST line of `text` that sets `key`, as the reader sees it
+/// ([`cut_comment`]), None when no line does. The last line is the one a reader
+/// keeps, so a text carrying a cascaded value before the section's own reads
+/// the section's.
+fn last_value(text: &str, key: &str) -> Option<String> {
+    let mut out = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with(';') || t.starts_with('#') || t.starts_with('[') {
+            continue;
+        }
+        if let Some((k, v)) = t.split_once('=') {
+            if k.trim() == key {
+                out = Some(cut_comment(v.trim()).to_string());
+            }
+        }
+    }
+    out
 }
 
 /// The `tensor-split` weights as llama.cpp parses them (`--tensor-split` in
@@ -2032,13 +2103,14 @@ top-p = 0.95\r\n";
     // `web_key_lists_are_exactly_what_render_section_writes`.
     #[test]
     fn web_model_profile_keys_exclude_the_seven_and_hold_the_named_ones() {
-        // The seven the design keeps off the web until the slice it names.
+        // The six the design keeps off the web until the slice it names
+        // (`n-cpu-moe` moved with L3 of "Layers, MoE and tensor placement on
+        // the web model profile page", pinned by `n_cpu_moe_is_on_the_web`).
         for key in [
             "model",
             "mmproj",
             "model-draft",
             "spec-type",
-            "n-cpu-moe",
             "moe-cache-mib",
             "override-tensor",
         ] {
@@ -2073,6 +2145,86 @@ top-p = 0.95\r\n";
                 "{key} is on the web, so it must not also be listed as off the web"
             );
         }
+    }
+
+    // L3 of "Layers, MoE and tensor placement on the web model profile page"
+    // (ARCHITECTURE.md, slice 3): `n-cpu-moe` moves to the web's list. The
+    // union of the two lists is unchanged, so `pai-app`'s pin of it against
+    // `render_section` stays green; what moves is which side the key sits on.
+    #[test]
+    fn n_cpu_moe_is_on_the_web() {
+        assert!(
+            WEB_MODEL_PROFILE_KEYS.contains(&"n-cpu-moe"),
+            "n-cpu-moe is a key of the MoE placement card, so the web's list must hold it"
+        );
+        assert!(
+            !MODEL_PROFILE_KEYS_NOT_ON_WEB.contains(&"n-cpu-moe"),
+            "n-cpu-moe is on the web, so it must not also be listed as off the web"
+        );
+    }
+
+    /// L3: the key's value rule, `("n-cpu-moe", 0..=4096)` in
+    /// `MODEL_PROFILE_INT_KEYS`: below 0 never loads, and 4096 is `shape_of`'s
+    /// block cap, so no real model is refused and a huge loop is. The refusal
+    /// is `whole_number`'s, naming the key, the text and the two bounds.
+    #[test]
+    fn n_cpu_moe_takes_a_whole_number_from_0_to_4096() {
+        let r = 0..=4096;
+        for text in ["-1", "4097"] {
+            assert_eq!(
+                model_profiles(&section("m", &format!("n-cpu-moe = {text}\n"))),
+                Err(not_int("n-cpu-moe", text, &r)),
+                "n-cpu-moe = {text:?} is refused naming the key and the range"
+            );
+        }
+        for good in [0, 24, 4096] {
+            assert_eq!(
+                model_profiles(&section("m", &format!("n-cpu-moe = {good}\n"))),
+                Ok(()),
+                "n-cpu-moe = {good} is a value the key takes"
+            );
+        }
+    }
+
+    // L4 of the same design (slice 3b): the device bound, the GPU a model
+    // profile names against the instance's server profile `Devices`. The pure
+    // rule here; the manager's calls at R3's points are its e2e phase.
+    #[test]
+    fn devices_outside_reads_the_gpus_a_profile_names() {
+        // A GPU outside `Devices`: the key and the device it names.
+        assert_eq!(
+            devices_outside("device-draft = ROCm1\n", "ROCm0"),
+            Some(("device-draft".into(), "ROCm1".into())),
+            "a device-draft naming a card the server profile does not name is found"
+        );
+        // Compared case-insensitively, as `ggml_backend_dev_by_name` matches.
+        assert_eq!(devices_outside("device-draft = rocm0\n", "ROCm0"), None);
+        // A device list: every entry is judged.
+        assert_eq!(
+            devices_outside("device-draft = CUDA0,ROCm2\n", "CUDA0,ROCm1"),
+            Some(("device-draft".into(), "ROCm2".into()))
+        );
+        assert_eq!(
+            devices_outside("device-draft = CUDA0,ROCm1\n", "CUDA0,ROCm1"),
+            None
+        );
+        // `mmproj-device` likewise.
+        assert_eq!(
+            devices_outside("mmproj-device = CUDA1\n", "ROCm0"),
+            Some(("mmproj-device".into(), "CUDA1".into()))
+        );
+        // `CPU` and `none` name no GPU.
+        assert_eq!(devices_outside("device-draft = CPU\n", "ROCm0"), None);
+        assert_eq!(devices_outside("mmproj-device = none\n", "ROCm0"), None);
+        // `Devices = none`: any GPU named is outside; unset (no value): every
+        // GPU, nothing refused.
+        assert_eq!(
+            devices_outside("device-draft = ROCm0\n", "none"),
+            Some(("device-draft".into(), "ROCm0".into()))
+        );
+        assert_eq!(devices_outside("device-draft = ROCm0\n", ""), None);
+        // A section that names no GPU: nothing to judge.
+        assert_eq!(devices_outside("ctx-size = 4096\n", "none"), None);
     }
 
     /// The rule of `device_list` (ARCHITECTURE.md "As built" a): it runs on the

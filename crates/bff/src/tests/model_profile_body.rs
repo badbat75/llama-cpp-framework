@@ -51,8 +51,10 @@ const REV: &str = "r1";
 /// URL comment, a comment above one key, a comment between two keys and a
 /// comment after the last key, and a `[other]` section with the same keys. Every
 /// key of one section holds a value of its own, so an edit of one section is
-/// visible against the other. Two keys of the fixture (`model`, `n-cpu-moe`) are
-/// keys the web is never asked to write, so they show as untouched lines. `nl`
+/// visible against the other. One key of the fixture (`model`) is a key the
+/// web is never asked to write, so it shows as an untouched line; `n-cpu-moe`
+/// was such a line until L3 moved the key onto the web, and the test
+/// `model_profile_body_saves_n_cpu_moe` rewrites it. `nl`
 /// is the file's line ending, tested with LF and with CRLF. Every key line is
 /// spelled compactly, so a rewritten line is visible as `key = value` and an
 /// untouched one keeps the compact bytes.
@@ -378,6 +380,30 @@ fn model_profile_body_accepts_every_key_of_the_web_list() {
             out,
             format!("; the presets\n[main]\n{key} = 12\n"),
             "every key of the web's list is accepted, and its line only is written"
+        );
+    }
+}
+
+/// L3 of "Layers, MoE and tensor placement on the web model profile page"
+/// (ARCHITECTURE.md, slice 3): `n-cpu-moe` is the web's to write, so a body
+/// carrying `24` rewrites that one line of `[main]` and leaves the same key in
+/// `[other]` untouched. The range is not judged here (the manager judges the
+/// edited section whole, and its refusal is the save test's 422); a value like
+/// `-1` is written by this rule and refused by that one.
+#[test]
+fn model_profile_body_saves_n_cpu_moe() {
+    for nl in ["\n", "\r\n"] {
+        let file_text = file(nl);
+        let out = text_of(
+            &body(Some(REV), &[("n-cpu-moe", Some("24"))]),
+            &file_text,
+            "main",
+            REV,
+        );
+        assert_eq!(
+            out,
+            replaced(&file_text, nl, "n-cpu-moe=7", "n-cpu-moe = 24"),
+            "n-cpu-moe is on the web, so its line is rewritten like any web key's ({nl:?})"
         );
     }
 }

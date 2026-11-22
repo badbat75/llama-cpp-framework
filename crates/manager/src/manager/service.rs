@@ -1313,7 +1313,12 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// profile of the pool and takes `none` and `inherit` only. The key goes
     /// in the instance's section of `assignments.ini`, and every model profile
     /// file of every instance renders again from what is on disk: the checks
-    /// run first, so a refusal writes and renders nothing. Guarded as a write
+    /// run first, so a refusal writes and renders nothing. The render this
+    /// record leaves is judged for its model files, its memory and the GPUs its
+    /// model profiles name: a `device-draft` or `mmproj-device` outside the
+    /// instance's server profile, that this assignment puts in effect, refuses
+    /// with `model-profile-device-outside` (L4); one already outside is not
+    /// re-judged. Guarded as a write
     /// of a served file is: the principal and `configure` gates, the `writing`
     /// lock, and one action record for the whole call, done or refused.
     pub fn set_model_profile<W: AsRequester>(
@@ -1389,6 +1394,20 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // this write does not make larger is judged on nothing.
             check_profile_memory_of(&text, instance, &enabled, &disabled, &today, &*self.gpus)
                 .map_err(ManagerError::Invalid)?;
+            // The cards the render this record leaves names, on the same rule
+            // (L4): a GPU the assignment puts in effect outside the instance's
+            // server profile refuses, and one its render already carries
+            // outside is no news.
+            check_device_bound_of(
+                &text,
+                instance,
+                &enabled,
+                &disabled,
+                &today,
+                &instance_devices(instance),
+                &instance_devices(instance),
+            )
+            .map_err(ManagerError::Invalid)?;
             let cap = profile_file(instance)
                 .and_then(|file| std::fs::read_to_string(file).ok())
                 .map(|contents| crate::server_cfg::from_text(&contents).models_max);
@@ -1431,7 +1450,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// profile of that render from fitting the cards the instance's current
     /// profile names to over the cards the new one names
     /// (`model-profile-over-memory`, R3): what was already over is not
-    /// re-judged. The profile the instance's own section
+    /// re-judged. The switch must also leave no `device-draft` or
+    /// `mmproj-device` of that render's model profiles outside the cards the
+    /// new profile names (`model-profile-device-outside`, L4): one already
+    /// outside is not re-judged. The profile the instance's own section
     /// names is answered before the walk of the others: no conflict with
     /// itself, and the switch to it changes no byte. Guarded as a write of a served file is: the
     /// principal and `configure` gates, the `writing` lock, and one action
@@ -1527,6 +1549,22 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 &enabled,
                 &disabled,
                 &*self.gpus,
+                &instance_devices(instance),
+                crate::server_cfg::from_text(&contents)
+                    .devices
+                    .as_deref()
+                    .unwrap_or(""),
+            )
+            .map_err(ManagerError::Invalid)?;
+            // The same pair of card sets judged for the GPUs the render's model
+            // profiles name (L4): a `device-draft` or `mmproj-device` the new
+            // profile leaves outside refuses, one already outside is no news.
+            check_device_bound_of(
+                &assignments,
+                instance,
+                &enabled,
+                &disabled,
+                &render_of(instance, &enabled, &disabled),
                 &instance_devices(instance),
                 crate::server_cfg::from_text(&contents)
                     .devices
@@ -2505,7 +2543,9 @@ fn record_holder(text: &str, profile: &str) -> Option<String> {
 /// files the node has, and a file that instance's render is already missing
 /// is never re-judged. A save of a server profile an instance runs that
 /// changes `Devices` judges that instance's render on the cards the text
-/// written names (R3). A refusal writes nothing.
+/// written names (R3). The renders are judged on the same rule for the GPUs
+/// their model profiles name (L4: `device-draft` and `mmproj-device`), at the
+/// two shrinking points and at a model profile write. A refusal writes nothing.
 fn check_contents(
     file: &ConfigFile,
     contents: &str,
@@ -2554,6 +2594,18 @@ fn check_contents(
                             held.as_deref().unwrap_or(""),
                             devices.as_deref().unwrap_or(""),
                         )?;
+                        // The same pair of card sets judged for the GPUs the
+                        // render's model profiles name (L4): a narrowing past
+                        // one of them refuses, one already outside is no news.
+                        check_device_bound_of(
+                            &assignments,
+                            &id,
+                            &enabled,
+                            &disabled,
+                            &render_of(&id, &enabled, &disabled),
+                            held.as_deref().unwrap_or(""),
+                            devices.as_deref().unwrap_or(""),
+                        )?;
                     }
                 }
             }
@@ -2569,7 +2621,11 @@ fn check_contents(
             // model profile whose file is not on the node has no header to
             // read, and the missing file is the news that matters (it is also
             // what makes this estimate give up).
-            check_profile_memory(&enabled, &disabled, &old, &off, gpus)
+            check_profile_memory(&enabled, &disabled, &old, &off, gpus)?;
+            // The cards the render's model profiles name, on the same render
+            // rule (L4): a GPU the write puts in effect outside the instance's
+            // server profile refuses.
+            check_device_bound(&on_disk(ASSIGNMENTS_FILE), &enabled, &disabled, &old, &off)
         }
         ConfigFile::ModelsDisabled => {
             let (old, enabled_file) = (on_disk("models.ini.disabled"), on_disk("models.ini"));
@@ -2583,7 +2639,14 @@ fn check_contents(
                 &enabled_file,
                 &old,
             )?;
-            check_profile_memory(&enabled, &disabled, &enabled_file, &old, gpus)
+            check_profile_memory(&enabled, &disabled, &enabled_file, &old, gpus)?;
+            check_device_bound(
+                &on_disk(ASSIGNMENTS_FILE),
+                &enabled,
+                &disabled,
+                &enabled_file,
+                &old,
+            )
         }
     }
 }
@@ -2740,6 +2803,112 @@ fn check_shrink_memory_of(
         });
     }
     Ok(())
+}
+
+/// The device bound of every instance's render, in id order: the first render
+/// with a model profile naming a GPU outside the server profile that instance
+/// runs refuses (L4, ARCHITECTURE.md "Layers, MoE and tensor placement on the
+/// web model profile page" (3), slice 3b). `assignments`, `enabled` and
+/// `disabled` are the record and the pool pair the write leaves;
+/// `old_enabled` and `old_disabled` are the pool pair on disk, which with the
+/// record on disk (read by `render_of`) is the render today. The rule, and the
+/// rule of what is no news, are [`check_device_bound_of`]'s.
+fn check_device_bound(
+    assignments: &str,
+    enabled: &str,
+    disabled: &str,
+    old_enabled: &str,
+    old_disabled: &str,
+) -> Result<(), pai_core::checks::Refusal> {
+    for id in crate::paths::instance_ids() {
+        // A model profile write moves no server profile: the cards are the
+        // same on both sides of the pair.
+        let devices = instance_devices(&id);
+        check_device_bound_of(
+            assignments,
+            &id,
+            enabled,
+            disabled,
+            &render_of(&id, old_enabled, old_disabled),
+            &devices,
+            &devices,
+        )?;
+    }
+    Ok(())
+}
+
+/// The device bound of instance `id`'s render over the assignment record
+/// `assignments` and the pool pair `enabled` / `disabled`, judged on the cards
+/// its server profile names after the write (`devices_new`) against the ones it
+/// names today (`devices_today`): the two places a model profile write stands,
+/// and the two where the card set moves, [`Manager::set_server_profile`] and a
+/// save of an in-use server profile that changes `Devices`. The first
+/// (model profile, key, device) the new render names outside `devices_new` that
+/// today's render did not name outside `devices_today` refuses with
+/// `model-profile-device-outside` and `[model profile, instance, key, device]`:
+/// what is already outside is no news, as an already-over estimate is for
+/// [`check_shrink_memory_of`]. A render with no server profile to read names
+/// every card, so it judges nothing ([`instance_devices`]). The devices
+/// themselves are [`pai_core::checks::devices_outside`]'s, never the node's
+/// probe.
+fn check_device_bound_of(
+    assignments: &str,
+    id: &str,
+    enabled: &str,
+    disabled: &str,
+    today: &str,
+    devices_today: &str,
+    devices_new: &str,
+) -> Result<(), pai_core::checks::Refusal> {
+    let assignment = pai_core::ini::text::section_text(assignments, id);
+    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
+    let was = outside_devices(today, devices_today);
+    if let Some((profile, key, device)) = outside_devices(&render, devices_new)
+        .into_iter()
+        .find(|named| !was.contains(named))
+    {
+        return Err(pai_core::checks::Refusal {
+            key: "model-profile-device-outside",
+            values: vec![profile, id.to_string(), key, device],
+        });
+    }
+    Ok(())
+}
+
+/// The (model profile, key, device) triples of the render `render` naming a GPU
+/// outside the `Devices` value `devices`, in the render's order: every section
+/// of the render's own, the `*` global section skipped, judged by
+/// [`pai_core::checks::devices_outside`] on the section's two device key lines
+/// with the render's `[*]` lines before them, the way llama.cpp cascades the
+/// global section into every model profile.
+fn outside_devices(render: &str, devices: &str) -> Vec<(String, String, String)> {
+    let sections = pai_core::ini::parse_sections(render);
+    let global = sections.iter().find(|section| section.id == "*");
+    let mut out = Vec::new();
+    for section in &sections {
+        if section.id == "*" {
+            continue;
+        }
+        // The cascaded line first and the section's own after it: the reader
+        // keeps the last line of a key.
+        let mut keys = String::new();
+        for key in &pai_core::checks::DEVICE_LIST_KEYS[1..] {
+            for from in [global, Some(section)] {
+                if let Some(value) = from
+                    .and_then(|s| s.keys.get(*key))
+                    .map(String::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    keys.push_str(&format!("{key} = {value}\n"));
+                }
+            }
+        }
+        if let Some((key, device)) = pai_core::checks::devices_outside(&keys, devices) {
+            out.push((section.id.clone(), key, device));
+        }
+    }
+    out
 }
 
 /// The `load-on-startup` of instance `id`'s render against `models_max`, that
@@ -10551,6 +10720,454 @@ pub(crate) fn manager_pair_memory_check_e2e() {
 
     // The phase leaves the tree as it found it: the record it moved and the
     // server profiles it added belong to the phases after it.
+    for entry in std::fs::read_dir(&sys).expect("listing").flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !found.iter().any(|(found, _)| *found == name) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    for (name, text) in &found {
+        std::fs::write(sys.join(name), text).expect("restore");
+    }
+}
+/// E2E phase: the device bound for `device-draft` and `mmproj-device`
+/// (ARCHITECTURE.md "Layers, MoE and tensor placement on the web model profile
+/// page" (3), slice 3b). Every GPU a model profile names (the entries of
+/// `device-draft` and `mmproj-device`, the section's value else the `[*]` one
+/// as llama.cpp cascades; `CPU` and `none` name no GPU) must be one the
+/// instance's server profile names in `Devices`: compared case-insensitively,
+/// `Devices` unset is every GPU and refuses nothing, `Devices = none` makes
+/// any GPU named outside, and the node's probe is not asked. Refused with
+/// `model-profile-device-outside`, `[model profile, instance, key, device]`,
+/// writing nothing, at the points R3's memory check already stands: a model
+/// profile write (both `check_contents` and `set_model_profile`, judged on the
+/// new text), an assignment, `SetServerProfile` and a save of an in-use server
+/// profile that narrows `Devices`, where as in R3 only a profile that passes
+/// the old set and fails the new one is refused: what was already outside is
+/// never re-judged.
+///
+/// The fixture keeps the memory check out of the way: one `write_gguf` model of
+/// a MiB of weights at a context of 8, on cards of 8 GiB, so every refusal
+/// here is the device bound's and never R3's.
+///
+/// Names the tests assume, the contract for the coder: the pure rule is
+/// `pai_core::checks::devices_outside(&str, &str) -> Option<(String, String)>`,
+/// pinned in that module's tests; every test here drives a manager verb, so
+/// the wiring is free.
+#[cfg(test)]
+pub(crate) fn manager_device_bound_check_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGpus, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    // The tree as this phase found it, put back at its end as R3's does.
+    let found: Vec<(String, String)> = std::fs::read_dir(&sys)
+        .expect("engine config dir")
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (
+                name.clone(),
+                std::fs::read_to_string(sys.join(&name)).unwrap_or_default(),
+            )
+        })
+        .collect();
+
+    let models = dir.path().join("models");
+    std::fs::create_dir_all(&models).expect("models dir");
+    let model = models.join("qwen-bound.gguf");
+    write_gguf(&model, 8, &[("token_embd.weight", 1 << 20)]);
+    let path = model.to_string_lossy().into_owned();
+    // Small on 8 GiB cards: the memory check passes everywhere, so a refusal
+    // is the device bound's.
+    const CARD: u64 = 8192;
+    let gpus = || FakeGpus::new(&[("ROCm0", CARD), ("CUDA1", CARD)]);
+
+    let bff = Caller(":1.9".into());
+    let desktop = Caller(":1.42".into());
+    let manager_on = |gpus: FakeGpus| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_log(FakeActionLog::new())
+        .with_gpus(gpus)
+    };
+
+    let read_opt = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let seen = |name: &str| -> String {
+        if name == "listing" {
+            format!("{}\n", listing().join("\n"))
+        } else {
+            read_opt(name).unwrap_or_default()
+        }
+    };
+    let snapshot = |names: &[&str]| -> Vec<(String, String)> {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .chain(std::iter::once("listing".to_string()))
+            .map(|name| (name.clone(), seen(&name)))
+            .collect()
+    };
+    let kept = |before: &[(String, String)]| {
+        for (name, text) in before {
+            assert_eq!(&seen(name), text, "the refusal wrote nothing: {name}");
+        }
+    };
+    let pool_files = |on: &str, off: &str| {
+        std::fs::write(sys.join("models.ini"), on).expect("models.ini");
+        std::fs::write(sys.join("models.ini.disabled"), off).expect("models.ini.disabled");
+    };
+    let assignments = |text: &str| {
+        std::fs::write(sys.join("assignments.ini"), text).expect("assignments.ini");
+    };
+    let record = |profile: &str| {
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            format!("[default]\nServerProfile = {profile}\n"),
+        )
+        .expect(INSTANCES_FILE);
+    };
+    let server_text = |devices: &str, port: u16| {
+        format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\nDevices = {devices}\n")
+    };
+    let profile_with = |name: &str, devices: &str, port: u16| {
+        std::fs::write(
+            sys.join(format!("server@{name}.ini")),
+            server_text(devices, port),
+        )
+        .expect("server profile");
+    };
+    let profile_plain = |name: &str, port: u16| {
+        std::fs::write(
+            sys.join(format!("server@{name}.ini")),
+            format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+        )
+        .expect("server profile");
+    };
+    // The refusal this phase is about, its four args whole.
+    let outside = |answer: &Result<(), ManagerError>,
+                   profile: &str,
+                   instance: &str,
+                   key: &str,
+                   device: &str| {
+        matches!(
+            answer,
+            Err(ManagerError::Invalid(r))
+                if r.key == "model-profile-device-outside"
+                    && r.values == [
+                        profile.to_string(),
+                        instance.to_string(),
+                        key.to_string(),
+                        device.to_string(),
+                    ]
+        )
+    };
+
+    const WATCH: [&str; 8] = [
+        "assignments.ini",
+        "instances.ini",
+        "models.ini",
+        "models.ini.disabled",
+        "models@default.ini",
+        "server@default.ini",
+        "server@narrow.ini",
+        "server@wide.ini",
+    ];
+
+    // The fixture texts: the model profile naming one GPU, and its shapes.
+    let draft =
+        |device: &str| format!("[qwen]\nmodel = {path}\nctx-size = 8\ndevice-draft = {device}\n");
+    let draft1 = draft("ROCm1");
+    let mmproj =
+        |device: &str| format!("[qwen]\nmodel = {path}\nctx-size = 8\nmmproj-device = {device}\n");
+
+    // ── DB-PIN-1 BEGIN. a model profile write naming a GPU outside Devices ──
+    //
+    // The instance's server profile names ROCm0: a save of a profile naming
+    // ROCm1 is refused naming profile, instance, key and device, and the tree
+    // keeps its bytes.
+    {
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &draft1, false);
+        assert!(
+            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
+            "a model profile save naming a GPU the instance's server profile does not name is \
+             refused naming the key and the device: {answer:?}"
+        );
+        kept(&before);
+    }
+    // DB-PIN-1 END
+
+    // ── DB-PIN-2 BEGIN. the compare is case-insensitive ────────────────────
+    //
+    // `rocm0` names the card the server profile names: `ggml_backend_dev_by_name`
+    // matches so, so the save lands.
+    {
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let lowered = draft("rocm0");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &lowered, false),
+            Ok(()),
+            "a device-draft naming the server profile's card in another case is not outside"
+        );
+        assert_eq!(text_of("models.ini"), lowered, "the save landed");
+    }
+    // DB-PIN-2 END
+
+    // ── DB-PIN-3 BEGIN. `mmproj-device` and `none` and no GPU named ────────
+    //
+    // `mmproj-device = none` names no GPU, and a profile naming no GPU at all
+    // is judged on nothing: both saves land on a `Devices = ROCm0` server
+    // profile.
+    {
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let off_vision = mmproj("none");
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &off_vision, false),
+            Ok(()),
+            "`mmproj-device = none` names no GPU: the save lands"
+        );
+    }
+    // DB-PIN-3 END
+
+    // ── DB-PIN-4 BEGIN. an unassigned profile save lands ───────────────────
+    //
+    // The profile names ROCm1 and is in no instance's render (`qwen = off`):
+    // no instance to judge, so the save lands.
+    {
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = off\n");
+        let m = manager_on(gpus());
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &draft1, false),
+            Ok(()),
+            "a profile no instance loads is judged on no server profile: the save lands"
+        );
+        assert_eq!(text_of("models.ini"), draft1, "the save landed");
+    }
+    // DB-PIN-4 END
+
+    // ── DB-PIN-5 BEGIN. the same refusal at an assignment ──────────────────
+    //
+    // `set_model_profile` is the path that renders the new record text: the
+    // profile sits on disk with `device-draft = ROCm1` and the assignment `on`
+    // puts it in effect on the `ROCm0` instance, so the verb refuses and the
+    // record keeps its bytes.
+    {
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        pool_files(&draft1, "");
+        assignments("[default]\nqwen = off\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
+        assert!(
+            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
+            "assigning a profile naming a GPU outside the instance's server profile is refused \
+             by `set_model_profile`, judging the new record text: {answer:?}"
+        );
+        kept(&before);
+    }
+    // DB-PIN-5 END
+
+    // ── DB-PIN-6 BEGIN. the switch to a `Devices = ROCm0` profile ──────────
+    //
+    // The instance runs a `ROCm0,ROCm1` server profile where the profile's
+    // `ROCm1` passes (names are exact, case-insensitive: `CUDA1` would not
+    // carry it); the switch to `ROCm0` puts it outside, so the switch is
+    // refused and the record keeps the profile it runs.
+    {
+        record("wide");
+        profile_with("wide", "ROCm0,ROCm1", 8080);
+        profile_with("narrow", "ROCm0", 8090);
+        pool_files(&draft1, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.set_server_profile(&desktop, "default", "narrow");
+        assert!(
+            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
+            "a switch to a server profile that leaves a named GPU outside is refused: {answer:?}"
+        );
+        kept(&before);
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            "[default]\nServerProfile = wide\n",
+            "the refusal kept the instance on the profile it runs"
+        );
+    }
+    // DB-PIN-6 END
+
+    // ── DB-PIN-7 BEGIN. a save narrowing `ROCm0,ROCm1` to `ROCm0` ──────────
+    {
+        record("default");
+        profile_with("default", "ROCm0,ROCm1", 8080);
+        pool_files(&draft1, "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(
+            &desktop,
+            "server@default.ini",
+            &server_text("ROCm0", 8080),
+            false,
+        );
+        assert!(
+            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
+            "a save that narrows an in-use server profile past a GPU the render names is \
+             refused: {answer:?}"
+        );
+        kept(&before);
+        assert!(
+            text_of("server@default.ini").contains("Devices = ROCm0,ROCm1"),
+            "the refusal left the cards the profile names standing"
+        );
+    }
+    // DB-PIN-7 END
+
+    // ── DB-PIN-8 BEGIN. a profile already outside is not re-judged ─────────
+    //
+    // `ROCm2` is outside the `ROCm0,CUDA1` set the instance runs today: at the
+    // shrink to `ROCm0` it is no news, so the switch and the narrowing save
+    // land, as R3's already-over rule.
+    {
+        record("wide");
+        profile_with("wide", "ROCm0,CUDA1", 8080);
+        profile_with("narrow", "ROCm0", 8090);
+        pool_files(&draft("ROCm2"), "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        assert_eq!(
+            m.set_server_profile(&desktop, "default", "narrow"),
+            Ok(()),
+            "a profile already outside the set the instance runs is not re-judged at a switch"
+        );
+        assert!(
+            text_of(INSTANCES_FILE).contains("ServerProfile = narrow"),
+            "the switch landed"
+        );
+
+        record("default");
+        profile_with("default", "ROCm0,CUDA1", 8080);
+        pool_files(&draft("ROCm2"), "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        assert_eq!(
+            m.write_file(
+                &desktop,
+                "server@default.ini",
+                &server_text("ROCm0", 8080),
+                false
+            ),
+            Ok(()),
+            "a narrowing save past an already-outside profile judges nothing: it lands"
+        );
+        assert!(
+            text_of("server@default.ini").contains("Devices = ROCm0\n"),
+            "the narrowing save landed"
+        );
+    }
+    // DB-PIN-8 END
+
+    // ── DB-PIN-9 BEGIN. `Devices` unset refuses nothing ────────────────────
+    {
+        record("default");
+        profile_plain("default", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        assert_eq!(
+            m.write_file(&desktop, "models.ini", &draft1, false),
+            Ok(()),
+            "`Devices` unset is every GPU: `ROCm1` is not outside and the save lands"
+        );
+    }
+    // DB-PIN-9 END
+
+    // ── DB-PIN-10 BEGIN. `Devices = none` refuses any GPU ──────────────────
+    {
+        record("default");
+        profile_with("default", "none", 8080);
+        pool_files("", "");
+        assignments("[default]\nqwen = on\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.write_file(&desktop, "models.ini", &mmproj("CUDA1"), false);
+        assert!(
+            outside(&answer, "qwen", "default", "mmproj-device", "CUDA1"),
+            "`Devices = none`: any GPU named is outside, so a `mmproj-device = CUDA1` save is \
+             refused naming the key and the device: {answer:?}"
+        );
+        kept(&before);
+    }
+    // DB-PIN-10 END
+
+    // ── DB-PIN-11 BEGIN. the `[*]` value counts ────────────────────────────
+    //
+    // The section names no `device-draft` of its own and the pool-wide `[*]`
+    // names ROCm1: llama.cpp cascades the `[*]` value into every profile, so
+    // the bound counts it, naming the profile the value lands on. No client
+    // write carries a `[*]` (it is refused `invalid-model-profile-id`), so the
+    // cascade sits on disk as a hand edit and is judged where the pool is read
+    // FROM DISK: at `set_model_profile`, the assignment that puts the profile
+    // in effect.
+    {
+        record("default");
+        profile_with("default", "ROCm0", 8080);
+        let cascaded = format!("[*]\ndevice-draft = ROCm1\n[qwen]\nmodel = {path}\nctx-size = 8\n");
+        pool_files(&cascaded, "");
+        assignments("[default]\nqwen = off\n");
+        let m = manager_on(gpus());
+        let before = snapshot(&WATCH);
+        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
+        assert!(
+            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
+            "a `device-draft` the `[*]` section carries cascades into `[qwen]` and is judged \
+             as the section's own at the assignment that puts it in effect: {answer:?}"
+        );
+        kept(&before);
+    }
+    // DB-PIN-11 END
+
+    // The phase leaves the tree as it found it.
     for entry in std::fs::read_dir(&sys).expect("listing").flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if !found.iter().any(|(found, _)| *found == name) {

@@ -1592,8 +1592,7 @@ async fn save_key_outside_the_web_list_is_400_and_reaches_no_manager() {
     let app = app_holding(FILE_ON, FILE_OFF);
     for key in [
         "model",     // the Assets card, not web-editable
-        "mmproj",    // the same
-        "n-cpu-moe", // needs the model's facts
+        "mmproj", // the same
         "moe-cache-mib",
         "override-tensor",
         "foo",            // a name no reader knows
@@ -3060,6 +3059,89 @@ async fn save_a_gpu_distribution_value_the_manager_refuses_marks_its_control() {
         app.get("/api/session", Some(&cookie))
             .await
             .assert_signed_in_as("alice");
+    }
+}
+
+// ── `n-cpu-moe` on the web (L3, ARCHITECTURE.md "Layers, MoE and tensor
+// placement on the web model profile page", slice 3) ──────────────────────
+//
+// The key moved from `checks::MODEL_PROFILE_KEYS_NOT_ON_WEB` to
+// `WEB_MODEL_PROFILE_KEYS` with the range rule `("n-cpu-moe", 0..=4096)` in
+// `MODEL_PROFILE_INT_KEYS`, so the page's body carries it and the save treats
+// it as every other key: the body check lets it through, `24` lands in the
+// section, and the manager's refusal of a value out of the range answers 422
+// with the range key naming `n-cpu-moe` and writes nothing.
+
+/// `FILE_ON` with `n-cpu-moe = 24` saved on `[alpha]`: the key was not in the
+/// section, so it lands after its last real line, and nothing else moved.
+const ON_NCPU: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+model = C:\\Models\\alpha.gguf\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+n-cpu-moe = 24\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";
+
+/// `n-cpu-moe` is on the web, so a body carrying `24` is saved: no 400 for a
+/// key off the web list, and the line lands inside `[alpha]` as any other
+/// key's does.
+#[tokio::test]
+async fn save_n_cpu_moe_lands_in_the_section() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.save_on(ALPHA, json!({ "n-cpu-moe": "24" }))
+        .await
+        .assert_saved(&rev(&KEY_A, MODELS, ON_NCPU, ALPHA), false, &[]);
+    assert_eq!(
+        app.file_text(MODELS).as_deref(),
+        Some(ON_NCPU),
+        "the line lands inside [alpha]"
+    );
+    assert_eq!(
+        section_of(&app.file_text(MODELS).expect("models.ini"), QWEN),
+        section_of(FILE_ON, QWEN),
+        "the other section is byte for byte as it was"
+    );
+}
+
+/// Below 0 never loads and 4096 is `shape_of`'s block cap, so the manager
+/// refuses `-1` and `4097` with `not-whole-number-in-range`, whose args name
+/// the key: the 422 marks the `n-cpu-moe` control and the section is never
+/// written, as every 422 about values.
+#[tokio::test]
+async fn save_n_cpu_moe_out_of_range_is_422_naming_the_key() {
+    for value in ["-1", "4097"] {
+        let app = app_holding(FILE_ON, FILE_OFF);
+        app.set_write_outcome(Outcome::Invalid {
+            key: "not-whole-number-in-range",
+            values: ["n-cpu-moe", value, "0", "4096"]
+                .iter()
+                .map(|a| a.to_string())
+                .collect(),
+        });
+        let cookie = app.sign_in().await;
+        let rep = app
+            .save(
+                ALPHA,
+                &save_body(&alpha_revision(), json!({ "n-cpu-moe": value })),
+                Some(&cookie),
+            )
+            .await;
+        rep.assert_refused(
+            "not-whole-number-in-range",
+            &["n-cpu-moe", value, "0", "4096"],
+            "n-cpu-moe",
+        );
+        assert_eq!(
+            app.file_text(MODELS).as_deref(),
+            Some(FILE_ON),
+            "{value}: the refusal wrote nothing"
+        );
     }
 }
 
