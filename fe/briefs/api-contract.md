@@ -35,8 +35,9 @@ exist yet. Change this file first when a shape changes.
   Where: `crates/bff/src/server.rs` `read` and `save_failure`, `control.rs` `action_failure`,
   `presets.rs` `read_answer` and `switch_failure`. The reads
   `GET /api/instances` and `GET .../boot` keep 502 `client-not-authorized`.
-- **The guard's keys**, each 403 or 413 with `args: []`, answered before any session is looked at
-  (`crates/bff/src/origin.rs`): `request-cross-origin` (a write whose `Origin` or `Sec-Fetch-Site`
+- **The guard's keys**, each 403 or 413 with `args: []` (`crates/bff/src/origin.rs`); the 403s are
+  answered before any session is looked at, the 413 by the write's handler after its session check
+  (no session is 401 whatever the body): `request-cross-origin` (a write whose `Origin` or `Sec-Fetch-Site`
   is not this bff), `request-bad-host` (a `Host` that is not `localhost`, `127.x.x.x` or `[::1]`),
   `payload-too-large` (413, a body over 64 KiB). The fe's own requests never get them: the guard
   stands in front of `/` and `/assets/*` too, so a page opened under another name never loads, and
@@ -47,11 +48,13 @@ exist yet. Change this file first when a shape changes.
 - **503** `client-unavailable` means no manager to reach or no answer in time.
 - **Writes and their time limit** (the server save and the model profile switch since 594e15e, the model
   profile save since 3eb24b2, which gives its read 5 s and the whole save 15 s, and the four association
-  routes since 2d9a4c8): the manager's calls of a
-  write get **15 s** (`lib.rs` `WRITE_TIMEOUT`); reads, the three verbs and the boot write keep
-  **5 s** (`MANAGER_TIMEOUT`).
+  routes since 2d9a4c8, every other write since 57666cb): the manager's calls of a
+  write get **15 s** (`lib.rs` `WRITE_TIMEOUT`), the three verbs, the boot write and the tags write
+  included; reads, the boot read among them, keep **5 s** (`MANAGER_TIMEOUT`).
   503 `client-unavailable` only while no write was asked; **504 `client-timeout`** once one was
-  sent and its outcome is unknown; a write that **landed** whose following read (the status, the
+  sent and its outcome is unknown (the limit ran out, or the manager was lost after the hand-over),
+  the session kept (since d1f3375 and 57666cb on the single-call writes: the model and server profile
+  create and delete, the instance create and removal, the verbs, the boot write, the tags write); a write that **landed** whose following read (the status, the
   switch's read-back) is slow or fails answers **200 with `running: true`**, never 504
   (`server.rs` `WriteState`, `TimedOut`).
   The four association routes never answer 504: a manager that outlives the limit, before or after a
@@ -216,7 +219,7 @@ profile's tags are not touched. 204 with no body. Errors: 401 `session-required`
 "server-bad-tags", "args": [reason, list joined by ",", most tags, least chars, most chars], "field":
 "tags"}` (`pai-core` `checks::tags_rule`; the reason is an English phrase of the code); 400
 `tags-malformed` for a body that is not that shape (the fe never sends one); 503
-`client-unavailable`. Source: `crates/bff/tests/instances.rs` in the bff's working tree.
+`client-unavailable`; 504 `client-timeout` (the list handed over, its outcome unknown). Source: `crates/bff/tests/instances.rs` in the bff's working tree.
 `ARCHITECTURE.md` (f') names the keys `instance-bad-tags` and `instance-malformed`: brief 12
 question C2.
 
@@ -353,7 +356,8 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   service manager has accepted the job; the state read just after can still be the previous one, so
   the fe polls `GET /api/instances` (any 2xx counts as accepted). Errors: 401; 403
   `client-not-authorized`; 403 `session-not-administrator` (above: the session ended);
-  404 `client-no-instance`; 503 `client-unavailable`; 502 `client-service-failed` with
+  404 `client-no-instance`; 503 `client-unavailable`; 504 `client-timeout` (the verb handed over,
+  not answered within 15 s or the manager lost: the job may have been taken); 502 `client-service-failed` with
   `args: []` when the service manager refused or the unit failed (its message stays in the bff's
   log); 502 `client-other` for anything else.
 - **A start or a restart of an instance that serves no model profile** is refused 409
@@ -373,7 +377,7 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   `GET /api/instances`; 401 `session-required` without a session from 2026-11-19, above), 404 `client-no-instance`, 502 `client-other`.
 - `PUT /api/instances/{id}/boot` takes `{"enabled": <bool>}` and answers 200 `{"enabled"}`, the
   state read back after the write. Errors: 401, 403 `client-not-authorized`, 403
-  `session-not-administrator`, 404, 503, 502 `client-service-failed` or `client-other`
+  `session-not-administrator`, 404, 503, 504 `client-timeout`, 502 `client-service-failed` or `client-other`
   (each with `args: []`), 400 `boot-malformed` for a body that is not `{"enabled": <bool>}` (the fe
   never sends one), 413 `payload-too-large`.
 - `GET /api/instances` and `GET /api/instances/{id}/boot` (and from 2026-11-19 `GET /api/version`) do not move a session's idle deadline:
@@ -643,7 +647,8 @@ detail in [crates/bff/README.md](../../crates/bff/README.md#the-create-and-the-d
   `no-model-profile-named` `[id]`, 409 `model-profile-enabled` `[id]`, 409 `model-profile-assigned`
   `[id, instances]`; both: 401 `session-required` (the manager not asked), 403
   `session-not-administrator` (the session ended), 503 `client-unavailable` (no manager, or the 15 s
-  write limit ran out: a retried create is then 409, a retried delete 404), 502 `client-other`.
+  ran out before the call was handed over), 504 `client-timeout` (the call handed over, its outcome
+  unknown: a retried create is then 409, a retried delete 404), 502 `client-other`.
 
 ## Open on the bff side
 
@@ -809,9 +814,9 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
     `instance-running` (`args` the id, an instance that is up: stop it first, the fe offers Remove only
     for a stopped one); the server profile it ran stays in the pool.
   - Both: 401, 403 `session-not-administrator` (the session ended), 503 `client-unavailable` (no
-    manager, or one that outlives the 15 s, the outcome unknown: a retried create is then 409
-    `instance-exists`), 502 `client-service-failed` (the service manager refused) and 502
-    `client-other`. **Never 504**, as on the association routes.
+    manager, or the 15 s ran out before the call was handed over), 504 `client-timeout` (the call
+    handed over, its outcome unknown: a retried create is then 409 `instance-exists`), 502
+    `client-service-failed` (the service manager refused) and 502 `client-other`.
 - **Start and restart** answer 409 `instance-no-model-profiles` `[id]`, no `field`, the session living
   on, (before any stop, so a refused restart stops nothing) when the instance serves no model profile:
   **served since e262708** (`crates/bff/src/control.rs`, `crates/bff/README.md` "The instances from the
@@ -829,9 +834,9 @@ Bodies, replies, revisions, statuses and time limits unchanged. Unchanged routes
   (the instance appended last, so the built texts keep working). `preset-engine-mismatch` is dropped:
   another engine's profile is simply not found.
 - Every write: 401, 403 `session-not-administrator` (the session ended), 413, the guard's 403s, 503
-  before asking, 504 `client-timeout` once asked (15 s). The four association routes (served) and the
-  two instance routes (served since e262708) keep every part of that except the 504: a manager that
-  outlives their limit, before or after a write, is 503 `client-unavailable`.
+  before asking, 504 `client-timeout` once asked (15 s). The four association routes (served) keep every part
+  of that except the 504: a manager that outlives their limit, before or after a write, is 503
+  `client-unavailable`.
 
 ### The web UI's plan (designer, 2026-11-17; a proposal until the user answers)
 

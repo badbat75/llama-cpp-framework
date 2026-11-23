@@ -131,7 +131,7 @@ runtime (axum).
 | `DELETE /api/session` | Signs out, for anyone: 204, the cookie cleared |
 | `GET /api/instances/{id}/server` | The instance's `server@<server_profile>.ini`, the server profile its record names, with its defaults and limits, for a signed-in user ([below](#the-server-file-of-an-instance)) |
 | `PUT /api/instances/{id}/server` | The form's save of that file, for a signed-in user ([below](#saving-the-server-file)) |
-| `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 with no manager, 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else, and 409 `{"key", "args"}`, no `field`, for a refusal of the state the job is asked over: a start or a restart of an instance with no model profile is `instance-no-model-profiles` `[id]` and the session lives on (`crates/bff/src/control.rs`) |
+| `POST /api/instances/{id}/start`, `/stop`, `/restart` | The run verb as the signed-in user: 204 once the manager accepted the job, no body, the state is not in the reply (the page polls `/api/instances`); 401 with no session, 403 ending the session when the manager refused that user, 404 for no such instance, 503 `client-unavailable` with no manager, 504 `client-timeout` for a verb handed over the manager and then not answered within the write's 15 s or lost with the manager (the job may have been taken; the session lives on), 502 `client-service-failed` when the service manager refused the job, 502 `client-other` for anything else, and 409 `{"key", "args"}`, no `field`, for a refusal of the state the job is asked over: a start or a restart of an instance with no model profile is `instance-no-model-profiles` `[id]` and the session lives on (`crates/bff/src/control.rs`) |
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The read reads the session as a gate and never moves its idle deadline, so the page can poll it, and connects as the bff's own account: the manager's refusal of that connect is of the bff's account, so it ends no session. The failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
 | `PUT /api/instances/{id}/tags` | `{"tags": [<text>, ...]}` in, 204 with no body once the manager wrote the instance's own list, for a signed-in user: 400 `tags-malformed` for a body that is not that list, 422 `server-bad-tags` (`field: "tags"`) for a list the manager's rule refuses ([below](#the-tags-of-an-instance)) |
@@ -231,8 +231,8 @@ of the bff's own account ([below](#the-association-routes)).
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
   `lib.rs`) that covers the connect. The routes that write a file, the server save, the model profile
-  switch and save, the pool's create, save and delete, the instance's create and removal, and the three
-  association writes, run under the longer `WRITE_TIMEOUT`
+  switch and save, the pool's create, save and delete, the instance's create and removal, the run verbs, the start at
+  boot write, the tags write and the three association writes, run under the longer `WRITE_TIMEOUT`
   ([below](#saving-the-server-file), [below](#the-association-routes)).
 - **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `client-unavailable`, so a test never
   reaches the real manager.
@@ -252,7 +252,7 @@ of the bff's own account ([below](#the-association-routes)).
 ### The tags of an instance
 
 `PUT /api/instances/{id}/tags` takes `{"tags": [<text>, ...]}` and asks the manager's
-`SetInstanceTags` as the signed-in user, under the same 5 s timeout as the read (`control.rs`). The
+`SetInstanceTags` as the signed-in user, under the write's 15 s (`WRITE_TIMEOUT`, `control.rs`). The
 session is checked first, so no request reaches the manager without one.
 
 | Status | Body | When |
@@ -262,9 +262,10 @@ session is checked first, so no request reaches the manager without one.
 | 401 | `{"key": "session-required", "args": []}` | No session; the manager is not connected to, so a body of the wrong shape is 401 and not 400 |
 | 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the write as this user (a member of `pai` at sign-in, removed since): the session ends, as on every guarded write |
 | 404 | `{"key": "client-no-instance", "args": []}` | No such instance, or the manager refuses the id (`NoInstance`, `InvalidId`) |
-| 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor in front of the whole router, before the manager is connected to |
+| 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, after the session check and before the manager is connected to |
 | 422 | `{"key", "args", "field": "tags"}` | The manager's rule refused the list: `checks::tags_rule`, answering `server-bad-tags` with its reasons, the same rule and the same words as the server profile's tags ([below](#saving-the-server-file)). The session stays signed in: a refusal of a value is no refusal of the user |
-| 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no full answer within 5 s |
+| 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or the 15 s ran out before the list was handed over |
+| 504 | `{"key": "client-timeout", "args": []}` | The list was handed over and its outcome is unknown: the 15 s ran out after it, or the manager was lost after it. The session lives on |
 | 502 | `{"key": "client-service-failed", "args": []}` | The system's write of the record failed (the manager's `Service`) |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail |
 
@@ -276,6 +277,8 @@ session is checked first, so no request reaches the manager without one.
   204, an empty list clears the tags, no session is 401, no such instance 404, a list the manager's
   check refuses is 422 with the check's key and values, a body it cannot read is 400 with the manager
   never connected to, no manager 503. The 413 of a body over the cap is the extractor's, by the code.
+  The 503 and 504 of a slow or lost manager are `tests/write_timeouts.rs`, as on the other single-call
+  writes ([below](#saving-the-server-file)).
 
 ## The node
 
@@ -470,7 +473,8 @@ The body becomes the file's text through the one fields table the GET reads with
 to: a body that is not that JSON, or a value of the wrong type, is 400 `server-malformed`; a check
 refusal is 422 `{"key", "args", "field"}`, `field` the INI key the form marks. A body over
 `origin::MAX_BODY` (64 KiB) is refused by the extractor layer in front of the whole router:
-413 `payload-too-large`, before the session is read. `Devices` is judged by the shape of its list
+413 `payload-too-large`, which the handler answers after the session check: with no session it is
+401 whatever the body. `Devices` is judged by the shape of its list
 only, never against the node's device list (`checks::device_list`): `ROCm0, ROCm1` is 422
 `device-bad-name` with args `["Devices", " ROCm1"]` and field `Devices`, and nothing is written,
 while an id the node has no GPU for (`ROCm7`) is taken, the instance that names it failing to start.
@@ -510,7 +514,7 @@ Done answers the 200.
 | 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the connect, the read or the write as this user: the session ends, as the read's 403 (a status it refuses after the write is not a failure: 200, `running: true`) |
 | 404 | `{"key": "client-no-instance", "args": []}` | No such file, or the manager says no such instance or refuses the id |
 | 409 | `{"key": "server-changed-elsewhere", "args": []}` | The file is not the one the form read: the sent revision does not match the read text, or the manager's compare and swap found it changed. Nothing is written, the session stays signed in |
-| 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, before the session is read |
+| 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, answered after the session check (no session is 401 whatever the body) and before the manager is connected to |
 | 422 | `{"key", "args", "field"}` | A value the checks refused: the bff's own (`server_cfg::check`, this machine's CPU count included), the manager's content check (`Invalid`), `client-address-in-use` (`field: "Port"`, its `args` naming who holds the address: the other instance, or `private-ai-bff`) or `client-unresolvable-host` (`field: "Hostname"`); the manager's detail stays out of the body. A tags list the rule refuses is 422 `server-bad-tags` with `field: "tags"` (the form's control, lowercase, the only key not spelled as the INI writes it): the rule is `checks::tags_rule`, run by `server_cfg::check` on the body's list. Since 5fb7b0e the manager judges `Devices` at this write too, when an instance runs the profile and the save changes the key: a model profile of that instance that fits the cards named today and not the new ones is 422 `model-profile-over-memory` `[profile, instance, needed MiB, available MiB]`, nothing written, with `field` the model profile's id (`field_of` reads `args[0]`, and the server form has no control for it) |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager reached and the write was never asked: the file is what it was |
 | 504 | `{"key": "client-timeout", "args": []}` | The write was asked and its outcome is unknown: a time limit that ran out at the write, or a manager lost at the write. A limit that runs out after the write landed is the 200 above |
@@ -560,15 +564,16 @@ included, stays behind a read of it.
 before anything is asked, so a body nothing can be made of reaches no manager: not `application/json`,
 not read, `engine` or `id` not text, or a `port` that is no whole number, is 400
 `server-profile-malformed`; a body with no `port` and one with `port: null` are both the file with no
-`Port` key. A body over 64 KiB is the extractor's 413, before the session is read. The bff then applies
+`Port` key. A body over 64 KiB is the extractor's 413, after the session check. The bff then applies
 the rules itself and the manager applies them again, being the writer: an engine other than `llama.cpp`
 is 422 `unknown-engine` (`field: "engine"`); a name the instance-id rule refuses is 422
 `server-profile-bad-id` (`field: "id"`: 1 to 32 of `a-z`, `0-9` and `-`, starting with a letter or a
 digit); a port outside `checks::server_int_range("Port")` is 422 `not-whole-number-in-range`
 (`field: "port"`, its args the key, the text and the two edges). A name already there is 409
-`client-server-profile-exists` `[id]`, and the session lives on. A manager that is unreachable, or that
-outlives the write's 15 s, is 503 `client-unavailable` with the outcome unknown: a retried create is
-then 409, which is how the ambiguity shows.
+`client-server-profile-exists` `[id]`, and the session lives on. A manager that is unreachable, or a 15 s that runs
+out before the call is handed over, is 503 `client-unavailable`, nothing written. A 15 s that runs out
+after it, or a manager lost after it, is 504 `client-timeout` with the outcome unknown and the session
+kept: a retried create is then 409, which is how the ambiguity shows.
 
 ### The document and the save
 
@@ -599,7 +604,8 @@ service's `[Bff] Listen`; unused, judged against nothing.
 profile a section of `instances.ini` names is 409 `client-server-profile-in-use` `[profile, instance]`
 and the file stays; no such profile is 404 `client-no-server-profile` `[id]`; a record the manager
 cannot read is 502 `client-other`, never the "unused" answer, so a profile a running instance reads is
-never removed on a record read failure. A retried delete after a 503 is 404.
+never removed on a record read failure. The 503 and 504 are the create's. A retried delete after a
+504 is 404.
 
 ## The model profile routes
 
@@ -739,8 +745,9 @@ written first, so a refusal leaves both files as they were.
 on one connect as the signed-in user, under the write's 15 s (`WRITE_TIMEOUT`). Both are served as an
 API with no page of their own yet. The session rules are the pool's: 401 `session-required` with no
 session and the manager not connected to; 403 `session-not-administrator` ending the session; 503
-`client-unavailable` with no manager or past the 15 s, the outcome unknown; 502 `client-other` for
-anything else.
+`client-unavailable` with no manager or a 15 s that ran out before the call was handed over, nothing
+written; 504 `client-timeout` for a 15 s that ran out after it or a manager lost after it, the outcome
+unknown and the session kept; 502 `client-other` for anything else.
 
 The create takes `{"id", "from"}` (a copy of the pool's model profile `from`) or `{"id", "values"}`,
 `values` being `{"model"}` or `{"hf-repo"}` with an optional `"hf-file"`, and answers 201 `{"id"}`. The
@@ -757,7 +764,7 @@ with no `field`; 422 `{"key", "args", "field"}` for the rest, `field` being `id`
 The delete answers 204 with no body. The manager judges it on the state under its lock: 404
 `no-model-profile-named` `[id]` for a name neither file holds; 409 `model-profile-enabled` `[id]` for
 one switched on; 409 `model-profile-assigned` `[id, instances]` for one an instance's section of
-`assignments.ini` names; any other refusal 422 with its key and args. A retried create after a 503 is
+`assignments.ini` names; any other refusal 422 with its key and args. A retried create after a 504 is
 the 409 and a retried delete the 404, which is how the ambiguity shows. Tests:
 `crates/bff/tests/model_profile_create.rs`.
 
@@ -1121,8 +1128,8 @@ and their order: `crates/config/README.md` "Through the manager (Linux, Windows)
 
 | Route | Answers |
 | --- | --- |
-| `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, three strings. 201 `{"id"}` with the id the body sent and `args: []`: the instance has no model profile, its start at boot is off, and nothing is started. 400 `instance-malformed` with no args, when the body is not JSON, not an object, missing one of the three keys, or one of them is not text; the manager is not connected to. A body over 64 KiB is the extractor's 413 `payload-too-large`, before the session is read ([above](#saving-the-server-file)). 422 `unknown-engine` `[engine]` with `field` `engine`, 422 `instance-bad-id` `[id]` with `field` `id` (the instance-id rule: 1 to 32 of `a-z`, `0-9` and `-`, starting with a letter or a digit), 422 `client-address-in-use` `[the other instance]` with `field` `serverProfile` when the address of the profile asked for is the address of another instance's server profile, 422 `client-unresolvable-host` `[host]` with `field` `serverProfile` when its host is a name this machine cannot look up. 404 `client-no-server-profile` `[name]` for a profile whose `server@<name>.ini` is not there, 409 `client-server-profile-in-use` `[profile, instance]` for a profile a running instance has, 409 `instance-exists` `[id]` for an id the record already has a section for. Any other check the manager ran keeps its own key and values, as a 422 with no `field`. 503 `client-unavailable` with no manager, including one that outlives the 15 s. 502 `client-service-failed` with no args when the service manager refused, 502 `client-other` with no args for anything else the manager failed as. |
-| `DELETE /api/instances/{id}` | 204 with no body. 409 `instance-protected` `[id]` for `default`, 409 `instance-running` `[id]` for an instance that is up, 404 `client-no-instance` with no args for an id the record does not name and for an id that is not a name at all (the manager's `InvalidId`), 503 `client-unavailable`, and the two 502s as above. A removal is refused while the instance runs, so the caller stops it first; the fe does not ask, its Remove is offered for a stopped one. |
+| `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, three strings. 201 `{"id"}` with the id the body sent and `args: []`: the instance has no model profile, its start at boot is off, and nothing is started. 400 `instance-malformed` with no args, when the body is not JSON, not an object, missing one of the three keys, or one of them is not text; the manager is not connected to. A body over 64 KiB is the extractor's 413 `payload-too-large`, after the session check ([above](#saving-the-server-file)). 422 `unknown-engine` `[engine]` with `field` `engine`, 422 `instance-bad-id` `[id]` with `field` `id` (the instance-id rule: 1 to 32 of `a-z`, `0-9` and `-`, starting with a letter or a digit), 422 `client-address-in-use` `[the other instance]` with `field` `serverProfile` when the address of the profile asked for is the address of another instance's server profile, 422 `client-unresolvable-host` `[host]` with `field` `serverProfile` when its host is a name this machine cannot look up. 404 `client-no-server-profile` `[name]` for a profile whose `server@<name>.ini` is not there, 409 `client-server-profile-in-use` `[profile, instance]` for a profile a running instance has, 409 `instance-exists` `[id]` for an id the record already has a section for. Any other check the manager ran keeps its own key and values, as a 422 with no `field`. 503 `client-unavailable` with no manager, or a 15 s that ran out before the call was handed over; 504 `client-timeout` after it (below). 502 `client-service-failed` with no args when the service manager refused, 502 `client-other` with no args for anything else the manager failed as. |
+| `DELETE /api/instances/{id}` | 204 with no body. 409 `instance-protected` `[id]` for `default`, 409 `instance-running` `[id]` for an instance that is up, 404 `client-no-instance` with no args for an id the record does not name and for an id that is not a name at all (the manager's `InvalidId`), 503 `client-unavailable` and 504 `client-timeout` as for the create, and the two 502s as above. A removal is refused while the instance runs, so the caller stops it first; the fe does not ask, its Remove is offered for a stopped one. |
 
 - **The checks are the manager's and the bff keeps the key.** `instance-bad-id`, `instance-exists`,
   `instance-protected`, `instance-running` and `unknown-engine` are keys of
@@ -1134,15 +1141,17 @@ and their order: `crates/config/README.md` "Through the manager (Linux, Windows)
   server save ([above](#saving-the-server-file)): the session is the proof, the principal rides the
   call, and the same 403 `session-not-administrator` is answered for an account the manager no longer
   accepts, ending the session.
-- **A write that goes past the 15 s is 503 `client-unavailable` with no args, never 504, and the
-  outcome is unknown**: the bff cannot know whether the manager wrote. A retried create of an instance
+- **A write handed over the manager and not answered is 504 `client-timeout`, the outcome unknown**:
+  the 15 s ran out after the hand-over, or the manager was lost after it, and the bff cannot know
+  whether the manager wrote. The session lives on. Before the hand-over (no manager, a connect that
+  did not return in time) it is 503 `client-unavailable` and nothing was written (since 57666cb). A retried create of an instance
   the first one did write is 409 `instance-exists`, which is how the ambiguity shows, and the read of
   the list is the truth.
 - **The reply's id is the id the body sent**, read before the manager is asked: a create answers no
   document, and the page re-reads the list.
 - **`crates/bff/tests/instances.rs` is 49 tests** over these two routes and the `removable` of the
   list: the shape of the replies, the exact `args` of each key, the 422 with a `field` and the 409
-  without one, the 503 of a manager that stops answering mid-write, and the 403 that ends the session.
+  without one, the 504 of a manager lost after the write was handed over, and the 403 that ends the session.
   A refusal test asserts the `args` and, where the key has one, the `field`: that is all the fe has to
   show. **Nothing here has been called against a real manager.**
 

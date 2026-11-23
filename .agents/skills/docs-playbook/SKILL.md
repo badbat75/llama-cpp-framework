@@ -584,3 +584,7 @@ Lessons only: the rules are in `AGENTS.md`.
   and the tester, coder and designer playbooks (not ours: report their stale figures). The nav's
   shape lives in `crates/bff/README.md` ("A shell with hash routes"); read `fe/src/App.tsx` (`NavHost`)
   before writing it: a brief can name an entry the code does not have yet (brief 20: Server profiles).
+- bff timeouts and the 413: `DefaultBodyLimit` (`lib.rs`) only caps; the 413 is the `Bytes`
+  rejection a write handler turns into `payload-too-large` after `sessions.current`, so no session is
+  401 whatever the body. Every write's 503/504 follows `server.rs` `timeout_answer` and `state.sent()`
+  (504 once handed over); the association routes (`instance_profiles.rs`) are the one exception, 503 only.
