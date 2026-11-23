@@ -3699,8 +3699,10 @@ ambiguity is visible (slice 14's rule).
 
 **(3) The bff routes** (mirroring the server profile pool; each 401 `session-required` with no
 session and nothing asked, `sessions.current`, 403 `session-not-administrator` ending the session,
-503 `client-unavailable`, a write timeout 503, anything else 502 `client-other`; the write timeout of
-`POST /api/profiles/server`):
+503 `client-unavailable` (no manager, or the limit ran out before the call was handed over), 504
+`client-timeout` once the call was handed over and its outcome is unknown (the server save's rule,
+`crates/bff/README.md`; corrected 2026-11-23, slice W1), anything else 502 `client-other`; the write
+timeout of `POST /api/profiles/server`):
 - **`POST /api/profiles/model`** `{"id": string, "from": string}` or `{"id": string, "values":
   {"model": string} | {"hf-repo": string, "hf-file"?: string}}`: 201 `{id}`. 400
   `model-profiles-malformed` for a body it cannot read (not an object, a non-string, an unknown
@@ -3756,6 +3758,19 @@ already `configure`) and delete unused ones (exactly what the rule allows); with
 - **MP3. The web UI** (slice 17, the designer's brief 16 first): a create form (id, the model or
   Hugging Face pick from M2/M3, or "clone from"), Delete offered on a switched-off, unassigned row,
   the refusals shown in their strings. Done when: the brief's criteria and the UX check.
+- **W1. One timeout answer for every bff write** (added 2026-11-23). Today the revision-checked saves
+  answer 504 `client-timeout` once the write was asked (`TimedOut`, `crates/bff/src/server.rs`), while
+  the single-call writes answer a plain `tokio::time::timeout` with 503 `client-unavailable`, telling
+  the page nothing changed when the write may have landed: `model_profiles::create` and `remove`,
+  `server_profiles::create` and `remove`, `instances::create` and `remove`, `control::act`,
+  `boot_write` and `tags_write`. W1 gives them the save's rule: 503 when no manager answers the
+  connect or the limit runs out before the call is handed over, 504 `client-timeout` after it.
+  Reads keep 503. Done when: per route, a fake manager that blocks past `write_timeout` after
+  receiving the call gives 504 `client-timeout` and the session lives on; a fake connect that never
+  returns gives 503; the existing tests stay green. The docs agent then fixes `crates/bff/README.md`:
+  the 504 row on those routes, and the three places that say the 413 comes "before the session is
+  read" (every write handler reads the session first and turns the body cap's rejection into 413
+  after it, so no session is 401 whatever the body: the gate's rule, which stays).
 - **With MT1** (tags, after slice 17): MT1's done-when gains "a delete through `DeleteModelProfile`
   leaves the record without its section" and "a clone carries the source's tags; a create of a new id
   leaves no section for it".
