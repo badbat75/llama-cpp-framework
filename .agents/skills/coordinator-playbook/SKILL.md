@@ -102,6 +102,10 @@ The user asked (2026-11-21) for a roadmap with estimated dates, kept current: ht
 Sections mean status (user, 2026-11-21): "Just closed" holds only done cards, newest first; "Now" only
 what an agent is working on; "Next" only work not started. Move a card when its status changes, and
 update the page in the same turn as the slice's commit, not later.
+When a card moves, update EVERY place that names its state: the card's chip, the "Now" heading line
+and the slice's other cards (on 2026-11-23 the 2j card still said "TP1 in progress" after TP1 closed,
+and the steps 1, 2, 3, 11, 13 and 15 had no card at all). At each step close, or when the user asks,
+audit the whole page against PLAN.md and `git log` (a Sonnet agent, read-only) and fix every gap.
 
 ## Documents kept current at every closed slice (user, 2026-11-21)
 
