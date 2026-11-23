@@ -93,6 +93,12 @@ fn data_root_e2e() {
     // ── Manager core: creating and deleting the node's server profiles ────
     crate::manager::service::manager_server_profile_crud_e2e();
 
+    // ── Manager core: creating and cloning a model profile ────────────────
+    crate::manager::service::manager_model_profile_create_e2e();
+
+    // ── Manager core: deleting a model profile ────────────────────────────
+    crate::manager::service::manager_model_profile_delete_e2e();
+
     // ── Manager core: creating and removing an instance ───────────────────
     crate::manager::service::manager_instance_crud_e2e();
 
@@ -125,6 +131,10 @@ fn data_root_e2e() {
     #[cfg(target_os = "linux")]
     crate::manager::dbus::manager_dbus_server_profiles_e2e();
 
+    // ── Manager over D-Bus: creating and deleting a model profile ────────
+    #[cfg(target_os = "linux")]
+    crate::manager::dbus::manager_dbus_model_profiles_e2e();
+
     // ── Manager over D-Bus: creating and removing an instance ───────────
     #[cfg(target_os = "linux")]
     crate::manager::dbus::manager_dbus_instance_crud_e2e();
@@ -134,11 +144,23 @@ fn data_root_e2e() {
     #[cfg(target_os = "linux")]
     dbus_client::manager_dbus_client_e2e();
 
+    // ── pai-core's client: creating and deleting a model profile ─────────
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_model_profiles_e2e();
+
+    // ── pai-core's client: a member's model profile create and delete ────
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_model_profiles_as_e2e();
+
     // ── pai-core's client of the manager over a stream ──────────────────
     // pai_core::client::pipe against manager::pipe::serve_stream, on a
     // Unix socket pair (the named pipe's OS-neutral protocol).
     #[cfg(unix)]
     pipe_client::manager_pipe_client_e2e();
+
+    // ── pai-core's client over a stream: a model profile's life ─────────
+    #[cfg(unix)]
+    pipe_client::manager_pipe_client_model_profiles_e2e();
 
     // ── Manager core: acting for a signed-in user (the bff names a member)
     crate::manager::service::manager_principal_e2e();

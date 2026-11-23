@@ -18,6 +18,8 @@
 //! {"method":"SetInstanceTags","instance":"default","tags":["edge","v2"]}
 //! {"method":"CreateServerProfile","engine":"llama.cpp","profile":"big","port":8123}
 //! {"method":"DeleteServerProfile","engine":"llama.cpp","profile":"big"}
+//! {"method":"CreateModelProfile","profile":"qwen3","from":"","values":{"model":"/m/a.gguf"}}
+//! {"method":"DeleteModelProfile","profile":"qwen3"}
 //! {"method":"ServerProfiles"}
 //! {"method":"Devices"}
 //! {"method":"Authenticate","user":"alice","password":"..."}
@@ -29,7 +31,8 @@
 //! A client [`PipeClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
-//! `CreateServerProfile`, `DeleteServerProfile`,
+//! `CreateServerProfile`, `DeleteServerProfile`, `CreateModelProfile`,
+//! `DeleteModelProfile`,
 //! `SetInstanceTags`, `Devices` and `ModelInfo` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
 //! (the manager answers a principal for the bff's account alone). The methods
@@ -91,8 +94,8 @@
 
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, NodeInfoReply, Reason,
-    ServerProfileInfo, TensorRow,
+    ManagerVersion, ModelFacts, ModelInfoReply, ModelProfileSource, NodeDevices, NodeInfoReply,
+    Reason, ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu};
@@ -370,6 +373,32 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             "DeleteServerProfile",
             &[("engine", json!(engine)), ("profile", json!(profile))],
         ))
+    }
+
+    /// `CreateModelProfile`: the source expanded as the frame carries it, `from`
+    /// the profile to copy (`""` for none) and `values` the pick's keys, an
+    /// object of strings, `{}` for a clone.
+    fn create_model_profile(
+        &self,
+        profile: &str,
+        source: &ModelProfileSource,
+    ) -> Result<(), ClientError> {
+        let (from, values) = source.as_source();
+        self.call_unit(self.guarded(
+            "CreateModelProfile",
+            &[
+                ("profile", json!(profile)),
+                ("from", json!(from)),
+                (
+                    "values",
+                    Value::Object(values.into_iter().map(|(k, v)| (k, json!(v))).collect()),
+                ),
+            ],
+        ))
+    }
+
+    fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded("DeleteModelProfile", &[("profile", json!(profile))]))
     }
 
     /// `CreateInstance`: the three names the manager's rule asks for, the

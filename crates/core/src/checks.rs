@@ -27,6 +27,10 @@ pub const KEYS: &[&str] = &[
     "invalid-model-profile-id",
     "model-profile-no-model",
     "model-profile-name-taken",
+    "model-profile-bad-source",
+    "model-profile-bad-text",
+    "model-profile-enabled",
+    "model-profile-assigned",
     "fit-target-format",
     "override-no-pattern",
     "override-no-device",
@@ -108,6 +112,10 @@ impl Refusal {
             "invalid-model-profile-id" => strings::fill("invalid-model-profile-id", &[&v(0)]),
             "model-profile-no-model" => strings::fill("model-profile-no-model", &[&v(0)]),
             "model-profile-name-taken" => strings::fill("model-profile-name-taken", &[&v(0)]),
+            "model-profile-bad-source" => strings::fill("model-profile-bad-source", &[&v(0)]),
+            "model-profile-bad-text" => strings::fill("model-profile-bad-text", &[&v(0)]),
+            "model-profile-enabled" => strings::fill("model-profile-enabled", &[&v(0)]),
+            "model-profile-assigned" => strings::fill("model-profile-assigned", &[&v(0), &v(1)]),
             "fit-target-format" => strings::fill("fit-target-format", &[&v(0), &v(1)]),
             "override-no-pattern" => strings::fill("override-no-pattern", &[&v(0)]),
             "override-no-device" => strings::fill("override-no-device", &[&v(0), &v(1)]),
@@ -406,8 +414,9 @@ pub fn model_profile_int_range(key: &str) -> Option<RangeInclusive<i32>> {
 }
 
 /// The model profile keys whose value is free text: a `;` or `#` in one would be cut
-/// off as an inline comment on reload, here and by llama-server alike.
-const MODEL_PROFILE_TEXT_KEYS: [&str; 7] = [
+/// off as an inline comment on reload, here and by llama-server alike. `hf-repo`
+/// and `hf-file` carry a repository and a file name, so they are here too.
+const MODEL_PROFILE_TEXT_KEYS: [&str; 9] = [
     "model",
     "mmproj",
     "model-draft",
@@ -415,6 +424,8 @@ const MODEL_PROFILE_TEXT_KEYS: [&str; 7] = [
     "override-tensor",
     "reasoning-budget-message",
     "fit-target",
+    "hf-repo",
+    "hf-file",
 ];
 
 /// The server.ini keys whose value is free text (paths, a URL, a key, the GPU
@@ -466,12 +477,32 @@ pub fn model_profile_id(id: &str) -> Result<(), Refusal> {
 }
 
 /// A model profile names a model file: `model`, the value as read, not blank.
+/// Strict on purpose: the configurator's own pre-check (`model_profiles.rs`)
+/// asks for a file of the node, since it has no Hugging Face pick to offer. The
+/// whole-file rule is looser, [`model_profile_has_model`].
 pub fn model_profile_model(id: &str, model: &str) -> Result<(), Refusal> {
     if model.trim().is_empty() {
         Err(Refusal::new("model-profile-no-model", &[&id]))
     } else {
         Ok(())
     }
+}
+
+/// The keys whose value replaces the file with one the engine downloads:
+/// `hf-repo` fetches it from a repository (`hf-file` names the file inside it,
+/// and is no model of its own), `model-url` and `docker-repo` replace the value
+/// with a URL and an image (llama.cpp `common/arg.cpp`). A profile holding one
+/// of these names its model without a `model` line, and its file is not on the
+/// node: the manager's model-file check skips it (`service.rs`).
+pub const FETCH_KEYS: [&str; 3] = ["hf-repo", "model-url", "docker-repo"];
+
+/// A model profile names its model: a not-blank `model`, or a not-blank key of
+/// [`FETCH_KEYS`] (the Hugging Face pick the web writes has no file of the
+/// node). Blank is no name: `model =` alone, and `hf-file` on its own, are
+/// refused.
+fn model_profile_has_model(s: &RawSection) -> bool {
+    let named = |key: &str| s.get(key).is_some_and(|v| !v.trim().is_empty());
+    named("model") || FETCH_KEYS.iter().any(|key| named(key))
 }
 
 /// The model files a model profile's `model` value names, in the order a check
@@ -1026,7 +1057,9 @@ fn known_key_line(sections: &[RawSection], id: &str, key: &str, raw: &str) -> bo
 /// touch; every other rule runs on the whole section.
 fn model_profile_section(s: &RawSection, known: &[RawSection]) -> Result<(), Refusal> {
     model_profile_id(&s.id)?;
-    model_profile_model(&s.id, &s.get("model").unwrap_or_default())?;
+    if !model_profile_has_model(s) {
+        return Err(Refusal::new("model-profile-no-model", &[&s.id]));
+    }
     for (key, raw) in &s.keys {
         if MODEL_PROFILE_TEXT_KEYS.contains(&key.as_str())
             && !known_key_line(known, &s.id, key, raw)
@@ -1930,6 +1963,114 @@ top-p = 0.95\r\n";
             model_profiles("[m]\nmodel =\nctx-size = 8192\n"),
             Err(refusal("model-profile-no-model", &["m"]))
         );
+    }
+
+    /// A model profile names its model by `model`, or by one of the keys the
+    /// engine fetches the file with: `hf-repo` downloads it, `model-url` and
+    /// `docker-repo` replace the value with a file the engine fetches
+    /// (llama.cpp `common/arg.cpp`; "The `model` rule loosened",
+    /// `ARCHITECTURE.md`, "Create, clone and delete model profiles from the
+    /// web"): the web's create offers the Hugging Face pick, whose section has
+    /// no file of the node. `hf-file` names the file inside `hf-repo` and is no
+    /// model of its own.
+    #[test]
+    fn a_model_profile_may_name_a_fetch_key_instead_of_its_model() {
+        for key in ["hf-repo", "model-url", "docker-repo"] {
+            assert_eq!(
+                model_profiles(&format!("[m]\n{key} = a/b\n")),
+                Ok(()),
+                "{key} names the model the node downloads"
+            );
+        }
+        for key in ["hf-file", "n-gpu-layers", "chat-template-kwargs"] {
+            assert_eq!(
+                model_profiles(&format!("[m]\n{key} = a/b\n")),
+                Err(refusal("model-profile-no-model", &["m"])),
+                "{key} is no model of its own"
+            );
+        }
+        for key in ["model", "hf-repo", "model-url", "docker-repo"] {
+            for value in ["", " ", "\t"] {
+                assert_eq!(
+                    model_profiles(&format!("[m]\n{key} = {value}\n")),
+                    Err(refusal("model-profile-no-model", &["m"])),
+                    "{key} = {value:?} is blank"
+                );
+            }
+        }
+        // The pair, as the file pick of `GET api/hf/files` writes it.
+        assert_eq!(
+            model_profiles("[m]\nhf-repo = a/b\nhf-file = m-Q8_0.gguf\n"),
+            Ok(())
+        );
+    }
+
+    /// `hf-repo` and `hf-file` carry a repository and a file name as free text,
+    /// like `model`: a `;` or `#` in one is cut as an inline comment on reload,
+    /// by the manager and by llama-server alike, so the marker rule runs on
+    /// them (they join the model profile free-text keys).
+    #[test]
+    fn hf_repo_and_hf_file_take_no_comment_marker() {
+        for (field, hostile) in [
+            ("hf-repo", "org/model#q8"),
+            ("hf-repo", "org/model;q8"),
+            ("hf-file", "m #1.gguf"),
+            ("hf-file", "m;m.gguf"),
+        ] {
+            let text = if field == "hf-repo" {
+                format!("[m]\n{field} = {hostile}\n")
+            } else {
+                format!("[m]\nhf-repo = org/model\n{field} = {hostile}\n")
+            };
+            assert_eq!(
+                model_profiles(&text),
+                Err(refusal("comment-markers", &[field])),
+                "{field} = {hostile:?}"
+            );
+        }
+    }
+
+    /// The keys of the two new model profile verbs (MP1, `ARCHITECTURE.md`
+    /// "Errors and keys"): each is a keyed `Invalid` refusal, a key of [`KEYS`],
+    /// in BOTH strings files with as many placeholders as the verb passes, and
+    /// with its own arm in [`Refusal::text`] that shows what it names.
+    /// `model-profile-assigned` names the profile and the instances that hold
+    /// it, joined with `, `.
+    #[test]
+    fn the_model_profile_create_and_delete_keys_are_keyed_refusals() {
+        let cli = crate::strings::parse(include_str!("../strings/cli.toml"));
+        let gui = crate::strings::parse(include_str!("../strings/en_US.toml"));
+        let profile = "Swift-1.5-Qwen3.8-27B";
+        for (key, values) in [
+            ("model-profile-bad-source", vec![profile.to_string()]),
+            ("model-profile-bad-text", vec!["hf-repo".to_string()]),
+            ("model-profile-enabled", vec![profile.to_string()]),
+            (
+                "model-profile-assigned",
+                vec![profile.to_string(), "default, lan-2".to_string()],
+            ),
+        ] {
+            assert!(KEYS.contains(&key), "{key} missing from checks::KEYS");
+            for (file, table) in [("cli.toml", &cli), ("en_US.toml", &gui)] {
+                let text = table
+                    .get(key)
+                    .unwrap_or_else(|| panic!("{key} missing from {file}"));
+                assert_eq!(
+                    placeholders(text),
+                    values.len(),
+                    "{key} in {file}: {text:?}"
+                );
+            }
+            // The wire form round trips: the verb's refusal reaches the client
+            // with its key and its values.
+            let r = Refusal { key, values };
+            assert_eq!(Refusal::decode(&r.encode()), Some(r.clone()), "{key}");
+            let text = r.text();
+            assert_ne!(text, key, "{key}: Refusal::text has no arm for it");
+            for value in &r.values {
+                assert!(text.contains(value), "{key}: {value:?} is not in {text:?}");
+            }
+        }
     }
 
     #[test]

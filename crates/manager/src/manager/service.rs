@@ -13,6 +13,7 @@
 //! caller and not the user.
 
 use crate::server_cfg::ServerConfig;
+use pai_core::checks::FETCH_KEYS;
 use std::net::IpAddr;
 
 /// A guarded action, one polkit action id each.
@@ -1184,7 +1185,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 }
                 _ => contents,
             };
-            self.check_and_write(file, name, contents)
+            self.check_and_write(file, name, contents, MODEL_FILES_JUDGE)
         })
     }
 
@@ -1207,7 +1208,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // of `contents`: `expected` is the whole text the caller read, so
             // other bytes mean its read is stale and the write is refused.
             match std::fs::read_to_string(file_path(name)?) {
-                Ok(text) if text == expected => self.check_and_write(file, name, contents),
+                Ok(text) if text == expected => {
+                    self.check_and_write(file, name, contents, MODEL_FILES_JUDGE)
+                }
                 Ok(_) => Err(ManagerError::Changed),
                 // A file that is not there is the same refusal: the caller's
                 // read has nothing to match. A read that failed for another
@@ -1255,13 +1258,20 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// what is on disk now. Taken under the `writing` lock, by the body of
     /// [`Self::write_guarded`], so the compare of a compare-and-swap, the write
     /// it authorizes and the renders it causes are one atomic step.
+    ///
+    /// `judge_model_files` is [`MODEL_FILES_JUDGE`] for every write, and
+    /// [`MODEL_FILES_SKIP`] for the create of a model profile, whose section is
+    /// born switched off: the model file it names is judged when a switch-on or
+    /// an assignment puts the profile in effect.
     fn check_and_write(
         &self,
         file: &ConfigFile,
         name: &str,
         contents: &str,
+        judge_model_files: bool,
     ) -> Result<(), ManagerError> {
-        check_contents(file, contents, &*self.gpus).map_err(ManagerError::Invalid)?;
+        check_contents(file, contents, &*self.gpus, judge_model_files)
+            .map_err(ManagerError::Invalid)?;
         if let ConfigFile::ServerProfile(id) = file {
             self.check_address(id, contents)?;
         }
@@ -1427,6 +1437,208 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         };
         let answer = run();
         self.record_action("set_model_profile", instance, Some(&who), &answer);
+        answer
+    }
+
+    /// Writes a new model profile `profile` into `models.ini.disabled`: born
+    /// switched off, assigned nothing, and never over a name either pool file
+    /// holds in any letter case. The source is one of two: `values` names the
+    /// model, with `model` alone or `hf-repo` and its optional `hf-file`, and
+    /// becomes the section's own lines sorted by key; `from` names a profile of
+    /// the pool, whose section's lines the new one takes under its own header,
+    /// and takes with it the `values` that only override a line, the clone
+    /// carrying its model with it. Every check answers before a byte is
+    /// written, in this order: a value that is blank, carries a control
+    /// character, a space at an end or a comment marker, or a key that is no
+    /// key of the INI (`model-profile-bad-text` and `comment-markers`, each
+    /// naming the key), the shape of the source (`model-profile-bad-source`),
+    /// the id rule (`invalid-model-profile-id`), a name the pool holds
+    /// (`model-profile-name-taken`), and a source that is no pool id
+    /// (`no-model-profile-named`, naming the source). Before the pool write,
+    /// every key of `assignments.ini` naming the new id in any letter case is
+    /// removed: the pool does not hold the id, so the key is dead, and a hand
+    /// `on` under an instance would serve the new profile at once. Nothing
+    /// renders, an off and unassigned profile being in no render. Guarded as a
+    /// write of a served file is: `configure` first, the `As` form answered
+    /// only to the bff's account for a current member of `pai`, one record of
+    /// the action log per call.
+    pub fn create_model_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+        from: &str,
+        values: &[(String, String)],
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // The source, the values and the id are judged before the lock and
+            // before a file is read: they need nothing of the node.
+            for (key, value) in values {
+                create_key_text(key).map_err(ManagerError::Invalid)?;
+                create_value_text(key, value).map_err(ManagerError::Invalid)?;
+            }
+            if !create_source_shape(from, values) {
+                return Err(one_value_refusal("model-profile-bad-source", profile));
+            }
+            pai_core::checks::model_profile_id(profile).map_err(ManagerError::Invalid)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let dir = crate::paths::engine_config_dir();
+            // A file that is really absent is an empty one; any other read
+            // failure answers its own kind, so a pool that cannot be read is
+            // never replaced with an empty one.
+            let on_disk = |name: &str| -> Result<String, ManagerError> {
+                match std::fs::read_to_string(dir.join(name)) {
+                    Ok(text) => Ok(text),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+                    Err(e) => Err(ManagerError::Io(e.kind())),
+                }
+            };
+            let enabled = on_disk("models.ini")?;
+            let mut disabled = on_disk("models.ini.disabled")?;
+            let holds = |text: &str| pai_core::ini::text::section_text(text, profile).is_some();
+            if holds(&enabled) || holds(&disabled) {
+                return Err(one_value_refusal("model-profile-name-taken", profile));
+            }
+            // The section to write, at the end of the off file: the source's
+            // lines under the new header, the call's keys after them. A clone
+            // takes the line ending of the source's own text, the keys that of
+            // the file being written, the CRLF of a file the install never
+            // copied.
+            let mut section = String::new();
+            if !from.is_empty() {
+                let source = pai_core::ini::text::section_text(&enabled, from)
+                    .or_else(|| pai_core::ini::text::section_text(&disabled, from))
+                    .ok_or_else(|| one_value_refusal("no-model-profile-named", from))?;
+                section.push_str(&cloned_section(&source, profile));
+            }
+            if !values.is_empty() {
+                let eol = pai_core::ini::detect_eol(&disabled);
+                if from.is_empty() {
+                    section.push_str(&format!("[{profile}]{eol}"));
+                }
+                let mut keys: Vec<&(String, String)> = values.iter().collect();
+                keys.sort_by(|a, b| a.0.cmp(&b.0));
+                for (key, value) in keys {
+                    section.push_str(&format!("{key} = {value}{eol}"));
+                }
+            }
+            // The dead keys go before the pool: the pool write is the one that
+            // makes the id a profile, and a hand `on` that outlives it serves
+            // the new profile at once.
+            let keys_text = on_disk(ASSIGNMENTS_FILE)?;
+            let cleaned = drop_profile_keys(&keys_text, profile);
+            if cleaned != keys_text {
+                std::fs::create_dir_all(&dir).map_err(&io)?;
+                write_served_file(
+                    &dir.join(ASSIGNMENTS_FILE),
+                    &ConfigFile::Models,
+                    &cleaned,
+                    &*self.group,
+                )
+                .map_err(&io)?;
+            }
+            if !disabled.is_empty() && !disabled.ends_with('\n') {
+                disabled.push_str(pai_core::ini::detect_eol(&disabled));
+            }
+            disabled.push_str(&section);
+            // The new profile is born switched off and unassigned, so its model
+            // file is not judged here: a switch-on or an assignment judges it.
+            self.check_and_write(
+                &ConfigFile::ModelsDisabled,
+                "models.ini.disabled",
+                &disabled,
+                MODEL_FILES_SKIP,
+            )
+        };
+        let answer = run();
+        self.record_action("create_model_profile", profile, Some(&who), &answer);
+        answer
+    }
+
+    /// Removes the model profile `profile` from `models.ini.disabled`: only a
+    /// profile that is switched off and assigned nothing. Every check answers
+    /// before a byte is written, in this order: a name neither pool file holds
+    /// is `no-model-profile-named [profile]`, the id of no id and `*` included
+    /// (the id rule answers nothing of its own here, and no path is built); a
+    /// name `models.ini` holds, a twin an interrupted switch left in both files
+    /// included, is `model-profile-enabled [profile]`, even when an instance
+    /// assigns it; a profile an instance's section of `assignments.ini` names
+    /// with `on`, `off` or `inherit` in any letter case, or that a hand
+    /// `* = on` under an instance serves, is `model-profile-assigned
+    /// [profile, "<ids>"]`, naming every such instance in the order of
+    /// `instances.ini`; and a record that cannot be read is
+    /// [`ManagerError::Io`], never the empty list of a node with no instance.
+    /// The write takes every section of the id, repeated in any letter case,
+    /// out of the off file, through the content checks of a save: a file whose
+    /// last section is removed stands empty. Nothing else moves, the renders
+    /// included. Guarded as a write of a served file is: `configure` first, the
+    /// `As` form answered only to the bff's account for a current member of
+    /// `pai`, one record of the action log per call.
+    pub fn delete_model_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let dir = crate::paths::engine_config_dir();
+            let on_disk = |name: &str| -> Result<String, ManagerError> {
+                match std::fs::read_to_string(dir.join(name)) {
+                    Ok(text) => Ok(text),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+                    Err(e) => Err(ManagerError::Io(e.kind())),
+                }
+            };
+            // The id is judged before any file, and answers the pool's refusal
+            // of its own: no id and `*` included, so no path is built from it.
+            if profile.is_empty()
+                || profile == "*"
+                || !pai_core::checks::valid_model_profile_id(profile)
+            {
+                return Err(one_value_refusal("no-model-profile-named", profile));
+            }
+            let enabled = on_disk("models.ini")?;
+            let mut disabled = on_disk("models.ini.disabled")?;
+            let holds = |text: &str| pai_core::ini::text::section_text(text, profile).is_some();
+            if holds(&enabled) {
+                return Err(one_value_refusal("model-profile-enabled", profile));
+            }
+            if !holds(&disabled) {
+                return Err(one_value_refusal("no-model-profile-named", profile));
+            }
+            let record = read_record(&dir.join(INSTANCES_FILE)).map_err(io)?;
+            let holders = assigned_instances(
+                &on_disk(ASSIGNMENTS_FILE)?,
+                &record,
+                &enabled,
+                &disabled,
+                profile,
+            );
+            if !holders.is_empty() {
+                return Err(ManagerError::Invalid(pai_core::checks::Refusal {
+                    key: "model-profile-assigned",
+                    values: vec![profile.to_string(), holders.join(", ")],
+                }));
+            }
+            while let Some(text) = pai_core::ini::text::delete_section(&disabled, profile) {
+                disabled = text;
+            }
+            self.check_and_write(
+                &ConfigFile::ModelsDisabled,
+                "models.ini.disabled",
+                &disabled,
+                MODEL_FILES_JUDGE,
+            )
+        };
+        let answer = run();
+        self.record_action("delete_model_profile", profile, Some(&who), &answer);
         answer
     }
 
@@ -2549,6 +2761,168 @@ fn known_engine(engine: &str) -> Result<(), ManagerError> {
     }
 }
 
+/// True when `from` and `values` are a source [`Manager::create_model_profile`]
+/// can build a section from. A pick: `from` empty and `values` naming the model
+/// with `model` alone, or `hf-repo` with `hf-file` beside it, no key twice. A
+/// clone: `from` a name, and `values` only lines that override one of the
+/// clone's, so none of the three naming a model of its own, none twice. Exactly
+/// one of the two sources, the empty pair and the pair at once both refused. The
+/// shape answers before a value is read.
+fn create_source_shape(from: &str, values: &[(String, String)]) -> bool {
+    let mut seen = [false; 3];
+    for (key, _) in values {
+        let i = match key.as_str() {
+            "model" => 0,
+            "hf-repo" => 1,
+            "hf-file" => 2,
+            // A clone's line of its own, `temp` beside the clone's model.
+            _ => {
+                if from.is_empty() {
+                    return false;
+                }
+                continue;
+            }
+        };
+        // A pick takes each key once; a clone takes no key that names a model.
+        if !from.is_empty() || seen[i] {
+            return false;
+        }
+        seen[i] = true;
+    }
+    !from.is_empty() || ((seen[0] || seen[1]) && !(seen[0] && seen[1]))
+}
+
+/// The refusal of one key of a new model profile's source: the key is written
+/// as the left side of a line, so a key that is empty, carries a control
+/// character, white space, `=`, `[`, `]`, `;` or `#` is no key of the INI: it
+/// forges a line, a comment marker or a whole section, out of the reach of the
+/// name, id and source checks. It names the key, as a bad value does.
+fn create_key_text(key: &str) -> Result<(), pai_core::checks::Refusal> {
+    if key.is_empty()
+        || key.chars().any(|c| {
+            c.is_control() || c.is_whitespace() || matches!(c, '=' | '[' | ']' | ';' | '#')
+        })
+    {
+        return Err(pai_core::checks::Refusal {
+            key: "model-profile-bad-text",
+            values: vec![key.to_string()],
+        });
+    }
+    Ok(())
+}
+
+/// The refusal of one value of a new model profile's source: the INI format has
+/// no escaping and a line ends at a newline, so a value that is blank, carries
+/// a space at an end or carries a control character names the key it sits under;
+/// a `;` or `#` is the existing `comment-markers` rule, naming the same key.
+fn create_value_text(key: &str, value: &str) -> Result<(), pai_core::checks::Refusal> {
+    if value.is_empty() || value.trim() != value || value.chars().any(|c| c.is_control()) {
+        return Err(pai_core::checks::Refusal {
+            key: "model-profile-bad-text",
+            values: vec![key.to_string()],
+        });
+    }
+    pai_core::checks::comment_markers(key, value)
+}
+
+/// The section the clone of `source` writes under the id `id`: the source's own
+/// header replaced and every other line kept exactly as the file holds it,
+/// comment lines included, the blank separator lines that end the section of
+/// the middle of the file left out, and one line ending added at the end. The
+/// line ending is the source's own, the one its header carries, so a clone of a
+/// section of an LF file is an LF section.
+fn cloned_section(source: &str, id: &str) -> String {
+    let eol = eol_of(source);
+    let rest = match source.split_once('\n') {
+        Some((_, rest)) => rest,
+        None => "",
+    };
+    let mut lines: Vec<&str> = rest.split(eol).collect();
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        return format!("[{id}]{eol}");
+    }
+    format!("[{id}]{eol}{}{eol}", lines.join(eol))
+}
+
+/// The line ending of `source`, a section's text taken from a file: the one its
+/// header carries, CRLF when the text has no line ending at all.
+fn eol_of(source: &str) -> &'static str {
+    match source.split_once('\n') {
+        Some((line, _)) if line.ends_with('\r') => "\r\n",
+        Some(_) => "\n",
+        None => "\r\n",
+    }
+}
+
+/// `text`, an `assignments.ini`, with every key naming `profile`, in any letter
+/// case, in any instance's section, dropped: the pool holds no profile of that
+/// name, so the key is dead, and a hand `on` under an instance would serve the
+/// profile the moment it is born.
+fn drop_profile_keys(text: &str, profile: &str) -> String {
+    let mut out = text.to_string();
+    for section in pai_core::ini::parse_sections(text) {
+        for key in section.keys.keys() {
+            if key.eq_ignore_ascii_case(profile) {
+                out = pai_core::ini::text::remove_key(&out, &section.id, key);
+            }
+        }
+    }
+    out
+}
+
+/// The ids, in the order of the record `record`, of the instances that assign
+/// `profile`. An instance assigns it with a key of its own: a section naming a
+/// key that names the id in any letter case, with `on`, `off` or `inherit`. A
+/// profile no section names is assigned by the hand `* = on` of an instance
+/// whose render holds it (`assign::rows` gives it `effective`, through the
+/// wildcard): `* = inherit` follows the pool's switch, so a switched-off profile
+/// stays out of that render and blocks nothing. The wildcard counts only when
+/// no key names the profile: a profile with a key of its own is assigned by
+/// that key, and the refusal names the instances that set it.
+fn assigned_instances(
+    assignments: &str,
+    record: &str,
+    enabled: &str,
+    disabled: &str,
+    profile: &str,
+) -> Vec<String> {
+    let sections = pai_core::ini::parse_sections(assignments);
+    let mut keyed: Vec<String> = Vec::new();
+    let mut served: Vec<String> = Vec::new();
+    for instance in pai_core::ini::parse_sections(record) {
+        let assigns = sections
+            .iter()
+            .find(|section| section.id.eq_ignore_ascii_case(&instance.id))
+            .is_some_and(|section| {
+                section.keys.iter().any(|(key, value)| {
+                    key.eq_ignore_ascii_case(profile)
+                        && ["on", "off", "inherit"]
+                            .iter()
+                            .any(|word| value.eq_ignore_ascii_case(word))
+                })
+            });
+        if assigns {
+            keyed.push(instance.id.clone());
+        }
+        let text = pai_core::ini::text::section_text(assignments, &instance.id);
+        let (_, rows) = pai_core::assign::rows(enabled, disabled, text.as_deref());
+        if rows
+            .iter()
+            .any(|row| row.via_all && row.effective && row.id.eq_ignore_ascii_case(profile))
+        {
+            served.push(instance.id);
+        }
+    }
+    if keyed.is_empty() {
+        served
+    } else {
+        keyed
+    }
+}
+
 /// The refusal of a rule that carries one value: the key, and the name the
 /// rule refused.
 fn one_value_refusal(key: &'static str, value: &str) -> ManagerError {
@@ -2567,6 +2941,14 @@ fn record_holder(text: &str, profile: &str) -> Option<String> {
         .map(|section| section.id)
 }
 
+/// The `judge_model_files` of [`check_contents`] and [`Manager::check_and_write`]:
+/// a write that judges the model files of the model profiles it puts in effect.
+const MODEL_FILES_JUDGE: bool = true;
+/// A write that leaves that check out: the create of a model profile, born
+/// switched off, names a model file judged when a switch-on or an assignment
+/// puts the profile in effect.
+const MODEL_FILES_SKIP: bool = false;
+
 /// The content checks of `file` for `contents`, against the files on disk:
 /// the instance file against the Server rules and its own render, `models.ini`
 /// and `models.ini.disabled` against the other model profile file and every
@@ -2576,7 +2958,9 @@ fn record_holder(text: &str, profile: &str) -> Option<String> {
 /// `instances.ini` names. Both model profile files are judged for their model
 /// files too: a model profile the write puts in effect on an instance names
 /// files the node has, and a file that instance's render is already missing
-/// is never re-judged. A save of a server profile an instance runs that
+/// is never re-judged; `judge_model_files` is [`MODEL_FILES_SKIP`] where a
+/// write lands a profile that is switched off and unassigned, whose file is
+/// judged at the switch-on or the assignment that makes it render. A save of a server profile an instance runs that
 /// changes `Devices` judges that instance's render on the cards the text
 /// written names (R3). The renders are judged on the same rule for the GPUs
 /// their model profiles name (L4: `device-draft` and `mmproj-device`), at the
@@ -2585,6 +2969,7 @@ fn check_contents(
     file: &ConfigFile,
     contents: &str,
     gpus: &dyn GpuTotals,
+    judge_model_files: bool,
 ) -> Result<(), pai_core::checks::Refusal> {
     use pai_core::checks;
     let dir = crate::paths::engine_config_dir();
@@ -2651,7 +3036,9 @@ fn check_contents(
             checks::models_file(contents, &old, &off, NO_MODELS_MAX)?;
             checks::model_profile_ids_free(contents, &old, &off)?;
             check_renders(&enabled, &disabled)?;
-            check_model_files(&on_disk(ASSIGNMENTS_FILE), &enabled, &disabled, &old, &off)?;
+            if judge_model_files {
+                check_model_files(&on_disk(ASSIGNMENTS_FILE), &enabled, &disabled, &old, &off)?;
+            }
             // The memory the render puts in effect, after the model files: a
             // model profile whose file is not on the node has no header to
             // read, and the missing file is the news that matters (it is also
@@ -2667,13 +3054,15 @@ fn check_contents(
             checks::models_disabled_file(contents, &old, &enabled_file)?;
             checks::model_profile_ids_free(contents, &old, &enabled_file)?;
             check_renders(&enabled, &disabled)?;
-            check_model_files(
-                &on_disk(ASSIGNMENTS_FILE),
-                &enabled,
-                &disabled,
-                &enabled_file,
-                &old,
-            )?;
+            if judge_model_files {
+                check_model_files(
+                    &on_disk(ASSIGNMENTS_FILE),
+                    &enabled,
+                    &disabled,
+                    &enabled_file,
+                    &old,
+                )?;
+            }
             check_profile_memory(&enabled, &disabled, &enabled_file, &old, gpus)?;
             check_device_bound(
                 &on_disk(ASSIGNMENTS_FILE),
@@ -2988,13 +3377,6 @@ fn check_renders(enabled: &str, disabled: &str) -> Result<(), pai_core::checks::
     }
     Ok(())
 }
-
-/// The model profile keys whose `model` file the engine puts on the node
-/// itself: `hf-repo` downloads it, `model-url` and `docker-repo` replace the
-/// value with a file the engine fetches (llama.cpp `common/arg.cpp`). A model
-/// profile carrying one of them names no file of the node, so the model-file
-/// check looks at nothing for it.
-const FETCH_KEYS: [&str; 3] = ["hf-repo", "model-url", "docker-repo"];
 
 /// A `model` value as the instance sees it: absolute as it stands, else under
 /// `cwd`, the folder the instance inherits. The one resolution the GPU memory
@@ -8760,18 +9142,17 @@ pub(crate) fn manager_model_file_check_e2e() {
         );
         kept(&before);
 
-        // A model profile with `hf-repo` and no `model` at all is never refused
-        // by this check: it names no file. It is the `model` rule's own, the key
-        // the manager answers today.
+        // A model profile with `hf-repo` and no `model` at all names the file
+        // the engine downloads, so it names no file of the node: the `model`
+        // rule accepts the fetch key and the save lands.
         let with = format!("{base}\n[repo]\nhf-repo = theos/Big-8B-Q4\n");
-        let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &with, false);
-        assert!(
-            matches!(&answer, Err(ManagerError::Invalid(r))
-                if r.key == "model-profile-no-model" && r.values == ["repo"]),
-            "`hf-repo` alone is the `model` rule's, never the model file's: {answer:?}"
+        assert_eq!(
+            answer,
+            Ok(()),
+            "`hf-repo` alone is a model the node downloads, refused by no check"
         );
-        kept(&before);
+        assert_eq!(text_of("models.ini"), with, "and the save landed");
     }
 
     // ── A model profile save: only where it is in effect ──────────────────
@@ -19404,6 +19785,1417 @@ mod tests {
         assert!(
             !signature.contains("keep_api_key"),
             "the compare-and-swap takes no key flag"
+        );
+    }
+}
+
+/// Creating a model profile (`CreateModelProfile`, ARCHITECTURE.md "Create,
+/// clone and delete model profiles from the web", slice MP1): `[<profile>]` and
+/// one line per value, appended to `models.ini.disabled`, born switched off and
+/// assigned nothing, never overwriting a name either pool file holds. Every
+/// other byte of the tree is kept: the switched-on file, the instance record and
+/// every render. The values are the file pick, the keys llama.cpp reads, sorted
+/// by key before anything is built, and the manager judges every byte itself
+/// before the lock, in this order: the shape (exactly one of `from` and
+/// `values`; `model` xor `hf-repo`; `hf-file` only with `hf-repo`; the three
+/// keys only) is `model-profile-bad-source [profile]`, an empty, control-space
+/// ridden or marker-carrying value is `model-profile-bad-text [key]` or
+/// `comment-markers [key]`, then the id is `invalid-model-profile-id
+/// [profile]`, a name either file holds in any letter case is
+/// `model-profile-name-taken [profile]`, and a clone's source that is no pool
+/// id, `*` included, is `no-model-profile-named [from]`. A clone is the source
+/// section's lines byte for byte under the new header, comments, key order and
+/// `load-on-startup` included, and is born switched off whatever the source is.
+/// Before the pool write, every key naming the new id in any letter case is
+/// removed from `assignments.ini`: they are dead keys (the pool does not hold
+/// the id), so no render changes, and a hand `on` key would serve the new
+/// profile at once. Guarded as a write of a served file is: `configure` first,
+/// the `As` form answered only to the bff's account for a current member of
+/// `pai`, one record of the action log per call.
+#[cfg(test)]
+pub(crate) fn manager_model_profile_create_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core_in = |allow: bool, group: FakeGroup, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(group)
+        .with_passwords(FakePasswords::new())
+        .with_log(log)
+    };
+    let core = |allow: bool, log: FakeActionLog| core_in(allow, FakeGroup::new(), log);
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let bytes_of = |name: &str| std::fs::read(sys.join(name)).expect("bytes");
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    // The outcome of each record, with the quotes the record puts around a
+    // kind's name taken off.
+    let outcomes = |lines: &[String]| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| {
+                l.rsplit_once("outcome=")
+                    .expect("outcome")
+                    .1
+                    .trim_matches('"')
+                    .to_string()
+            })
+            .collect()
+    };
+    // The values of a call, as the wire carries them: pairs of strings, in the
+    // order the caller sent them (the manager sorts them).
+    let vals = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    };
+    let refused = |key: &'static str, values: &[&str]| -> Result<(), ManagerError> {
+        Err(ManagerError::Invalid(pai_core::checks::Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }))
+    };
+    // The `model` line of a pool text, as it stands: `real_model_files` turned
+    // its value into a path of this test's tree.
+    let model_line_of = |text: &str| -> String {
+        text.lines()
+            .find(|line| line.starts_with("model = "))
+            .expect("a model line")
+            .to_string()
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    // Every file of the engine's directory, by name with its bytes: a refusal
+    // is pinned by the whole tree standing, not by the two pool files alone.
+    let snapshot = || -> Vec<(String, Vec<u8>)> {
+        let mut out: Vec<(String, Vec<u8>)> = std::fs::read_dir(&sys)
+            .expect("listing")
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                std::fs::read(entry.path()).ok().map(|bytes| (name, bytes))
+            })
+            .collect();
+        out.sort();
+        out
+    };
+
+    // The pool, and the records. `models.ini` holds `On-Profile`, switched on
+    // and cloned below, and `Twin`; `models.ini.disabled` holds `Off-Profile`.
+    // `X = on` names the id the first create writes, in the other letter case:
+    // a dead key a GUI delete or a hand edit leaves, which the create removes.
+    let pool_on = real_model_files(
+        dir.path(),
+        "[On-Profile]\n; a note\ntemp = 0.7\nmodel = /models/on.gguf\nload-on-startup = true\n\n[Twin]\nmodel = /models/twin.gguf\n",
+    );
+    let pool_off = real_model_files(dir.path(), "[Off-Profile]\nmodel = /models/off.gguf\n");
+    let seed_assignments = "[default]\nX = on\nkeep = inherit\n";
+    write_record(&sys, &["default"]);
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+    )
+    .expect("server profile");
+    std::fs::write(sys.join(ASSIGNMENTS_FILE), seed_assignments).expect(ASSIGNMENTS_FILE);
+    let m = core(true, FakeActionLog::new());
+    assert_eq!(
+        m.write_file(&desktop, "models.ini", &pool_on, false),
+        Ok(()),
+        "the pool stands first, so the renders exist"
+    );
+    assert_eq!(
+        m.write_file(&desktop, "models.ini.disabled", &pool_off, false),
+        Ok(()),
+        "and its switched-off half"
+    );
+    let render_of = text_of("models@default.ini");
+    assert!(
+        !render_of.contains("[On-Profile]") && !render_of.contains("[Off-Profile]"),
+        "the hand keys name no id of the pool, so the render holds no model profile: {}",
+        text_of("models@default.ini")
+    );
+
+    // ── A create writes the section at the end of the off file ─────────────
+    // `want` is the whole off file, kept byte for byte as the creates grow it.
+    let mut want;
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let group = FakeGroup::new();
+        let g = group.calls.clone();
+        let m = core_in(true, group, log);
+        let on_before = bytes_of("models.ini");
+        let record_before = bytes_of(INSTANCES_FILE);
+        let render_before = bytes_of("models@default.ini");
+        let before = listing();
+        want = text_of("models.ini.disabled");
+
+        assert_eq!(
+            m.create_model_profile(&desktop, "x", "", &vals(&[("model", "/m/x.gguf")])),
+            Ok(()),
+            "a new id with a model file"
+        );
+        want = format!("{want}[x]\nmodel = /m/x.gguf\n");
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            want,
+            "the section at the end of the off file, every other byte of it kept, and \
+             no blank line added to a text that ends with an ending"
+        );
+        assert_eq!(
+            bytes_of("models.ini"),
+            on_before,
+            "nothing lands in the switched-on file: the profile is born switched off"
+        );
+        assert_eq!(
+            bytes_of("models@default.ini"),
+            render_before,
+            "the render is kept byte for byte: an off, unassigned profile serves nothing"
+        );
+        assert_eq!(
+            text_of(ASSIGNMENTS_FILE),
+            "[default]\nkeep = inherit\n",
+            "born unassigned: the key naming the new id in the other case is gone, \
+             every other key and byte kept"
+        );
+        assert_eq!(
+            bytes_of(INSTANCES_FILE),
+            record_before,
+            "a create writes no instance record"
+        );
+        assert_eq!(listing(), before, "no new file, and no temp file left");
+        let calls = g.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            Vec::new(),
+            "a create touches no server profile, so it asks the group seam nothing: \
+             the pool, the record and the renders are model profile text, whose mode \
+             lets every user read them"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for name in [
+                "models.ini.disabled",
+                "models@default.ini",
+                ASSIGNMENTS_FILE,
+            ] {
+                assert_eq!(
+                    std::fs::metadata(sys.join(name))
+                        .expect("metadata")
+                        .permissions()
+                        .mode()
+                        & 0o7777,
+                    0o644,
+                    "the mode of {name}: the pool's files, the record and the render, \
+                     written by the create as a served write writes them"
+                );
+            }
+        }
+
+        // The Hugging Face pick: the two lines, sorted, and `hf-repo` alone.
+        assert_eq!(
+            m.create_model_profile(
+                &desktop,
+                "hf-pair",
+                "",
+                &vals(&[("hf-file", "m-Q8_0.gguf"), ("hf-repo", "org/model")])
+            ),
+            Ok(()),
+            "the pick of `GET api/hf/files`: a repository and the file inside it"
+        );
+        want = format!("{want}[hf-pair]\nhf-file = m-Q8_0.gguf\nhf-repo = org/model\n");
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            want,
+            "the two lines sorted by key, whatever order the call sent them in"
+        );
+        assert_eq!(
+            m.create_model_profile(&desktop, "hf-only", "", &vals(&[("hf-repo", "org/other")])),
+            Ok(()),
+            "`hf-repo` alone names the model the node downloads: the `model` rule accepts it"
+        );
+        want = format!("{want}[hf-only]\nhf-repo = org/other\n");
+        assert_eq!(text_of("models.ini.disabled"), want);
+        assert_eq!(
+            m.create_model_profile(
+                &desktop,
+                "nofile",
+                "",
+                &vals(&[("model", &dir.path().join("absent.gguf").to_string_lossy())])
+            ),
+            Ok(()),
+            "a model file the node has not is accepted: the profile is off and \
+             unassigned, so it renders nowhere and the file is judged at the switch-on"
+        );
+        want = format!(
+            "{want}[nofile]\nmodel = {}\n",
+            dir.path().join("absent.gguf").to_string_lossy()
+        );
+        assert_eq!(text_of("models.ini.disabled"), want);
+
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="create_model_profile" target="x" caller=":1.42" principal=- outcome=ok"#
+                    .to_string(),
+                r#"action="create_model_profile" target="hf-pair" caller=":1.42" principal=- outcome=ok"#
+                    .to_string(),
+                r#"action="create_model_profile" target="hf-only" caller=":1.42" principal=- outcome=ok"#
+                    .to_string(),
+                r#"action="create_model_profile" target="nofile" caller=":1.42" principal=- outcome=ok"#
+                    .to_string(),
+            ],
+            "one record per call, the new profile as its target"
+        );
+    }
+
+    // ── The ending style of the file, kept ────────────────────────────────
+    {
+        let m = core(true, FakeActionLog::new());
+
+        std::fs::write(
+            sys.join("models.ini.disabled"),
+            "[Hand]\r\nmodel = /m/hand.gguf\r\n",
+        )
+        .expect("a CRLF off file");
+        assert_eq!(
+            m.create_model_profile(&desktop, "crlf", "", &vals(&[("model", "/m/crlf.gguf")])),
+            Ok(()),
+            "a create into a pool a hand edit wrote with CRLF"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            "[Hand]\r\nmodel = /m/hand.gguf\r\n[crlf]\r\nmodel = /m/crlf.gguf\r\n",
+            "the new section takes the file's ending, and the bytes before it stand"
+        );
+
+        std::fs::write(
+            sys.join("models.ini.disabled"),
+            "[Hand]\nmodel = /m/hand.gguf",
+        )
+        .expect("a pool with no ending on its last line");
+        assert_eq!(
+            m.create_model_profile(&desktop, "noeol", "", &vals(&[("model", "/m/noeol.gguf")])),
+            Ok(()),
+            "a create into a text whose last line has no ending"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            "[Hand]\nmodel = /m/hand.gguf\n[noeol]\nmodel = /m/noeol.gguf\n",
+            "one ending first: the last line of the file and the new header do not share a line"
+        );
+
+        std::fs::remove_file(sys.join("models.ini.disabled")).expect("no off file");
+        assert_eq!(
+            m.create_model_profile(
+                &desktop,
+                "brand-new",
+                "",
+                &vals(&[("model", "/m/new.gguf")])
+            ),
+            Ok(()),
+            "a node with no off file at all"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            "[brand-new]\r\nmodel = /m/new.gguf\r\n",
+            "the file is created holding the section alone, with the CRLF ending the \
+             GUI writes when it has no file to read one from"
+        );
+    }
+
+    // ── A clone: the source's lines, byte for byte, born switched off ──────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        std::fs::write(sys.join("models.ini.disabled"), "").expect("an empty off file");
+        let on_before = bytes_of("models.ini");
+        let render_before = bytes_of("models@default.ini");
+
+        assert_eq!(
+            m.create_model_profile(&desktop, "x-clone", "On-Profile", &vals(&[])),
+            Ok(()),
+            "a clone of a profile that is switched on"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            // The source's lines under the new header, its trailing blank
+            // lines left out: the separator before the next section is layout,
+            // not the source's lines (MP1, ARCHITECTURE.md done-when).
+            format!(
+                "[x-clone]\n; a note\ntemp = 0.7\n{}\nload-on-startup = true\n",
+                model_line_of(&pool_on)
+            ),
+            "the source's lines as they stand, under the new header: the comment, the \
+             key order, and `load-on-startup` too, with no blank line at the end"
+        );
+        assert_eq!(
+            bytes_of("models.ini"),
+            on_before,
+            "the source is kept byte for byte, and the clone is not in the switched-on file"
+        );
+        assert_eq!(
+            bytes_of("models@default.ini"),
+            render_before,
+            "the render is kept: the clone is switched off, so it serves nothing"
+        );
+
+        // The source is looked up as the render does: the other file, and any
+        // letter case.
+        std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("the off pool");
+        assert_eq!(
+            m.create_model_profile(&desktop, "off-clone", "OFF-PROFILE", &vals(&[])),
+            Ok(()),
+            "a source named in the other letter case, in the off file"
+        );
+        assert!(
+            text_of("models.ini.disabled")
+                .contains(&format!("[off-clone]\n{}\n", model_line_of(&pool_off))),
+            "the source's own line, copied: {}",
+            text_of("models.ini.disabled")
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="create_model_profile" target="x-clone" caller=":1.42" principal=- outcome=ok"#
+                    .to_string(),
+                r#"action="create_model_profile" target="off-clone" caller=":1.42" principal=- outcome=ok"#
+                    .to_string(),
+            ],
+            "one record per clone"
+        );
+    }
+
+    // ── A mid-file source and a last-section source clone the same ─────────
+    {
+        let log = FakeActionLog::new();
+        let m = core(true, log);
+        let same = real_model_files(
+            dir.path(),
+            "[mid-src]\n; a note\ntemp = 0.3\nmodel = /models/clone-same.gguf\n\n[last-src]\n; a note\ntemp = 0.3\nmodel = /models/clone-same.gguf\n",
+        );
+        std::fs::write(sys.join("models.ini.disabled"), &same).expect("the off pool");
+        assert_eq!(
+            m.create_model_profile(&desktop, "from-mid", "mid-src", &vals(&[])),
+            Ok(()),
+            "a clone of a source sitting in the middle of the file"
+        );
+        assert_eq!(
+            m.create_model_profile(&desktop, "from-last", "last-src", &vals(&[])),
+            Ok(()),
+            "a clone of a source that is the file's last section"
+        );
+        let off = text_of("models.ini.disabled");
+        let sec = |id: &str| -> String {
+            pai_core::ini::text::section_text(&off, id).expect("the clone is there")
+        };
+        assert_eq!(
+            sec("from-mid")["[from-mid]\n".len()..],
+            sec("from-last")["[from-last]\n".len()..],
+            "the source's trailing blank lines are layout, not its lines: a mid-file \
+             source and a last-section source of the same lines clone the same bytes: {off}"
+        );
+        assert_eq!(
+            off,
+            format!(
+                "{same}[from-mid]\n; a note\ntemp = 0.3\n{model}\n[from-last]\n; a note\ntemp = 0.3\n{model}\n",
+                model = model_line_of(&same)
+            ),
+            "the whole file the two clones leave: each ends with one line ending, and \
+             the call's section follows the last line with no blank between"
+        );
+    }
+
+    // ── Every refusal, and the whole tree standing behind it ───────────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        std::fs::write(sys.join("models.ini"), &pool_on).expect("the on pool");
+        std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("the off pool");
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), seed_assignments).expect(ASSIGNMENTS_FILE);
+        std::fs::write(
+            sys.join(INSTANCES_FILE),
+            "[default]\nServerProfile = default\n",
+        )
+        .expect(INSTANCES_FILE);
+        let before = snapshot();
+
+        for (id, from, values, key) in [
+            // A name either file holds, in any letter case: a create never overwrites.
+            (
+                "twin",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "model-profile-name-taken",
+            ),
+            (
+                "TWIN",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "model-profile-name-taken",
+            ),
+            (
+                "OFF-PROFILE",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "model-profile-name-taken",
+            ),
+            // The id rule.
+            (
+                "*",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "invalid-model-profile-id",
+            ),
+            (
+                "a b",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "invalid-model-profile-id",
+            ),
+            (
+                "",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "invalid-model-profile-id",
+            ),
+            (
+                "../x",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "invalid-model-profile-id",
+            ),
+            (
+                "a[b]",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "invalid-model-profile-id",
+            ),
+            (
+                "a;b",
+                "",
+                vec![("model", "/m/x.gguf")],
+                "invalid-model-profile-id",
+            ),
+            // The source: from the id, from the pick, from both, from neither.
+            (
+                "dup",
+                "On-Profile",
+                vec![("model", "/m/x.gguf")],
+                "model-profile-bad-source",
+            ),
+            ("dup", "", vec![], "model-profile-bad-source"),
+            (
+                "dup",
+                "",
+                vec![("hf-file", "m.gguf")],
+                "model-profile-bad-source",
+            ),
+            (
+                "dup",
+                "",
+                vec![("model", "/m/a.gguf"), ("hf-repo", "org/model")],
+                "model-profile-bad-source",
+            ),
+            (
+                "dup",
+                "",
+                vec![("n-gpu-layers", "99")],
+                "model-profile-bad-source",
+            ),
+            (
+                "dup",
+                "",
+                vec![("model", "/m/a.gguf"), ("model", "/m/b.gguf")],
+                "model-profile-bad-source",
+            ),
+            ("nosuch-clone", "nosuch", vec![], "no-model-profile-named"),
+            ("star-clone", "*", vec![], "no-model-profile-named"),
+            // The values: nothing to write, a control character, a space at an end.
+            ("dup", "", vec![("model", "")], "model-profile-bad-text"),
+            ("dup", "", vec![("model", "  ")], "model-profile-bad-text"),
+            ("dup", "", vec![("model", "\t")], "model-profile-bad-text"),
+            (
+                "dup",
+                "",
+                vec![("model", "/m/a.gguf\n[evil]\ntemp = 1")],
+                "model-profile-bad-text",
+            ),
+            (
+                "dup",
+                "",
+                vec![("model", "/m/a.gguf\rx")],
+                "model-profile-bad-text",
+            ),
+            (
+                "dup",
+                "",
+                vec![("model", "/m/a\0b")],
+                "model-profile-bad-text",
+            ),
+            (
+                "dup",
+                "",
+                vec![("model", "/m/a\u{7f}b")],
+                "model-profile-bad-text",
+            ),
+            (
+                "dup",
+                "",
+                vec![("model", "/m/a.gguf\u{2003}")],
+                "model-profile-bad-text",
+            ),
+            (
+                "dup",
+                "",
+                vec![("model", "\u{2003}/m/a.gguf")],
+                "model-profile-bad-text",
+            ),
+            (
+                "dup",
+                "",
+                vec![("hf-repo", "org/model\u{a0}")],
+                "model-profile-bad-text",
+            ),
+            (
+                "dup",
+                "",
+                vec![("hf-repo", "org/model"), ("hf-file", "m.gguf\nx")],
+                "model-profile-bad-text",
+            ),
+            // A marker: the value would be cut as an inline comment on reload.
+            ("dup", "", vec![("model", "/m/a;b")], "comment-markers"),
+            ("dup", "", vec![("model", "/m/a#b")], "comment-markers"),
+            (
+                "dup",
+                "",
+                vec![("hf-repo", "org/model#q8")],
+                "comment-markers",
+            ),
+            ("dup", "", vec![("hf-file", "m;m.gguf")], "comment-markers"),
+            // The keys: the call writes every key as a line of the file, so a
+            // key that is no key of the INI forges a line, a comment marker or
+            // a whole section the name, id and source checks never saw.
+            (
+                "dup",
+                "",
+                vec![("a\n[x]\nmodel", "1")],
+                "model-profile-bad-text",
+            ),
+            ("dup", "", vec![("a=b", "1")], "model-profile-bad-text"),
+            ("dup", "", vec![("a;b", "1")], "model-profile-bad-text"),
+            ("dup", "", vec![("a#b", "1")], "model-profile-bad-text"),
+            ("dup", "", vec![("[x]", "1")], "model-profile-bad-text"),
+            ("dup", "", vec![("a b", "1")], "model-profile-bad-text"),
+            ("dup", "", vec![(" a", "1")], "model-profile-bad-text"),
+            ("dup", "", vec![("", "1")], "model-profile-bad-text"),
+            // The same keys on a clone: the shape lets any key through as an
+            // override, so today the line is written raw beside the source's.
+            (
+                "kc-forge",
+                "On-Profile",
+                vec![("a\n[x]\nmodel", "1")],
+                "model-profile-bad-text",
+            ),
+            (
+                "kc-eq",
+                "On-Profile",
+                vec![("a=b", "1")],
+                "model-profile-bad-text",
+            ),
+            (
+                "kc-semi",
+                "On-Profile",
+                vec![("a;b", "1")],
+                "model-profile-bad-text",
+            ),
+            (
+                "kc-hash",
+                "On-Profile",
+                vec![("a#b", "1")],
+                "model-profile-bad-text",
+            ),
+            (
+                "kc-bracket",
+                "On-Profile",
+                vec![("[x]", "1")],
+                "model-profile-bad-text",
+            ),
+            (
+                "kc-space",
+                "On-Profile",
+                vec![("a b", "1")],
+                "model-profile-bad-text",
+            ),
+            (
+                "kc-lead",
+                "On-Profile",
+                vec![(" a", "1")],
+                "model-profile-bad-text",
+            ),
+            (
+                "kc-empty",
+                "On-Profile",
+                vec![("", "1")],
+                "model-profile-bad-text",
+            ),
+            // The order: the shape and the values are judged before the id, and
+            // every one of them before the files are read.
+            (
+                "*",
+                "*",
+                vec![("model", "/m/x.gguf")],
+                "model-profile-bad-source",
+            ),
+            (
+                "*",
+                "",
+                vec![("model", "/m/a\nb")],
+                "model-profile-bad-text",
+            ),
+            (
+                "twin",
+                "",
+                vec![("model", "/m/a\nb")],
+                "model-profile-bad-text",
+            ),
+        ] {
+            let wanted: Vec<&str> = if key == "no-model-profile-named" {
+                vec![from]
+            } else if key == "model-profile-bad-text" || key == "comment-markers" {
+                // Both name the key the bad value sits under, as the pipe and
+                // D-Bus tests of the same rule expect it.
+                vec![values
+                    .iter()
+                    .find(|(_, v)| {
+                        v.is_empty()
+                            || v.trim() != *v
+                            || v.chars().any(|c| c.is_control())
+                            || v.contains(';')
+                            || v.contains('#')
+                    })
+                    .map(|(k, _)| *k)
+                    .unwrap_or(values[0].0)]
+            } else {
+                vec![id]
+            };
+            assert_eq!(
+                m.create_model_profile(&desktop, id, from, &vals(&values)),
+                refused(key, &wanted),
+                "create of {id:?} from {from:?} with {values:?}"
+            );
+            assert_eq!(
+                snapshot(),
+                before,
+                "a create refused at {id:?} {from:?} {values:?} changed no byte, anywhere"
+            );
+        }
+        assert_eq!(
+            text_of(ASSIGNMENTS_FILE),
+            seed_assignments,
+            "the dead key `X = on` stays: a create refused at the shape, the id, the \
+             values, the taken name or the source never reaches the cleanup of step 6, \
+             so it writes no record at all"
+        );
+        assert_eq!(
+            listing(),
+            before
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>(),
+            "and no file was created"
+        );
+        let got = records(&lines);
+        assert_eq!(
+            outcomes(&got),
+            vec!["Invalid"; 51],
+            "one record per refused call, every one of them the check's refusal"
+        );
+        assert!(
+            got.iter()
+                .all(|l| l.starts_with(r#"action="create_model_profile" target="#)),
+            "every record is the create's own: {got:?}"
+        );
+    }
+
+    // ── A pool write that lands, a render that does not: the cleanup stays ─
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), "[default]\ny = on\n").expect(ASSIGNMENTS_FILE);
+        std::fs::write(
+            sys.join("models.ini.disabled"),
+            "[Hand]\nmodel = /m/hand.gguf\n",
+        )
+        .expect("the off pool");
+        // The render cannot land: an atomic write cannot rename a file onto a
+        // directory. A mode change is no fixture, the service runs as root.
+        let render = sys.join("models@default.ini");
+        std::fs::remove_file(&render).expect("the render aside");
+        std::fs::create_dir(&render).expect("a directory in the render's place");
+
+        let e = m.create_model_profile(&desktop, "y", "", &vals(&[("model", "/m/y.gguf")]));
+        assert!(
+            matches!(e, Err(ManagerError::Io(_))),
+            "the render's own failure is the answer: {e:?}"
+        );
+        assert!(
+            text_of("models.ini.disabled").contains("[y]\nmodel = /m/y.gguf\n"),
+            "the pool write landed, as a write of a pool file does when a render fails: {}",
+            text_of("models.ini.disabled")
+        );
+        assert!(
+            !text_of(ASSIGNMENTS_FILE).contains("X = on"),
+            "the dead key stays removed: the cleanup is kept, the pool holds the id now: {}",
+            text_of(ASSIGNMENTS_FILE)
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="create_model_profile" target="y" caller=":1.42" principal=- outcome="Io""#
+                    .to_string()
+            ],
+            "the failure is recorded, as every guarded call is"
+        );
+
+        std::fs::remove_dir(&render).expect("the directory away");
+        std::fs::write(&render, "[*]\n").expect("the render back");
+    }
+
+    // ── The gate: configure, and the `As` form for a member of `pai` ──────
+    {
+        std::fs::write(sys.join("models.ini"), &pool_on).expect("the on pool");
+        std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("the off pool");
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), seed_assignments).expect(ASSIGNMENTS_FILE);
+
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, log);
+        let before = snapshot();
+        assert_eq!(
+            m.create_model_profile(&desktop, "gate-1", "", &vals(&[("model", "/m/a.gguf")])),
+            Err(ManagerError::NotAuthorized),
+            "a caller the authority refuses for configure"
+        );
+        assert_eq!(
+            snapshot(),
+            before,
+            "a refused caller wrote nothing, anywhere"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="create_model_profile" target="gate-1" caller=":1.42" principal=- outcome=refused"#
+                    .to_string()
+            ],
+            "the guard's refusal is recorded"
+        );
+    }
+    {
+        std::fs::write(sys.join("models.ini"), &pool_on).expect("the on pool");
+        std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("the off pool");
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let vouching = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.create_model_profile(&member, "alice-mp", "", &vals(&[("model", "/m/a.gguf")])),
+            Ok(()),
+            "the bff's account, for a member of `pai`"
+        );
+        assert!(
+            text_of("models.ini.disabled").contains("[alice-mp]\nmodel = /m/a.gguf\n"),
+            "and the profile is there"
+        );
+        assert_eq!(
+            m.create_model_profile(&outsider, "bob-mp", "", &vals(&[("model", "/m/a.gguf")])),
+            Err(ManagerError::NotAuthorized),
+            "the bff's account, for a caller outside `pai`"
+        );
+        assert_eq!(
+            m.create_model_profile(&vouching, "x", "", &vals(&[("model", "/m/a.gguf")])),
+            Err(ManagerError::NotAuthorized),
+            "a caller that is not the bff vouches for nobody"
+        );
+        assert!(
+            !text_of("models.ini.disabled").contains("[bob-mp]"),
+            "the refused `As` create wrote nothing"
+        );
+        assert!(
+            !text_of("models.ini.disabled").contains("[x]"),
+            "nor did the one that is not the bff's"
+        );
+        let got = records(&lines);
+        assert_eq!(
+            got.iter()
+                .map(|l| l.rsplit_once("outcome=").expect("outcome").1.to_string())
+                .collect::<Vec<_>>(),
+            vec!["ok", "refused", "refused"],
+            "the accepted call ok, every `As` refusal recorded as refused"
+        );
+        assert!(
+            got[0].starts_with(r#"action="create_model_profile" target="alice-mp" caller=":1.9""#),
+            "the record names the bff's account, as every `As` record does: {got:?}"
+        );
+    }
+}
+
+/// Deleting a model profile (`DeleteModelProfile`, ARCHITECTURE.md "Create,
+/// clone and delete model profiles from the web", slice MP1): the profile's own
+/// section, alone, out of `models.ini.disabled`, every other byte of the tree
+/// kept. The checks, under the lock, in this order: the id rule fails, or the id
+/// is `*`, and it is `no-model-profile-named [profile]`, never
+/// `invalid-model-profile-id`, and before any file is read; a profile
+/// `models.ini` holds in any letter case, a twin left in both files included, is
+/// `model-profile-enabled [profile]` (switch it off first), even when an
+/// instance assigns it; a profile neither pool file holds is
+/// `no-model-profile-named [profile]`, a key of `assignments.ini` notwithstanding;
+/// a profile an instance's section names with `inherit`, `on` or `off` (any
+/// letter case), or that a hand `* = on` serves, is **`model-profile-assigned
+/// [profile, "<a>, <b>"]`** with the ids of every such instance, in the record's
+/// own order, joined with `, `; a record that cannot be read is `Io`, never the
+/// "unused" of an empty list. `* = inherit` serves nothing of itself, so it does
+/// not block. The write is `check_and_write(ModelsDisabled, …)`: every section of
+/// the id, repeated in any letter case, is gone with `ini::text::delete_section`
+/// and nothing else moves, the renders included. Guarded as a write of a served
+/// file is: `configure` first, the `As` form answered only to the bff's account
+/// for a current member of `pai`, one record of the action log per call.
+#[cfg(test)]
+pub(crate) fn manager_model_profile_delete_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use pai_core::ini::text::delete_section;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core_in = |allow: bool, group: FakeGroup, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(group)
+        .with_passwords(FakePasswords::new())
+        .with_log(log)
+    };
+    let core = |allow: bool, log: FakeActionLog| core_in(allow, FakeGroup::new(), log);
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let bytes_of = |name: &str| std::fs::read(sys.join(name)).expect("bytes");
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    // The outcome of each record, with the quotes the record puts around a
+    // kind's name taken off.
+    let outcomes = |lines: &[String]| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| {
+                l.rsplit_once("outcome=")
+                    .expect("outcome")
+                    .1
+                    .trim_matches('"')
+                    .to_string()
+            })
+            .collect()
+    };
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    let refused = |key: &'static str, values: &[&str]| -> Result<(), ManagerError> {
+        Err(ManagerError::Invalid(pai_core::checks::Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }))
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let snapshot = || -> Vec<(String, Vec<u8>)> {
+        let mut out: Vec<(String, Vec<u8>)> = std::fs::read_dir(&sys)
+            .expect("listing")
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                std::fs::read(entry.path()).ok().map(|bytes| (name, bytes))
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    // Every render, by name with its bytes.
+    let renders = || -> Vec<(String, Vec<u8>)> {
+        listing()
+            .into_iter()
+            .filter(|name| name.starts_with("models@"))
+            .map(|name| (name.clone(), bytes_of(&name)))
+            .collect()
+    };
+
+    // The three instances of the record, and the pool: `On-One` (switched on,
+    // `load-on-startup`) and `Twin` in `models.ini`; `off-one`, the twin's other
+    // copy, `two-places`, `Repeated` and a second copy spelled in the other case
+    // in `models.ini.disabled`. A twin is what an interrupted switch leaves.
+    const IDS: [&str; 3] = ["default", "lan-2", "lan-3"];
+    write_record(&sys, &IDS);
+    let pool_on = real_model_files(
+        dir.path(),
+        "[On-One]\nmodel = /models/on1.gguf\nload-on-startup = true\n\n[Twin]\nmodel = /models/twin.gguf\n",
+    );
+    let pool_off = real_model_files(
+        dir.path(),
+        "[off-one]\nmodel = /models/off1.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n\n[two-places]\n; a note\ntemp = 0.3\nmodel = /models/two.gguf\n\n[Repeated]\nmodel = /models/rep1.gguf\n\n[repeated]\nmodel = /models/rep2.gguf\n\n[Star-Served]\nmodel = /models/star.gguf\n",
+    );
+    // The pool and the record of the assignments, and the render of every
+    // instance as the pool and its own section give it: a fixture that seeds
+    // the pool by hand writes no render of its own.
+    let seed = |on: &str, off: &str, assignments: &str| {
+        std::fs::write(sys.join("models.ini"), on).expect("models.ini");
+        std::fs::write(sys.join("models.ini.disabled"), off).expect("models.ini.disabled");
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), assignments).expect(ASSIGNMENTS_FILE);
+        for id in IDS {
+            std::fs::write(
+                sys.join(format!("models@{id}.ini")),
+                pai_core::assign::render(on, off, Some(&section(assignments, id))),
+            )
+            .expect("render");
+        }
+    };
+
+    // The keys: `Off-One` and `two-places` under `default`, `On-One` and
+    // `TWO-PLACES` under `lan-2` (the other case, and an `off`), `On-Three` a key
+    // of a profile the pool does not hold, and a hand `* = on` under `lan-3`.
+    const KEYS: &str = "[default]\nOff-One = inherit\ntwo-places = inherit\nOn-Three = off\n\n[lan-2]\nOn-One = inherit\nTWO-PLACES = off\n\n[lan-3]\n* = on\n";
+
+    // ── Every refusal, and the whole tree standing behind it ───────────────
+    {
+        seed(&pool_on, &pool_off, KEYS);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let group = FakeGroup::new();
+        let g = group.calls.clone();
+        let m = core_in(true, group, log);
+        let before = snapshot();
+
+        for (id, key, values) in [
+            // Switched on: step 2, before the assignments of step 3, which
+            // `lan-2`'s key would answer.
+            ("on-one", "model-profile-enabled", &["on-one"][..]),
+            ("ON-ONE", "model-profile-enabled", &["ON-ONE"]),
+            // The twin an interrupted switch left in both files: on.
+            ("twin", "model-profile-enabled", &["twin"]),
+            // Assigned, in the other case, and `inherit`: a row the admin set.
+            ("off-one", "model-profile-assigned", &["off-one", "default"]),
+            ("OFF-ONE", "model-profile-assigned", &["OFF-ONE", "default"]),
+            // Two instances, named in the record's order: the `inherit` of
+            // `default` first, the `off` of `lan-2` with it.
+            (
+                "two-places",
+                "model-profile-assigned",
+                &["two-places", "default, lan-2"],
+            ),
+            // Served only through a hand `* = on`: a delete would leave a key
+            // that the next profile of the id inherits.
+            (
+                "star-served",
+                "model-profile-assigned",
+                &["star-served", "lan-3"],
+            ),
+            // Not in the pool at all, and a key of it is no proof.
+            ("nope", "no-model-profile-named", &["nope"]),
+            ("On-Three", "no-model-profile-named", &["On-Three"]),
+            // No id of its own: the id rule and `*` answer the pool's refusal,
+            // not `invalid-model-profile-id`, and no path is built.
+            ("*", "no-model-profile-named", &["*"]),
+            ("a b", "no-model-profile-named", &["a b"]),
+            ("", "no-model-profile-named", &[""]),
+            ("../x", "no-model-profile-named", &["../x"]),
+            ("a[b]", "no-model-profile-named", &["a[b]"]),
+        ] {
+            assert_eq!(
+                m.delete_model_profile(&desktop, id),
+                refused(key, values),
+                "delete of {id:?}"
+            );
+            assert_eq!(
+                snapshot(),
+                before,
+                "a delete refused at {id:?} changed no byte, anywhere"
+            );
+        }
+        assert_eq!(
+            g.lock().unwrap().clone(),
+            Vec::new(),
+            "a refused delete asks the group seam nothing"
+        );
+        let got = records(&lines);
+        assert_eq!(
+            outcomes(&got),
+            vec!["Invalid"; 14],
+            "one record per refused call, every one of them the check's refusal"
+        );
+        assert!(
+            got.iter()
+                .all(|l| l.starts_with(r#"action="delete_model_profile" target="#)),
+            "every record is the delete's own: {got:?}"
+        );
+    }
+
+    // ── The record cannot be read: `Io`, never "unused" ────────────────────
+    {
+        seed(&pool_on, &pool_off, KEYS);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let on_before = bytes_of("models.ini");
+        let off_before = bytes_of("models.ini.disabled");
+        let kept = renders();
+        std::fs::remove_file(sys.join(INSTANCES_FILE)).expect("the record out");
+        std::fs::create_dir(sys.join(INSTANCES_FILE)).expect("a directory in its place");
+
+        assert_eq!(
+            m.delete_model_profile(&desktop, "repeated"),
+            Err(ManagerError::Io(std::io::ErrorKind::IsADirectory)),
+            "a record that cannot be read answers the read's own kind, not the \
+             empty list of a node with no instance"
+        );
+        // The id is judged before any file: `*` answers the pool's refusal even
+        // with the record unreadable.
+        assert_eq!(
+            m.delete_model_profile(&desktop, "*"),
+            refused("no-model-profile-named", &["*"]),
+            "the id rule runs before the record is read"
+        );
+        assert_eq!(
+            bytes_of("models.ini"),
+            on_before,
+            "nothing removed from the switched-on file"
+        );
+        assert_eq!(
+            bytes_of("models.ini.disabled"),
+            off_before,
+            "and nothing from the switched-off one"
+        );
+        assert_eq!(renders(), kept, "and no render written");
+        assert!(sys.join(INSTANCES_FILE).is_dir(), "the path stands");
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="delete_model_profile" target="repeated" caller=":1.42" principal=- outcome="Io""#.to_string(),
+                r#"action="delete_model_profile" target="*" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            ],
+            "the read's failure is recorded as every guarded call is"
+        );
+        std::fs::remove_dir(sys.join(INSTANCES_FILE)).expect("the directory away");
+        write_record(&sys, &IDS);
+    }
+
+    // ── A pool file cannot be read: `Io`, nothing removed ──────────────────
+    {
+        seed(&pool_on, &pool_off, KEYS);
+        let m = core(true, FakeActionLog::new());
+        let off_before = bytes_of("models.ini.disabled");
+        let kept = renders();
+        std::fs::remove_file(sys.join("models.ini")).expect("models.ini out");
+        std::fs::create_dir(sys.join("models.ini")).expect("a directory in its place");
+        assert_eq!(
+            m.delete_model_profile(&desktop, "repeated"),
+            Err(ManagerError::Io(std::io::ErrorKind::IsADirectory)),
+            "the switched-on file is read first: its failure is the answer"
+        );
+        assert_eq!(
+            bytes_of("models.ini.disabled"),
+            off_before,
+            "the file the delete writes keeps every byte"
+        );
+        assert_eq!(renders(), kept, "and no render written");
+        std::fs::remove_dir(sys.join("models.ini")).expect("the directory away");
+    }
+
+    // ── An accepted delete: the section alone, out ─────────────────────────
+    // The keys of the profiles this block deletes are gone: `* = inherit` serves
+    // nothing of itself, so it does not block, and no key names them.
+    const FREE: &str = "[default]\nkeep = inherit\n\n[lan-2]\n* = inherit\n";
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        seed(&pool_on, &pool_off, FREE);
+        let on_before = bytes_of("models.ini");
+        let record_before = bytes_of(INSTANCES_FILE);
+        let keys_before = bytes_of(ASSIGNMENTS_FILE);
+        let kept = renders();
+        let before = listing();
+
+        // Both copies of `repeated`, spelled in two cases, go: the reader finds a
+        // section ignoring the letter case, so one copy left would be the same
+        // profile.
+        assert_eq!(
+            m.delete_model_profile(&desktop, "repeated"),
+            Ok(()),
+            "a profile no instance assigns, in the switched-off file"
+        );
+        let want = delete_section(
+            &delete_section(&pool_off, "repeated").expect("one copy"),
+            "repeated",
+        )
+        .expect("the other copy");
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            want,
+            "every section of the id is gone, repeated copies and all, every other \
+             byte of the file kept"
+        );
+        assert!(
+            !text_of("models.ini.disabled").contains("[Repeated]")
+                && !text_of("models.ini.disabled").contains("[repeated]"),
+            "no copy is left"
+        );
+        assert_eq!(
+            section(&text_of("models.ini.disabled"), "star-served"),
+            section(&pool_off, "Star-Served"),
+            "the neighbour's section is the bytes it was, its case and all"
+        );
+        assert_eq!(
+            bytes_of("models.ini"),
+            on_before,
+            "the switched-on file: nothing"
+        );
+        assert_eq!(
+            bytes_of(ASSIGNMENTS_FILE),
+            keys_before,
+            "a delete writes no assignment key: it refuses one that has any"
+        );
+        assert_eq!(
+            bytes_of(INSTANCES_FILE),
+            record_before,
+            "and no instance record"
+        );
+        assert_eq!(
+            renders(),
+            kept,
+            "and no render moves: an unassigned profile is in none of them"
+        );
+        assert_eq!(listing(), before, "no new file, and no temp file left");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(sys.join("models.ini.disabled"))
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o644,
+                "the mode of the pool file the delete wrote"
+            );
+        }
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="delete_model_profile" target="repeated" caller=":1.42" principal=- outcome=ok"#
+                    .to_string()
+            ],
+            "one record, the profile as its target"
+        );
+
+        // The id in the other case, and a file whose last line has no ending.
+        assert_eq!(
+            m.delete_model_profile(&desktop, "STAR-SERVED"),
+            Ok(()),
+            "the id given in the other letter case is the same profile"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            delete_section(&want, "star-served").expect("the section"),
+            "the section is found ignoring the case, as the reader finds it"
+        );
+
+        // The last section, with no ending of its own: the file keeps standing,
+        // empty.
+        std::fs::write(
+            sys.join("models.ini.disabled"),
+            "[Last]\nmodel = /m/last.gguf",
+        )
+        .expect("an unterminated pool");
+        assert_eq!(
+            m.delete_model_profile(&desktop, "last"),
+            Ok(()),
+            "the only profile of the file"
+        );
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            "",
+            "the file stands, empty: a delete removes a section, not the file"
+        );
+
+        // The CRLF file a hand edit wrote, with its ending kept for what is left.
+        let crlf_seed = "[Keep]\r\nmodel = /m/keep.gguf\r\n\r\n[Crlf]\r\nmodel = /m/crlf.gguf\r\n";
+        std::fs::write(sys.join("models.ini.disabled"), crlf_seed).expect("a CRLF off file");
+        assert_eq!(
+            m.delete_model_profile(&desktop, "crlf"),
+            Ok(()),
+            "a delete from a pool a hand edit wrote with CRLF"
+        );
+        let crlf_want = delete_section(crlf_seed, "crlf").expect("the section");
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            crlf_want,
+            "the section out, every other byte kept"
+        );
+        assert!(
+            crlf_want.starts_with("[Keep]\r\nmodel = /m/keep.gguf\r\n"),
+            "the neighbour's section keeps its CRLF ending: {crlf_want:?}"
+        );
+        assert!(
+            !text_of("models.ini.disabled").contains("[Crlf]"),
+            "and the profile's section is gone"
+        );
+
+        // Gone already: the second delete of the same id is the pool's refusal,
+        // and writes nothing.
+        let off_before = bytes_of("models.ini.disabled");
+        let before = snapshot();
+        assert_eq!(
+            m.delete_model_profile(&desktop, "crlf"),
+            refused("no-model-profile-named", &["crlf"]),
+            "a profile that is not in the pool"
+        );
+        assert_eq!(
+            snapshot(),
+            before,
+            "and a second delete of it changed no byte"
+        );
+        assert_eq!(bytes_of("models.ini.disabled"), off_before);
+    }
+
+    // ── The gate: configure, and the `As` form for a member of `pai` ───────
+    {
+        seed(&pool_on, &pool_off, FREE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, log);
+        let before = snapshot();
+        assert_eq!(
+            m.delete_model_profile(&desktop, "star-served"),
+            Err(ManagerError::NotAuthorized),
+            "a caller the authority refuses for configure"
+        );
+        assert_eq!(
+            snapshot(),
+            before,
+            "a refused caller removed nothing, anywhere"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="delete_model_profile" target="star-served" caller=":1.42" principal=- outcome=refused"#
+                    .to_string()
+            ],
+            "the guard's refusal is recorded"
+        );
+    }
+    {
+        seed(&pool_on, &pool_off, FREE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let vouching = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.delete_model_profile(&member, "star-served"),
+            Ok(()),
+            "the bff's account, for a member of `pai`"
+        );
+        assert_eq!(
+            m.delete_model_profile(&outsider, "two-places"),
+            Err(ManagerError::NotAuthorized),
+            "the bff's account, for a caller outside `pai`"
+        );
+        assert_eq!(
+            m.delete_model_profile(&vouching, "off-one"),
+            Err(ManagerError::NotAuthorized),
+            "a caller that is not the bff vouches for nobody"
+        );
+        let off = text_of("models.ini.disabled");
+        assert!(
+            !off.contains("[star-served]") && !off.contains("[Star-Served]"),
+            "the accepted delete landed"
+        );
+        assert!(
+            off.contains("two-places") && off.contains("off-one"),
+            "every refused delete left its profile: {off}"
+        );
+        let got = records(&lines);
+        assert_eq!(
+            got.iter()
+                .map(|l| l.rsplit_once("outcome=").expect("outcome").1.to_string())
+                .collect::<Vec<_>>(),
+            vec!["ok", "refused", "refused"],
+            "the accepted call ok, every `As` refusal recorded as refused"
+        );
+        assert!(
+            got[0]
+                .starts_with(r#"action="delete_model_profile" target="star-served" caller=":1.9""#),
+            "the record names the bff's account, as every `As` record does: {got:?}"
         );
     }
 }

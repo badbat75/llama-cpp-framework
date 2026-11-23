@@ -7,6 +7,10 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ## Proving a red, and what a run proves
 
+- A red reported mid-run is verified against the repo before anything is done with it: `git cat-file -t
+  <commit>`, `ls` (or `find`) the file, `git worktree list`. A report naming a test file and a commit that
+  are not in this checkout, with one worktree at HEAD, is not this session's red: report the mismatch and
+  finish the brief the session was given. Never write or run tests for a file that is not there.
 - Never wait without a deadline (`recv_timeout`, a `try_wait` loop, `method_timeout`): a test must fail,
   not hang. `recv_timeout` returns `Disconnected` at once when the thread panicked (a `todo!` stub):
   report that apart from `Timeout`, or the red reads as a hang.
@@ -16,7 +20,10 @@ Lessons only: the rules are in `AGENTS.md`.
   proves it with `cmp -s`. Report the mutated line from the OLD snippet's index: the NEW text usually
   exists in other phases of the same file, so indexing the new text names a line in an unrelated phase.
   A script that dies between its write and its restore leaves the file mutated: restore from the backup
-  and `grep -n` the fixed text before running anything else. Judge red from the OUTPUT (`FAILED` / `panicked at`), never from the exit code:
+  and `grep -n` the fixed text before running anything else. Restore with plain `cp`, NEVER `cp -p`: the
+  `-p` mtime is older than the mutant build, so the next run reuses the MUTANT binary (no `Compiling` line)
+  and the post-restore "green check" reads `FAILED` on a restored file. Judge red from the OUTPUT
+  (`FAILED` / `panicked at`), never from the exit code:
   `cmd | tail` reports `tail`'s 0 and a survivor reads as green.
 - A gate whose first four lines are copied verbatim into every guarded verb (`authorize_as` + lock +
   `known_engine` in the manager's verbs) cannot be mutated in place: the snippet matches 3 times. Include
@@ -97,6 +104,16 @@ future` of a non-async block), run it, then delete it and write the real tests. 
 - A red target's TEST FAILURE also stops the run (cargo: `error: test failed, to rerun pass --lib`), so the
   later files never report. Use `--no-fail-fast` for the slice's map: one run, every target's
   `test result:` line, and `awk '/^---- /{name=$2} /panicked at/{print name" | "$0}'` for one line per red.
+- A run whose log carries no `Compiling <crate>` line judged a STALE binary: files written before the last
+  build rebuild nothing, so a solo run and a full run both report the OLD test set (mine: an e2e whose
+  phase was registered after the build, green twice, 343 passed, while the tree was red). Grep the log for
+  `Compiling <crate>` before calling anything red or green; force the rebuild by adding a `#[test]` to the
+  crate's test module, run, remove it, prove with `cmp` + `grep -c`. An assertion that passes in a run and
+  fails deterministically in a probe over the same phase is the stale binary, never a flake.
+- A copy of the tree handed over as "green there" is read with `diff -rq crates <copy>`: it usually carries
+  edits in test files BEYOND the diffs quoted (MP1: two diffs quoted, the copy also changed
+  `tests/dbus_client.rs` and `tests/pipe_client.rs`), and one of those is the fix a phase needs. Judge
+  every hunk of the full diff and name the incomplete list.
 - `cargo test -p <crate> <word>` filters test names, never target names: `cargo test -p pai-bff listen`
   skipped most of `tests/listen.rs`. Run a file with `--test <name>` and account for every
   `N filtered out` line in the report.
@@ -138,6 +155,9 @@ future` of a non-async block), run it, then delete it and write the real tests. 
 - Register a new phase in the body of `data_root_e2e` in the same edit that writes it. A phase that is not
   called there is invisible to the e2e run: its solo run looks green and the full-suite failure blames
   the tree.
+- A whole-file pin over a file the phase's own calls GROW (a clone appended to the pool fixture): the
+  expected text is `fixture + appended`, the fixture's own sections kept; an expectation of the appended
+  sections alone reds naming the fixture lines, a bug the tester owns.
 - An e2e phase that rewrites a file a LATER phase pins (a `[Server]` profile whose `ModelsMax` the next
   block reads): snapshot the text at the phase's start (`let found = read(name).expect(..)`), write it
   back with `std::fs::write` at the block's end. Prove the restore's teeth with a mutant that swaps the
@@ -153,6 +173,20 @@ future` of a non-async block), run it, then delete it and write the real tests. 
   `gguf_shape::parse_header` reads) is invisible when SWAPPED on every fixture whose two counts are EQUAL,
   which is the common case. Keep at least one fixture with UNEQUAL counts (2 kv, 7 tensors), and mirror
   the reader's own test writer (`gguf_shape::tests::gguf`), never "fix" the reader for a fixture.
+- When two of the slice's own pins of ONE rule disagree (a clone's bytes taken verbatim from
+  `ini::text::section_text` in one file, with the trailing separator stripped in another), the design's own
+  words decide: a design naming the function ("the source section's bytes as `ini::text::section_text`
+  gives them") means VERBATIM, a mid-file section's blank separator line included. Retarget the loose pin
+  to derive from the same call on the fixture, and keep one red naming the code's stripped bytes.
+- A hand `* = on` in a fixture's `assignments.ini` serves EVERY switched-off profile, so that tree holds no
+  free profile and an accepted delete later in the same block is unreachable (its `.expect` is the red).
+  Keep the `* = on` seed for the refusal pins and rewrite `assignments.ini` with one explicit key just
+  before the accepted delete; do not answer it by dropping the `* = on` from the seed, that clause is a
+  done-when criterion.
+- An entry in a refusals loop whose `why` says "an id taken by an earlier call of this phase" must carry an
+  id the phase really created (`bus-hf`, not `bus-both`): a fresh id makes the create succeed and the red
+  reads "expected a refusal". Never add that id to the phase's "wrote nothing" pin, the file holds it from
+  the earlier accepted call.
 - A phase that drives a real save goes through `config_seam_e2e` (`crates/app/src/server_control.rs`:
   redirect the tree, save through the seam, reload, assert), never through a direct write of
   the files: that passes without the seam.
@@ -206,6 +240,13 @@ pai-bff` fails "the web UI is not built" until `xtask build framework` has run. 
   0..1800 ms (the 10 ms bound of the token probe) under load. Run them alone, then judge:
   `cargo test -p pai-manager --lib -- --test-threads=1 data_root_e2e` (`dbus_client` is a module of that
   test).
+- A rule about the KEYS of a `CreateModelProfile` call cannot be pinned in `src/tests/pipe_client.rs` /
+  `dbus_client.rs`: their refusal tables ride `ModelProfileSource`, whose variants carry fixed keys
+  (`model`, `hf-repo`, `hf-file`) and a `From` carries none. The cheap tables are the raw-wire ones in
+  `manager/pipe.rs` (`json!` requests, so any key crosses) and `manager/dbus.rs` (`v(&[(k, v)])`); pin the
+  transport row there. The red of an accepted hostile clone reads as the acceptance: a `MethodReturn` at
+  the `expect_err`, or the reply reaching `no-model-profile-named` (the key and shape checks passed, only
+  the fixture's missing source stopped the write).
 - To run `data_root_e2e` alone (every phase in one test, tree redirects serial): the full path with
   `--exact`, `cargo test -p pai-manager --lib -- tests::data_root_e2e --exact` (no `--test-threads=1`
   needed, nothing else runs). `--test '*'` names no target for `pai-manager` (its `src/tests/` compile
@@ -350,6 +391,25 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   field. Add the field once there, and state in a comment the shared assumption it bakes in: the cards'
   tests never read the model facts, so the fake's reason answer is what "editable" means to them, and the
   answer-dependent states (pending, dense) belong in the new file.
+- A CARD added to `MODEL_PROFILE_CARDS` (21 T.2) fans out the same way and reds ~12 page-structure files
+  (HearthJump*, HearthAssets*, ModelProfileCards1-5, ModelProfileContent, ModelProfilePage,
+  ModelProfileSave16, ModelProfileGpu1): every card count, jump entry, h3 order and whole-page tab path
+  DERIVES from that list, so those reds are the slice's own, and each greens when the card lands. Read the
+  diff of each: an expected list that only gains the new card's name is the cascade; one that gains a
+  CONTROL the page does not render yet is a pin the coder must satisfy. A card whose controls are no field
+  of 2e's table needs `extraStops` (the tab path) and the same key in the every-button-of-main pin
+  (`ModelProfilePage` 2d.67): that pin maps the flat `fieldLabels()`, which cannot carry a card's own
+  control at the card's place, so add a helper that walks the cards (fields then `extraStops`) and use it.
+  Retarget in the same edit the old "the card before/after X" pins, and a page-wide "no such control" pin
+  the new card now fills.
+- A fe test that imports a module the slice has to write reds the type check as `TS2307: Cannot find
+  module`, and every parameter of the imported values as an implicit `any`: that is a compile red, not a
+  behaviour red. Write the smallest typed stub in `fe/src` (the real signatures, `KINDS: T[] = []`, every
+  function `throw new Error('<name>: not implemented (SLICE stub)')` with its argument interpolated so
+  `noUnusedParameters` and ESLint stay quiet), and say in its header that it is a stub the coder replaces.
+- Keep every lookup that touches a not-yet-written module INSIDE the tests (`const CUSTOM = () =>
+  idx('custom')`): a module-level one throws while the file loads, and vitest prints
+  `Test Files 1 failed` with `Tests no tests`, which maps no red to any criterion.
 - Retargeting an old pin onto another field (198a's "nothing to focus" refusal, moved off `n-cpu-moe` to
   `moe-cache-mib`): pick a row the new slice leaves disabled, and prove the path stays covered by finding
   a sibling row of the same table that already pins it; a retarget that lands on a row the slice also
@@ -393,7 +453,21 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   import the module through a variable (`const ICON_MODULE = './Icon.tsx'`) and cast: a union widening
   the coder forgets then shows as the path-data red, not as a file that will not run.
 - A fe test file has no exported helper to reuse (importing one registers its tests), so a CSS-text
-  reader is COPIED into the new file, as `U17aSkeletons.test.tsx` and `Reflow.test.ts` each did.
+  reader is COPIED into the new file, as `U17aSkeletons.test.tsx` and `Reflow.test.ts` each did. Before
+  naming its parts, grep the file's own top-level names: the reader's `RULES` collided with
+  `TensorPlacement1.test.tsx`'s legend-text constant and vitest answered a `PARSE_ERROR` for the whole
+  file (`Tests 0`), which is a compile red, not a behaviour red.
+- A CSS fix that adds a declaration to a rule an existing test pins as "declares exactly this set of
+  properties" (Reflow's `declared(body)` pin of the D1 row items) makes that pin part of the slice: amend
+  it in the same edit, pinning the values on the classes the fix names and keeping the "nothing else"
+  allowlist scoped to the card's namespace. The allowlist guards sit in files the slice's run filter does
+  NOT name, so run them too (`npm --prefix fe test -- HearthTokens`): the new `min-width: 0` of the two
+  selects reds H1a.12 naming exactly the two missing entries, and its list is per NAME, so the coder's one
+  comma group `.ot-tensor select, .ot-goes-on select` passes it and the per-selector CSS pin passes
+  (match a selector against `sel.split(',')` of each top rule, not against a whole rule's header).
+- Prettier is part of the test edit: after writing, `npm --prefix fe run format:check` and, on a warn of
+  your own files, `npm --prefix fe exec -- prettier --write fe/src/X.test.tsx` (the exec's cwd is the repo
+  root, so the paths carry `fe/`; `src/X.test.tsx` answers "No files matching the pattern").
 - A CSS text pin whose selector ALSO appears inside a `@media` block: the flat rule regex matches it
   TWICE, so a `block(sel)` "exactly one rule" assert reds on a rule that exists. Strip every at-rule
   (header plus its block, by brace depth) into a `topBlock(sel)`, pin the top-level rule there, and pin
@@ -450,6 +524,18 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   edit, and after Escape ("does nothing special", 19 G.7), it is the typed text, not the projected count.
   Expecting the committed count there demands one element show two texts in one render: unsatisfiable, the
   test is the red. Pin the tuple as typed text + untouched slider.
+- A change rule spelled as a COMPARISON (21 T.8: the key is changed when `render(rules)` differs from
+  `render(parse(loaded))`, so "an edit undone is unchanged") makes every save pin of a round-trip edit
+  unsatisfiable: the red is `expected [] to have a length of 1` at the shared `save` helper's `waitFor`
+  line, never a value diff, so it names a helper, not the test. End the edit in a change of its own (the
+  row's device), which keeps the value pin and proves the kept state reached the wire, and say in a
+  comment why the round trip alone sends nothing.
+- When the value is DERIVED from the row's fields at render (a stateless `rowRule`: kind plus
+  `parseLayers(layersText)`), a brief worded "a text it cannot read leaves the pattern as it was" has two
+  readings: the last composed pattern (stateful) and the field fallback (the kind with no layers). The
+  fallback can equal `render(parse(loaded))`, so the comparison rule sends no key and a value assertion
+  never runs: the red is the `save` helper's `waitFor` again. Pin the reading the brief supports, state in
+  a comment that the other reading sends nothing at all, and mark it pending the designer's ruling.
 - A row-order pin after unchecking (19 G.9 inherits brief 14 unchanged): compute it from GD1.5 (checked
   rows in `device` order, then the unchecked in the reply's order) plus GD1.8 ("unchecking moves the row
   back among the unchecked at its GD1.5 place"), never from the list as it stood: `[A,B,C]` after
@@ -1373,6 +1459,21 @@ fe/ /tmp/<x>/` plus a symlink to the real `node_modules`, driven by a script tha
 - Decorative art of a page is pinned on two planes: DOM in the `.tsx` (structure, order, emptiness, tab
   order) and stylesheet text in a `.ts` (every colour, size and mask declaration). The CSS reader is COPIED
   into each file, since a test file imports no other test file.
+- A review fix that names the DECLARATIONS and leaves the class name to the coder (brief 21 TP1 review D1,
+  "named by the class the coder gives them"): pin the rule by its signature, the top-level rules whose
+  declaration-name set equals the brief's list, then the values, and put the MATCH COUNT in an assertion
+  ("exactly two rules declare flex and min-width and nothing else") so a fourth item with a size nothing
+  briefed is red. Compute today's signature matches with a node script that copies the reader, BEFORE
+  writing the test: `flex-basis: 100%` + `min-width: 0` is already `.tag-options`' (it also declares
+  margin, list-style and border, so exact-set matching excludes it) and `flex: 1 1 16rem` is the global
+  text input's (its `min-width: 0` sits in a SIBLING rule), so a loose match reds "found 1" on a rule that
+  has nothing to do with the slice.
+- The same case in `Reflow.test.ts` R1.8: allow coder-named classes and ids by a NAMESPACE regex (the
+  card's strings-key prefix), keep the frozen list exact for everything else, and assert the namespace is
+  NOT EMPTY, else a fix that adds no class at all passes.
+- H1a.12's ordered min-height/min-width list: find a coder-named class's entries by a name regex over the
+  whole entry (the LS1 precedent is `/\bblocks\b/`), assert each surviving entry's value slice, and keep
+  the rest of the pinned list byte-exact; say in the comment that the coder names the class.
 - A brief that says "the box holds A then B" is pinned on the wrapper's `children`
   (`toEqual([a, b])`), not on `main.children`: the coder may nest the box at any depth.
 - A contrast rule is computed in the test (sRGB-relative luminance, `(L1+0.05)/(L2+0.05)`) from the
@@ -2410,3 +2511,64 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
   fe/vite.config.ts --reporter=json --outputFile=..` from the repo root resolves the config as
   `fe/fe/vite.config.ts`, dies at startup and writes NO outputFile (a missing JSON is that failure, not an
   empty run).
+
+## A manager verb tested over three transports (slice MP1, 2026-11-22)
+
+- A verb whose method does not exist yet makes EVERY phase that calls it a COMPILE red, and `pai-manager`'s
+  `src/tests/` compile into `--lib`: one missing method stops every manager test, the pipe unit tests that
+  compile included. Report the error list (`grep -c "no method named"`) as the slice's red and say plainly
+  that the behaviour pins cannot be seen before the coder lands.
+- The shared phases of `manager/service.rs` are type-checked for Windows (`--target x86_64-pc-windows-gnu`):
+  a mode pin needs `#[cfg(unix)] { use std::os::unix::fs::PermissionsExt; .. }` (the precedent at
+  `manager_server_profile_crud_e2e`), so run that check before reporting, not only the Linux one.
+- The pipe parser reads field by field (`v.get(k)?.as_str()`), so three frame rules to pin, and to NOT pin:
+  a field the manager does not know (`port`, `tags` on a model profile verb) is IGNORED and the call runs,
+  never a BadRequest; a field that is present with the wrong JSON type (a `null` included) is no request;
+  a `principal` on a plain verb, and an `As` spelling without one, are no request, already pinned for every
+  verb by `a_principal_on_a_method_that_takes_none_is_a_bad_request` and
+  `an_as_method_without_a_principal_is_a_bad_request` in `manager/pipe.rs`.
+- Rust's inline format args are identifiers and fields only: `"..: {off_text()}"` is
+  `invalid format string: expected '}', found '('`. Pass the value as the assert's next argument.
+- A `///` on a `let` inside a function body is an `unused doc comment` warning, and clippy runs
+  `-D warnings`: comment a helper inside a phase with `//`.
+- Four small compile reds that read like production gaps, and are the test's own: `tempfile::TempDir` has no
+  `join` (`dir.path().join`); a bytes reader's `Vec<u8>` answers `.contains(&u8)`, so a substring pin takes
+  the TEXT reader (E0308 `expected &u8, found &str`); `assert_eq(` without the `!` reads
+  `E0423: cannot find function assert_eq`; a loop's `want` for a client method that answers
+  `Result<(), ClientError>` needs the helper to return `Err(..)` (`-> Result<(), ClientError>`), not the bare
+  `ClientError`.
+- `cargo test -p <crate> -- <filter>` matches SUBSTRINGS of the full path: `checks::the_model..` finds 0 tests
+  (the path is `checks::tests::..`). Pass the bare test names, one run, several filters.
+
+## Rerunning an fe slice after the coder (brief 21 TP1, 2026-11-22)
+
+- A test that renders the page twice (its `for (const case of ..) { const { main } = await form(..) }`
+  loop) needs `cleanup()` at the top of each iteration: RTL cleans only between tests, so the loop's
+  second `render` appends a second `<main>` and the helper's `screen.getByRole('main')` reds
+  `Found multiple elements with the role "main"`, naming no case.
+- A file whose test clicks a jump button needs the jsdom stub `Element.prototype.scrollIntoView = () => {}`
+  in `beforeEach` (every jump file has it: HearthJump, ModelProfileGpu1, ModelProfileSave16). Without it
+  the click throws an uncaught TypeError, vitest records an unhandled error, and 3 UNRELATED later tests
+  red `Found multiple elements with the role "main"`: the cascade hides every real cause in the file.
+  Fix the stub first, then judge the remaining reds.
+- Reading a Goes on list is reading a STATE: pin the answered list only after `await landed(main)`. A rule
+  with device `""` shows `CPU` while the read is pending and `(no device)` once it answered, so a pin
+  written against the pending list greens in a fast run and reds in a slow one (the json reporter run is
+  the slow one). Audit before reporting: every test that reads a device select needs `landed`, the
+  deliberate pending case is the only exception.
+- An absence pin for a key of a LATER sub-slice cannot use `en(key)`: the strings sheet gains exactly this
+  sub-slice's keys, so the helper throws `no English for <key> in the test` (and adding the key to the
+  test's `EN` reds `1a strings`, which is the sheet's exact-set guard). Pin the absence structurally (the
+  block is the card's last element, `nextElementSibling` is null), never with the English inline.
+- Four asserts that are the test's own red, not a production gap: `queryByRole(..)!.value` then
+  `toBeNull()` is a TypeError on an absent control (pin `expect(queryByRole(..)).toBeNull()`); a
+  `ruleItems()` helper that asserts the list exists and does `getAllByRole('listitem')` throws on the
+  empty state, so "no rule left" is `queryAllByRole('listitem')` with `toHaveLength(0)`, which greens both
+  shapes (no list, empty list); a hand-indexed option (`options[3]` for "the last option") reds on the
+  neighbour when the fixture grows, index from `options.length - 1`; a title naming a property (monospace)
+  needs its pin (`className` contains `mono`, the precedent in ModelProfileCards2).
+- A save rule stated as a comparison is not a flag: 21 T.8 "the key is changed when `render` of the rows
+  on screen differs from `render(parse(loaded))`", so an edit typed and typed back sends NOTHING. A
+  `dirty` boolean set by any edit sends the key, and the test that types the text back is the coder's red,
+  brief-backed. Keep the body that states the brief's case (type, type back, expect 0 PUTs), and report
+  the flag as the defect: a "user touched it" state cannot express the equality.

@@ -2269,3 +2269,341 @@ fn the_pipe_client_reads_the_node_info() {
     );
     hang_up(server, client);
 }
+
+/// Creating and deleting a model profile over the stream, with pai-core's
+/// client (slice MP1): the three sources of a create, the clone keeping the
+/// source's lines, every rule's refusal decoded by the client, the delete's
+/// section alone out, a caller the authority refuses answered NotAuthorized
+/// with nothing done, and the `As` forms for a member of `pai` and an outsider.
+pub(crate) fn manager_pipe_client_model_profiles_e2e() {
+    use crate::manager::service::fakes::FakePasswords;
+    use pai_core::client::ModelProfileSource;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    let record = "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n";
+    std::fs::write(sys.join("instances.ini"), record).expect("record");
+    for (id, port) in [("default", 8080), ("lan-2", 8081)] {
+        std::fs::write(
+            sys.join(format!("server@{id}.ini")),
+            format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+        )
+        .expect("server profile");
+    }
+    let on = real_model_files(
+        dir.path(),
+        "[On-One]\nmodel = /models/on1.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n",
+    );
+    let off = real_model_files(
+        dir.path(),
+        "[off-one]\n; a note\ntemp = 0.3\nmodel = /models/off1.gguf\n\n[two-places]\nmodel = /models/two.gguf\n\n[free-me]\nmodel = /models/free.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n",
+    );
+    std::fs::write(sys.join("models.ini"), &on).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), &off).expect("models.ini.disabled");
+    let keys = "[default]\ntwo-places = inherit\n\n[lan-2]\ntwo-places = off\n";
+    std::fs::write(sys.join("assignments.ini"), keys).expect("assignments.ini");
+    let section = |text: &str, id: &str| -> String {
+        pai_core::ini::text::section_text(text, id).unwrap_or_default()
+    };
+    for id in ["default", "lan-2"] {
+        std::fs::write(
+            sys.join(format!("models@{id}.ini")),
+            pai_core::assign::render(&on, &off, Some(&section(keys, id))),
+        )
+        .expect("render");
+    }
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let off_text = || text_of("models.ini.disabled");
+    let refused = |key: &'static str, values: &[&str]| -> Result<(), ClientError> {
+        Err(ClientError::Invalid(Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }))
+    };
+
+    let c = core(true, &[]);
+    let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
+    let (server, client) = connect(&c, &alice);
+
+    // ── The three sources ──────────────────────────────────────────────────
+    assert_eq!(
+        client.create_model_profile(
+            "pipe-model",
+            &ModelProfileSource::Model("/models/pipe-model.gguf".into())
+        ),
+        Ok(()),
+        "a profile of a model file of the node"
+    );
+    assert_eq!(
+        section(&off_text(), "pipe-model"),
+        "[pipe-model]\nmodel = /models/pipe-model.gguf\n",
+        "the new section, at the end of the switched-off file: {}",
+        off_text()
+    );
+    assert_eq!(
+        std::fs::metadata(sys.join("models.ini.disabled"))
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o644,
+        "the mode of the pool file a create writes, over the stream as over the bus"
+    );
+    assert_eq!(
+        client.create_model_profile(
+            "pipe-hf",
+            &ModelProfileSource::Hf {
+                repo: "org/repo".into(),
+                file: Some("Q4_K_M.gguf".into()),
+            }
+        ),
+        Ok(()),
+        "a profile of a Hugging Face pick with a file"
+    );
+    assert_eq!(
+        client.create_model_profile(
+            "pipe-repo",
+            &ModelProfileSource::Hf {
+                repo: "org/other".into(),
+                file: None,
+            }
+        ),
+        Ok(()),
+        "a profile of a repository with no file named"
+    );
+    assert_eq!(
+        section(&off_text(), "pipe-hf"),
+        "[pipe-hf]\nhf-file = Q4_K_M.gguf\nhf-repo = org/repo\n",
+        "the pick's two keys, sorted: {}",
+        off_text()
+    );
+    assert_eq!(
+        section(&off_text(), "pipe-repo"),
+        "[pipe-repo]\nhf-repo = org/other\n",
+        "a repository alone is one key, and no `model`: {}",
+        off_text()
+    );
+
+    // ── The clone: the source's lines, kept ────────────────────────────────
+    assert_eq!(
+        client.create_model_profile("pipe-clone", &ModelProfileSource::From("off-one".into())),
+        Ok(()),
+        "a copy of a switched-off profile"
+    );
+    assert_eq!(
+        section(&off_text(), "pipe-clone"),
+        // The source's lines with its trailing blank separator left out
+        // (MP1, ARCHITECTURE.md done-when): the copy ends with one ending.
+        format!(
+            "[pipe-clone]\n{}\n",
+            section(&off, "off-one")["[off-one]\n".len()..].trim_end_matches('\n')
+        ),
+        "the source's comment, keys and order, under the new header, no blank at the \
+         end: {}",
+        off_text()
+    );
+    assert_eq!(
+        client.create_model_profile("pipe-on-clone", &ModelProfileSource::From("On-One".into())),
+        Ok(()),
+        "the source of a switched-on profile: the clone is born switched off"
+    );
+    assert_eq!(
+        section(&off_text(), "pipe-on-clone"),
+        format!(
+            "[pipe-on-clone]\n{}\n",
+            section(&on, "On-One")["[On-One]\n".len()..].trim_end_matches('\n')
+        ),
+        "the source's lines, in the switched-off file: {}",
+        off_text()
+    );
+    assert_eq!(
+        text_of("models.ini"),
+        on,
+        "the switched-on file keeps every byte of itself"
+    );
+    assert_eq!(text_of("assignments.ini"), keys, "a create assigns nothing");
+    assert_eq!(text_of("instances.ini"), record, "and writes no record");
+
+    // ── Every rule's refusal, decoded by the client ────────────────────────
+    for (id, source, want, why) in [
+        (
+            "OFF-ONE",
+            ModelProfileSource::Model("/m/x.gguf".into()),
+            refused("model-profile-name-taken", &["OFF-ONE"]),
+            "a name the pool holds in the other case",
+        ),
+        (
+            "a b",
+            ModelProfileSource::Model("/m/x.gguf".into()),
+            refused("invalid-model-profile-id", &["a b"]),
+            "an id with a space",
+        ),
+        (
+            "pipe-nosuch",
+            ModelProfileSource::From("no-such-profile".into()),
+            refused("no-model-profile-named", &["no-such-profile"]),
+            "a source the pool does not hold",
+        ),
+    ] {
+        assert_eq!(
+            client.create_model_profile(id, &source),
+            want,
+            "{why}: the refusal the client decodes"
+        );
+    }
+    assert!(
+        !off_text().contains("[pipe-nosuch]"),
+        "a refused create wrote nothing: {}",
+        off_text()
+    );
+
+    // ── The delete: the section alone, out ─────────────────────────────────
+    assert_eq!(
+        client.delete_model_profile("free-me"),
+        Ok(()),
+        "a profile no instance assigns"
+    );
+    assert_eq!(section(&off_text(), "free-me"), "", "its section is gone");
+    assert!(
+        section(&off_text(), "pipe-clone").contains("a note"),
+        "the neighbour's section is kept: {}",
+        off_text()
+    );
+    for (id, want, why) in [
+        (
+            "on-one",
+            refused("model-profile-enabled", &["on-one"]),
+            "a profile that is switched on",
+        ),
+        (
+            "Twin",
+            refused("model-profile-enabled", &["Twin"]),
+            "the twin an interrupted switch left in both files",
+        ),
+        (
+            "two-places",
+            refused("model-profile-assigned", &["two-places", "default, lan-2"]),
+            "a profile two instances assign: both named, in the record's order",
+        ),
+        (
+            "gone",
+            refused("no-model-profile-named", &["gone"]),
+            "a profile neither file holds",
+        ),
+        (
+            "*",
+            refused("no-model-profile-named", &["*"]),
+            "no id: the pool's refusal, not the id rule",
+        ),
+    ] {
+        assert_eq!(client.delete_model_profile(id), want, "{why}");
+    }
+    assert_eq!(
+        text_of("assignments.ini"),
+        keys,
+        "neither the create nor the delete of a free profile writes a key"
+    );
+    assert_eq!(
+        asked(&c),
+        vec![(alice.clone(), Action::Configure); 14],
+        "every verb asked configure of the connection's caller, once per call"
+    );
+    assert_eq!(
+        calls(&c),
+        vec![],
+        "no verb of a model profile touches a unit"
+    );
+    hang_up(server, client);
+
+    // ── A caller the authority refuses ─────────────────────────────────────
+    let c = core(false, &[]);
+    let (server, client) = connect(&c, &alice);
+    assert_eq!(
+        client.create_model_profile("pipe-no", &ModelProfileSource::Model("/m/a.gguf".into())),
+        Err(ClientError::NotAuthorized),
+        "a caller polkit refuses configure"
+    );
+    assert_eq!(
+        client.delete_model_profile("pipe-clone"),
+        Err(ClientError::NotAuthorized),
+        "the same for a delete"
+    );
+    assert!(
+        !off_text().contains("[pipe-no]") && section(&off_text(), "pipe-clone").contains("a note"),
+        "the refused calls wrote and removed nothing: {}",
+        off_text()
+    );
+    hang_up(server, client);
+
+    // ── The `As` names: a member's calls, vouched for by the bff ───────────
+    let passwords = FakePasswords::new();
+    let asked_admin = passwords.asked_admin.clone();
+    let (c, _checked) = auth_core(passwords);
+    let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+    assert_eq!(
+        client.acting_for("alice").create_model_profile(
+            "as-mp",
+            &ModelProfileSource::Model("/models/as.gguf".into())
+        ),
+        Ok(()),
+        "the member's create, vouched for by the bff"
+    );
+    assert_eq!(
+        section(&off_text(), "as-mp"),
+        "[as-mp]\nmodel = /models/as.gguf\n",
+        "the profile the member's create wrote: {}",
+        off_text()
+    );
+    assert_eq!(
+        client
+            .acting_for("bob")
+            .create_model_profile("as-bob", &ModelProfileSource::Model("/m/b.gguf".into())),
+        Err(ClientError::NotAuthorized),
+        "bob is no member of `pai`"
+    );
+    assert_eq!(
+        client
+            .acting_for("alice")
+            .delete_model_profile("two-places"),
+        Err(ClientError::Invalid(Refusal {
+            key: "model-profile-assigned",
+            values: vec!["two-places".into(), "default, lan-2".into()],
+        })),
+        "the member's delete of an assigned profile is the rule's refusal"
+    );
+    assert_eq!(
+        client.acting_for("alice").delete_model_profile("as-mp"),
+        Ok(()),
+        "and the member's delete of its own profile"
+    );
+    assert_eq!(
+        client.acting_for("bob").delete_model_profile("pipe-clone"),
+        Err(ClientError::NotAuthorized),
+        "the same for a delete"
+    );
+    assert!(
+        !off_text().contains("[as-bob]") && section(&off_text(), "pipe-clone").contains("a note"),
+        "a refusal of the `As` form wrote and removed nothing: {}",
+        off_text()
+    );
+    assert_eq!(
+        *asked_admin.lock().unwrap(),
+        vec![
+            "alice".to_string(),
+            "bob".into(),
+            "alice".into(),
+            "alice".into(),
+            "bob".into()
+        ],
+        "the membership of the vouched name, asked once per call, never cached"
+    );
+    assert_eq!(
+        calls(&c),
+        vec![],
+        "no verb of a model profile touches a unit, for a member either"
+    );
+    hang_up(server, client);
+}

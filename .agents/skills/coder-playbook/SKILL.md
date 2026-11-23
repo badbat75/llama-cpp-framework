@@ -125,9 +125,19 @@ Lessons only: the rules are in `AGENTS.md`.
   options where the red one reads them shows today's list, so the read had not landed. Report it: the
   tester's fix is a `waitFor`, and a production change that made the read land synchronously would be the
   wrong cure.
-- The full `npm --prefix fe test` (102 files, one jsdom worker each) loses one `SignInOnly.test.tsx`
-  timing test about 1 run in 10 here (`09 S1a.10`, a `findByRole` on the nav after sign-in); a detached
-  HEAD worktree with the same `node_modules` is green 6/6. State the rate in the report, do not chase it.
+- The full `npm --prefix fe test` (109 files, one jsdom worker each) loses one `SignInOnly.test.tsx`
+  timing test about 1 run in 10 here (`09 S1a.10`, a `findByRole` on the nav after sign-in), and lost one
+  `AboutPage.test.tsx` `18 AN.3` once in two runs on 2026-11-22 (green alone, and the whole suite green on
+  the rerun); a detached HEAD worktree with the same `node_modules` is green 6/6. It lost one
+  `ModelProfileContent.test.tsx` `2d.70, 2d.80` once in two runs on 2026-11-23, green alone and green on
+  the full rerun, with a CSS-only edit in the tree. State the rate in the report, do not chase it.
+- A text field that may not read (brief 21's Layers) keeps its LAST READABLE value in the row's state,
+  beside the shown text: a pattern derived from the text at render time cannot honour the GUI's "last good
+  value" (an unreadable text falls back to whatever the derivation gives, and if that is the loaded value
+  the `render(rows) !== render(parse(loaded))` change test of 21 T.8 sends NO key, so the red test cannot
+  go green). So: `row.layers` (null = every layer) set from `splitPattern` at load, updated only by a text
+  `parseLayers` reads, composed in `rowRule`; the handler (`otSetLayersText`) is the pure fn, in the card's
+  module, not in the page.
 - React: `flushSync` (from `react-dom`) is the only way a committed state is readable in the next statement, and a
   `startWrite` nested inside `flushSync` does not commit. A `useOptimistic` overlay ENDS a task after the answer
   resolves, so a test that focuses an item the answer restored cannot be written with it.
@@ -1832,3 +1842,204 @@ before you report.
   also a link named `default`, and a screen-level find answers "multiple elements").
 - The 20 N.5 race (part a's list) is INVISIBLE in a filtered run: green alone, red only in a full-suite
   run. State the run you measured.
+
+## Slice 21 TP1a (2026-11-22): the pure rule module, and the strings file it does NOT touch
+
+- The tester ships the production file as a STUB that throws (`fe/src/tensorRules.ts`: the exported
+  types and signatures, every body `throw new Error(.. stub ..)`), so the red is behaviour, not a load
+  failure, and the coder REPLACES that file (it is UNTRACKED: `git diff` prints nothing for it).
+- A pure module's label-key pin goes through the TEST's English table
+  (`en()` in `fe/src/test/bff.ts`, its own `EN` object), not through `fe/src/strings.ts`. So a module
+  whose table carries `label: 'model-profile-ot-kind-<id>'` goes green with the key in no strings file.
+  Do NOT add those keys to `strings.ts` in that run: `strings.test.ts`'s "every value is used" scans
+  source text for `t(` + a literal, and a label that reaches `t` only from a component is table data, so
+  the keys belong with the slice that renders them. Check which file a label pin reads before widening.
+- `fe`'s tsconfig has NO `strict` and no `noUncheckedIndexedAccess`, and its eslint
+  (`tseslint.configs.recommended`) does NOT enable `no-non-null-assertion`: a tester's `KINDS[i]!` lints
+  clean, and production indexing needs no `!` (guard an out-of-range index with
+  `if (entry === undefined)`, which both checks accept). `erasableSyntaxOnly: true` rules out a
+  `const enum` in this tree.
+- Mirroring a Rust parser into TS, the divergences to name in the code: `u32::from_str` takes a leading
+  `+` (a digits-only `/^[0-9]+$/` refuses it), and Rust's `split_once` is the FIRST occurrence, so
+  `indexOf` not `lastIndexOf` (the block list `blk\.(1|3)\.x` splits at the first `)`).
+
+## Slice 21 TP1b (2026-11-22): the Tensor card, and three test shapes that eat a whole file
+
+- **A new card in the jump list makes an unamended test file leak its document.** jsdom has no
+  `Element.prototype.scrollIntoView`, so the jump click raises an UNHANDLED `TypeError`
+  (`ModelProfilePage.tsx` `jump`), React never unmounts, and EVERY later `screen.getByRole('main')` of
+  that file dies on `Found multiple elements with the role "main"`: in `TensorPlacement1.test.tsx` that
+  one missing line reddens three tests that never touch the jump, and vitest prints `Errors 1 error` at
+  the bottom of the run. The fix is the test's, one line in its `beforeEach`, the shipped idiom
+  (`ModelProfileGpu1.test.tsx:68`, `HearthJump.test.tsx:38`):
+  `Element.prototype.scrollIntoView = () => {}`. Prove a cascade like this in a copy with that line
+  added, and say which reds are the cascade.
+- **A focus move to a control that MOUNTS in the same commit is handler work, not effect work.** The
+  repo idiom is `flushSync(() => { setRows(..); setDirty(true) })` and then
+  `document.getElementById(id).focus()` in the click handler (App.tsx, Chip.tsx, the page's own `jump`).
+  The "keep the target id in a state and focus it from an effect" shape is an eslint ERROR here:
+  `react-hooks/set-state-in-effect` flags the `setOtFocus(null)` the effect needs to arm itself once, so
+  the effect cannot clear itself.
+- **A card that empties on a removal keeps TWO things visible at once** (21 T.3 + 21 T.7): the plain
+  `model-profile-ot-none` paragraph AND an empty `<ul role="list">`, so `Add rule` keeps its place in the
+  tab path. Gate the list on `rows.length > 0 || dirty`, and keep the list mounted while the rows are an
+  edit: with the list gone the test's own `queryByRole('list')` returns null and its tab-order loop has
+  nothing to walk.
+- Three shapes of red in `TensorPlacement1.test.tsx` the code cannot answer, all proved in a copy:
+  a `ruleItems` helper built on `getAllByRole('listitem')` THROWS on the empty list the test expects at
+  `toBe(0)` (992); an option-list assertion indexing `[3]` of a five-option list its own preceding line
+  pins (`:703` pins `deviceOptions(probe)` + the missing option, so the extra option is `[4]`, 709); and
+  `en('model-profile-ot-text')`, a TP2 key, read by a TP1 test (437, `en()` throws on an unknown key, and
+  the key must not exist before TP2: the brief's own "Rules as text is TP2 and is not here").
+- One flag answers two contradictory dirty pins: 21 T.6 (`:864`) sends the Pattern text typed with no
+  blur, so the typed text IS the rule at once, and 21 T.8 (`:1056`) then pins the same edit's Save at ZERO
+  PUTs under a label that says "a save of the edited row is a change". Take the brief's rule (the text is
+  the rule), report the pair. The `landed()` helper of that file is what makes a device-list assertion
+  flaky: 21 T.3 (`:488`) reads the Goes on list of a rule on `''` without awaiting the probe, so it sees
+  the pending `[CPU, …]` list, while 21 T.7 (`:717`) pins the ANSWERED list (`no-device` first) for the
+  same device. Same file, 1, 2 and 3 reds per run, measured.
+
+## Slice 21 TP1c (2026-11-22): 21 T.8's change is a comparison, and it costs two T.6 tests
+
+- `override-tensor` is changed when `rowsValue(otRows)` differs from
+  `rowsValue(tensorRows(loaded.values['override-tensor'] ?? null))`, i.e. `render(rows)` vs
+  `render(parse(loaded))` (21 T.8). One function feeds BOTH the save body and the card's `dirty` prop
+  (the emptied `<ul>` of 21 T.7 stays while it is a change), so the `otDirty` flag is gone, and with it
+  its `setOtDirty` in Add, Remove, the 200 arm and Discard (all four were redundant once the value is
+  derived). `rowsValue([])` is `null` and `tensorRows(null)` is `[]`, so a key the file lacks and no row
+  on screen are the same state: unchanged.
+- The pair the TP1b section left open, resolved against the flag: the comparison turns T.8's
+  "an edit undone is unchanged" green and reddens exactly two tests of the same file, `21 T.6` at 803 and
+  835. Both demand a PUT whose `override-tensor` is the value they loaded (their own sent-value
+  assertions at 831 and 853 quote the loaded string), which is the observable 21 T.8's first test (1035)
+  pins at ZERO PUTs. Measured on the tree both ways: flag = 1 red (T.8), comparison = 2 reds (T.6 803,
+  835), full suite 2978 passing beside them. No rule told by the brief separates them (the T.6 pair is a
+  kind cycled through `embd` and a Layers text left unreadable; T.8 is a pattern typed back), and the
+  only rule that would is per-control, which 21 T.8's own comment refuses. The tester's edit.
+
+## Slice MP1a (2026-11-23): a model profile created through the manager
+
+- The manager's `CreateModelProfile` takes its pick POSITIONALLY: D-Bus `(s profile, s from, a(ss)
+  values)`, `As` `(sssa(ss))` with the principal first; the pipe
+  `{"method","profile","from","values"}` with `profile` and `values` REQUIRED and `from` optional (absent
+  is `""`). `principal` is present only on a name ending `As`. `ModelProfileSource`
+  (`crates/core/src/client.rs`) is the CLIENT's shape, never the wire's: it crosses through
+  `as_source() -> (String, Vec<(String, String)>)`, so the protocol number does not move.
+- A created profile is born switched off and unassigned, so ARCHITECTURE step 7 ("a `model` file is not
+  checked for existence here") means the WRITE must not judge the model files. `check_contents` /
+  `check_and_write` carry `judge_model_files: bool` (`MODEL_FILES_JUDGE` / `MODEL_FILES_SKIP`), gated on
+  the caller's own `check_model_files`, so every existing write is unchanged.
+- The append to `models.ini.disabled` is built by hand (a missing file is created CRLF, a text that does
+  not end with an ending gets one, NO blank separator before the new header):
+  `ini::text::replace_section` inserts a separator the byte-exact pins reject.
+- `pai_core::ini::text::section_text` of a section from the MIDDLE of a file keeps its trailing blank
+  separator line. That is the whole clone argument: ARCHITECTURE's "the source's bytes as `section_text`
+  gives them" reads as KEEP (the `pipe-clone` / `bus-clone` pins) and the `x-clone` pin of `service.rs`
+  reads as STRIP, and nothing separates the sources. Stripping ships here; hand the pair over.
+- The value refusals name the KEY (`model-profile-bad-text [key]`, `comment-markers [key]`, ARCHITECTURE
+  3603-3606); every other refusal of the verb names the profile, and `no-model-profile-named` names the
+  `from`. A table that computes one `wanted` for all its keys is the stale pin.
+- A malformed pipe frame is answered `bad_request()` and the stream CLOSES (`serve_stream` returns
+  `Err(InvalidData)`): all six malformed-request tests of `manager/pipe.rs` assert `is_err()`; a stream
+  that survives a junk frame is not this transport's behaviour.
+- Two lints of the tester's new test code, mechanical and assertion-free: a `#[cfg(test)] pub(crate) fn`
+  of an e2e added AFTER `mod tests` is `clippy::items_after_test_module` (move it above, where every other
+  e2e of the file sits), and `requests(&[body.clone()])` is `clippy::cloned_ref_to_slice_refs` (the file's
+  own shape is `requests(std::slice::from_ref(&body))`).
+- `cargo test -p pai-manager` runs in 4 s, so sweeping one e2e's red list is cheap: snapshot the test file
+  in `/tmp/opencode/<x>.pristine` with its `md5sum`, patch an expectation by exact text, run, `cp` back,
+  `md5sum` the pair.
+
+## Slice MP1b (2026-11-23): the delete, behind a create that panics
+
+- The `if !(cond) { eprintln! }` rewrite of a blocking assert SKIPS the call, so a later phase of the same
+  e2e runs on a pool the create never seeded and every mark after it is an artifact. Catch instead:
+  `macro_rules! check_eq { ($($arg:tt)*) => {{ let r = std::panic::catch_unwind(
+  std::panic::AssertUnwindSafe(|| { assert_eq!($($arg)*); })); if r.is_err() { eprintln!("MARK"); }}; }}`
+  (and the `assert!` twin): the args run, the phase continues, and one run lists every red. A copy that
+  ends GREEN prints NO captured stdout, so count the marks with `--nocapture`.
+- A python patch that inserts such a macro must insert it AFTER the `fn` line (at the file top it lands
+  above the `//!` module docs, E0753) and must start its replacement range AFTER the inserted head: the
+  head's own `assert_eq!` gets rewritten and the macro expands into itself (E0753 recursion limit).
+- The manager's model-pool fixtures pass their text through `real_model_files(dir, text)` (service.rs),
+  which rewrites every `model = /models/x.gguf` to a real file under `dir/models`. A pin built from the
+  fixture's LITERAL text (`"[x-clone]\nmodel = /models/on1.gguf\n"`, `section(&off, "off-one")`) can never
+  equal the file: build it from the rewritten `on` / `off` binding, or from `off_text()` read before the
+  write. And `section_text` of the LAST section of a file ends with a blank line, of a MIDDLE section it
+  does not, so a clone pin needs `trim_end_matches('\n')` plus one `\n`.
+- Three self-contradictory fixtures of the MP1 delete phases, all create-side, all the tester's: a
+  `assignments.ini` with a hand `[lan-2]\n* = on` serves EVERY profile, so no profile is free to delete in
+  that fixture (the accepted delete needs `* = inherit`, as service.rs's `FREE` shows, with an explicit key
+  for the one profile the test wants hand-served); `section("twin")` reads `models.ini.disabled` for a
+  profile seeded in `models.ini`; a `model-profile-name-taken` case names an id (`bus-both`) the phase
+  never creates.
+- Proof that the delete side is complete: apply ONLY those test edits in the copy, no production change,
+  and `cargo test -p pai-manager` goes 343/343 green. That is the report the coordinator needs: the two
+  repo reds are `tests::data_root_e2e` (the create pins, one test, every MP1 phase behind it) and
+  `manager::pipe::tests::a_malformed_model_profile_request_is_a_bad_request`.
+- Rust in a patch script: `values: Vec<(&str, &str)>` elements need `vec![values[0].0]` (no stable
+  `str::as_str`), and inside `find(|(_, v)| …)` the compare is `v.trim() != *v` (a `&&str`).
+
+## Slice MP1 review (2026-11-23): the create's KEY rule
+
+- The key check must sit in the values loop, BEFORE `create_source_shape`: a pick carrying a key that is
+  not `model` / `hf-repo` / `hf-file` is already refused by the shape as `model-profile-bad-source
+  [profile]`, while the service e2e, `pipe.rs` and `dbus.rs` all pin `model-profile-bad-text [key]` for
+  the same call (`("dup","",[("a=b","1")])`). A rule placed after the shape can never reach its own pins.
+- The refusal is the value's key (`model-profile-bad-text`, naming the key, ARCHITECTURE 3605). No new
+  strings key: `char::is_control` covers `\0 \t \n \r \x7f` and `char::is_whitespace` covers U+00A0 and
+  U+2003, so the pair plus `= [ ] ; #` and the empty key is the whole rule, and it fires before the lock
+  and before any file read, so the whole-tree `snapshot()` pin holds.
+- `cargo fmt -p pai-manager --check` stays red on three hunks that are ALL the tester's new test
+  literals (`pipe.rs:2517`, `service.rs:20410` and `:20420`, a case and a reply list past rustfmt's
+  width): production is clean, so report them, do not reformat a test module.
+
+## Slice 21 TP1 review (2026-11-23): D1 the card's sheet, D2 an empty list, D3 a pending read
+
+- A review whose fix is "the sheet gained no rule" is pinned by tests that read `index.css` as TEXT, and
+  they pin by PROPERTY SET and by NAMESPACE, not by class name, so the class names are free and the
+  declarations are not. The three lints a new card's CSS walks into: `Reflow.test.ts` R1.8 (every class
+  the sheet selects is in a frozen list, plus one namespace the tester grants for the card, here
+  `/^(ot|tensor|placement)[-a-z0-9]*$/`, and every `#id`: exactly one new one, matching a regex the test
+  writes); the 720 px test (ONE block styles `.field`, `grids.length === 1`, and the rule that places the
+  card must match `/#model-profile-[\w-]*(card-tensor|ot)\b.*\bdiv\b/`, carry `grid-column: 2` and NO
+  `grid-row`); and the sizes test, which takes every TOP-LEVEL rule whose declared-property SET is
+  exactly `['flex','min-width']` (must be two, `1 1 16rem` and `1 1 12rem`) or exactly
+  `['flex-basis','min-width']` (must be one, `100%`). An extra `gap` in a pinned block, or a
+  `min-width: 0` on the row container, is red.
+- The size census that catches the extra one is `HearthTokens.test.ts` H1a.12: EVERY `min-height` and
+  `min-width` in the sheet, as `selector: prop: value`, IN FILE ORDER, with the card's namespace filtered
+  out as a group. So `min-width: 0` goes on the flex items only: a plain fieldset's block-level row div
+  needs none (`fieldset { min-width: 0 }` is already global), and a `width: 100%` on a descendant is
+  outside the census. A `rem`/`ch` value is fine: the sheet already ships `flex: 1 1 16rem` and `7ch`.
+- Probe those pins BEFORE editing: the tests' own reader is ~30 lines (comments stripped,
+  `/([^{}]+)\{([^{}]*)\}/g`, nesting by counting braces before the match), and it runs as a plain
+  `node` script. `execute` has no `node:fs`, so write the script to `/tmp/opencode/*.mjs` and run it: it
+  prints which rules each pin matches, which ids and classes the sheet names, and turns a CSS guess into
+  a check.
+- A group of controls nested in a card is a PLAIN `fieldset`, never a second `.field`: from 720 px the
+  grid is `200px minmax(0,1fr)` and the inner fieldset's control column is 0 px wide, so its selects are
+  18 px and "Remove" stacks one letter per line. The outer `.field` fieldset keeps its class and its ONE
+  wrapper `div` is what the media block puts in `grid-column: 2`; the legend (no class) takes the label
+  cell and everything else flows.
+- A label and its control are ONE flex item (a `span`): as two items the pair splits at 320 px, the
+  "Pattern" label landing beside an unrelated button.
+- That item span is itself a flex ROW when it holds a `select` (brief 21's TP1 review D4): an item's
+  `min-width: 0` does NOT shrink the select inside it, a select is no flex item there, so it keeps its
+  longest option's width and the page scrolls sideways (430 of 320 px). The fix is the item's own
+  `display: flex; flex-wrap: wrap; align-items: center; gap` plus `flex: 1 1 12rem; min-width: 0` on
+  the select, and `max-width: 100%` on a `ch`-wide `input.number` in the same kind of item (its 10 ch
+  spills the control column at 200 % text). The CSS pins then force the SHAPE of the rules: a
+  `topBy`-style helper (selector compact equality, `single`) matches only a rule whose selector is
+  EXACTLY one name, so each item needs its own rule, while a `topStyling`-style helper splits a
+  selector on `,` and a per-name `min-width` set does too (HearthTokens `sizes` collapses
+  `\s+` to ONE space), so the two selects go in one comma group.
+- D3, an option list built while a read is pending: it must contain the option matching the row's own
+  value, else the `select` shows a value the row does not have (jsdom answers `sel.value` with the first
+  option, so a rule on NO device read "CPU: system memory"; a real engine does the same).
+- D2, a `role="list"` rendered with zero items is announced "list, 0 items" beside the paragraph that
+  says why there are none: render the list on `rows.length > 0` alone, not `|| dirty`.
+- A prop the component stops reading must leave the props type, the destructure and the page's props
+  object: `tsconfig.app.json` sets `noUnusedParameters` and `noUnusedLocals`, so leaving `dirty` in the
+  destructure is a typecheck red, and the doc comment that justified it ("the card keeps the answer")
+  goes with it, per the rule that a comment states no fact the code no longer shows.

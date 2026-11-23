@@ -761,6 +761,64 @@ where
         Ok(self.core(move |m| m.remove_instance(&who, &id)).await?)
     }
 
+    /// `CreateModelProfile`: writes a new model profile, `(ssa(ss))`, the id,
+    /// the profile to copy (`""` for none) and the keys of the file pick. Its
+    /// reply is the unit.
+    async fn create_model_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+        from: String,
+        values: Vec<(String, String)>,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.create_model_profile(&who, &profile, &from, &values))
+            .await?)
+    }
+
+    /// `CreateModelProfile` for `principal`, the principal first as every `As`
+    /// method has it (`sssa(ss)`).
+    async fn create_model_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+        from: String,
+        values: Vec<(String, String)>,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.create_model_profile(&who, &profile, &from, &values))
+            .await?)
+    }
+
+    /// `DeleteModelProfile`: removes a switched-off, unassigned model profile,
+    /// `(s)`, its id.
+    async fn delete_model_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.delete_model_profile(&who, &profile))
+            .await?)
+    }
+
+    /// `DeleteModelProfile` for `principal`, the principal first (`ss`).
+    async fn delete_model_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.delete_model_profile(&who, &profile))
+            .await?)
+    }
+
     /// `ReadFile` for `principal`. The reply has the plain method's shape;
     /// a member of `pai` may configure, so a member's read is never withheld.
     async fn read_file_as(
@@ -3738,6 +3796,460 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
         assert!(
             !sys.join("models@db-as.ini").exists() && record().contains("[lan-2]"),
             "and nothing was written for them"
+        );
+    }
+}
+
+/// Creating and deleting a model profile over D-Bus (slice MP1):
+/// `CreateModelProfile(s profile, s from, a(ss) values)` and its `As` form with
+/// the principal first, `(sssa(ss))`; `DeleteModelProfile(s profile)` and
+/// `DeleteModelProfileAs(ss)`. Every reply is the unit. A rule's refusal crosses
+/// as the keyed `Invalid` (decoded to `model-profile-name-taken`,
+/// `invalid-model-profile-id`, `model-profile-bad-source`,
+/// `model-profile-bad-text`, `model-profile-enabled`,
+/// `model-profile-assigned`, `no-model-profile-named`), the guard's refusal as
+/// `NotAuthorized`. A body that is not the signature is zbus's own error and
+/// writes nothing, and a caller with no sender is refused.
+#[cfg(test)]
+pub(crate) fn manager_dbus_model_profiles_e2e() {
+    use super::service::fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use super::service::real_model_files;
+    use pai_core::checks::Refusal;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    use zbus::blocking::connection::Builder;
+    use zbus::blocking::Connection;
+
+    type Core = Manager<FakeService, FakeAuthority, FakeResolver>;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n",
+    )
+    .expect("record");
+    for (id, port) in [("default", 8080), ("lan-2", 8081)] {
+        std::fs::write(
+            sys.join(format!("server@{id}.ini")),
+            format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+        )
+        .expect("server profile");
+    }
+    let on = real_model_files(
+        dir.path(),
+        "[Twin]\nmodel = /models/twin.gguf\n\n[On-One]\nmodel = /models/on1.gguf\n",
+    );
+    let off = real_model_files(
+        dir.path(),
+        "[two-places]\nmodel = /models/two.gguf\n\n[Star-Served]\nmodel = /models/star.gguf\n\n[free-me]\nmodel = /models/free.gguf\n",
+    );
+    std::fs::write(sys.join("models.ini"), on).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), &off).expect("models.ini.disabled");
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[default]\ntwo-places = inherit\n\n[lan-2]\ntwo-places = off\n* = on\n",
+    )
+    .expect("assignments.ini");
+    for id in ["default", "lan-2"] {
+        std::fs::write(sys.join(format!("models@{id}.ini")), "").expect("render");
+    }
+
+    let connect = |core: &Arc<Core>, sender: Option<&str>| -> (Connection, Connection) {
+        let (s0, s1) = UnixStream::pair().expect("socket pair");
+        let iface = ManagerInterface::new(core.clone());
+        let server = std::thread::spawn(move || {
+            Builder::async_io_unix_stream(s0)
+                .server(zbus::Guid::generate())
+                .expect("server guid")
+                .p2p()
+                .serve_at(OBJECT_PATH, iface)
+                .expect("serve_at")
+                .build()
+                .expect("server connection")
+        });
+        let client = Builder::async_io_unix_stream(s1)
+            .p2p()
+            .method_timeout(Duration::from_secs(10))
+            .build()
+            .expect("client connection");
+        if let Some(name) = sender {
+            client.inner().set_unique_name(name).expect("unique name");
+        }
+        (server.join().expect("server thread"), client)
+    };
+    let core = |allow: bool| -> Arc<Core> {
+        Arc::new(
+            Manager::new(
+                FakeService::new(),
+                FakeAuthority::new(allow)
+                    .quietly(true)
+                    .bff(&Caller(":1.9".into())),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new())
+            .with_passwords(FakePasswords::new())
+            .with_log(FakeActionLog::new()),
+        )
+    };
+    fn call<B>(conn: &Connection, method: &str, body: &B) -> Result<zbus::Message, (String, String)>
+    where
+        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    {
+        conn.call_method(None::<&str>, OBJECT_PATH, Some(INTERFACE), method, body)
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                zbus::Error::FDO(e) => {
+                    use zbus::DBusError;
+                    (
+                        e.name().to_string(),
+                        e.description().unwrap_or_default().to_string(),
+                    )
+                }
+                other => panic!("{method}: not a method error reply: {other:?}"),
+            })
+    }
+    let err_name = |kind: &str| format!("org.privateai.Manager1.Error.{kind}");
+    let refusal = |key: &'static str, values: &[&str]| Refusal {
+        key,
+        values: values.iter().map(|v| v.to_string()).collect(),
+    };
+    let v = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, value)| (k.to_string(), value.to_string()))
+            .collect()
+    };
+    let off_text = || std::fs::read_to_string(sys.join("models.ini.disabled")).expect("off file");
+    let section = |id: &str| -> String {
+        pai_core::ini::text::section_text(&off_text(), id).unwrap_or_default()
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+
+    // ── A caller with no sender: both verbs refused, nothing touched ───────
+    {
+        let c = core(true);
+        let (_server, client) = connect(&c, None);
+        let e = call(
+            &client,
+            "CreateModelProfile",
+            &("nope", "", v(&[("model", "/m/nope.gguf")])),
+        )
+        .expect_err("CreateModelProfile with no sender");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        let e = call(&client, "DeleteModelProfile", &("free-me"))
+            .expect_err("DeleteModelProfile with no sender");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        assert!(
+            !section("nope").contains("nope.gguf") && section("free-me").contains("free.gguf"),
+            "a call with no sender wrote and removed nothing: {}",
+            off_text()
+        );
+    }
+
+    // ── An authorized caller: the verbs, their answers, their refusals ─────
+    {
+        let c = core(true);
+        let (_server, client) = connect(&c, Some(":1.42"));
+
+        let r = call(
+            &client,
+            "CreateModelProfile",
+            &("bus-x", "", v(&[("model", "/m/bus-x.gguf")])),
+        )
+        .expect("CreateModelProfile of a new id");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            section("bus-x"),
+            "[bus-x]\nmodel = /m/bus-x.gguf\n",
+            "the section of the call, in the switched-off file: {}",
+            off_text()
+        );
+
+        // The `from` of the wire is a name, the values pairs: a clone carries
+        // the source's lines and the call's own.
+        let r = call(
+            &client,
+            "CreateModelProfile",
+            &("bus-clone", "bus-x", v(&[("temp", "0.2")])),
+        )
+        .expect("CreateModelProfile cloning a profile");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            section("bus-clone"),
+            "[bus-clone]\nmodel = /m/bus-x.gguf\ntemp = 0.2\n",
+            "the source's lines, then the call's: {}",
+            off_text()
+        );
+
+        // A rule's refusal of a create crosses as the keyed `Invalid`.
+        for (id, from, values, want, why) in [
+            (
+                "TWIN",
+                "",
+                v(&[("model", "/m/twin.gguf")]),
+                refusal("model-profile-name-taken", &["TWIN"]),
+                "an id the pool holds in the other case",
+            ),
+            (
+                "*",
+                "",
+                v(&[("model", "/m/x.gguf")]),
+                refusal("invalid-model-profile-id", &["*"]),
+                "an id of no id",
+            ),
+            (
+                "both",
+                "bus-x",
+                v(&[("model", "/m/both.gguf"), ("hf-repo", "org/repo")]),
+                refusal("model-profile-bad-source", &["both"]),
+                "a model and a fetch at once",
+            ),
+            (
+                "lf",
+                "",
+                v(&[("model", "/m/a\ngguf")]),
+                refusal("model-profile-bad-text", &["model"]),
+                "a value with a line ending",
+            ),
+            (
+                "hk-key",
+                "bus-x",
+                v(&[("a\n[x]\nmodel", "1")]),
+                refusal("model-profile-bad-text", &["a\n[x]\nmodel"]),
+                "a clone override key of no key: written raw it forges a second \
+                 section the name, id and source checks never saw",
+            ),
+            (
+                "nowhere",
+                "no-such-profile",
+                v(&[("model", "/m/x.gguf")]),
+                refusal("model-profile-bad-source", &["nowhere"]),
+                "a model of its own beside a clone's source, judged before the pool",
+            ),
+            (
+                "clone-missing",
+                "no-such-profile",
+                v(&[]),
+                refusal("no-model-profile-named", &["no-such-profile"]),
+                "a clone whose source the pool does not hold",
+            ),
+        ] {
+            let e = call(&client, "CreateModelProfile", &(id, from, values))
+                .expect_err("a create refused by a rule");
+            assert_eq!(e.0, err_name("Invalid"), "{why}: {e:?}");
+            assert_eq!(
+                Refusal::decode(&e.1),
+                Some(want),
+                "{why}: the refusal crosses encoded: {:?}",
+                e.1
+            );
+        }
+        assert!(
+            !off_text().contains("[both]")
+                && !off_text().contains("[lf]")
+                && !off_text().contains("[hk-key]")
+                && !off_text().contains("[nowhere]")
+                && !off_text().contains("[clone-missing]"),
+            "a refused create wrote nothing: {}",
+            off_text()
+        );
+
+        // A rule's refusal of a delete, the same.
+        for (id, want, why) in [
+            (
+                "twin",
+                refusal("model-profile-enabled", &["twin"]),
+                "a profile that is switched on",
+            ),
+            (
+                "two-places",
+                refusal("model-profile-assigned", &["two-places", "default, lan-2"]),
+                "a profile two instances assign",
+            ),
+            (
+                "Star-Served",
+                refusal("model-profile-assigned", &["Star-Served", "lan-2"]),
+                "a profile a hand `* = on` serves",
+            ),
+            (
+                "gone",
+                refusal("no-model-profile-named", &["gone"]),
+                "a profile the pool does not hold",
+            ),
+            (
+                "*",
+                refusal("no-model-profile-named", &["*"]),
+                "no id: the pool's refusal, not the id rule",
+            ),
+        ] {
+            let e =
+                call(&client, "DeleteModelProfile", &(id)).expect_err("a delete refused by a rule");
+            assert_eq!(e.0, err_name("Invalid"), "{why}: {e:?}");
+            assert_eq!(
+                Refusal::decode(&e.1),
+                Some(want),
+                "{why}: the refusal crosses encoded: {:?}",
+                e.1
+            );
+        }
+        assert!(
+            pai_core::ini::text::section_text(
+                &std::fs::read_to_string(sys.join("models.ini")).expect("on file"),
+                "Twin",
+            )
+            .unwrap_or_default()
+            .contains("twin.gguf")
+                && section("Star-Served").contains("star.gguf"),
+            "a refused delete removed nothing: {}",
+            off_text()
+        );
+
+        // The hand `* = on` of `lan-2` serves every switched-off profile, so
+        // while the record holds it no profile is free. The refusals above read
+        // it; the accepted delete needs the key of one profile alone.
+        std::fs::write(
+            sys.join("assignments.ini"),
+            "[default]\ntwo-places = inherit\n\n[lan-2]\ntwo-places = off\nStar-Served = on\n",
+        )
+        .expect("assignments.ini");
+
+        // The accepted delete: the section alone, out.
+        call(&client, "DeleteModelProfile", &("free-me")).expect("the delete of a free profile");
+        assert_eq!(
+            section("free-me"),
+            "",
+            "the profile is gone: {}",
+            off_text()
+        );
+        assert!(
+            section("Star-Served").contains("star.gguf"),
+            "the neighbour is kept: {}",
+            off_text()
+        );
+
+        // The `As` forms are there, with the principal first, and gated: this
+        // caller is not the bff's account.
+        let e = call(
+            &client,
+            "CreateModelProfileAs",
+            &("alice", "bus-as", "", v(&[("model", "/m/as.gguf")])),
+        )
+        .expect_err("CreateModelProfileAs from a caller that is not the bff");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        let e = call(&client, "DeleteModelProfileAs", &("alice", "Star-Served"))
+            .expect_err("DeleteModelProfileAs from a caller that is not the bff");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        assert!(
+            !off_text().contains("[bus-as]") && section("Star-Served").contains("star.gguf"),
+            "a refused `As` form writes and removes nothing: {}",
+            off_text()
+        );
+
+        // The shape: no less, no more, and of the agreed types. zbus answers a
+        // mismatch with its own error, never one of the manager's.
+        let before = listing();
+        for e in [
+            call(&client, "CreateModelProfile", &("x", "")).expect_err("the values missing"),
+            call(
+                &client,
+                "CreateModelProfile",
+                &("x", "", vec!["model".to_string()]),
+            )
+            .expect_err("an array of strings where pairs belong"),
+            call(
+                &client,
+                "CreateModelProfile",
+                &("x", "", v(&[("model", "/m/x.gguf")]), "more"),
+            )
+            .expect_err("four arguments"),
+            call(&client, "DeleteModelProfile", &())
+                .expect_err("DeleteModelProfile with no argument"),
+            call(&client, "DeleteModelProfile", &("a", "b"))
+                .expect_err("DeleteModelProfile with two"),
+            call(&client, "CreateModelProfileAs", &("alice", "x", ""))
+                .expect_err("the As create missing the values"),
+            call(&client, "DeleteModelProfileAs", &("alice"))
+                .expect_err("the As delete missing the profile"),
+        ] {
+            assert!(
+                !e.0.starts_with("org.privateai.Manager1."),
+                "not the manager's error: {e:?}"
+            );
+        }
+        assert_eq!(listing(), before, "a call of the wrong shape wrote nothing");
+    }
+
+    // ── The bff's account: a member's call lands, an outsider's is refused ─
+    {
+        let c = core(true);
+        let (_server, client) = connect(&c, Some(":1.9"));
+
+        let r = call(
+            &client,
+            "CreateModelProfileAs",
+            &("alice", "member-mp", "", v(&[("hf-repo", "org/repo")])),
+        )
+        .expect("CreateModelProfileAs for a member of `pai`");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            section("member-mp"),
+            "[member-mp]\nhf-repo = org/repo\n",
+            "the member's profile, with the fetch and no model: {}",
+            off_text()
+        );
+
+        let e = call(
+            &client,
+            "CreateModelProfileAs",
+            &("bob", "outsider-mp", "", v(&[("model", "/m/bob.gguf")])),
+        )
+        .expect_err("CreateModelProfileAs for a caller outside `pai`");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+
+        call(&client, "DeleteModelProfileAs", &("alice", "member-mp"))
+            .expect("DeleteModelProfileAs for a member of `pai`");
+        assert_eq!(
+            section("member-mp"),
+            "",
+            "the member's delete landed: {}",
+            off_text()
+        );
+        let e = call(&client, "DeleteModelProfileAs", &("bob", "Star-Served"))
+            .expect_err("DeleteModelProfileAs for a caller outside `pai`");
+        assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        assert!(
+            !off_text().contains("[outsider-mp]") && section("Star-Served").contains("star.gguf"),
+            "a refusal of the `As` form wrote and removed nothing: {}",
+            off_text()
         );
     }
 }

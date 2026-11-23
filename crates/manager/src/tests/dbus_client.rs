@@ -2510,3 +2510,431 @@ fn the_dbus_client_reads_the_node_info() {
         "a forged pair spawns no Vulkan child"
     );
 }
+
+/// Creating and deleting a model profile over D-Bus, with pai-core's client
+/// (slice MP1): the three sources of a create, the clone keeping the source's
+/// lines, every rule's refusal decoded by the client (`ClientError::Invalid`
+/// with the key and its values), the delete's section alone out, a caller with
+/// no sender refused, and the `As` forms for a member of `pai` and an outsider.
+pub(crate) fn manager_dbus_client_model_profiles_e2e() {
+    use pai_core::client::ModelProfileSource;
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n",
+    )
+    .expect("record");
+    for (id, port) in [("default", 8080), ("lan-2", 8081)] {
+        std::fs::write(
+            sys.join(format!("server@{id}.ini")),
+            format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+        )
+        .expect("server profile");
+    }
+    let on = real_model_files(
+        dir.path(),
+        "[On-One]\nmodel = /models/on1.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n",
+    );
+    let off = real_model_files(
+        dir.path(),
+        "[off-one]\n; a note\ntemp = 0.3\nmodel = /models/off1.gguf\n\n[two-places]\nmodel = /models/two.gguf\n\n[free-me]\nmodel = /models/free.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n",
+    );
+    std::fs::write(sys.join("models.ini"), &on).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), &off).expect("models.ini.disabled");
+    let keys = "[default]\ntwo-places = inherit\n\n[lan-2]\ntwo-places = off\n";
+    std::fs::write(sys.join("assignments.ini"), keys).expect("assignments.ini");
+    let section = |text: &str, id: &str| -> String {
+        pai_core::ini::text::section_text(text, id).unwrap_or_default()
+    };
+    for id in ["default", "lan-2"] {
+        std::fs::write(
+            sys.join(format!("models@{id}.ini")),
+            pai_core::assign::render(&on, &off, Some(&section(keys, id))),
+        )
+        .expect("render");
+    }
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let off_text = || text_of("models.ini.disabled");
+    let refused = |key: &'static str, values: &[&str]| -> Result<(), ClientError> {
+        Err(ClientError::Invalid(Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }))
+    };
+
+    let c = core(true, &[]);
+    let (_server, client) = connect(&c, Some(":1.42"));
+    let alice = Caller(":1.42".into());
+
+    // ── The three sources ──────────────────────────────────────────────────
+    assert_eq!(
+        client.create_model_profile(
+            "bus-model",
+            &ModelProfileSource::Model("/models/bus-model.gguf".into())
+        ),
+        Ok(()),
+        "a profile of a model file of the node"
+    );
+    assert_eq!(
+        section(&off_text(), "bus-model"),
+        "[bus-model]\nmodel = /models/bus-model.gguf\n",
+        "the new section, at the end of the switched-off file: {}",
+        off_text()
+    );
+    assert_eq!(
+        std::fs::metadata(sys.join("models.ini.disabled"))
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o644,
+        "the mode of the pool file a create writes: readable by the instance"
+    );
+    assert_eq!(
+        client.create_model_profile(
+            "bus-hf",
+            &ModelProfileSource::Hf {
+                repo: "org/repo".into(),
+                file: Some("Q4_K_M.gguf".into()),
+            }
+        ),
+        Ok(()),
+        "a profile of a Hugging Face pick with a file"
+    );
+    assert_eq!(
+        client.create_model_profile(
+            "bus-repo",
+            &ModelProfileSource::Hf {
+                repo: "org/other".into(),
+                file: None,
+            }
+        ),
+        Ok(()),
+        "a profile of a repository with no file named"
+    );
+    assert_eq!(
+        section(&off_text(), "bus-hf"),
+        "[bus-hf]\nhf-file = Q4_K_M.gguf\nhf-repo = org/repo\n",
+        "the pick's two keys, sorted: {}",
+        off_text()
+    );
+    assert_eq!(
+        section(&off_text(), "bus-repo"),
+        "[bus-repo]\nhf-repo = org/other\n",
+        "a repository alone is one key, and no `model`: {}",
+        off_text()
+    );
+
+    // ── The clone: the source's lines, kept ────────────────────────────────
+    assert_eq!(
+        client.create_model_profile("bus-clone", &ModelProfileSource::From("off-one".into())),
+        Ok(()),
+        "a copy of a switched-off profile"
+    );
+    assert_eq!(
+        section(&off_text(), "bus-clone"),
+        // The source's lines with its trailing blank separator left out
+        // (MP1, ARCHITECTURE.md done-when): the copy ends with one ending.
+        format!(
+            "[bus-clone]\n{}\n",
+            section(&off, "off-one")["[off-one]\n".len()..].trim_end_matches('\n')
+        ),
+        "the source's comment, keys and order, under the new header, no blank at the \
+         end: {}",
+        off_text()
+    );
+    assert_eq!(
+        client.create_model_profile("bus-on-clone", &ModelProfileSource::From("On-One".into())),
+        Ok(()),
+        "the source of a switched-on profile: the clone is born switched off"
+    );
+    assert_eq!(
+        section(&off_text(), "bus-on-clone"),
+        format!(
+            "[bus-on-clone]\n{}\n",
+            section(&on, "On-One")["[On-One]\n".len()..].trim_end_matches('\n')
+        ),
+        "the source's lines, in the switched-off file: {}",
+        off_text()
+    );
+    assert_eq!(
+        text_of("models.ini"),
+        on,
+        "the switched-on file keeps every byte of itself: a create lands in the other"
+    );
+    assert_eq!(text_of("assignments.ini"), keys, "a create assigns nothing");
+    assert_eq!(
+        text_of("instances.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n",
+        "and writes no instance record"
+    );
+
+    // ── Every rule's refusal, decoded by the client ────────────────────────
+    for (id, source, want, why) in [
+        (
+            "OFF-ONE",
+            ModelProfileSource::Model("/m/x.gguf".into()),
+            refused("model-profile-name-taken", &["OFF-ONE"]),
+            "a name the pool holds in the other case",
+        ),
+        (
+            "*",
+            ModelProfileSource::Model("/m/x.gguf".into()),
+            refused("invalid-model-profile-id", &["*"]),
+            "an id of no id",
+        ),
+        (
+            "bus-hf",
+            ModelProfileSource::From("off-one".into()),
+            refused("model-profile-name-taken", &["bus-hf"]),
+            "an id taken by an earlier call of this phase",
+        ),
+        (
+            "bus-nosuch",
+            ModelProfileSource::From("no-such-profile".into()),
+            refused("no-model-profile-named", &["no-such-profile"]),
+            "a source the pool does not hold",
+        ),
+    ] {
+        assert_eq!(
+            client.create_model_profile(id, &source),
+            want,
+            "{why}: the refusal the client decodes"
+        );
+    }
+    assert!(
+        !off_text().contains("[bus-nosuch]"),
+        "a refused create wrote nothing: {}",
+        off_text()
+    );
+
+    // ── The delete: the section alone, out ─────────────────────────────────
+    assert_eq!(
+        client.delete_model_profile("free-me"),
+        Ok(()),
+        "a profile no instance assigns"
+    );
+    assert_eq!(section(&off_text(), "free-me"), "", "its section is gone");
+    assert!(
+        section(&off_text(), "bus-clone").contains("a note"),
+        "the neighbour's section is kept: {}",
+        off_text()
+    );
+    for (id, want, why) in [
+        (
+            "on-one",
+            refused("model-profile-enabled", &["on-one"]),
+            "a profile that is switched on",
+        ),
+        (
+            "Twin",
+            refused("model-profile-enabled", &["Twin"]),
+            "the twin an interrupted switch left in both files",
+        ),
+        (
+            "two-places",
+            refused("model-profile-assigned", &["two-places", "default, lan-2"]),
+            "a profile two instances assign: both named, in the record's order",
+        ),
+        (
+            "gone",
+            refused("no-model-profile-named", &["gone"]),
+            "a profile neither file holds",
+        ),
+        (
+            "*",
+            refused("no-model-profile-named", &["*"]),
+            "no id: the pool's refusal, not the id rule",
+        ),
+    ] {
+        assert_eq!(client.delete_model_profile(id), want, "{why}");
+    }
+    assert_eq!(
+        text_of("assignments.ini"),
+        keys,
+        "neither the create nor the delete of a free profile writes a key"
+    );
+    assert_eq!(
+        asked(&c),
+        vec![(alice.clone(), Action::Configure); 15],
+        "every verb asked configure of the sender, once per call"
+    );
+    assert_eq!(
+        calls(&c),
+        vec![],
+        "no verb of a model profile touches a unit"
+    );
+
+    // ── A caller with no sender ────────────────────────────────────────────
+    let (_server, anonymous) = connect(&c, None);
+    assert_eq!(
+        anonymous.create_model_profile("bus-anon", &ModelProfileSource::Model("/m/a.gguf".into())),
+        Err(ClientError::NotAuthorized),
+        "no sender, no create"
+    );
+    assert_eq!(
+        anonymous.delete_model_profile("bus-clone"),
+        Err(ClientError::NotAuthorized),
+        "no sender, no delete"
+    );
+    assert!(
+        !off_text().contains("[bus-anon]") && section(&off_text(), "bus-clone").contains("a note"),
+        "the refused calls wrote and removed nothing: {}",
+        off_text()
+    );
+}
+
+/// The `As` forms of the two verbs, over D-Bus, for a client bound to a
+/// member: the member's create and delete land, an outsider's are refused with
+/// nothing done, and the pair (the bff's account, a current member) decides the
+/// right: polkit is asked nothing.
+pub(crate) fn manager_dbus_client_model_profiles_as_e2e() {
+    use crate::manager::service::fakes::{FakeGroup, FakePasswords};
+    use pai_core::client::ModelProfileSource;
+
+    const BFF: &str = ":1.9";
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    std::fs::write(
+        sys.join("instances.ini"),
+        "[default]\nServerProfile = default\n",
+    )
+    .expect("record");
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+    )
+    .expect("server profile");
+    std::fs::write(sys.join("models.ini"), "").expect("models.ini");
+    let off = real_model_files(
+        dir.path(),
+        "[keep]\nmodel = /models/keep.gguf\n\n[two-places]\nmodel = /models/two.gguf\n",
+    );
+    std::fs::write(sys.join("models.ini.disabled"), &off).expect("models.ini.disabled");
+    std::fs::write(sys.join("assignments.ini"), "[default]\ntwo-places = on\n")
+        .expect("assignments.ini");
+    std::fs::write(
+        sys.join("models@default.ini"),
+        pai_core::assign::render("", &off, Some("[default]\ntwo-places = on\n")),
+    )
+    .expect("render");
+    let section = |text: &str, id: &str| -> String {
+        pai_core::ini::text::section_text(text, id).unwrap_or_default()
+    };
+    let off_text = || std::fs::read_to_string(sys.join("models.ini.disabled")).expect("off file");
+
+    let passwords = FakePasswords::new();
+    let admins = passwords.asked_admin.clone();
+    let c = Arc::new(
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(false)
+                .quietly(false)
+                .bff(&Caller(BFF.into())),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords),
+    );
+    let polkit = |c: &Arc<Core>| c.authority().asked.lock().unwrap().clone();
+    let bff_checks = |c: &Arc<Core>| c.authority().asked_bff.lock().unwrap().clone();
+    let asked_admin = |a: &Arc<std::sync::Mutex<Vec<String>>>| a.lock().unwrap().clone();
+
+    let (_server, client) = connect(&c, Some(BFF));
+    let member = Arc::new(client.acting_for("alice"));
+
+    assert_eq!(
+        on("create_model_profile", &member, |c| c.create_model_profile(
+            "alice-mp",
+            &ModelProfileSource::Model("/models/alice.gguf".into())
+        )),
+        Ok(()),
+        "a member's create, vouched for by the bff: the right is the pair, not polkit"
+    );
+    assert_eq!(
+        section(&off_text(), "alice-mp"),
+        "[alice-mp]\nmodel = /models/alice.gguf\n",
+        "the member's profile landed: {}",
+        off_text()
+    );
+    assert_eq!(
+        on("delete_model_profile", &member, |c| c
+            .delete_model_profile("alice-mp")),
+        Ok(()),
+        "and the member's delete of it"
+    );
+    assert_eq!(section(&off_text(), "alice-mp"), "", "it is gone");
+    assert_eq!(
+        on("delete_model_profile", &member, |c| c
+            .delete_model_profile("two-places")),
+        Err(ClientError::Invalid(Refusal {
+            key: "model-profile-assigned",
+            values: vec!["two-places".into(), "default".into()],
+        })),
+        "the member's delete of an assigned profile is the rule's refusal, not a \
+         permission of its own: the manager answers the web's rules as the caller's own"
+    );
+    assert_eq!(
+        on("create_model_profile", &member, |c| c.create_model_profile(
+            "keep",
+            &ModelProfileSource::Model("/models/again.gguf".into())
+        )),
+        Err(ClientError::Invalid(Refusal {
+            key: "model-profile-name-taken",
+            values: vec!["keep".into()],
+        })),
+        "a name the pool holds, for a member as for anybody"
+    );
+
+    let outsider = Arc::new(client.acting_for("bob"));
+    assert_eq!(
+        on("create_model_profile", &outsider, |c| c
+            .create_model_profile(
+                "bob-mp",
+                &ModelProfileSource::Model("/models/bob.gguf".into())
+            )),
+        Err(ClientError::NotAuthorized),
+        "bob is no member of `pai`"
+    );
+    assert_eq!(
+        on("delete_model_profile", &outsider, |c| c
+            .delete_model_profile("keep")),
+        Err(ClientError::NotAuthorized),
+        "the same for a delete"
+    );
+    assert!(
+        !off_text().contains("[bob-mp]") && section(&off_text(), "keep").contains("keep.gguf"),
+        "a refusal of the `As` form wrote and removed nothing: {}",
+        off_text()
+    );
+    assert_eq!(
+        polkit(&c),
+        vec![],
+        "the principal gate decides the right: polkit is asked nothing"
+    );
+    assert_eq!(
+        bff_checks(&c),
+        vec![Caller(BFF.into()); 6],
+        "the caller checked once per `As` call"
+    );
+    assert_eq!(
+        asked_admin(&admins),
+        [
+            "alice".to_string(),
+            "alice".into(),
+            "alice".into(),
+            "alice".into(),
+            "bob".into(),
+            "bob".into(),
+        ],
+        "the membership of the vouched name, asked once per call, never cached"
+    );
+}

@@ -246,6 +246,42 @@ pub struct ServerProfileInfo {
     pub instance: Option<String>,
 }
 
+/// What a new model profile is built from (`CreateModelProfile`,
+/// `ARCHITECTURE.md` "Create, clone and delete model profiles from the web"):
+/// a copy of a profile the pool holds, a `model` file of the node, or a
+/// Hugging Face repository with an optional file inside it (the `value` object
+/// `GET api/hf/files` answers). Exactly one source, which is why the client
+/// carries one enum: the manager judges the shape of a call that arrives with
+/// two, or none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelProfileSource {
+    /// A copy of the pool's model profile `id`, its section's lines kept.
+    From(String),
+    /// A new profile with one `model` line.
+    Model(String),
+    /// A new profile with `hf-repo`, and its `hf-file` when the pick named one.
+    Hf { repo: String, file: Option<String> },
+}
+
+impl ModelProfileSource {
+    /// The pair `CreateModelProfile` takes: the profile to copy, `""` when the
+    /// source is a pick, and the pick's keys, `""` for a clone. A transport
+    /// expands the enum this way, the manager never seeing it.
+    pub fn as_source(&self) -> (String, Vec<(String, String)>) {
+        match self {
+            Self::From(id) => (id.clone(), Vec::new()),
+            Self::Model(model) => (String::new(), vec![("model".into(), model.clone())]),
+            Self::Hf { repo, file } => {
+                let mut values = vec![("hf-repo".into(), repo.clone())];
+                if let Some(file) = file {
+                    values.push(("hf-file".into(), file.clone()));
+                }
+                (String::new(), values)
+            }
+        }
+    }
+}
+
 /// One tensor of a model, as the tensor list of [`ModelFacts`] carries it: the
 /// name the GGUF header spells (`blk.7.ffn_gate_exps.weight`), and the bytes the
 /// tensor occupies in its shard. The page places weights by these.
@@ -486,6 +522,46 @@ pub trait ManagerClient {
     fn server_profiles(&self) -> Result<Vec<ServerProfileInfo>, ClientError> {
         Err(ClientError::Other(
             "this transport of the manager has no ServerProfiles".into(),
+        ))
+    }
+    /// Writes the model profile `profile` into `models.ini.disabled`: born
+    /// switched off and assigned nothing, never overwriting a name either pool
+    /// file holds (`ClientError::Invalid` with `model-profile-name-taken`).
+    /// Guarded as a write of a served file is.
+    ///
+    /// STUB (slice MP1, tester): the verb exists so the tests compile; the
+    /// manager's rule and every transport's body are the coder's.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn create_model_profile(
+        &self,
+        profile: &str,
+        source: &ModelProfileSource,
+    ) -> Result<(), ClientError> {
+        let _ = (profile, source);
+        Err(ClientError::Other(
+            "this transport of the manager has no CreateModelProfile".into(),
+        ))
+    }
+    /// Removes the model profile `profile` from `models.ini.disabled`, when it
+    /// is switched off and no instance is assigned it: a profile of `models.ini`
+    /// is `model-profile-enabled`, one a key names is `model-profile-assigned`
+    /// naming the instances, and a name neither file holds is
+    /// `no-model-profile-named` (all `ClientError::Invalid`). Guarded as a write
+    /// of a served file is.
+    ///
+    /// STUB (slice MP1, tester): the verb exists so the tests compile; the
+    /// manager's rule and every transport's body are the coder's.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
+        let _ = profile;
+        Err(ClientError::Other(
+            "this transport of the manager has no DeleteModelProfile".into(),
         ))
     }
     /// Replaces the tags of the instance `instance`: the record's own list,

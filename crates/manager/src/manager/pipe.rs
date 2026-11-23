@@ -65,6 +65,11 @@ enum Request {
     CreateServerProfile(String, String, u16, Option<Principal>),
     /// `engine`, `profile`: removes a server profile no instance points at.
     DeleteServerProfile(String, String, Option<Principal>),
+    /// `profile`, `from`, `values`: writes a new model profile, `from` a
+    /// profile to copy (`""` for none) and `values` the keys of the file pick.
+    CreateModelProfile(String, String, Vec<(String, String)>, Option<Principal>),
+    /// `profile`: removes a switched-off, unassigned model profile.
+    DeleteModelProfile(String, Option<Principal>),
     /// `engine`, `instance`, `server_profile`: creates an instance.
     CreateInstance(String, String, String, Option<Principal>),
     /// `instance`: removes an instance.
@@ -111,6 +116,23 @@ impl Request {
         // no request: the shape of the frame is the frame's rule, what a port
         // means is the core's.
         let port = || u16::try_from(v.get("port")?.as_u64()?).ok();
+        // The source of a model profile create: `from` the name of the profile
+        // to copy, no field being none, and `values` the keys of the file pick,
+        // an object of strings, required. A `from` that is no string, a
+        // `values` that is no object (an array of pairs is the bus's shape, not
+        // the frame's), an entry that is no string, or `values` missing, is no
+        // request.
+        let from = || match v.get("from") {
+            Some(value) => value.as_str().map(str::to_string),
+            None => Some(String::new()),
+        };
+        let values = || {
+            v.get("values")?
+                .as_object()?
+                .iter()
+                .map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+                .collect::<Option<Vec<(String, String)>>>()
+        };
         Some(match method {
             "ListInstances" => Request::ListInstances,
             "Instances" => Request::Instances,
@@ -200,6 +222,24 @@ impl Request {
                 arg("profile")?,
                 principal().map(Some)?,
             ),
+            // The create of a model profile: the id, the profile to copy (no
+            // field is none) and the keys of the file pick, an object of
+            // strings. A `values` that is no object, a value that is no
+            // string, a `from` that is no string, is no request.
+            "CreateModelProfile" => {
+                Request::CreateModelProfile(arg("profile")?, from()?, values()?, None)
+            }
+            "CreateModelProfileAs" => Request::CreateModelProfile(
+                arg("profile")?,
+                from()?,
+                values()?,
+                principal().map(Some)?,
+            ),
+            // Its removal.
+            "DeleteModelProfile" => Request::DeleteModelProfile(arg("profile")?, None),
+            "DeleteModelProfileAs" => {
+                Request::DeleteModelProfile(arg("profile")?, principal().map(Some)?)
+            }
             // The create of an instance: the engine, the id and the server
             // profile it runs. The id is the frame's `instance`, the name every
             // verb keyed on an instance uses.
@@ -340,6 +380,17 @@ where
         // Its removal.
         Request::DeleteServerProfile(engine, profile, principal) => requester(caller, principal)
             .and_then(|who| manager.delete_server_profile(&who, &engine, &profile))
+            .map(|()| Value::Null),
+        // A new model profile, born switched off: the id, the profile to copy
+        // and the keys of the file pick.
+        Request::CreateModelProfile(profile, from, values, principal) => {
+            requester(caller, principal)
+                .and_then(|who| manager.create_model_profile(&who, &profile, &from, &values))
+                .map(|()| Value::Null)
+        }
+        // Its removal.
+        Request::DeleteModelProfile(profile, principal) => requester(caller, principal)
+            .and_then(|who| manager.delete_model_profile(&who, &profile))
             .map(|()| Value::Null),
         // A new instance. The reply is empty as every write's: the caller sent
         // the id, and the create answers before the record is written.
@@ -2332,5 +2383,217 @@ mod tests {
         drop(client);
         let served = served.join().expect("the server thread panicked");
         assert!(served.is_ok(), "{served:?}");
+    }
+
+    // ── The model profile verbs (slice MP1) ───────────────────────────────
+
+    /// Creating and deleting a model profile ask `configure` as every write of a
+    /// served file does; a caller the authority refuses is answered NotAuthorized
+    /// with nothing done. The `As` forms name a principal: a caller that is not
+    /// the bff's account is answered NotAuthorized by the principal gate, before
+    /// the action's action is asked. The ids and the values here are all ones the
+    /// core refuses before it resolves a path, so nothing reaches `paths::`
+    /// (this unit test does not redirect the data root).
+    #[test]
+    fn the_model_profile_create_and_delete_ask_configure_and_a_refused_caller_changes_nothing() {
+        let c = core(false);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "CreateModelProfile", "profile": "new-mp", "values": {"model": "/m/new.gguf"}}),
+                json!({"method": "DeleteModelProfile", "profile": "old-mp"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("NotAuthorized", "NotAuthorized"),
+                error("NotAuthorized", "NotAuthorized")
+            ]
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 2]);
+        assert_eq!(calls(&c), vec![]);
+
+        // The `As` forms, from a caller that is not the bff: the principal gate
+        // decides, and the action is never asked.
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "CreateModelProfileAs", "principal": "alice", "profile": "new-mp", "values": {"model": "/m/new.gguf"}}),
+                json!({"method": "DeleteModelProfileAs", "principal": "alice", "profile": "old-mp"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("NotAuthorized", "NotAuthorized"),
+                error("NotAuthorized", "NotAuthorized")
+            ],
+            "a caller that is not the bff vouches for nobody"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "the principal gate refused, so the action was never asked"
+        );
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// The refusals of the two verbs, over the wire, each with its own key
+    /// encoded as every `Invalid` reply is: the id rule, the shape of the source,
+    /// a value that is no text, a marker in a fetch value, and a key that is no
+    /// key of the INI. The source's
+    /// shape is judged before the id, so a call with no id of its own and both
+    /// sources answers `model-profile-bad-source`; a delete of an id the id rule
+    /// refuses answers the pool's `no-model-profile-named`, not
+    /// `invalid-model-profile-id`.
+    #[test]
+    fn the_model_profile_verbs_answer_the_rules_refusals() {
+        let c = core(true);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                // The id rule, and the source's shape first.
+                json!({"method": "CreateModelProfile", "profile": "*", "values": {"model": "/m/x.gguf"}}),
+                json!({"method": "CreateModelProfile", "profile": "a b", "values": {"model": "/m/x.gguf"}}),
+                json!({"method": "CreateModelProfile", "profile": "", "values": {"model": "/m/x.gguf"}}),
+                json!({"method": "CreateModelProfile", "profile": "../x", "values": {"model": "/m/x.gguf"}}),
+                json!({"method": "CreateModelProfile", "profile": "a[b]", "values": {"model": "/m/x.gguf"}}),
+                json!({"method": "CreateModelProfile", "profile": "*", "from": "*", "values": {"model": "/m/x.gguf"}}),
+                // The source: both, and neither.
+                json!({"method": "CreateModelProfile", "profile": "dup", "from": "src", "values": {"model": "/m/a.gguf"}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"model": "/m/a.gguf", "hf-repo": "org/model"}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"hf-file": "m.gguf"}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"n-gpu-layers": "99"}}),
+                // A value that is no text, and a marker in a fetch value.
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"model": ""}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"model": "  "}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"model": "/m/a\nb"}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"model": "/m/a\rb"}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"model": "/m/a\0b"}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"hf-repo": "org/model\u{2003}"}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"model": "/m/a;b"}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "values": {"hf-file": "m;m.gguf"}}),
+                // A key that is no key of the INI, on a clone: the shape lets
+                // any key through, so only the key rule keeps the forged line
+                // out of the file.
+                json!({"method": "CreateModelProfile", "profile": "hk-wire", "from": "src", "values": {"a\n[x]\nmodel": "1"}}),
+                // The source the pool does not hold, and no source at all: the
+                // pool's own refusal, answered before any file of the tree.
+                json!({"method": "CreateModelProfile", "profile": "dup", "from": "*", "values": {}}),
+                json!({"method": "CreateModelProfile", "profile": "dup", "from": "*", "values": {"temp": "0.2"}}),
+                // The delete: no id of its own is the pool's refusal.
+                json!({"method": "DeleteModelProfile", "profile": "*"}),
+                json!({"method": "DeleteModelProfile", "profile": "a b"}),
+                json!({"method": "DeleteModelProfile", "profile": ""}),
+                json!({"method": "DeleteModelProfile", "profile": "../x"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("Invalid", &refusal("invalid-model-profile-id", &["*"])),
+                error("Invalid", &refusal("invalid-model-profile-id", &["a b"])),
+                error("Invalid", &refusal("invalid-model-profile-id", &[""])),
+                error("Invalid", &refusal("invalid-model-profile-id", &["../x"])),
+                error("Invalid", &refusal("invalid-model-profile-id", &["a[b]"])),
+                error("Invalid", &refusal("model-profile-bad-source", &["*"])),
+                error("Invalid", &refusal("model-profile-bad-source", &["dup"])),
+                error("Invalid", &refusal("model-profile-bad-source", &["dup"])),
+                error("Invalid", &refusal("model-profile-bad-source", &["dup"])),
+                error("Invalid", &refusal("model-profile-bad-source", &["dup"])),
+                error("Invalid", &refusal("model-profile-bad-text", &["model"])),
+                error("Invalid", &refusal("model-profile-bad-text", &["model"])),
+                error("Invalid", &refusal("model-profile-bad-text", &["model"])),
+                error("Invalid", &refusal("model-profile-bad-text", &["model"])),
+                error("Invalid", &refusal("model-profile-bad-text", &["model"])),
+                error("Invalid", &refusal("model-profile-bad-text", &["hf-repo"])),
+                error("Invalid", &refusal("comment-markers", &["model"])),
+                error("Invalid", &refusal("comment-markers", &["hf-file"])),
+                error(
+                    "Invalid",
+                    &refusal("model-profile-bad-text", &["a\n[x]\nmodel"])
+                ),
+                error("Invalid", &refusal("no-model-profile-named", &["*"])),
+                error("Invalid", &refusal("no-model-profile-named", &["*"])),
+                error("Invalid", &refusal("no-model-profile-named", &["*"])),
+                error("Invalid", &refusal("no-model-profile-named", &["a b"])),
+                error("Invalid", &refusal("no-model-profile-named", &[""])),
+                error("Invalid", &refusal("no-model-profile-named", &["../x"])),
+            ],
+            "the shape and the values first, then the id, then the pool: every key of \
+             the design, encoded as every refusal is"
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 25]);
+        assert_eq!(
+            calls(&c),
+            vec![],
+            "no verb of a model profile touches a unit"
+        );
+    }
+
+    /// `profile` and `values` are required and of their own types, `from` is a
+    /// name when it is there, and `values` is an object of strings: a missing
+    /// field, a value that is not a string, `values` of another shape, a
+    /// principal that disagrees with the `As` spelling, or a method spelled
+    /// otherwise, is no request. A field the manager does not know (`port`,
+    /// `tags`) stays ignored, as it is for every other verb, so it is not
+    /// among these.
+    #[test]
+    fn a_malformed_model_profile_request_is_a_bad_request() {
+        for body in [
+            json!({"method": "CreateModelProfile"}),
+            json!({"method": "CreateModelProfile", "profile": "x"}),
+            json!({"method": "CreateModelProfile", "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfile", "profile": 5, "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": "model=/m/x.gguf"}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": ["model=/m/x.gguf"]}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": [["model", "/m/x.gguf"]]}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": null}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": 5}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": {"model": 5}}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": {"model": null}}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": {"model": true}}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": {"model": ["a"]}}),
+            json!({"method": "CreateModelProfile", "profile": "x", "values": {"model": {"p": "/m/x.gguf"}}}),
+            json!({"method": "CreateModelProfile", "profile": "x", "from": 5, "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfile", "profile": "x", "from": null, "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfile", "profile": "x", "from": ["a"], "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfileAs", "profile": "x", "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfileAs", "principal": 5, "profile": "x", "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfileAs", "principal": null, "profile": "x", "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfile", "principal": "alice", "profile": "x", "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "createModelProfile", "profile": "x", "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "CreateModelProfiles", "profile": "x", "values": {"model": "/m/x.gguf"}}),
+            json!({"method": "DeleteModelProfile"}),
+            json!({"method": "DeleteModelProfile", "profile": 5}),
+            json!({"method": "DeleteModelProfile", "profile": null}),
+            json!({"method": "DeleteModelProfile", "profile": ["x"]}),
+            json!({"method": "DeleteModelProfileAs", "profile": "x"}),
+            json!({"method": "DeleteModelProfileAs", "principal": 5, "profile": "x"}),
+            json!({"method": "DeleteModelProfile", "principal": "alice", "profile": "x"}),
+            json!({"method": "deleteModelProfile", "profile": "x"}),
+        ] {
+            let c = core(true);
+            let (result, replies) = serve(&c, alice(), requests(std::slice::from_ref(&body)));
+            // A frame that is no request is answered and ends the connection,
+            // as every other verb's malformed frame does.
+            assert!(result.is_err(), "{body}");
+            assert_eq!(replies.len(), 1, "{body}");
+            assert_bad_request(&replies[0], &body.to_string());
+            assert_eq!(
+                asked(&c),
+                vec![],
+                "{body}: a frame that is no request asks the authority nothing"
+            );
+            assert_eq!(calls(&c), vec![], "{body}");
+        }
     }
 }

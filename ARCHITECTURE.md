@@ -3738,7 +3738,9 @@ already `configure`) and delete unused ones (exactly what the rule allows); with
   a create with `model` writes `[x]` / `model = /m/x.gguf` at the end of `models.ini.disabled`, every
   other byte kept, and nothing in `models.ini`; with `hf-repo` only it is accepted; a clone of a
   switched-on source lands in the disabled file with the source's lines byte for byte under the new
-  header; an `assignments.ini` holding `X = on` for the new id `x` under an instance loses that key and
+  header, its trailing blank lines left out (the separator before the next section is layout, not the
+  source's lines: a mid-file and a last source clone alike, and the call's keys follow the last line
+  with no blank between); an `assignments.ini` holding `X = on` for the new id `x` under an instance loses that key and
   the render of that instance stays `[*]`-only; a taken id (other case, either file) is
   `model-profile-name-taken`, `*` and `a b` are `invalid-model-profile-id`, `from` absent or `*` is
   `no-model-profile-named`, both or neither source and `hf-file` alone are `model-profile-bad-source`,

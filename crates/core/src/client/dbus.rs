@@ -35,8 +35,8 @@
 
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, ModelFacts, ModelInfoReply, NodeDevices, NodeInfoReply, Reason,
-    ServerProfileInfo, TensorRow,
+    ManagerVersion, ModelFacts, ModelInfoReply, ModelProfileSource, NodeDevices, NodeInfoReply,
+    Reason, ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu, Status};
@@ -333,6 +333,27 @@ impl ManagerClient for DbusClient {
         match self.acting() {
             Some(principal) => self.call("DeleteServerProfileAs", &(principal, engine, profile)),
             None => self.call("DeleteServerProfile", &(engine, profile)),
+        }
+        .map(|_| ())
+    }
+    fn create_model_profile(
+        &self,
+        profile: &str,
+        source: &ModelProfileSource,
+    ) -> Result<(), ClientError> {
+        let (from, values) = source.as_source();
+        match self.acting() {
+            Some(principal) => {
+                self.call("CreateModelProfileAs", &(principal, profile, from, values))
+            }
+            None => self.call("CreateModelProfile", &(profile, from, values)),
+        }
+        .map(|_| ())
+    }
+    fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("DeleteModelProfileAs", &(principal, profile)),
+            None => self.call("DeleteModelProfile", &(profile,)),
         }
         .map(|_| ())
     }

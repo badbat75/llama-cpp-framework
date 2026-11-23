@@ -419,7 +419,7 @@ pub(super) fn wire(app: &AppWindow, state: &Rc<RefCell<State>>) {
                         let key = match (app.global::<AppState>().get_server_running(), enabled) {
                             (true, true) => strings::key("model-profile-enabled-restart"),
                             (true, false) => strings::key("model-profile-disabled-restart"),
-                            (false, true) => strings::key("model-profile-enabled"),
+                            (false, true) => strings::key("model-profile-switched-on"),
                             (false, false) => strings::key("model-profile-disabled"),
                         };
                         set_status(&app, strings::fill(key, &[&id]), false);
