@@ -15,7 +15,15 @@ export type SaveAnswer =
   | { kind: 'signed-out' }
   | { kind: 'revoked' }
   | { kind: 'changed-elsewhere' }
-  | { kind: 'refused'; text: string; field?: string }
+  | {
+      kind: 'refused'
+      text: string
+      field?: string
+      /** The 422's key and its args: given by `refusalOf`, so a page can place
+       * the mark where the key's args point (brief 21, 21 T.12). */
+      key?: string
+      args?: string[]
+    }
   | { kind: 'failed'; text: string }
 
 /** What a write that threw reads as: a time-out may have written the file

@@ -88,6 +88,10 @@ import {
 import { setBlocks, type Layout } from './gpuBlocks.ts'
 import {
   ADD_ID,
+  OT_TEXT,
+  otControlElementId,
+  otControlId,
+  otLayersBad,
   otNewDevice,
   otNewRule,
   otSetLayersText,
@@ -500,6 +504,12 @@ const REFUSALS: RefusalTable = {
         return t('api-override-no-pattern', ...args)
       case 'override-no-device':
         return t('api-override-no-device', ...args)
+      // Brief 21 TP2, 21 T.12: the two checks of `override-tensor` the manager
+      // answers beside the pattern and device ones.
+      case 'override-tensor-space':
+        return t('api-override-tensor-space', ...args)
+      case 'override-bad-device':
+        return t('api-override-bad-device', ...args)
       case 'invalid-model-profile-id':
         return t('api-invalid-model-profile-id', ...args)
       case 'model-profile-name-taken':
@@ -550,8 +560,12 @@ const REFUSALS: RefusalTable = {
         return args[2]
       case 'tensor-split-format':
         return 'tensor-split'
+      // Brief 21 TP2, 21 T.12: the card owns the key, so the fallback names it
+      // and the page answers on the rule the args point at.
       case 'override-no-pattern':
       case 'override-no-device':
+      case 'override-tensor-space':
+      case 'override-bad-device':
         return 'override-tensor'
       default:
         return undefined
@@ -675,6 +689,22 @@ function focusField(key: string) {
   }
 }
 
+/** Puts the focus on the first control the page marked, in the order the
+ *  controls are on screen (21 T.11, 21 T.12: the first failing one). The marks
+ *  are keyed as the card keys its Field Errors, and `otControlElementId` gives
+ *  the id of the control each one marks. A mark names a control the page
+ *  renders, so one of them answers. */
+function focusMarked(marks: Partial<Record<string, string>>) {
+  const ids = new Set(Object.keys(marks).map(otControlElementId))
+  for (const control of document.querySelectorAll<HTMLElement>(
+    'input, select, textarea',
+  ))
+    if (ids.has(control.id)) {
+      control.focus()
+      return
+    }
+}
+
 /** Whether the field of a key can be worked on: its control is enabled, or the
  *  box that ticks it on is. A field the page cannot edit has no control and no
  *  box at all, so nothing to mark and nowhere to go. */
@@ -792,6 +822,12 @@ function Content({
   const [otRows, setOtRows] = useState<TensorRow[]>(() =>
     tensorRows(doc.values['override-tensor'] ?? null),
   )
+  // Brief 21, 21 T.10: the Rules as text field. Its text is the page's: what is
+  // typed in is shown as it is typed, until Enter or the focus leaving applies
+  // it to the rows. `null` is "nothing typed in": the field shows the loaded
+  // value as the file writes it while the key is unchanged (21 T.8), and
+  // `render` of the rows once they are an edit.
+  const [otText, setOtText] = useState<string | null>(null)
   // A second Save while one runs sends nothing (137).
   const saving = useRef(false)
   const bar = useSaveBarPadding()
@@ -1051,16 +1087,26 @@ function Content({
    *  its own row and leaves the others, and moves no focus. The key is sent when
    *  the rows no longer render the loaded rules (21 T.8), so an edit typed and
    *  typed back is unchanged, and a Layers text `parseLayers` cannot read is a
-   *  change: the pattern stays as the last readable text composed it. */
-  function otEdit(id: number, change: (row: TensorRow) => TensorRow) {
+   *  change: the pattern stays as the last readable text composed it, and the
+   *  card's own check at Save answers it (21 T.11). 142's rule: the edit clears
+   *  the Field Error of the control it was made on, and leaves the marks of the
+   *  row's other controls, which speak of what did not move (the TP2 review's
+   *  D3). */
+  function otEdit(
+    id: number,
+    field: string,
+    change: (row: TensorRow) => TensorRow,
+  ) {
     setOtRows((rows) => rows.map((row) => (row.id === id ? change(row) : row)))
+    fields.clear(otControlId(field, id))
+    setPhase((p) => (p === 'saving' ? p : 'idle'))
   }
 
   /** Tensor: the row's kind. A row that comes to Custom shows the Custom text it
    *  remembers for the visit, else the pattern it stands for now; a row that
    *  leaves Custom keeps its text to remember (21 T.6). */
   function otKind(id: number, kind: string) {
-    otEdit(id, (row) => ({
+    otEdit(id, 'tensor', (row) => ({
       ...row,
       kind,
       ...(kind === OT_CUSTOM
@@ -1073,22 +1119,22 @@ function Content({
    *  layers the row carries (21 T.6), so a half-typed text leaves the pattern as
    *  the last readable text composed it. */
   function otLayersText(id: number, text: string) {
-    otEdit(id, (row) => otSetLayersText(row, text))
+    otEdit(id, 'layers', (row) => otSetLayersText(row, text))
   }
 
   /** Pattern: the text as typed. It is the rule's pattern at once (21 T.6), so
    *  the key follows the text as typed; TP2 checks the text itself at Save. */
   function otPatternText(id: number, text: string) {
-    otEdit(id, (row) => ({ ...row, customText: text }))
+    otEdit(id, 'pattern', (row) => ({ ...row, customText: text }))
   }
 
   /** Goes on: the option's value is the rule's device. */
   function otDevice(id: number, device: string) {
-    otEdit(id, (row) => ({ ...row, device }))
+    otEdit(id, 'goes-on', (row) => ({ ...row, device }))
   }
 
   /** Add rule (21 T.7): the embedding table on the first GPU the read lists, on
-   *  CPU when it lists none or has not answered, appended after the rules, the
+   *  CPU while it has not answered or lists none, appended after the rules, the
    *  focus on its Tensor. The rows are committed (flushSync) before the focus,
    *  the way a jump opens a card: the Tensor of a row that mounts in this commit
    *  exists only after it. */
@@ -1114,15 +1160,126 @@ function Content({
       ?.focus()
   }
 
+  /** The Rules as text field's text (21 T.10): what is typed in; while nothing
+   *  is, the value as the file writes it, and `render` of the rows once they are
+   *  an edit (21 T.8's rule, so the field never shows a text whose rules the
+   *  save would not send). */
+  function otTextShown(): string {
+    if (otText !== null) return otText
+    const shown = otChanged()
+      ? rowsValue(otRows)
+      : (loaded.values['override-tensor'] ?? null)
+    return shown ?? ''
+  }
+
+  /** The rules as the file wrote them, read and rendered again: the text 21 T.8
+   *  compares with the rows' `render`, so a value the file wrote with an alias,
+   *  a space or a hand-written order reads unchanged. */
+  function otLoadedRender(): string | null {
+    return rowsValue(tensorRows(loaded.values['override-tensor'] ?? null))
+  }
+
+  /** Typing in the Rules as text field (21 T.10): only the field's text
+   *  changes, the rows keep what they show. */
+  function otTextType(text: string) {
+    setOtText(text)
+    fields.clear(OT_TEXT)
+    setPhase((p) => (p === 'saving' ? p : 'idle'))
+  }
+
+  /** Enter, or the focus leaving the Rules as text field (21 T.10): the text
+   *  becomes the rows, the way the value's rows are made (21 T.3), so the
+   *  remembered texts and the half-typed fields of the rows it replaces go with
+   *  them. The rows are new rows, with ids no control of the page carries yet
+   *  (21 T.6): a Field Error the page put on a row is never left on another
+   *  one. A text that parses to the rules on screen is the same value, so the
+   *  rows, their ids and the key are left alone. */
+  function otApplyText() {
+    if (otText === null) return
+    const rows = tensorRows(otText)
+    setOtText(null)
+    const value = (one: TensorRow[]) => rowsValue(one) ?? ''
+    if (value(rows) === value(otRows)) return
+    let id = otRows.reduce((max, row) => Math.max(max, row.id), 0)
+    setOtRows(rows.map((row) => ({ ...row, id: (id += 1) })))
+  }
+
+  /** The card's own checks at Save (21 T.11), keyed by the id of the control
+   *  each failure marks, in the order the rules are on screen: a Layers text
+   *  `parseLayers` cannot read, on the row that shows a Layers field (the rule
+   *  the save sends is the one the last readable text composed, and the text on
+   *  screen is in no part of it), a Custom pattern that is empty, and one holding
+   *  a `,` or an `=`, the separators of the value, which would split the rule in
+   *  two on the next read. A rule on no device sends `pattern=`, which reads
+   *  back as a rule with none. The keys of the whole value, a comment marker,
+   *  are the page's text checks, answered on Rules as text (2h.143). */
+  function otChecks(): Partial<Record<string, string>> {
+    const marks: Partial<Record<string, string>> = {}
+    for (const row of otRows) {
+      if (otLayersBad(row))
+        marks[otControlId('layers', row.id)] = t(
+          'model-profile-ot-layers-bad',
+          row.layersText,
+        )
+      if (row.kind === OT_CUSTOM) {
+        const pattern = row.customText ?? ''
+        const bad =
+          pattern === ''
+            ? t('model-profile-ot-pattern-empty')
+            : /[,=]/.test(pattern)
+              ? t('model-profile-ot-pattern-separator')
+              : null
+        if (bad !== null) marks[otControlId('pattern', row.id)] = bad
+      }
+      if (row.device === '')
+        marks[otControlId('goes-on', row.id)] = t(
+          'model-profile-ot-device-missing',
+        )
+    }
+    return marks
+  }
+
+  /** Where a refusal naming `override-tensor` goes on the card (21 T.12): the
+   *  pattern and device keys carry the rule's 1-based position in `args[0]` and
+   *  land on its Pattern input where the row shows one, else on its Tensor
+   *  select; `override-bad-device` lands on its Goes on;
+   *  `model-profile-device-outside` names a device (`args[3]`, the manager
+   *  reading it without case) and lands on the Goes on of every rule that is on
+   *  it. A position with no row, and a device no rule is on, answer on Rules as
+   *  text: the whole value is what the refusal speaks of. */
+  function otRefusal(
+    key: string,
+    args: string[],
+    text: string,
+  ): Partial<Record<string, string>> {
+    if (key === 'model-profile-device-outside') {
+      const device = (args[3] ?? '').toLowerCase()
+      const on = otRows.filter((row) => row.device.toLowerCase() === device)
+      if (on.length === 0) return { [OT_TEXT]: text }
+      return Object.fromEntries(
+        on.map((row) => [otControlId('goes-on', row.id), text]),
+      )
+    }
+    const row = otRows[Number(args[0]) - 1]
+    if (row === undefined) return { [OT_TEXT]: text }
+    return {
+      [key === 'override-bad-device'
+        ? otControlId('goes-on', row.id)
+        : row.kind === OT_CUSTOM
+          ? otControlId('pattern', row.id)
+          : otTensorId(row.id)]: text,
+    }
+  }
+
   /** Whether the rules on screen are an edit of the loaded ones (21 T.8): the key
    *  is changed when `render` of the rows differs from `render` of the loaded
    *  rules, so a value the file wrote with an alias, a space or a hand-written
-   *  order reads unchanged, and an edit typed and typed back is unchanged. */
+   *  order reads unchanged, and an edit typed and typed back is unchanged. A
+   *  Layers text the card cannot read is a change too (21 T.11): what the card
+   *  shows is not in the value, and the Save that answers it has to be
+   *  pressable. */
   function otChanged() {
-    return (
-      rowsValue(otRows) !==
-      rowsValue(tensorRows(loaded.values['override-tensor'] ?? null))
-    )
+    return rowsValue(otRows) !== otLoadedRender() || otRows.some(otLayersBad)
   }
 
   const tensor: TensorCardProps = {
@@ -1134,6 +1291,10 @@ function Content({
     onDevice: otDevice,
     onAdd: otAdd,
     onRemove: otRemove,
+    text: otTextShown(),
+    onText: otTextType,
+    onApply: otApplyText,
+    errors: fields.errors,
   }
 
   /** The changed keys as the body of 133 spells them. A number field with its
@@ -1228,7 +1389,11 @@ function Content({
       'tensor-split' in changes &&
       gpuComposeSplit(gpuChecked(), weights) !== null &&
       incomplete.length > 0
-    if (failures.length > 0 || weightsBad) {
+    // Brief 21, 21 T.11: the Tensor placement card's own checks, on the rules
+    // shown: a failure there stops the save the same way, marking the control
+    // of the rule that fails.
+    const otMarks = otChecks()
+    if (failures.length > 0 || weightsBad || Object.keys(otMarks).length > 0) {
       const marked: Record<string, string> = Object.fromEntries(
         failures.map(([row, error]) => [row.key, error]),
       )
@@ -1238,6 +1403,7 @@ function Content({
         const device = fields.errors['device']
         if (device !== undefined) marked['device'] = device
       }
+      Object.assign(marked, otMarks)
       // Rendered first, so the focused control is announced with its error.
       flushSync(() => {
         alerts.setAlert({ text: t('save-invalid') })
@@ -1245,8 +1411,12 @@ function Content({
         setMarks(weightsBad ? incomplete : null)
       })
       const first = failures[0]
-      if (first === undefined) focusField('tensor-split')
-      else
+      if (first === undefined) {
+        // The card's checks alone: the first failing control, in the order the
+        // rules are on screen (21 T.11).
+        if (weightsBad) focusField('tensor-split')
+        else focusMarked(marked)
+      } else
         focusFailure(
           first[0],
           ruleLocked(
@@ -1302,6 +1472,25 @@ function Content({
         })
         return
       case 'refused': {
+        // Brief 21, 21 T.12: `override-tensor` is the Tensor placement card's
+        // key, and the card's rules are the value the save sent, so the refusal
+        // marks the control of the rule it names (its position, or the device
+        // for `model-profile-device-outside`), and Rules as text when the refusal
+        // speaks of the whole value.
+        if (answer.field === 'override-tensor') {
+          const marks = otRefusal(
+            answer.key ?? '',
+            answer.args ?? [],
+            answer.text,
+          )
+          // Rendered first, so the focused control is announced with its error.
+          flushSync(() => {
+            alerts.setAlert({ text: t('save-refused', answer.text) })
+            fields.set(marks)
+          })
+          focusMarked(marks)
+          return
+        }
         // 142 to 144: a 422 whose key the table knows marks its field and is
         // told in the bar; a field this page does not render is only told there.
         const field =
@@ -1357,8 +1546,10 @@ function Content({
     setMarks(null)
     setMoved('')
     // Brief 21 21 T.8: the rules go back to the loaded ones, and the rows'
-    // remembered texts and half-typed fields go with them.
+    // remembered texts and half-typed fields go with them; so does the text
+    // typed into Rules as text, which shows the value again (21 T.10).
     setOtRows(tensorRows(loaded.values['override-tensor'] ?? null))
+    setOtText(null)
     fields.set({})
     setPhase('idle')
   }

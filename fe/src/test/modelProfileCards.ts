@@ -55,14 +55,32 @@ function boxedKeyOf(field: Field): string | undefined {
 
 /** One card: the strings key of its h3, and its fields in the card's order.
  * A card with no field of its own (Assets: its values are a description list,
- * 73) has no About toggle and adds no tab stop. `extraStops` are the strings
- * keys of the controls a card holds that are no field of 2e's table 112, in the
- * card's order: `fieldTabStops` adds them after the card's fields, so the
- * whole-page tab path of every model profile page test includes them. */
+ * 73) has no About toggle and adds no tab stop. `extraStops` are the controls a
+ * card holds that are no field of 2e's table 112, in the card's order: a
+ * strings key names a button, `{ about: key }` the About toggle of that key's
+ * Field (its name, as every field's), `{ input: key }` a text input named by
+ * that key (a tab stop, no button, so `cardButtons` skips it). `fieldTabStops`
+ * adds them after the card's fields, so the whole-page tab path of every model
+ * profile page test includes them. */
+export type ExtraStop = string | { about: string } | { input: string }
+
+/** The tab stop an extra control carries: its accessible name. */
+function extraStopTabStop(stop: ExtraStop): string {
+  if (typeof stop === 'string') return en(stop)
+  if ('about' in stop) return `${en('field-about')} ${en(stop.about)}`
+  return en(stop.input)
+}
+
+/** The button an extra control carries, or null when it is no button. */
+function extraStopButton(stop: ExtraStop): string | null {
+  if (typeof stop === 'string') return en(stop)
+  if ('about' in stop) return `${en('field-about')} ${en(stop.about)}`
+  return null
+}
 export type Card = {
   heading: string
   fields: Field[]
-  extraStops?: string[]
+  extraStops?: ExtraStop[]
 }
 
 export const MODEL_PROFILE_CARDS: Card[] = [
@@ -79,13 +97,19 @@ export const MODEL_PROFILE_CARDS: Card[] = [
   // Brief 21 (fe/briefs/21-tensor-placement.md, 21 T.2): the place 02e's 83
   // gives the card is after GPU distribution, before Hardware config. Its
   // rules are no field of 2e's table 112, so the card has no field of its own;
-  // its one control that is always there is Add rule, so the whole-page tab
-  // path carries it. The rule rows' controls depend on the value and the
-  // device read, and are pinned in TensorPlacement1.test.tsx.
+  // its controls that are always there are Add rule and, with TP2, the Rules
+  // as text field (21 T.10: its About toggle, then its input), so the
+  // whole-page tab path carries them in that order (21 T.13). The rule rows'
+  // controls depend on the value and the device read, and are pinned in
+  // TensorPlacement1.test.tsx and TensorPlacement2.test.tsx.
   {
     heading: 'model-profile-tensor-placement',
     fields: [],
-    extraStops: ['model-profile-ot-add'],
+    extraStops: [
+      'model-profile-ot-add',
+      { about: 'model-profile-ot-text' },
+      { input: 'model-profile-ot-text' },
+    ],
   },
   {
     heading: 'model-profile-hardware-config',
@@ -309,7 +333,9 @@ export function cardButtons(): string[] {
     ...card.fields.map(
       (field) => `${en('field-about')} ${labelText(fieldLabel(field))}`,
     ),
-    ...(card.extraStops ?? []).map((key) => en(key)),
+    ...(card.extraStops ?? [])
+      .map(extraStopButton)
+      .filter((b): b is string => b !== null),
   ])
 }
 
@@ -338,6 +364,9 @@ const EDITABLE_FIELDS: Label[] = [
   // Brief 14 (GD1.2): the GPU distribution card's split mode select, always
   // enabled (decision 6).
   'model-profile-split-mode',
+  // Brief 21 (21 T.10): the Rules as text field's input, editable while the
+  // page is (the TP1 card holds no input, select or textarea of its own).
+  'model-profile-ot-text',
   'model-profile-context-size',
   'model-profile-parallel-slots',
   'model-profile-unified-kv',
@@ -630,7 +659,7 @@ export function fieldTabStops(values: Record<string, string>): string[] {
       const toggle = CHECKBOX_TOGGLES[fieldId(fieldLabel(field))]
       stops.push(toggle === undefined ? label : en(toggle))
     }
-    for (const key of card.extraStops ?? []) stops.push(en(key))
+    for (const stop of card.extraStops ?? []) stops.push(extraStopTabStop(stop))
   }
   return stops
 }

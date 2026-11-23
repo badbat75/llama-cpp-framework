@@ -1902,6 +1902,13 @@ ul.check-list {
   width: 100%;
 }
 
+/* The Field Error of a rule (brief 21, 21 T.11): the row is a wrapping flex row,
+   and the error is a line of its own under the controls it marks, the way
+   `.ot-pattern` is. */
+.ot-rule-row .field-error {
+  flex-basis: 100%;
+}
+
 .check-list-actions {
   display: flex;
   flex-wrap: wrap;

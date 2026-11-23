@@ -132,6 +132,11 @@ const EDITABLE_BY_ID: Record<string, Field> = {
   // select, always enabled. It is not a 2e card, so it joins the map to say the
   // control is enabled, and changes nothing of the 2e set the title lists.
   'model-profile-split-mode': 'model-profile-split-mode',
+  // Brief 21's 21 T.10: the tensor placement card's Rules as text input,
+  // editable on an editable page. It is no field of a 2e card, so it joins the
+  // map to say the control is enabled, and changes nothing of the 2e set the
+  // title lists.
+  'model-profile-ot-text': 'model-profile-ot-text',
   'model-profile-ctx-size': 'model-profile-context-size',
   'model-profile-parallel': 'model-profile-parallel-slots',
   'model-profile-kv-unified': 'model-profile-unified-kv',

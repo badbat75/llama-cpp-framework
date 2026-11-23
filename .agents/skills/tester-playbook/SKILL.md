@@ -99,6 +99,9 @@ a trap that recurs; a slice's history does not belong here.
   remove it, prove with `cmp` + `grep -c`).
 - A GREEN rerun with no `Compiling` is a replay of the coder's fresh build: prove it by each test binary's
   mtime (the `Running` lines) post-dating the newest `*.rs` of the crate, and report that beside the totals.
+  Compare each binary to the newest of its OWN inputs (its own test file + the crate's non-test `*.rs` +
+  `Cargo.toml`): once the tester edits one test file, the crate-wide newest `.rs` makes every other binary
+  look stale, and the check answers 0 only per target.
 - A target that fails to compile stops the run; a target's test FAILURE stops it too. Use `--no-fail-fast`
   for the slice's map (every `test result:` line; `awk '/^---- /{name=$2} /panicked at/{print name" | "$0}'`
   for one line per red) and run the untouched binaries in a second invocation to show them green.
@@ -180,6 +183,13 @@ a trap that recurs; a slice's history does not belong here.
   `impl` block (the red is then compile red, one `E0407` per verb: count and list them), and the cell a
   second instance needs (`Live::instances`) exists in one file only. A route whose id the fake does not
   list answers `no_instance`: that is the gate, not a broken harness.
+- Read the trait before promising an `E0407`: a verb an earlier slice added WITH a default body (the
+  older-protocol transports, e.g. `set_instance_tags`, `instances`) is overridable, so the fake compiles and
+  the red is the router's 404 on the missing route. Count `E0407` only for a verb the trait does not declare.
+- The fan-out of a key added to a bff list row: every whole-row `json!` literal is one that carries a key
+  unique to the row (`grep -c '"removable"' crates/bff/tests/*.rs` finds them all, in every file that pins
+  the list), and the file's `row()`-style fake helper is where the new field gets its default. List them by
+  file and count, patch none (the rule under "Renames, wire and text").
 - A verb added to a path an existing suite pins as "not served" reds that suite's 405 loop. The design
   decides who owns the loop: drop the served verb, keep the rest (day-one guards), point the doc comment
   at the file that pins the new verb.
@@ -227,6 +237,10 @@ a trap that recurs; a slice's history does not belong here.
   `format:check` on your files.
 - In this environment `npm --prefix fe test` exits 1 with an `EISDIR ... getPackageScopeConfig` and a
   `jsdom` message while every file passed: judge from the `Test Files` / `Tests` lines.
+- `npx --prefix fe prettier --check src/x.test.tsx` matches NO file and still ends "All matched files use
+  Prettier code style!": judge from its `[error] No files matching` line, and run prettier with the cwd in
+  `fe/` (or paths from the repo root). `prettier --write` on a file the coder left clean moves only your
+  own lines: keep a `cp` of the file and `diff` it after.
 - vitest swallows `console.log`: probe a harness fact with a deliberately failing assert carrying the
   value, in a `.test.tsx` you delete afterwards (prove with `ls | grep -c`).
 - Group reds by cause: strip ANSI and `grep -oE "(TestingLibraryElementError|AssertionError|TypeError): .{0,60}"
@@ -270,7 +284,9 @@ a trap that recurs; a slice's history does not belong here.
   one position: grep the suite and amend the tester's lists. Pin "nothing between A and B" with indices
   taken from the settled list.
 - Read a state-dependent list (devices, a select that shows a placeholder while pending) only after the
-  page's `landed()` helper; the deliberate pending case is the only exception.
+  page's `landed()` helper; the deliberate pending case is the only exception. The probe also gates
+  ACTIONS that read it (Add rule seeds the first probed GPU): clicking one before `landed()` seeds the
+  pending-case value and the test reds on a correct component.
 - `vi.useFakeTimers()` breaks RTL's `waitFor`/`findBy*` (a render that needs a real macrotask never
   happens). List `toFake` as `setTimeout/clearTimeout/setInterval/clearInterval/Date`, flush with
   `act(() => advanceTimersByTimeAsync(0))` repeated, put the answer's own timeout inside the fake clock,
@@ -334,6 +350,10 @@ a trap that recurs; a slice's history does not belong here.
   Where a row retargets an old pin (a refusal that gains a control), delete that row from the old table
   and cite the new test file in a comment; where the prior sub-slice pinned an absence structurally
   (`nextElementSibling` is null), retarget the same selector onto the thing this slice adds.
+- A card that gains always-visible controls: amend `MODEL_PROFILE_CARDS` in `fe/src/test/modelProfileCards.ts`
+  (`extraStops`: a strings key is a button, `{about: key}` its Field's About toggle, `{input: key}` a text
+  input, no button). `ModelProfileSave1.test.tsx` 2h.130 keeps a LOCAL copy of the editable-field map
+  (`EDITABLE_BY_ID`, "a test file imports no other test file") so a new editable control lands in both.
 - A new nav entry lands in about a dozen order lists. Sweep every standalone `en('nav-...'),` line (and the
   `EN[...]` variants), then check tails (`grep -L` for the new key; `grep -rn "slice(-[0-9]"` for windowed
   lists) and `NodePage`'s list. Also rewrite what the sweep cannot: a `parseRoute` pin of `not-found` for

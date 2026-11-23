@@ -48,6 +48,8 @@ a trap that recurs; a slice's history does not belong here.
 
 - Capture a loop's output before judging it: `out=$(eval "$c" 2>&1); code=$?`, then print `exit=$code` and
   the warning count; `cmd | tail; echo $?` reports tail's 0. Judge from `FAILED`/`panicked`/`error`.
+- `cargo test -p <crate> --test a --test b` without `--no-fail-fast` stops at the first failing test
+  target: the second target's `test result` line is missing, not green. Enumerate with `--no-fail-fast`.
 - `cargo clippy -p <crate> --all-targets -- -D warnings` builds the lib WITHOUT tests: an item only
   `#[cfg(test)]` code calls is dead there. Gate the test-only wrapper `#[cfg(test)]` (never
   `allow(dead_code)`), and avoid a `#[cfg(test)]` variant that a production `match` names. A
@@ -165,7 +167,14 @@ a trap that recurs; a slice's history does not belong here.
   leaves its idle deadline alone.
 - A route's BODY-SHAPE gate outranks a record-resolution pin. A list item's extra fields come from rows
   found once per id above the loop. An additive wire key reddens every whole-row `json!` literal: list
-  them for the tester. Fakes implement only the trait methods their routes call, the rest are defaults.
+  them for the tester. Prove the list in a copy with one regex on the id pair
+  (`("id": "<x>", )(?="engine")` inserts the key) and count literals apart from tests: 21 literals in
+  `tests/instances.rs` and 10 in `tests/origin.rs` reddened 11 and 13 tests, so the report is longer than
+  the literal count and no assertion changes. Fakes implement only the trait methods their routes call,
+  the rest are defaults.
+- A refusal with no control to mark (a state: 409 with key and args, no `field`) needs no arm in a
+  422-with-field mapper: `control::action_failure`'s `Invalid` arm IS the keyed 409, so the mapper guards
+  `key != "<that key>"` and falls through to it.
 - A `Box<dyn ManagerClient + Send + Sync>` does not coerce to `&dyn ManagerClient`: pass `&*boxed`. A
   write on a path a read already owns is added beside the existing handler. One `Host` rule serves both
   address families (strip the brackets and parse `IpAddr`). An axum handler takes `Path` first and `Bytes`
@@ -205,7 +214,12 @@ a trap that recurs; a slice's history does not belong here.
   tables (`REFUSALS.text` and its sibling).
 - Making a read-only card editable reddens every fixture that pinned it read-only: the shared list under
   `fe/src/test/` spells the editable set and derives tab stops from it (one fix point; an editable number
-  field is two tab stops). The `EN` table of `fe/src/test/bff.ts` is a second pin of `en_US.json`
+  field is two tab stops). On the model profile page that list is `MODEL_PROFILE_CARDS` in
+  `fe/src/test/modelProfileCards.ts` (`fields` per card, `extraStops` for a control that is no 2e field):
+  one new `Field` there reddens ten tests until the tester adds it: `2d.67` (ModelProfilePage, the card
+  button list), `2d.71` and `2d.78` (ModelProfileContent), `2h.130` (ModelProfileSave1, which sweeps every
+  `[id]` control and reads its enabled state from `EDITABLE_BY_ID`, so an unknown id is expected DISABLED),
+  and `2e.91` in ModelProfileCards1 to 5. A card of a new sub-slice that adds a field is that list's job. The `EN` table of `fe/src/test/bff.ts` is a second pin of `en_US.json`
   (`App.test.tsx` `1a strings`); "every value is used" scans for `t(` + a string literal, so a key that
   reaches `t` otherwise reds it. A strings key id makes a good `aria-labelledby` target.
 - One new focusable control reddens by one position every document-wide "tab stops are exactly" test
@@ -223,6 +237,11 @@ a trap that recurs; a slice's history does not belong here.
   what the flush after `advance` renders. A fixture handing ONE `Response` to several readers of an
   endpoint starves the second (React runs a child's effect before its parent's); a count over one endpoint
   counts every reader.
+- To print data from a scratch test (the default reporter hides `console.log` in a piped run): assert it
+  against an impossible value, `expect(rows.join(' / '), 'PROOF').toBe('X')`, and read the received string.
+- ESLint `no-fallthrough` reddens a comment written BETWEEN grouped `case` labels of a `switch` ("Expected a
+  'break' statement before 'case'"): write the comment above the group. `querySelectorAll` over a CSS
+  selector yields `Element`, so a loop that calls `.focus()` needs `querySelectorAll<HTMLElement>`.
 - `flushSync` is the only way a committed state is readable in the next statement; an
   `aria-activedescendant` index over a DERIVED list must carry the list it was walked onto; a text field
   that may not read keeps its LAST READABLE value in the row state.
@@ -255,6 +274,13 @@ a trap that recurs; a slice's history does not belong here.
   the group's alert and the surviving paragraph must never both carry it when the test looks.
 - A shared tree means shared output: one `npm --prefix fe test` tail can interleave another role's vitest run
   (its counts, a file that exists nowhere in this tree). Judge a run by the failing file names you can open.
+- A test that clicks a control whose value comes from the device probe (Add rule's Goes on) without awaiting
+  the probe's as-of line is the test's race: one production answers the pending read and the answered one.
+  Witness pair: pending → the fallback, after the page's `landed` helper → the first probed id. Prove it in a
+  copy by adding the await, never by widening production.
+- A Save check keyed by a control id must gate on that control being rendered (a Layers text the row keeps
+  while its kind hides the field): a mark on an id with no element is invisible and `focusMarked` has nothing
+  to focus.
 
 ### The UX check
 

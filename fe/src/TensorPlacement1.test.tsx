@@ -55,8 +55,17 @@ const GOES = en('model-profile-ot-goes-on')
 const REMOVE = en('model-profile-ot-remove')
 const PATTERN = en('model-profile-ot-pattern')
 const ADD = en('model-profile-ot-add')
+/** 21 T.13 (TP2): the Rules as text Field follows Add rule, so its About toggle
+ *  and its input end every tab path of this card. The full path, with the rules,
+ *  is pinned in `TensorPlacement2.test.tsx`. */
+const TEXT_STOPS = [
+  `${en('field-about')} ${en('model-profile-ot-text')}`,
+  en('model-profile-ot-text'),
+]
 const CPU_TEXT = en('model-profile-ot-cpu')
 const NO_DEVICE = en('model-profile-ot-no-device')
+/** 21 T.11 (TP2): the bar's alert when the page's own check refuses the save. */
+const INVALID = en('save-invalid')
 const NONE_FOUND = en('model-profile-gpu-none-found')
 /** The key this card owns. */
 const OT = 'override-tensor'
@@ -277,6 +286,37 @@ function describedIds(el: HTMLElement): string[] {
     .filter(Boolean)
 }
 
+/** The texts of the elements `aria-describedby` names. */
+function described(el: HTMLElement): string[] {
+  return describedIds(el).map(
+    (id) => document.getElementById(id)?.textContent ?? `(no #${id})`,
+  )
+}
+
+/** The Field Error element the control names, by id. */
+function errorOf(el: HTMLElement, text: string): HTMLElement | null {
+  return (
+    describedIds(el)
+      .map((id) => document.getElementById(id))
+      .find((e) => e !== null && e.textContent === text) ?? null
+  )
+}
+
+/** Asserts `el` is marked invalid with the error `text` under it (21 T.11,
+ *  02h 142). The Field Error's place in the rule row is 21 T.11's own test in
+ *  `TensorPlacement2.test.tsx`. */
+function expectError(el: HTMLElement, text: string, what: string) {
+  expect(el.getAttribute('aria-invalid'), `${what} aria-invalid`).toBe('true')
+  expect(described(el), `${what} aria-describedby`).toContain(text)
+  const error = errorOf(el, text)
+  expect(error, `${what}: the error is shown`).toBeDefined()
+  expect(isHidden(error!), `${what}: the error is shown`).toBe(false)
+  expect(before(el, error!), `${what}: the error comes after the control`).toBe(
+    true,
+  )
+  return error!
+}
+
 /** Clicks Save changes and waits for the PUT of this model profile. */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
   within(main)
@@ -291,6 +331,14 @@ function discard(main: HTMLElement) {
   fireEvent.click(
     within(main).getByRole('button', { name: en('save-discard') }),
   )
+}
+
+/** Clicks Save changes and waits for the bar's `save-invalid`: the page's own
+ *  check (21 T.11, TP2) refused the save, so nothing went out. */
+async function saveInvalid(main: HTMLElement, bff: ReturnType<typeof fakeBff>) {
+  fireEvent.click(within(main).getByRole('button', { name: en('save-button') }))
+  await within(main).findByText(INVALID)
+  expect(bff.to('PUT', PUT), '21 T.11: nothing is sent').toHaveLength(0)
 }
 
 /** The values one save sent, keyed. */
@@ -362,6 +410,15 @@ function removeOf(group: HTMLElement, n: number): HTMLElement {
 
 function addOf(card: HTMLElement): HTMLElement {
   return within(card).getByRole('button', { name: ADD })
+}
+
+/** 21 T.10 (TP2): the Rules as text input. It shows the loaded value as the
+ *  file writes it while the key is unchanged, and `render` of the rows once
+ *  they are an edit, so it is how a test reads the rule a row stands for. */
+function textField(card: HTMLElement): HTMLInputElement {
+  return within(card).getByRole('textbox', {
+    name: en('model-profile-ot-text'),
+  }) as HTMLInputElement
 }
 
 /** The one flex item of a rule's row that holds `control` and its label
@@ -466,18 +523,21 @@ test('21 T.2: the intro is the two lines of the strings key, one paragraph per n
   expect(before(first, second), '21 T.2: the lines in order').toBe(true)
 })
 
-test('21 T.2: one fieldset legend Rules; everything after the legend is in one wrapper div holding the format paragraph, the rules, and Add rule, in that order; Rules as text is TP2 and is not here', async () => {
+test('21 T.2: one fieldset legend Rules; everything after the legend is in one wrapper div holding the format paragraph, the rules, and Add rule, in that order; the Rules as text Field of 21 T.10 follows the fieldset', async () => {
   const { main } = await form(file(EXPS, `${EMBD}=CPU`))
   const card = cardOf(main, CARD)
   const fs = rulesFieldset(card)
-  // Rules as text is TP2, so its key is not in the strings sheet in TP1 (the
-  // sheet gains exactly TP1's keys, pinned by `1a strings` against the test's
-  // EN map). Pinned structurally, no English: the Rules fieldset is the card's
-  // last element, so TP2's Field has no place to sit.
+  // TP1 pinned this structurally as an absence (nothing follows the Rules
+  // fieldset, so TP2's Field had no place to sit); 21 T.10 retargets it onto
+  // the Field, with nothing between the two.
+  const after = fs.nextElementSibling
+  expect(after, '21 T.10: the Field after the Rules fieldset').not.toBeNull()
   expect(
-    fs.nextElementSibling,
-    '21 T.2: Rules as text is TP2: nothing follows the Rules fieldset',
-  ).toBeNull()
+    within(after as HTMLElement).queryByRole('button', {
+      name: `${en('field-about')} ${en('model-profile-ot-text')}`,
+    }),
+    '21 T.10: it is the Rules as text Field',
+  ).not.toBeNull()
   const legend = fs.querySelector('legend')
   expect(
     (legend?.textContent ?? '').replace(/\s+/g, ' ').trim(),
@@ -1127,7 +1187,7 @@ test('21 T.6: a kind change composes with the layers the row keeps: Layers hidde
   ).toBe(`${withLayers}=CUDA0`)
 })
 
-test('21 T.6: Layers composes the pattern at each input, and a text parseLayers cannot read leaves the pattern as it was', async () => {
+test('21 T.6: Layers composes the pattern at each input, and a text parseLayers cannot read leaves the pattern as it was (21 TP2 review D1: with 21 T.11 built, Save refuses it)', async () => {
   const { bff, main } = await form(file(`${EXPS}=CPU`))
   const card = cardOf(main, CARD)
   const layers = layersOf(ruleGroup(card, 1))!
@@ -1143,14 +1203,27 @@ test('21 T.6: Layers composes the pattern at each input, and a text parseLayers 
   ).toBe('10-')
   // 21 T.6, ruling of 2026-11-22 (reading (a)): a text `parseLayers` cannot
   // read leaves the pattern as the last readable text composed it in this
-  // visit, not the loaded one. `10-12, 15` composed the pattern to the experts
-  // family on blocks 10, 11, 12 and 15, and `10-` leaves it there, so the
-  // value sent is that composition.
-  await save(main, bff)
+  // visit, not the loaded one. `10-12, 15` composed the rule to the experts
+  // family on blocks 10, 11, 12 and 15, and `10-` leaves it there. The Rules
+  // as text field shows `render` of the rows once they are an edit (21 T.10),
+  // so it is how this reads the pattern the row kept.
   expect(
-    sentValues(bff)[OT],
-    '21 T.6: the unreadable text left the pattern alone',
+    textField(cardOf(main, CARD)).value,
+    '21 T.6: the pattern is the last readable text composed',
   ).toBe(`blk\\.(10|11|12|15)${EXPS}=CPU`)
+  // 21 T.11, as the TP2 review's D1 rules it: once the page's own checks are
+  // built, Save is refused while the Layers text on screen does not read,
+  // whatever was typed before it. Nothing goes out, the input carries
+  // model-profile-ot-layers-bad with its text, and the focus lands on it.
+  await saveInvalid(main, bff)
+  expectError(
+    layersOf(ruleGroup(cardOf(main, CARD), 1))!,
+    en('model-profile-ot-layers-bad', '10-'),
+    '21 T.11: Layers',
+  )
+  expect(document.activeElement, '21 T.11: focus on Layers').toBe(
+    layersOf(ruleGroup(cardOf(main, CARD), 1)),
+  )
 })
 
 test('21 T.6: Layers of a readable text composes the kind with the layers it reads', async () => {
@@ -1294,6 +1367,30 @@ test('21 T.7: with no GPU in the probe, and while the probe has not answered, Ad
   }
 })
 
+test('21 T.7: while the device read has not answered, Add rule appends the new rule on CPU, not on the device of the last rule on screen (21 TP2 review D2)', async () => {
+  // The file's rule is on a GPU, so a new rule that carries on the last
+  // rule's device lands on a GPU the page has not seen the probe confirm.
+  const h = held()
+  const { bff, main } = await form(file(`${EXPS}=ROCm0`), {
+    devices: h.answer,
+  })
+  fireEvent.click(addOf(cardOf(main, CARD)))
+  const added = ruleGroup(cardOf(main, CARD), 2)
+  expect(
+    tensorOf(added).value,
+    '21 T.7: the new rule is the embedding table',
+  ).toBe('embd')
+  expect(
+    goesOnOf(added).value,
+    '21 T.7: CPU while the read has not answered, never the last rule device',
+  ).toBe('CPU')
+  await save(main, bff)
+  expect(
+    sentValues(bff)[OT],
+    '21 T.7: the new rule is saved on CPU, the loaded rule keeps ROCm0',
+  ).toBe(`${EXPS}=ROCm0,${EMBD}=CPU`)
+})
+
 test('21 T.7: Remove drops its rule: focus to the next rule Tensor select, else the previous, else Add rule', async () => {
   const { bff, main } = await form(
     file(`${EMBD}=CUDA0`, `${EXPS}=CPU`, `${EXPS}=ROCm0`),
@@ -1407,7 +1504,7 @@ test('21 T.8: an edit undone is unchanged, and Discard restores the loaded rules
 
 // ── 21 T.9: the keyboard ──────────────────────────────────────────────────
 
-test('21 T.9: Tab in a rule goes Tensor, Layers, Goes on, Remove, and after the last rule Add rule', async () => {
+test('21 T.9: Tab in a rule goes Tensor, Layers, Goes on, Remove, and after the last rule Add rule, then Rules as text (21 T.13)', async () => {
   const { main } = await form(file(`${EXPS}=CPU`))
   await landed(main)
   expect(
@@ -1419,10 +1516,11 @@ test('21 T.9: Tab in a rule goes Tensor, Layers, Goes on, Remove, and after the 
     GOES,
     `${REMOVE} ${en('model-profile-ot-rule', '1')}`,
     ADD,
+    ...TEXT_STOPS,
   ])
 })
 
-test('21 T.9: Tab in a Custom rule goes Tensor, Goes on, Remove, Pattern, and then Add rule', async () => {
+test('21 T.9: Tab in a Custom rule goes Tensor, Goes on, Remove, Pattern, and then Add rule, then Rules as text (21 T.13)', async () => {
   const { main } = await form(file(`${HAND}=CPU`, `${EMBD}=CUDA0`))
   await landed(main)
   const card = cardOf(main, CARD)
@@ -1439,5 +1537,6 @@ test('21 T.9: Tab in a Custom rule goes Tensor, Goes on, Remove, Pattern, and th
     GOES,
     `${REMOVE} ${en('model-profile-ot-rule', '2')}`,
     ADD,
+    ...TEXT_STOPS,
   ])
 })

@@ -278,6 +278,13 @@ export const EN: Record<string, string> = {
   'api-override-no-pattern': 'tensor override {0} has an empty pattern',
   'api-override-no-device':
     'tensor override {0} (`{1}`) names no device: a rule is `<pattern>=<device>`, and llama.cpp splits it at the first `=`',
+  // Brief 21, TP2 (fe/briefs/21-tensor-placement.md, section 2): the two
+  // refusals the manager added for `override-tensor`. The English is
+  // crates/core/strings/en_US.toml 1022 and 1023, verbatim.
+  'api-override-tensor-space':
+    'tensor override {0} has a space at the ends of its pattern or its device: llama.cpp keeps it, so the pattern matches no tensor and the device names none. Remove the space',
+  'api-override-bad-device':
+    'tensor override {0} names `{1}`: a device is a card name of letters, digits and `_` (CPU, ROCm0, CUDA1), and llama.cpp spells the CPU device CPU',
   'api-invalid-model-profile-id':
     "invalid model profile id `{0}`: use letters, digits, '.', '-', '_'",
   'api-model-profile-name-taken': 'a model profile named `{0}` already exists',
@@ -715,6 +722,19 @@ export const EN: Record<string, string> = {
   'model-profile-ot-kind-shexp': 'MoE shared expert (ffn_*_shexp)',
   'model-profile-ot-kind-router': 'MoE router (ffn_gate_inp)',
   'model-profile-ot-kind-custom': 'Custom regex…',
+  // Brief 21, sub-slice TP2 (section 2): Rules as text, its hint, the page's
+  // own checks on a rule. Every English is the brief's.
+  'model-profile-ot-text': 'Rules as text',
+  'model-profile-ot-text-hint':
+    'The whole value as llama.cpp reads it: rules <pattern>=<device> joined by commas, the first match winning. Paste a value from a guide here, or change the order of the rules. Applied when you press Enter or leave the field.\nFlag: --override-tensor',
+  'model-profile-ot-layers-bad':
+    'Layers {0} is not a list of layers. Write numbers from 0 to 999 and ranges such as 10-12, 15, at most 256 layers, or leave it empty for every layer.',
+  'model-profile-ot-pattern-empty': 'Write a pattern, or pick a tensor kind.',
+  // The only brace group of this text is the regex example `{1,2}`, so the
+  // page shows it with no args and `en` leaves the braces alone.
+  'model-profile-ot-pattern-separator':
+    'A pattern cannot hold , or =: llama.cpp splits the rules on them, and neither can be escaped. Write the pattern without them (a range such as {1,2} as a class or an alternative).',
+  'model-profile-ot-device-missing': "Pick where this rule's tensors go.",
   // Brief 19 (fe/briefs/19-layer-sliders.md), section 2, sub-slice LS1: the
   // model facts read and the per-GPU block controls. LS1 adds the keys from
   // model-profile-model-facts-reading to model-profile-gpu-output-layer and

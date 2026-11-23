@@ -472,3 +472,66 @@ min-content is the input's `10ch`, and the input's `max-width: 100%` is measured
 span. Fix: give `.ot-layers` the same flex row as `.ot-tensor` (`display: flex; flex-wrap: wrap;
 align-items: center; gap: var(--space-2); min-width: 0`) and its input `min-width: 0`. With D5 fixed,
 TP1 is accepted; every other point of 21 T.1 to T.9 is met.
+
+## TP2 review (designer, 2026-11-23)
+
+I read the TP2 diff (`TensorPlacement.tsx`, `ModelProfilePage.tsx`, `Field.tsx`, `index.css`,
+`en_US.json`) and the test names of `TensorPlacement2.test.tsx`. I drove the page in Chromium,
+Firefox and WebKit at 1280 and 320 px, light and dark, 100 % and 200 % text
+(`build/ux-review/tp2.js`, log `tp1/run4.txt`, shots `tp1/tp2-*.png`).
+`npm --prefix fe/ux run check` passes: 168 states per browser, 0 failing.
+**Verdict: not accepted. D1 must be fixed; D2 and D3 are small.**
+
+**The ruling asked for: the brief wins.** The ruling of 2026-11-22 in 21 T.6 already says that once
+TP2 is built, Save is refused while the Layers text on screen does not read, whatever was typed
+before it. `otLayersBad`'s narrowing (`TensorPlacement.tsx` 148, the `layersGood` field) contradicts
+that ruling; that is D1.
+
+- 21 T.10 met. The field shows the file's value while the key is unchanged. Typing leaves the rows as
+  they are (3 rows while typing). Enter applies the text: two rows, the text re-rendered without the
+  space, focus kept on the field. Its names are textbox "Rules as text" and button "About Rules as
+  text".
+- 21 T.11 met except D1. With an unreadable Layers text, an empty Pattern, an `a{1,2}` Pattern and a
+  rule on no device, each control is marked with its text, focus goes to the first one, the alert reads
+  `save-invalid` and nothing is sent.
+- 21 T.12 met:
+  - `override-tensor-space` at position 2 lands on rule 2's Tensor (its kind is not Custom), and
+    `override-bad-device` on Goes on.
+  - Position 9, with no such row, lands on Rules as text, and so does `comment-markers`.
+  - `model-profile-device-outside` with `ROCM0` marks only the Goes on of the rule on `ROCm0` (case
+    ignored).
+  - Each time focus goes to the marked control and the alert reads `save-refused` with the text.
+- 21 T.13 met. Tab goes from the last rule to Add rule, the About toggle, then the input. A 309- to
+  365-character value scrolls inside the input (505 to 935 px at 1280, 41 to 279 at 320), with no
+  sideways scroll in any engine, width, theme or text size.
+
+**D1 (must fix): Save is not refused while a Layers text does not read** (`TensorPlacement.tsx` 148,
+`layersGood` at 65 and 138). Loaded `blk\.(0|1|2)…`, typed `10-12, 15` then `10-`: the PUT goes out in
+all three engines. Fix:
+- make `otLayersBad(row)` simply `'unreadable' in parseLayers(row.layersText)` for a shown Layers
+  field, and drop `layersGood`;
+- change `TensorPlacement1.test.tsx` 1140-1164 so it no longer saves. It reads the Rules as text
+  input, which shows `render` of the rows (`blk\.(10|11|12|15)…=CPU` while Layers shows `10-`), and
+  that still proves the pattern kept its last readable form (21 T.6). It then expects Save to mark
+  `model-profile-ot-layers-bad` and send nothing (21 T.11).
+
+**D2 (small): Add rule changed its device rule without a brief or a test** (`TensorPlacement.tsx`
+254-268, `otNewDevice`). While the probe is pending it copies the last rule's device. 21 T.7 says CPU
+while the read has not answered (the GUI's `add`), and copying can bring along a device the bound
+refuses. Put back `(probe?.devices ?? [])[0]?.id ?? 'CPU'`.
+
+**D3 (small): an edit clears the errors of the row's other controls** (`ModelProfilePage.tsx` otEdit,
+the loop over `tensor`, `layers`, `goes-on`, `pattern`). 21 T.11 and 02h 142 say editing a control
+clears its own error. Example: a device-outside mark on Goes on vanishes when the user changes the
+Tensor kind. Clear only the edited control's key.
+
+**Re-check (2026-11-23): D1 to D3 are fixed. TP2 is accepted.** I rebuilt `fe/dist` and ran
+`build/ux-review/tp2b.js` in Chromium, Firefox and WebKit.
+- D1: loaded `blk\.(0|1|2)…`, typed `10-12, 15` then `10-`. Rules as text shows
+  `blk\.(10|11|12|15)…=CPU`, Save marks Layers, focus goes to it, the alert reads `save-invalid`, and
+  nothing is sent.
+- D2: with the device read held, Add rule puts the new rule on CPU.
+- D3: after a device-outside refusal on rule 2's Goes on, changing rule 2's Tensor keeps the mark,
+  and picking a device clears it.
+
+No `fe/ux` state changed, so I did not rerun the UX check (it passed with 0 failing at the TP2 review).

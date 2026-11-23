@@ -486,6 +486,7 @@ export function TextField({
   unit,
   disabled,
   onChange,
+  onApply,
 }: Common & {
   value: string
   placeholder: string
@@ -494,6 +495,10 @@ export function TextField({
   /** Omitted: the input is enabled. */
   disabled?: boolean
   onChange: (value: string) => void
+  /** Omitted: every change applies the text, as the other fields do. Where it
+   * is given the text is a draft of its own: Enter and the focus leaving apply
+   * it (21 T.10's Rules as text). */
+  onApply?: () => void
 }) {
   const unitId = unit === undefined ? undefined : `${id}-unit`
   return (
@@ -510,6 +515,10 @@ export function TextField({
         placeholder={placeholder}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && onApply !== undefined) onApply()
+        }}
+        onBlur={onApply}
         {...describes(id, error, unitId)}
       />
       {unit !== undefined && (

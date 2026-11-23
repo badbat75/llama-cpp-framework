@@ -447,11 +447,11 @@ const TABLE_143: [string, Record<string, unknown>][] = [
     'model-profile-no-model (Assets)',
     { key: 'model-profile-no-model', args: [ID] },
   ],
-  ['override-no-pattern (2j)', { key: 'override-no-pattern', args: ['0'] }],
-  [
-    'override-no-device (2j)',
-    { key: 'override-no-device', args: ['0', 'ffn.*'] },
-  ],
+  // Brief 21 TP2 (21 T.12): `override-no-pattern`, `override-no-device` and a
+  // `comment-markers` on `override-tensor` are no longer answers with no
+  // control, so those rows live in `TensorPlacement2.test.tsx`, where the
+  // Tensor placement card's rules and its Rules as text field take the mark
+  // and the focus. 2h.143 keeps the fields with no control on this page.
   [
     'invalid-model-profile-id',
     { key: 'invalid-model-profile-id', args: ['Bad name!'] },
@@ -459,14 +459,6 @@ const TABLE_143: [string, Record<string, unknown>][] = [
   [
     'model-profile-name-taken',
     { key: 'model-profile-name-taken', args: ['Qwen3-32B'] },
-  ],
-  [
-    'a key 2h shows nowhere',
-    {
-      key: 'comment-markers',
-      args: ['override-tensor'],
-      field: 'override-tensor',
-    },
   ],
 ]
 

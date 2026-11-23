@@ -1,6 +1,16 @@
 // The Tensor placement card of the model profile page (brief 21,
-// fe/briefs/21-tensor-placement.md, 21 T.2 to 21 T.9): the rules of
-// `override-tensor`, one row each, and the Add rule button.
+// fe/briefs/21-tensor-placement.md, 21 T.2 to 21 T.13): the rules of
+// `override-tensor`, one row each, the Add rule button and, after the Rules
+// fieldset, the whole value as text (21 T.10), the way it is pasted from a
+// guide and reordered.
+//
+// The text is the page's, as the rows are: the card shows it and reports
+// typing, Enter and the focus leaving; the page applies the text to the rows.
+//
+// A control the page's own check at Save (21 T.11) or the manager's refusals
+// (21 T.12) name is marked: `errors` is keyed by the control's id, and the
+// marked control carries a Field Error of its own, on a line of its own at the
+// end of its row, named by the control's `aria-describedby`.
 //
 // The rules are `tensorRules.ts`'s, the mirror of the configurator's table, so a
 // row shows the rule the file says and the save sends the rule the row shows.
@@ -28,6 +38,7 @@ import {
   splitPattern,
 } from './tensorRules.ts'
 import type { Layers, TensorRule } from './tensorRules.ts'
+import { FieldError, TextField } from './Field.tsx'
 import { t } from './strings.ts'
 
 /** One row of the card. `id` is the page's, so a removal renumbers the rows
@@ -110,7 +121,7 @@ export function otNewRule(id: number, device: string): TensorRow {
  *  cannot read leaves them where the last readable one left them, so the
  *  pattern stays as that composed it: loaded `blk\.(0|1|2)...`, typed `10-12,
  *  15` then `10-`, the rule holds blocks 10, 11, 12 and 15 (the GUI's last good
- *  value; TP2's 21 T.11 refuses the Save while the text is unreadable). */
+ *  value). The text on screen is what the Save checks (21 T.11). */
 export function otSetLayersText(row: TensorRow, text: string): TensorRow {
   const read = parseLayers(text)
   return {
@@ -120,12 +131,50 @@ export function otSetLayersText(row: TensorRow, text: string): TensorRow {
   }
 }
 
+/** A Layers text to refuse at Save (21 T.11): the row shows a Layers field (a
+ *  kind with blocks) and its text on screen is one `parseLayers` cannot read.
+ *  What the save sends is the pattern the last readable text composed (21 T.6),
+ *  and the text on screen is in no part of it, so the save is refused while the
+ *  text stands, whatever was typed before it (the ruling of 2026-11-22, the TP2
+ *  review's D1). A row whose kind has no Layers field shows no text to read. */
+export function otLayersBad(row: TensorRow): boolean {
+  return kindOf(row).block !== '' && 'unreadable' in parseLayers(row.layersText)
+}
+
 /** The id of the format paragraph, the description of every Layers and Pattern
  *  field (21 T.4, WCAG 3.3.2). One card, so one id on the page. */
 export const FORMAT_ID = 'model-profile-ot-format'
 
+/** What a row's control carries when the page marked it (21 T.11, 21 T.12):
+ *  `aria-invalid`, and the Field Error named by `aria-describedby` beside the
+ *  ids that described the control before. An unmarked control keeps exactly the
+ *  description it had (`described` is empty for a select). */
+function marked(
+  described: string[],
+  error: string | undefined,
+  id: string,
+): { 'aria-invalid'?: true; 'aria-describedby'?: string } {
+  const ids = error === undefined ? described : [...described, `${id}-error`]
+  return {
+    ...(error === undefined ? {} : { 'aria-invalid': true as const }),
+    ...(ids.length === 0 ? {} : { 'aria-describedby': ids.join(' ') }),
+  }
+}
+
 /** The Add rule button's id: the focus of a removal that leaves no rule (21 T.7). */
 export const ADD_ID = 'model-profile-ot-add'
+
+/** The Rules as text field's key (21 T.10), as the page's field keys are
+ *  spelled: `fieldId` of it is the Field's id, so a refusal naming the whole
+ *  value marks and focuses this field the way it marks any other field. */
+export const OT_TEXT = 'ot-text'
+
+/** The id of the control a Field Error key marks (21 T.11, 21 T.12): a row's
+ *  control carries its own id, and the Rules as text Field owns its input, as
+ *  every Field does, so its control is `<field id>-control`. */
+export function otControlElementId(key: string): string {
+  return key === OT_TEXT ? `model-profile-${OT_TEXT}-control` : key
+}
 
 /** A control's id, unique on the page: the row's fields carry the row's id, so a
  *  removal leaves the other rows alone and the page can focus a control by id. */
@@ -196,14 +245,18 @@ function goesOnOptions(device: string, probe: GpuProbe | null | undefined) {
   return options
 }
 
-/** The device of a rule Add appends: the first GPU the probe lists, `CPU` when
- *  it lists none, and `CPU` while the read has not answered (21 T.7). */
+/** The device of a rule Add appends (21 T.7): the first GPU the probe lists,
+ *  `CPU` when it lists none or the read has not answered. While the read is
+ *  pending the card has no GPU to offer, and the device of a rule on screen can
+ *  be a GPU the bound refuses, so a new rule starts on CPU, as the configurator's
+ *  `add` does. */
 export function otNewDevice(probe: GpuProbe | null | undefined): string {
   return (probe?.devices ?? [])[0]?.id ?? 'CPU'
 }
 
 /** What the page gives the card: its rows, the device read the Goes on selects
- *  list, and what each control does to a row. */
+ *  list, the Rules as text field's text, what each control does to a row, and
+ *  the Field Errors by control id. */
 export type TensorCardProps = {
   rows: TensorRow[]
   probe: GpuProbe | null | undefined
@@ -213,12 +266,25 @@ export type TensorCardProps = {
   onDevice: (id: number, device: string) => void
   onAdd: () => void
   onRemove: (id: number) => void
+  /** The Rules as text field, shown as it is (21 T.10): the page keeps the text
+   *  typed in, and the loaded value as the file writes it while the key is
+   *  unchanged (21 T.8). */
+  text: string
+  /** Typing: only the field's text changes, the rows keep what they show. */
+  onText: (text: string) => void
+  /** Enter, or the focus leaving: the page applies the text to the rows. */
+  onApply: () => void
+  /** The Field Errors (21 T.11, 21 T.12), keyed by the id of the control each
+   *  one marks: `otControlId` of a row's field, and `OT_TEXT` for Rules as
+   *  text. */
+  errors: Partial<Record<string, string>>
 }
 
 /** The card's block: the Rules fieldset, its format paragraph, the rules as one
  *  list of rows, and the Add rule button last (21 T.2). The fieldset is a
  *  `.field`, so from 720 px the wrapper div is placed in the control column,
- *  beside the legend (the TP1 review's D1). */
+ *  beside the legend (the TP1 review's D1). After the fieldset, the Rules as
+ *  text Field (21 T.10), a Field of the card like any other. */
 export function TensorPlacement({
   rows,
   probe,
@@ -228,44 +294,66 @@ export function TensorPlacement({
   onDevice,
   onAdd,
   onRemove,
+  text,
+  onText,
+  onApply,
+  errors,
 }: TensorCardProps) {
   return (
-    <fieldset
-      className="field"
-      id="model-profile-ot-rules"
-      aria-describedby={FORMAT_ID}
-    >
-      <legend>{t('model-profile-ot-rules')}</legend>
-      <div>
-        <p className="muted" id={FORMAT_ID}>
-          {t('model-profile-ot-format')}
-        </p>
-        {rows.length === 0 && (
-          <p className="muted">{t('model-profile-ot-none')}</p>
-        )}
-        {rows.length > 0 && (
-          <ul className="check-list" role="list">
-            {rows.map((row, i) => (
-              <TensorRuleRow
-                key={row.id}
-                row={row}
-                n={i + 1}
-                probe={probe}
-                onKind={onKind}
-                onLayersText={onLayersText}
-                onPatternText={onPatternText}
-                onDevice={onDevice}
-                onRemove={onRemove}
-              />
-            ))}
-          </ul>
-        )}
-        <button type="button" className="secondary" id={ADD_ID} onClick={onAdd}>
-          <Icon name="plus" />
-          {t('model-profile-ot-add')}
-        </button>
-      </div>
-    </fieldset>
+    <>
+      <fieldset
+        className="field"
+        id="model-profile-ot-rules"
+        aria-describedby={FORMAT_ID}
+      >
+        <legend>{t('model-profile-ot-rules')}</legend>
+        <div>
+          <p className="muted" id={FORMAT_ID}>
+            {t('model-profile-ot-format')}
+          </p>
+          {rows.length === 0 && (
+            <p className="muted">{t('model-profile-ot-none')}</p>
+          )}
+          {rows.length > 0 && (
+            <ul className="check-list" role="list">
+              {rows.map((row, i) => (
+                <TensorRuleRow
+                  key={row.id}
+                  row={row}
+                  n={i + 1}
+                  probe={probe}
+                  onKind={onKind}
+                  onLayersText={onLayersText}
+                  onPatternText={onPatternText}
+                  onDevice={onDevice}
+                  onRemove={onRemove}
+                  errors={errors}
+                />
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            className="secondary"
+            id={ADD_ID}
+            onClick={onAdd}
+          >
+            <Icon name="plus" />
+            {t('model-profile-ot-add')}
+          </button>
+        </div>
+      </fieldset>
+      <TextField
+        id={`model-profile-${OT_TEXT}`}
+        label={t('model-profile-ot-text')}
+        hint={t('model-profile-ot-text-hint')}
+        error={errors[OT_TEXT]}
+        value={text}
+        placeholder=""
+        onChange={onText}
+        onApply={onApply}
+      />
+    </>
   )
 }
 
@@ -285,6 +373,7 @@ function TensorRuleRow({
   onPatternText,
   onDevice,
   onRemove,
+  errors,
 }: {
   row: TensorRow
   n: number
@@ -294,14 +383,27 @@ function TensorRuleRow({
   onPatternText: TensorCardProps['onPatternText']
   onDevice: TensorCardProps['onDevice']
   onRemove: TensorCardProps['onRemove']
+  errors: TensorCardProps['errors']
 }) {
   const rule = t('model-profile-ot-rule', `${n}`)
   const kind = kindOf(row)
   const custom = kind.id === CUSTOM
+  const withLayers = kind.block !== ''
   const tensorId = otTensorId(row.id)
   const layersId = otControlId('layers', row.id)
   const goesOnId = otControlId('goes-on', row.id)
   const patternId = otControlId('pattern', row.id)
+  // The marked controls of this row, in the order they are on screen (21 T.11,
+  // 21 T.12): each gets its Field Error, at the end of the row, on a line of
+  // its own. Only the controls the row shows are looked for.
+  const marks = (
+    [
+      [tensorId, errors[tensorId]],
+      ...(withLayers ? [[layersId, errors[layersId]]] : []),
+      [goesOnId, errors[goesOnId]],
+      ...(custom ? [[patternId, errors[patternId]]] : []),
+    ] as [string, string | undefined][]
+  ).filter((one): one is [string, string] => one[1] !== undefined)
   return (
     <li>
       <fieldset>
@@ -312,6 +414,7 @@ function TensorRuleRow({
             <select
               id={tensorId}
               value={row.kind}
+              {...marked([], errors[tensorId], tensorId)}
               onChange={(e) => onKind(row.id, e.target.value)}
             >
               {KINDS.map((one) => (
@@ -321,7 +424,7 @@ function TensorRuleRow({
               ))}
             </select>
           </span>
-          {kind.block !== '' && (
+          {withLayers && (
             <span className="ot-layers">
               <label htmlFor={layersId}>{t('model-profile-ot-layers')}</label>
               <input
@@ -329,7 +432,7 @@ function TensorRuleRow({
                 className="number"
                 type="text"
                 value={row.layersText}
-                aria-describedby={FORMAT_ID}
+                {...marked([FORMAT_ID], errors[layersId], layersId)}
                 onChange={(e) => onLayersText(row.id, e.target.value)}
               />
             </span>
@@ -339,6 +442,7 @@ function TensorRuleRow({
             <select
               id={goesOnId}
               value={row.device}
+              {...marked([], errors[goesOnId], goesOnId)}
               onChange={(e) => onDevice(row.id, e.target.value)}
             >
               {goesOnOptions(row.device, probe).map((one) => (
@@ -367,11 +471,14 @@ function TensorRuleRow({
                 spellCheck={false}
                 autoCapitalize="off"
                 value={row.customText ?? ''}
-                aria-describedby={FORMAT_ID}
+                {...marked([FORMAT_ID], errors[patternId], patternId)}
                 onChange={(e) => onPatternText(row.id, e.target.value)}
               />
             </span>
           )}
+          {marks.map(([id, text]) => (
+            <FieldError key={id} id={`${id}-error`} text={text} />
+          ))}
         </div>
       </fieldset>
     </li>

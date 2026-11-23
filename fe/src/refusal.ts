@@ -16,18 +16,25 @@ export type RefusalTable = {
 /** The refusal a body carries: the table's text for its key, and the field to
  * mark, the reply's when it names one, else the table's fallback. `undefined`
  * for a body that is no shaped refusal, or a key the table does not know: the
- * caller falls back to its own generic message. */
+ * caller falls back to its own generic message. The key and its `args` come
+ * along: a page that marks a control the key's position names, as the Tensor
+ * placement card does (brief 21, 21 T.12), reads them there. */
 export function refusalOf(
   body: unknown,
   table: RefusalTable,
-): { text: string; field?: string } | undefined {
+): { text: string; key: string; args: string[]; field?: string } | undefined {
   const error = apiError(body)
   if (error === null) return undefined
   const text = table.text(error.key, error.args)
   if (text === undefined) return undefined
   const named =
     isRecord(body) && typeof body.field === 'string' ? body.field : undefined
-  return { text, field: named ?? table.field(error.key, error.args) }
+  return {
+    text,
+    key: error.key,
+    args: error.args,
+    field: named ?? table.field(error.key, error.args),
+  }
 }
 
 /** The fields a save marked, by the key of the field, and the clearing of one
