@@ -49,8 +49,8 @@ exist yet. Change this file first when a shape changes.
 - **Writes and their time limit** (the server save and the model profile switch since 594e15e, the model
   profile save since 3eb24b2, which gives its read 5 s and the whole save 15 s, and the four association
   routes since 2d9a4c8, every other write since 57666cb): the manager's calls of a
-  write get **15 s** (`lib.rs` `WRITE_TIMEOUT`), the three verbs, the boot write and the tags write
-  included; reads, the boot read among them, keep **5 s** (`MANAGER_TIMEOUT`).
+  write get **15 s** (`lib.rs` `WRITE_TIMEOUT`), the three verbs, the boot write, the tags write and
+  the label write included; reads, the boot read among them, keep **5 s** (`MANAGER_TIMEOUT`).
   503 `client-unavailable` only while no write was asked; **504 `client-timeout`** once one was
   sent and its outcome is unknown (the limit ran out, or the manager was lost after the hand-over),
   the session kept (since d1f3375 and 57666cb on the single-call writes: the model and server profile
@@ -69,7 +69,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/version` | signed in | exists; `name`, `os` AN4, served (e52480d) | `{"version", "name", "os"}` |
 | `GET /api/node` | signed in | 13; `os`, `vulkan`, `gpus`, `nodeInfo` AN4, served (e52480d) | `{"name", "api", "version", "engines", "os", "vulkan", "gpus"}` (+ `nodeInfo` on a manager failure) |
 | `GET /api/node/devices` | signed in | GD (bff slice G2, served 66b2bb3), `ramMib`/`cpuThreads` served (a1a3458) | `{"probedAt", "ramMib", "cpuThreads", "devices"}` |
-| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13; `removable` 16, served (e262708) | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` |
+| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13; `removable` 16, served (e262708); `label` IL2, served (5ec6cf8) | `[{"id", "label", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, served | 204 |
@@ -79,6 +79,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/instances/{id}/boot` | anyone | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/boot` | administrator (`configure`) | 1c, served (9a) | `{"enabled"}` |
 | `PUT /api/instances/{id}/tags` | administrator (`configure`) | T1, being built (bff slice 12) | 204 |
+| `PUT /api/instances/{id}/label` | administrator (`configure`) | IL2, served (5ec6cf8) | 204 |
 | `GET /api/engines` | anyone | model profiles slice, proposed | `[{"id", "name"}]` |
 | `GET /api/profiles/model` | administrator | 2a, 2b, served (257147e); `assignments` 15 | `[{"id", "engine", "engineAvailable", "enabled", "model", "assignments"}]` |
 | `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244); `restart` 15 | `{"enabled", "running", "restart"}` |
@@ -136,6 +137,17 @@ does not answer is listed with `null` and never fails the list.
 state. The fe offers Remove only where it is true: the removal refuses a running instance and `default`
 ([below](#as-designed-after-4b), "Instances"; `crates/bff/README.md` "Creating and removing an
 instance").
+
+**IL2 (served at 5ec6cf8).** Each item gains **`label`**: the text the node's administrator named this
+instance, the `Label` of its `instances.ini` section as the manager wrote it (spaces and tabs of the
+ends already off), or `null` when the section carries none and when the manager answers no row for the
+instance. It is a name beside the id, nothing the engine reads: the id stays what names the unit
+`llama.cpp@<id>` on Linux and the service `llama.cpp_<id>` on Windows, and the instance's own files, and
+nothing renames it. The page's rule, brief 16, 17f (not built in `fe/src` yet):
+show the label where there is one and the fallback `<engine> :<port>` (`llama.cpp :9931`) where there
+is not, the id as the secondary name (the design: `ARCHITECTURE.md` "Instance labels"). Reading it follows
+the fe's rule for the other keys of a row, a missing, empty or mistyped `label` reading as `null` and
+failing nothing (the pattern today: `serverProfileIn` in `fe/src/Instances.tsx`).
 
 ### `GET /api/version` (`name` and `os`: AN4, served e52480d)
 
@@ -222,6 +234,28 @@ profile's tags are not touched. 204 with no body. Errors: 401 `session-required`
 `client-unavailable`; 504 `client-timeout` (the list handed over, its outcome unknown). Source: `crates/bff/tests/instances.rs` in the bff's working tree.
 `ARCHITECTURE.md` (f') names the keys `instance-bad-tags` and `instance-malformed`: brief 12
 question C2.
+
+### `PUT /api/instances/{id}/label` (IL2, served at 5ec6cf8)
+
+Body `{"label": string}`: the name of this instance beside its id. The empty text, and a text of
+nothing but spaces and tabs, clears it (the manager removes the key, so the page falls back to the
+engine and the port). The bff sends the text trimmed of the spaces and tabs of its ends, the same trim
+the manager's check applies. 204 with no body. Errors: 401 `session-required` (the session is checked
+first: such a body with no session is 401, the manager not connected to); 403
+`session-not-administrator` (the session ended); 404 `client-no-instance`; 400
+`instance-malformed` for a body that is not that object, a `label` that is not a string, or a body that
+is not JSON, the manager not connected to; 422 `{"key": "instance-bad-label", "args": [label],
+"field": "label"}` for a text over 64 characters or holding a control character, 422
+`{"key": "comment-markers", "args": [label], "field": "label"}` for one holding `;` or `#` (`pai-core`
+`checks::instance_label`; the text in `args` is the trimmed one, the one the file would have held); 409
+`{"key": "instance-label-taken", "args": [label, other-id]}`, no `field`: the label is another
+instance's (the rule is case-insensitive), and a clash between two rows has no control to mark; 503
+`client-unavailable`; 504 `client-timeout` (the text handed over, its outcome unknown); 502
+`client-service-failed`, 502 `client-other`. A body over 64 KiB is the extractor's 413
+`payload-too-large`, after the session check; a body carrying an extra key beside `label` is read as the
+label alone. The label is written while the instance runs: nothing the
+engine reads changes, nothing restarts. Source: `crates/bff/tests/instance_label.rs`,
+`crates/bff/README.md` "The label of an instance", `ARCHITECTURE.md` "Instance labels".
 
 ### The session
 

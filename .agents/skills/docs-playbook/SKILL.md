@@ -340,6 +340,27 @@ Lessons only: the rules are in `AGENTS.md`.
   stayed 12 tests while the bff went 470 to 596): quote the commit's own counts. A 0 that means
   "no figure" needs saying on all three pages: the host reads (`crates/core/src/host.rs`) answer 0
   when they fail, the bff scales nothing, and the fe shows neither `0 MiB` nor a 0 cap.
+- A row widened with a string key (IL1 a1fcf25 added `label` to the instance row, `a(sssqasas)` to
+  `a(sssqasass)`) is the widest spread of them all: grep the OLD signature in every `.md` and `.rs`
+  (the decode and its signature assertion of `crates/core/src/client/dbus.rs`, its header comment too,
+  the doc and test assertions of `crates/manager/src/manager/dbus.rs`,
+  the `Instances()` paragraph and the source-map row of `crates/config/README.md`), and count the tuple
+  yourself, the prose has been wrong before. The two transports read "no label" differently and the
+  docs must say both: the bus has no null so the manager answers the empty string and the client maps
+  it, while the pipe's missing key is `None` and an older row of the OLD shape is a strict-decode
+  failure (`ClientError::Other`, a 502), never a list of empty labels. The bff's own key order is
+  alphabetical and its rows keep the manager's order, so a widened row moves no key. A text rule that
+  clears with the empty text repeats the tags rule (`remove_key`, `set_key`, the trim of spaces and
+  tabs on the way in): the trim is the bff's `label_text` and the check's own, so a 422's `args` carry
+  the trimmed text, the one the file would have held.
+- The bff's 409 (`instance-label-taken`, the pair `[label, other-id]`) has no test of its own: no fake
+  manager refusal carries `ClientError::Conflict`, and the suite that maps the codes
+  (`client_error_codes_map_to_status_and_message` in `tests/profile_switch.rs`) pins the shape only
+  (409, key, empty `field`). Write it as the code's mapping plus that pinned shape, never as measured.
+- Prettier does not cover `fe/briefs/*.md`: the file at HEAD fails `npx --prefix fe prettier --check`
+  by 81 lines, so brief prose is wrapped by hand. `crates/bff/README.md` wraps near 100 (median 96,
+  p90 102 of its non-table lines) and its status tables are single long rows: a 101 to 106 column prose
+  line is in style, and a table row needs no wrap.
 - Two CPU counts live side by side and the docs must not merge them: the server document's
   `limits.Threads` / `ThreadsBatch` maximum is the bff's own (`server.rs` `own_cpu_count`, 1 when
   the host answers nothing; the two saves repeat `available_parallelism` inline), not the node's

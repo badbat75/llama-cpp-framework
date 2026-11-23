@@ -5,7 +5,8 @@ HTTP service, plain HTTP on the address the administrator chose (`[Bff] Listen`)
 built from `fe/` and the API it calls. Today every API route
 beside the sign-in is for a signed-in user: the framework version, this host's name with the engine and
 runtime versions its packages installed, the node's compute devices ([below](#the-node)), the manager's
-instances with their state, the run verbs, the start-at-boot flag, an instance's tags, an instance's server file read and saved, the model profile
+instances with their state, the run verbs, the start-at-boot flag, an instance's tags, an instance's label
+([below](#the-label-of-an-instance)), an instance's server file read and saved, the model profile
 list, the model profile on/off switch and one model profile, read and saved, the server profile
 pool: its list, a new profile, one profile read and saved, and its delete
 ([below](#the-server-profile-pool)), and an instance's associations: its server profile switched, and
@@ -121,7 +122,7 @@ runtime (axum).
 | Route | Answer |
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>", "name": "<host name>", "os": {"name": <text|null>, "version": <text|null>, "kernel": <text|null>}}` (e52480d: `name` as `GET /api/node` answers it, `os` read by the bff itself with `pai_core::host::os`, the machine the bff runs on), for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
-| `GET /api/instances` | `[{"id": "<id>", "engine": "llama.cpp", "serverProfile": "<profile>|null", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>, "removable": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the server profiles, the ports, the tags and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `GET /api/instances` | `[{"id": "<id>", "label": "<text>|null", "engine": "llama.cpp", "serverProfile": "<profile>|null", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>, "removable": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the server profiles, the ports, the tags, the labels and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
 | `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, each a string: 201 `{"id"}` with the id the body sent, once the manager wrote the instance, for a signed-in user, as that user, under the write's 15 s. A body that is not those three strings is 400 `instance-malformed`, the manager not connected to; every rule of the instance itself is the manager's and keeps its key ([below](#creating-and-removing-an-instance)) |
 | `DELETE /api/instances/{id}` | 204 with no body once the manager took the instance away, for a signed-in user, as that user, under the write's 15 s: 409 `instance-protected` `[id]` for `default` and `instance-running` `[id]` for one that is up, 404 `client-no-instance` for an id the record does not name ([below](#creating-and-removing-an-instance)) |
 | `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}], "os": {...}|null, "vulkan": "ok"|"none"|"failed"|null, "gpus": [...]|null}`, for a signed-in user, the last three from the manager's `NodeInfoAs` as that user (e52480d); 401 `session-required` with no session, the manager not asked. It leaves the session's idle deadline where it was ([below](#the-node)) |
@@ -135,6 +136,7 @@ runtime (axum).
 | `GET /api/instances/{id}/boot` | `{"enabled"}`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The read reads the session as a gate and never moves its idle deadline, so the page can poll it, and connects as the bff's own account: the manager's refusal of that connect is of the bff's account, so it ends no session. The failures are `/api/instances`' |
 | `PUT /api/instances/{id}/boot` | `{"enabled": <bool>}` in, `{"enabled"}` out, read back from the manager on the same connect, for a signed-in user: 400 `boot-malformed` for a body that is not that JSON, the other answers as the verbs |
 | `PUT /api/instances/{id}/tags` | `{"tags": [<text>, ...]}` in, 204 with no body once the manager wrote the instance's own list, for a signed-in user: 400 `tags-malformed` for a body that is not that list, 422 `server-bad-tags` (`field: "tags"`) for a list the manager's rule refuses ([below](#the-tags-of-an-instance)) |
+| `PUT /api/instances/{id}/label` | `{"label": <text>}` in, 204 with no body once the manager wrote the instance's name beside its id, the empty text clearing it, for a signed-in user: 400 `instance-malformed` for a body that is not that object, 422 `instance-bad-label` and `comment-markers` (`field: "label"`) for a text the manager's rule refuses, 409 `instance-label-taken` `[label, other-id]`, no `field`, when another instance holds the label ([below](#the-label-of-an-instance)) |
 | `PUT /api/instances/{id}/profiles/server` | `{"serverProfile": "<profile>"}` in, `{"running"}` out, for a signed-in user: the record now names that `server@<profile>.ini` as the file the instance runs, nothing started, stopped or restarted ([below](#the-association-routes)) |
 | `GET /api/instances/{id}/profiles/model` | `{"all", "profiles"}` for a signed-in user: the model profile pool's rows as this instance's section of `assignments.ini` makes them, each with `value`, `viaAll` and `effective` ([below](#the-association-routes)) |
 | `PUT /api/instances/{id}/profiles/model/{profile}` | `{"value": "on"|"off"|"none"|"inherit"}` in, `{"effective", "running"}` out, for a signed-in user: the one key of the instance's section of `assignments.ini`, `effective` read back after the write ([below](#the-association-routes)) |
@@ -189,7 +191,8 @@ each instance, and `GET /api/profiles/server` asks `ServerProfiles` ([below](#th
 the four calls the manager answers without authorization. What the bff calls beyond them is
 `Authenticate`, what sign-in makes ([below](#the-session)), the `As` form of a guarded method naming
 the session's user, what a signed-in route makes ([below](#the-server-file-of-an-instance)), the tags
-write ([below](#the-tags-of-an-instance)), the pool's create, delete, document and save
+write ([below](#the-tags-of-an-instance)), the label write ([below](#the-label-of-an-instance)), the
+pool's create, delete, document and save
 ([below](#the-server-profile-pool)), the three association writes with the reads of `assignments.ini`
 and of the two model profile files ([below](#the-association-routes)), the instance's create and
 removal ([below](#creating-and-removing-an-instance)), and the model profile list,
@@ -199,7 +202,7 @@ of the bff's own account ([below](#the-association-routes)).
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `[{"id", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
+| 200 | `[{"id", "label", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
 | 401 | `{"key": "session-required", "args": []}` | The request's cookie names no live session: `connect` is never called, no `Set-Cookie` goes out |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach (none running, macOS), or no full answer within 5 s |
 | 502 | `{"key": "client-not-authorized", "args": []}` | The manager refused a call |
@@ -212,6 +215,14 @@ of the bff's own account ([below](#the-association-routes)).
 - **`serverProfile` is the server profile the instance runs**: the name the record of `instances.ini`
   carries, as the manager spells it, `null` when its section names none, from the same `Instances`
   call as the port and the tags.
+- **`label` is the name the administrator gave that instance beside its id**: the `Label` of its
+  section of `instances.ini`, with the spaces and tabs of its ends already off as the manager wrote it,
+  from the same `Instances` call. `null` is no label: a section with no `Label`, and no row for the
+  instance. The bus has no null, so there the manager answers the empty string for a section with no
+  label and the client reads it as `null`; over the pipe a row of a manager that answers no `label`
+  field is likewise no label, and the list stands (an older manager whose rows have the old shape is a
+  failed read, not a list of no labels). The label is a name for the page, nothing the engine reads:
+  the id stays what names the unit, the service and the files ([below](#the-label-of-an-instance)).
 - **The port and the tags come from `Instances`**: `port` is the port the instance's server profile
   names, `0` when its section names no profile or the record cannot be read; `tags` is the server
   profile's `Tags` followed by the instance's own, in that order with the repeats removed
@@ -232,7 +243,8 @@ of the bff's own account ([below](#the-association-routes)).
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
   `lib.rs`) that covers the connect. The routes that write a file, the server save, the model profile
   switch and save, the pool's create, save and delete, the instance's create and removal, the run verbs, the start at
-  boot write, the tags write and the three association writes, run under the longer `WRITE_TIMEOUT`
+  boot write, the tags write, the label write and the three association writes, run under the longer
+  `WRITE_TIMEOUT`
   ([below](#saving-the-server-file), [below](#the-association-routes)).
 - **Under `PRIVATE_AI_DATA_ROOT` it dials nothing** and answers 503 `client-unavailable`, so a test never
   reaches the real manager.
@@ -279,6 +291,60 @@ session is checked first, so no request reaches the manager without one.
   never connected to, no manager 503. The 413 of a body over the cap is the extractor's, by the code.
   The 503 and 504 of a slow or lost manager are `tests/write_timeouts.rs`, as on the other single-call
   writes ([below](#saving-the-server-file)).
+
+### The label of an instance
+
+`PUT /api/instances/{id}/label` takes `{"label": <text>}` and asks the manager's `SetInstanceLabel` as
+the signed-in user, under the write's 15 s (`WRITE_TIMEOUT`, `control.rs`). The session is checked
+first, so no request reaches the manager without one. The label is the name the page shows beside the
+id, nothing the engine reads: the id stays what names the unit `llama.cpp@<id>` and the instance's own
+files, and nothing renames it (slice IL1 and IL2; the design:
+[ARCHITECTURE.md](../../ARCHITECTURE.md) "Instance labels").
+
+| Status | Body | When |
+| --- | --- | --- |
+| 204 | no body | The manager wrote the text. Nothing is read back: the browser refreshes when it wants the label |
+| 400 | `{"key": "instance-malformed", "args": []}` | The body is not `application/json`, is not read, has no `label`, its `label` is not a string, or is not an object; the manager is not connected to. A body carrying an extra key beside `label` is read as the label alone |
+| 401 | `{"key": "session-required", "args": []}` | No session; the manager is not connected to, so a body of the wrong shape is 401 and not 400 |
+| 403 | `{"key": "session-not-administrator", "args": []}` | The manager refused the write as this user (a member of `pai` at sign-in, removed since): the session ends, as on every guarded write |
+| 404 | `{"key": "client-no-instance", "args": []}` | No such instance, or the manager refuses the id (`NoInstance`, `InvalidId`) |
+| 413 | `{"key": "payload-too-large", "args": []}` | A body over 64 KiB, by the extractor, after the session check and before the manager is connected to |
+| 422 | `{"key", "args", "field": "label"}` | The manager's rule refused the text (`checks::instance_label`): `instance-bad-label` for a text over 64 characters or holding a control character, `comment-markers` for one holding `;` or `#`, each with the text as its one arg. The session stays signed in: a refusal of a value is no refusal of the user |
+| 409 | `{"key": "instance-label-taken", "args": [label, other-id]}` | The label is another instance's, the rule ignoring letter case. No `field`: the clash is between two rows and the page has no control to mark. The session lives on |
+| 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or the 15 s ran out before the text was handed over |
+| 504 | `{"key": "client-timeout", "args": []}` | The text was handed over and its outcome is unknown: the 15 s ran out after it, or the manager was lost after it. The session lives on |
+| 502 | `{"key": "client-service-failed", "args": []}` | The system's write of the record failed (the manager's `Service`) |
+| 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail |
+
+- **The bff trims the text, the manager judges it**: the trim of the spaces and tabs of the ends is the
+  same one `checks::instance_label` applies, so a space the page leaves at the edges changes nothing on
+  the way, and the `args` of a 422 carry the trimmed text, the one the file would have held. A text of
+  nothing but spaces is the empty text.
+- **The manager writes `Label` into the instance's own section of `instances.ini`**, and the empty text
+  removes the key, leaving no label (`set_instance_label` in
+  [crates/manager/src/manager/service.rs](../manager/src/manager/service.rs)). It applies the rule
+  before it reads the record, so a refusal leaves every file untouched; the label is unique among the
+  node's other instances ignoring letter case, judged under its write lock, and an instance changing
+  the letter case of its own label relabels itself, it does not clash with the text it carries. The
+  label rides nothing the engine reads, so the write works while the instance runs and nothing
+  restarts.
+- **The page's fallback is the engine and the port**: `GET /api/instances` carries the row's `label`
+  ([above](#the-instances-from-the-manager)) and the page shows it where there is one and
+  `llama.cpp :9931` where there is none, the id as the secondary name (`fe/briefs/api-contract.md`
+  `PUT /api/instances/{id}/label`; the page's label field is the open `fe` work, brief 16, 17f).
+- **The route is pinned by `tests/instance_label.rs`**, over the fake manager: 15 tests
+  (`cargo test -p pai-bff --test instance_label`: 15 passed, rerun 2026-11-23 on the tree at 5ec6cf8,
+  where the whole `pai-bff` was 718/718, the tester's rerun with binary freshness pinned), pinning that
+  the trimmed text reaches the manager and answers 204, an empty text clears the label, no session is
+  401 (a body of the wrong shape among them), no such instance 404, a text the manager's check refuses
+  is 422 with its key, its text and `field` "label", a label another instance holds is 409 with the
+  label and that id and no `field`, a body it cannot read is 400 with the manager never connected to, no
+  manager 503, and the manager refusing the writer ends the session. The 413 of a body over the cap is
+  the extractor's, answered after the session check (`a_body_over_the_cap_is_413_after_the_session_check`),
+  and `the_label_route_answers_only_the_write` pins that `GET`, `POST` and `DELETE` on it are the
+  router's 405, read before the session and asking the manager nothing. The 503 and 504 of a slow or
+  lost manager are `tests/write_timeouts.rs`, as on the other single-call writes
+  ([below](#saving-the-server-file)), and `tests/instances.rs` pins the `label` key of the list.
 
 ## The node
 
