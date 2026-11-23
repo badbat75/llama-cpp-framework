@@ -2776,3 +2776,166 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
     );
     hang_up(server, client);
 }
+
+/// M3 of "Choosing the model file on the web": `ModelFiles` / `ModelFilesAs`
+/// over the stream, with pai-core's client. The frame the picker reads crosses:
+/// the folder as an absolute path, every row with its path, size, shard count
+/// and category (null for a file of the folder itself), the flag saying the
+/// walk stopped at its bound, and the folder's keyed why INSIDE a success. The
+/// client reads every key strictly, so this is the frame's pin; the listing's
+/// rules are pinned by `manager_model_files_e2e`. The read opens a folder under
+/// this phase's redirect, so it lives in the e2e.
+pub(crate) fn manager_pipe_client_model_files_e2e() {
+    use crate::manager::service::fakes::{FakeGroup, FakePasswords};
+    use pai_core::client::{ModelFileRow, Reason};
+
+    let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let models = crate::paths::instance_models_dir();
+    std::fs::create_dir_all(&models).expect("models dir");
+    let file = |rel: &str, bytes: usize| {
+        let p = models.join(rel);
+        std::fs::create_dir_all(p.parent().expect("parent")).expect("parent dir");
+        std::fs::write(&p, vec![b'g'; bytes]).expect("file");
+    };
+    file("loose.gguf", 5);
+    file("models/big-00001-of-00003.gguf", 1000);
+    file("models/big-00002-of-00003.gguf", 1000);
+    file("mmprojs/mm.GGUF", 30);
+    file("notes.txt", 9);
+    file(".hf-staging/staged.gguf", 99);
+
+    let core = |quiet: bool, entries: usize| {
+        Arc::new(
+            Manager::new(
+                FakeService::new(),
+                FakeAuthority::new(true)
+                    .quietly(quiet)
+                    .bff(&Caller(BFF_SID.into())),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new())
+            .with_passwords(FakePasswords::new())
+            .with_walk_max_entries(entries),
+        )
+    };
+    let row = |rel: &str, size: u64, shards: u64, category: Option<&str>| ModelFileRow {
+        path: models.join(rel).to_string_lossy().into_owned(),
+        size,
+        shards,
+        category: category.map(str::to_string),
+    };
+    let sorted = |rows: Vec<ModelFileRow>| -> Vec<ModelFileRow> {
+        let mut rows = rows;
+        rows.sort_by(|a, b| a.path.cmp(&b.path));
+        rows
+    };
+    let want = || {
+        sorted(vec![
+            row("loose.gguf", 5, 1, None),
+            row("mmprojs/mm.GGUF", 30, 1, Some("mmprojs")),
+            row("models/big-00001-of-00003.gguf", 1000, 3, Some("models")),
+        ])
+    };
+    let frame = |got: pai_core::client::ModelFilesReply| {
+        (got.dir, sorted(got.files), got.truncated, got.error)
+    };
+
+    // ── The bff's own read, and the member's read it vouches for ───────────
+    let c = core(true, 50_000);
+    let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+    assert_eq!(
+        client.model_files().map(frame),
+        Ok((models.to_string_lossy().into_owned(), want(), false, None)),
+        "the folder, the three rows with every field (the second shard, the txt \
+         and the dot-folder left out), the flag false and no why"
+    );
+    assert_eq!(
+        *c.authority().asked_quietly.lock().unwrap(),
+        vec![(Caller(BFF_SID.into()), Action::Control)],
+        "control asked without interaction"
+    );
+    assert_eq!(
+        *c.authority().asked.lock().unwrap(),
+        Vec::<(Caller, Action)>::new(),
+        "never asked with a prompt: a file list is worth no challenge"
+    );
+    assert_eq!(
+        client.acting_for("alice").model_files().map(frame),
+        Ok((models.to_string_lossy().into_owned(), want(), false, None)),
+        "the member's read, vouched for by the bff: the same rows"
+    );
+    assert_eq!(
+        client.acting_for("bob").model_files(),
+        Err(ClientError::NotAuthorized),
+        "bob is no member of `pai`: no paths of the node's models folder"
+    );
+    assert_eq!(
+        *c.authority().asked_quietly.lock().unwrap(),
+        vec![(Caller(BFF_SID.into()), Action::Control)],
+        "the principal gate decides the right: polkit is asked nothing more"
+    );
+    assert_eq!(
+        *c.service().calls.lock().unwrap(),
+        Vec::<Call>::new(),
+        "the read reaches no service manager"
+    );
+    hang_up(server, client);
+
+    // ── A caller that is not the bff, vouching for a member: refused ───────
+    let c = core(true, 50_000);
+    let (server, client) = connect(&c, &alice);
+    assert_eq!(
+        client.acting_for("alice").model_files(),
+        Err(ClientError::NotAuthorized),
+        "only the bff's account vouches"
+    );
+    hang_up(server, client);
+
+    // ── A caller polkit refuses the quiet check: refused ───────────────────
+    let c = core(false, 50_000);
+    let (server, client) = connect(&c, &alice);
+    assert_eq!(
+        client.model_files(),
+        Err(ClientError::NotAuthorized),
+        "no control, no list"
+    );
+    hang_up(server, client);
+
+    // ── The flag: a walk that stops at its bound says so across the stream ──
+    let c = core(true, 2);
+    let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+    let got = client.model_files().expect("served");
+    assert!(
+        got.truncated,
+        "the walk stopped after 2 entries of the 5 the folder holds: {got:?}"
+    );
+    assert!(
+        got.files.len() <= 2,
+        "the list is cut with the flag: {}",
+        got.files.len()
+    );
+    hang_up(server, client);
+
+    // ── A folder that is not there: the keyed why inside a success ─────────
+    let c = core(true, 50_000);
+    let (server, client) = connect(&c, &Caller(BFF_SID.into()));
+    std::fs::remove_dir_all(&models).expect("remove models dir");
+    assert_eq!(
+        client.model_files(),
+        Ok(pai_core::client::ModelFilesReply {
+            dir: models.to_string_lossy().into_owned(),
+            files: Vec::new(),
+            truncated: false,
+            error: Some(Reason {
+                key: "models-dir-unreadable".into(),
+                args: vec![models.to_string_lossy().into_owned()],
+            }),
+        }),
+        "the stream carries the why as the keyed pair, a null being the folder \
+         having read: the picker shows an empty list with a text"
+    );
+    hang_up(server, client);
+}

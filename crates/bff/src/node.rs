@@ -14,6 +14,12 @@
 //! the idle deadline moves, and the list is asked of the manager as the
 //! signed-in user, on the probe's bound ([`crate::DEVICES_TIMEOUT`]) rather
 //! than a read's, because a cold probe starts the engine on the node.
+//!
+//! `GET /api/node/model-files`: the node's one models folder as the model-file
+//! picker's list (M3 of "Choosing the model file on the web", `ARCHITECTURE.md`,
+//! amended by "One models folder for every engine" (3)). A page read like the
+//! device list, asked as the signed-in user, on a read's bound: the manager
+//! walks the folder, so no engine starts.
 
 use crate::session::Sessions;
 use crate::Connect;
@@ -123,6 +129,7 @@ fn gpu_row(gpu: &pai_core::vulkan::NodeGpu) -> serde_json::Value {
 /// the manager as the signed-in user.
 pub(crate) fn routes(
     connect: Connect,
+    timeout: std::time::Duration,
     sessions: Arc<Sessions>,
     versions_dir: Option<PathBuf>,
 ) -> axum::Router {
@@ -131,6 +138,13 @@ pub(crate) fn routes(
         move |headers: HeaderMap| {
             let (connect, sessions) = (connect.clone(), sessions.clone());
             devices(connect, sessions, headers)
+        }
+    };
+    let model_files = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |headers: HeaderMap| {
+            let (connect, sessions) = (connect.clone(), sessions.clone());
+            model_files(connect, sessions, timeout, headers)
         }
     };
     axum::Router::new()
@@ -143,6 +157,7 @@ pub(crate) fn routes(
             }),
         )
         .route("/api/node/devices", axum::routing::get(devices))
+        .route("/api/node/model-files", axum::routing::get(model_files))
 }
 
 /// The answer to `GET /api/node`: 401 `session-required` with no live session,
@@ -227,6 +242,74 @@ async fn devices(connect: Connect, sessions: Arc<Sessions>, headers: HeaderMap) 
         tokio::time::timeout(crate::DEVICES_TIMEOUT, ask).await,
         |list| axum::Json(devices_document(&list)).into_response(),
     )
+}
+
+/// The answer to `GET /api/node/model-files`: 401 `session-required` with no
+/// live session, the manager not asked at all; the node's one models folder,
+/// asked as the signed-in user, on a read's bound: the manager walks a folder,
+/// so no engine starts and the probe's bound is not needed. The list is read
+/// through one connect and one call, in a blocking task, so the async server
+/// waits on the walk without stopping. Its failures are the device list's: 403
+/// `session-not-administrator` and the session ended when the manager refused
+/// the signed-in user, 503 `client-unavailable` when there is no manager or it
+/// answers past the bound, 502 `client-other` for anything else. It is a page
+/// read and not a poll: the idle deadline moves, the picker asking when it
+/// opens.
+async fn model_files(
+    connect: Connect,
+    sessions: Arc<Sessions>,
+    timeout: std::time::Duration,
+    headers: HeaderMap,
+) -> Response<Body> {
+    use axum::response::IntoResponse;
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return crate::session::error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let user = identity.user;
+    let ask = tokio::task::spawn_blocking(move || -> Result<_, pai_core::client::ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        client.model_files()
+    });
+    crate::model_profiles::read_answer(
+        &sessions,
+        &session,
+        tokio::time::timeout(timeout, ask).await,
+        |reply| axum::Json(model_files_document(&reply)).into_response(),
+    )
+}
+
+/// The document: `{"source": "local", "dir", "files", "truncated", "error"}`,
+/// `files` one `{"path", "size", "shards", "category"}` per model file, in the
+/// walk's order, `category` the first subfolder of the file (`models`,
+/// `mmprojs`, `mtps`, `dflashs`) or `null` for a file of the folder itself.
+/// `source` says which of the picker's two lists this is (the Hugging Face one
+/// answers `"hf"`). Every row travels as the manager answered it: the bff adds,
+/// drops, sorts, caps and judges nothing, so the manager's bounds are the only
+/// ones. `error` is the folder's own keyed why, inside a 200: a folder that is
+/// missing, is not a folder, or cannot be read is the picker's empty list with
+/// a text, never this route's failure.
+fn model_files_document(reply: &pai_core::client::ModelFilesReply) -> serde_json::Value {
+    serde_json::json!({
+        "source": "local",
+        "dir": reply.dir,
+        "files": reply
+            .files
+            .iter()
+            .map(|file| {
+                serde_json::json!({
+                    "path": file.path,
+                    "size": file.size,
+                    "shards": file.shards,
+                    "category": file.category,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "truncated": reply.truncated,
+        "error": reply
+            .error
+            .as_ref()
+            .map(|reason| serde_json::json!({ "key": reason.key, "args": reason.args })),
+    })
 }
 
 /// The document: `{"probedAt", "ramMib", "cpuThreads", "devices"}`, `probedAt`

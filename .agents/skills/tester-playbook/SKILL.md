@@ -77,6 +77,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   symlink of `fe/node_modules`, or a `git worktree add --detach` of HEAD for an inherited red. Report it
   as "seen in a scratch copy with X flipped", never as a green of the current tree, and name the scratch
   panic lines as such.
+- For an fe slice, the scratch copy is the proof the reds are satisfiable: a python script applies a
+  faithful stub of the feature (the strings keys, the new reader, the call sites), aborting when a snippet
+  matches `!= 1` time, and the slice's files go green there. What stays red in the scratch names the part
+  of the feature the stub left out (a form, a Used-by link), which is the coder's job, not a typo. Run the
+  OLDER files the shared fake touches there too: that sweep finds the order lists and h1 lookups the brief
+  did not list.
 - Isolate one phase or pin with: a temporary `#[test]` calling just that phase; `#[cfg(any())]` over the
   blocked phases; a gate on an env var (`is_none()` wrapping the red pins' braces; an early `return`
   skips the whole phase); `// <SLICE>-PIN-<n> BEGIN/END` markers a script deletes. Restore byte for byte
@@ -234,6 +240,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   button.
 - When you retarget an old pin onto another field or a moved read, amend the old test to the new rule and
   say in a comment which slice retired the old one.
+- When a slice changes how an accessible NAME is built (a name read off the item, not the id), find the
+  files to amend by the FIXTURES, not by the brief's list: the shared `INSTANCES` fixture leaves out the
+  field feeding the name (`port`, `label`), so a lookup by id keeps passing there, and only a fixture that
+  sets it needs the name. `grep -n "port: [0-9]" *.test.tsx` is the sweep.
+- Give a page-open helper the name it awaits as a parameter defaulting to the fixture's name: a case that
+  changes the fixture (port 0, a label) awaits the name the change gives, and a hard-coded name reds it.
 - Pin a 422 whose `field` names a control the form checks itself (a port) with a value the check accepts,
   and the args exactly as the bff sends them: with a value that check refuses the reply is UNREACHABLE,
   because the check sends nothing.
@@ -327,6 +339,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `not-found` for the new address, a group's href list, an `aria-current` case, a "gains no such key" pin.
 - Pin an alias rule on both paths (address equals the state hash: no navigation; address moves:
   `setHash`).
+- Find a tile or an instance link by its address (`a.tile-id[href="#/instances/<id>"]`), not by its text,
+  in a helper shared by tests of a slice that renames it: the helper then survives the name rule, and the
+  name is pinned where the brief states it.
 - When a brief makes a read-only field editable, amend every fixture that pinned it read-only (the
   fan-out goes through the shared cards helper) and retarget the "nothing to focus" refusals.
 
@@ -386,7 +401,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A helper that trims a line's end (`str::trim_end`) erases a trailing non-breaking space: pin a
   Unicode-whitespace value with the raw line, never with the file's `keys_of`-style helper.
 - One `data_root_e2e` masks its own later reds: `pai-manager`'s service phases AND its D-Bus/pipe client
-  phases are calls of ONE test, so a full run prints only the first panic.
+  phases are calls of ONE test, so a full run prints only the first panic. To show a LATER phase's
+  day-one state, comment out the earlier phase's one CALL LINE in `src/tests/mod.rs` (a `// GATE`
+  prefix), run, restore with `cp` + `cmp -s` and `grep -c "// GATE"` answering 0: one line per phase,
+  no block surgery.
+- Pin a walk's bound of ENTRIES VISITED with a marker file under a subfolder: the bound is consumed
+  inside the first folder's loop, so the marker's ABSENCE proves where the walk stopped, and a tree
+  below the bound proves it did not stop early. `paths::instance_models_dir()` under a redirect is
+  `<root>/engine-models`; a bound fixture takes a fresh `redirect_for_tests` per block (the bound
+  counts the tree, so no block may inherit another's files).
 - A phase that rewrites a file a LATER phase reads as its `base` reds that phase when its payload equals
   what the earlier phase left: a compare-and-swap then accepts a stale content.
 - A mutant of a validation gate shows only on a tree green in that phase first: with an unrelated fixture

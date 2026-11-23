@@ -970,6 +970,10 @@ pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     node: Box<dyn NodeFacts + Send + Sync>,
     /// Records every guarded call, done or refused, through [`ActionLog`].
     action_log: Box<dyn ActionLog + Send + Sync>,
+    /// How many entries the models-folder listing visits before it stops and
+    /// answers `truncated` ([`MODELS_WALK_MAX_ENTRIES`], lowered by
+    /// [`Self::with_walk_max_entries`]).
+    walk_max_entries: usize,
     /// Held by a write from its address check to its rename, so a check
     /// sees every write before it (and `write_served_file`'s one temp
     /// name per file is never shared). Taken only after the authorization:
@@ -988,6 +992,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             gpus: Box::new(NoGpus),
             node: Box::new(NoNodeFacts),
             action_log: Box::new(NoActionLog),
+            walk_max_entries: MODELS_WALK_MAX_ENTRIES,
             writing: std::sync::Mutex::new(()),
         }
     }
@@ -1027,6 +1032,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// `log`, in place of the silent [`NoActionLog`].
     pub fn with_log(mut self, log: impl ActionLog + Send + Sync + 'static) -> Self {
         self.action_log = Box::new(log);
+        self
+    }
+
+    /// This manager stopping its models-folder listing after `entries` entries
+    /// visited, in place of [`MODELS_WALK_MAX_ENTRIES`].
+    pub fn with_walk_max_entries(mut self, entries: usize) -> Self {
+        self.walk_max_entries = entries;
         self
     }
 
@@ -2398,6 +2410,34 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         })
     }
 
+    /// M3 of "Choosing the model file on the web" (`ARCHITECTURE.md` (4) and
+    /// "One models folder for every engine" (3)): the node's one models
+    /// folder (`paths::instance_models_dir()`) as the picker's file list. The
+    /// gate is the gate of [`Self::devices`]: the caller's own read is
+    /// `control` asked WITHOUT interaction, the `As` form is the bff's account
+    /// vouching for a current member of `pai`, and every refusal is
+    /// [`ManagerError::NotAuthorized`] with the folder never opened.
+    ///
+    ///
+    /// The folder is opened only for a caller the gate lets through. A folder
+    /// that is missing, is not a folder, or cannot be read answers no rows and
+    /// the keyed `models-dir-unreadable` naming it, INSIDE a success: the
+    /// picker shows an empty list with a text, the call does not fail. A
+    /// folder below it that cannot be opened is skipped, its files simply
+    /// absent. The walk is the folder's own ([`walk_models_dir`]), its bound of
+    /// entries visited being this manager's [`Self::walk_max_entries`]: no
+    /// service manager is reached, no file is written, no action recorded.
+    pub fn model_files(
+        &self,
+        who: &Requester,
+    ) -> Result<pai_core::client::ModelFilesReply, ManagerError> {
+        self.authorize_quietly(who, Action::Control)?;
+        Ok(walk_models_dir(
+            &crate::paths::instance_models_dir(),
+            self.walk_max_entries,
+        ))
+    }
+
     /// L1 of "Layers, MoE and tensor placement on the web model profile page"
     /// (ARCHITECTURE.md (1)): the layer facts of ONE saved model profile, by
     /// its id. The gate is the gate of reading `models.ini`
@@ -2759,6 +2799,143 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         }
         Ok(())
     }
+}
+
+/// How deep [`walk_models_dir`] descends below the models folder: a file in
+/// the folder itself is at depth 0, one under six folders is at depth 6 and is
+/// the deepest listed. The layout the picker reads is one category folder with
+/// a tree of the download tool's under it.
+const MODELS_WALK_MAX_DEPTH: usize = 6;
+
+/// How many rows [`walk_models_dir`] lists before it stops and says so
+/// (`truncated`): a folder of a model farm is no page of ten thousand rows.
+const MODELS_WALK_MAX_FILES: usize = 5000;
+
+/// How many entries [`walk_models_dir`] visits before it stops and says so
+/// (`truncated`), counting every entry it looks at and not only the rows it
+/// keeps: the service's account reads the tree, so a bound on the rows alone
+/// leaves a huge tree of sidecars read in full on every request. A test lowers
+/// it through [`Manager::with_walk_max_entries`].
+const MODELS_WALK_MAX_ENTRIES: usize = 50_000;
+
+/// The shard facts a `.gguf` name carries: the number of shards it declares (1
+/// for a file whose name is no shard) and whether the file is the FIRST shard
+/// (a single file is its own first). Both are read out of the name with no
+/// shard opened, the way [`MAX_MODEL_SHARDS`] judges a shard set.
+fn shards_of(name: &str) -> (u64, bool) {
+    use pai_core::gguf_shape::split_shard_suffix;
+    let one = || (1, true);
+    // The extension is the shard suffix's own, matched any case as the scan
+    // matches it, so a `.Gguf` shard is judged like a `.gguf` one.
+    let Some(cut) = name.len().checked_sub(5) else {
+        return one();
+    };
+    if !name.is_char_boundary(cut) || !name[cut..].eq_ignore_ascii_case(".gguf") {
+        return one();
+    }
+    let stem = &name[..cut];
+    // `split_shard_suffix` has read the index as five digits and the total as
+    // five digits, so the total needs no second check.
+    let Some((_, index)) = split_shard_suffix(stem) else {
+        return one();
+    };
+    let Some((_, total)) = stem.rsplit_once("-of-") else {
+        return one();
+    };
+    (total.parse().unwrap_or(1).max(1), index == "00001")
+}
+
+/// The `category` of a model file: the first subfolder of `path` under `dir`
+/// (the GUI's `model_scan::Category::subdir` layout: `models`, `mmprojs`,
+/// `mtps`, `dflashs`), `None` for a file that sits in `dir` itself.
+fn models_category(dir: &std::path::Path, path: &std::path::Path) -> Option<String> {
+    use std::path::Component;
+    let mut parts = path.strip_prefix(dir).ok()?.components();
+    match (parts.next(), parts.next()) {
+        (Some(Component::Normal(name)), Some(_)) => Some(name.to_string_lossy().into_owned()),
+        _ => None,
+    }
+}
+
+/// Every `.gguf` file under `dir`, as the picker's rows: a split model once,
+/// as its first shard with the shard count its name declares, each row's
+/// `category` the first subfolder under `dir`. Symlinked folders are not
+/// followed (a linked folder is another folder's files, and the models folder
+/// is the only one the caller has a right to), a folder whose name begins with
+/// `.` is skipped (a download tool's staging area is no model), the descent
+/// stops at [`MODELS_WALK_MAX_DEPTH`] folders, the entries visited at
+/// `max_entries` (every entry the walk looks at, folders and files it keeps no
+/// row of included, the bound's reason at [`MODELS_WALK_MAX_ENTRIES`]) and the
+/// rows at [`MODELS_WALK_MAX_FILES`], `truncated` saying the last two. A folder
+/// that is missing, is not a folder, or cannot be opened answers no rows and
+/// the keyed `models-dir-unreadable` naming it; a folder below it that cannot
+/// be opened is skipped, its files simply absent.
+fn walk_models_dir(dir: &std::path::Path, max_entries: usize) -> pai_core::client::ModelFilesReply {
+    let text = dir.to_string_lossy().into_owned();
+    let mut out = pai_core::client::ModelFilesReply {
+        dir: text.clone(),
+        files: Vec::new(),
+        truncated: false,
+        error: None,
+    };
+    if !std::fs::metadata(dir).is_ok_and(|m| m.is_dir()) {
+        out.error = Some(pai_core::client::Reason {
+            key: "models-dir-unreadable".into(),
+            args: vec![text],
+        });
+        return out;
+    }
+    let mut stack = vec![(dir.to_path_buf(), 0usize)];
+    let mut visited = 0usize;
+    while let Some((folder, depth)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            // The bound counts the entries visited, so a tree the walk keeps no
+            // row of spends it too: the reading is the service's own account.
+            if visited == max_entries {
+                out.truncated = true;
+                return out;
+            }
+            visited += 1;
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if file_type.is_dir() {
+                if depth == MODELS_WALK_MAX_DEPTH || name.starts_with('.') {
+                    continue;
+                }
+                stack.push((entry.path(), depth + 1));
+                continue;
+            }
+            // A symlink, a fifo or a device is no model file, and a file of
+            // another extension is no model file, whatever its folder.
+            if !file_type.is_file() || !name.to_lowercase().ends_with(".gguf") {
+                continue;
+            }
+            // A split model is the first shard's row, so the row is the same
+            // whichever shard the folder hands over first, and a set missing
+            // its first shard, which no loader opens, is listed nowhere.
+            let (shards, first) = shards_of(&name);
+            if !first {
+                continue;
+            }
+            if out.files.len() == MODELS_WALK_MAX_FILES {
+                out.truncated = true;
+                return out;
+            }
+            let path = entry.path();
+            out.files.push(pai_core::client::ModelFileRow {
+                path: path.to_string_lossy().into_owned(),
+                size: entry.metadata().map(|m| m.len()).unwrap_or(0),
+                shards,
+                category: models_category(dir, &path),
+            });
+        }
+    }
+    out
 }
 
 /// The name the manager gives the web service when its address is in use: the
@@ -21769,5 +21946,472 @@ pub(crate) fn manager_model_profile_delete_e2e() {
                 .starts_with(r#"action="delete_model_profile" target="star-served" caller=":1.9""#),
             "the record names the bff's account, as every `As` record does: {got:?}"
         );
+    }
+}
+
+/// M3 of "Choosing the model file on the web" (`ARCHITECTURE.md` (4) and (7),
+/// amended by "One models folder for every engine" (3)): `ModelFiles` /
+/// `ModelFilesAs` lists the node's one models folder
+/// (`paths::instance_models_dir()` until F1 introduces `paths::models_dir()`
+/// and repoints the listing). The listing: regular files ending `.gguf` (any
+/// case) by ABSOLUTE path, recursive to depth 6, symlinked directories not
+/// followed, dot-folders skipped (`.hf-staging`), at most 5000 entries per
+/// folder (then `truncated` true), a split model shown once as its first shard
+/// (`-00001-of-0000N.gguf`) with the shard count, and `category` the first
+/// subfolder under the folder (the GUI's `model_scan::Category::subdir`
+/// layout). A folder that is missing, is not a folder, or cannot be read is an
+/// OK answer with `files` empty and the keyed `models-dir-unreadable` `[dir]`,
+/// never the call's failure. The gate is the `devices` gate: the caller's own
+/// read is `control` asked WITHOUT interaction, the `As` form is the bff's
+/// account vouching for a current member of `pai`, and every refusal is
+/// `NotAuthorized` with the folder never opened.
+#[cfg(test)]
+pub(crate) fn manager_model_files_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use pai_core::client::{ModelFileRow, Reason};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let models = crate::paths::instance_models_dir();
+    std::fs::create_dir_all(&models).expect("models dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let own = Requester {
+        caller: desktop.clone(),
+        principal: None,
+    };
+    let own_bff = Requester {
+        caller: bff.clone(),
+        principal: None,
+    };
+
+    let core = |allow: bool, quiet: bool| {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let manager = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(quiet).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_log(log);
+        (manager, lines)
+    };
+
+    let file = |rel: &str, bytes: usize| {
+        let p = models.join(rel);
+        std::fs::create_dir_all(p.parent().expect("parent")).expect("parent dir");
+        std::fs::write(&p, vec![b'g'; bytes]).expect("file");
+    };
+    let row = |rel: &str, size: u64, shards: u64, category: Option<&str>| ModelFileRow {
+        path: models.join(rel).to_string_lossy().into_owned(),
+        size,
+        shards,
+        category: category.map(str::to_string),
+    };
+    let sorted = |rows: Vec<ModelFileRow>| -> Vec<ModelFileRow> {
+        let mut rows = rows;
+        rows.sort_by(|a, b| a.path.cmp(&b.path));
+        rows
+    };
+
+    // The fixture: every category, a loose file, a split model, a file of
+    // another extension, a dot-folder, an upper-case extension, and a
+    // symlinked folder whose file must not travel.
+    file("loose.gguf", 5);
+    file("UPPER.Gguf", 7);
+    file("models/a.gguf", 100);
+    file("models/o/r/deep.gguf", 50);
+    file("models/big-00001-of-00003.gguf", 1000);
+    file("models/big-00002-of-00003.gguf", 1000);
+    file("models/big-00003-of-00003.gguf", 1000);
+    file("mmprojs/mm.gguf", 30);
+    file("mtps/mtp.gguf", 20);
+    file("dflashs/d.gguf", 10);
+    file("notes.txt", 9);
+    file(".hf-staging/staged.gguf", 99);
+    #[cfg(unix)]
+    {
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).expect("outside dir");
+        std::fs::write(outside.join("y.gguf"), b"g").expect("outside file");
+        std::os::unix::fs::symlink(&outside, models.join("link")).expect("symlink");
+    }
+
+    // ── The member's listing: absolute paths, shards collapsed, the
+    //    category the first subfolder, the dot-folder and the link out ─────
+    {
+        let (m, lines) = core(true, true);
+        let got = m.model_files(&member).expect("the member is served");
+        assert_eq!(got.dir, models.to_string_lossy(), "the folder");
+        assert!(
+            std::path::Path::new(&got.dir).is_absolute(),
+            "the folder, absolute"
+        );
+        assert!(!got.truncated, "the fixture is small");
+        assert_eq!(got.error, None, "the folder reads");
+        assert_eq!(
+            sorted(got.files),
+            sorted(vec![
+                row("UPPER.Gguf", 7, 1, None),
+                row("dflashs/d.gguf", 10, 1, Some("dflashs")),
+                row("loose.gguf", 5, 1, None),
+                row("mmprojs/mm.gguf", 30, 1, Some("mmprojs")),
+                row("models/a.gguf", 100, 1, Some("models")),
+                row("models/big-00001-of-00003.gguf", 1000, 3, Some("models")),
+                row("models/o/r/deep.gguf", 50, 1, Some("models")),
+                row("mtps/mtp.gguf", 20, 1, Some("mtps")),
+            ]),
+            "every .gguf once by absolute path, the split model as its first
+             shard with its count, the txt, the dot-folder and the linked
+             folder's file left out"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            Vec::<fakes::Call>::new(),
+            "the read reaches no service manager"
+        );
+        assert_eq!(
+            *lines.lock().unwrap(),
+            Vec::<String>::new(),
+            "a read records no action"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![],
+            "the pair is the right: polkit is asked for nothing, not even quietly"
+        );
+    }
+
+    // ── The caller's own call: control asked quietly, never with a prompt ──
+    {
+        let (m, _lines) = core(true, true);
+        let got = m
+            .model_files(&own_bff)
+            .expect("the bff's own read is served");
+        assert_eq!(got.dir, models.to_string_lossy());
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![(bff.clone(), Action::Control)],
+            "control asked without interaction, the way a read that may prompt for nothing is asked"
+        );
+        assert_eq!(
+            *m.authority().asked.lock().unwrap(),
+            Vec::<(Caller, Action)>::new(),
+            "never asked with a prompt: a file list is worth no challenge"
+        );
+    }
+    {
+        let (m, _lines) = core(true, true);
+        let got = m
+            .model_files(&own)
+            .expect("the desktop user's own read is served");
+        assert_eq!(got.dir, models.to_string_lossy());
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![(desktop.clone(), Action::Control)]
+        );
+    }
+
+    // ── No control: refused, the folder never opened ───────────────────────
+    {
+        // A caller with control for the prompting check and none for the quiet
+        // one: the listing is the quiet check's, so it is refused.
+        let (m, _lines) = core(true, false);
+        assert_eq!(
+            m.model_files(&own),
+            Err(ManagerError::NotAuthorized),
+            "a caller polkit would challenge, or refuses quietly, gets no list"
+        );
+    }
+    {
+        // No control at all.
+        let (m, _lines) = core(false, false);
+        assert_eq!(
+            m.model_files(&own),
+            Err(ManagerError::NotAuthorized),
+            "a caller without control"
+        );
+    }
+
+    // ── The As form: the bff's account, and a current member of `pai` ──────
+    {
+        let (m, _lines) = core(true, true);
+        assert_eq!(
+            m.model_files(&outsider),
+            Err(ManagerError::NotAuthorized),
+            "bob is no member of `pai`"
+        );
+        assert_eq!(
+            *m.authority().asked_quietly.lock().unwrap(),
+            vec![],
+            "a non-member's read asks polkit for nothing"
+        );
+    }
+    {
+        // A caller that is not the bff's account vouching for a user.
+        let (m, _lines) = core(true, true);
+        let forger = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.model_files(&forger),
+            Err(ManagerError::NotAuthorized),
+            "only the bff's account vouches for a user"
+        );
+    }
+    {
+        // A member removed between two calls is refused at the next one.
+        let passwords = FakePasswords::new();
+        let admins = passwords.admins.clone();
+        let manager = Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(FakeActionLog::new());
+        assert!(manager.model_files(&member).is_ok(), "alice is a member");
+        admins.lock().unwrap().remove("alice");
+        assert_eq!(
+            manager.model_files(&member),
+            Err(ManagerError::NotAuthorized),
+            "the membership is read at every call, never cached"
+        );
+    }
+
+    // ── Depth: the walk descends at most 6 folders ─────────────────────────
+    {
+        file("d1/d2/d3/d4/d5/d6/deep6.gguf", 3);
+        file("d1/d2/d3/d4/d5/d6/d7/deep7.gguf", 3);
+        let (m, _lines) = core(true, true);
+        let got = m.model_files(&member).expect("served");
+        let deep6 = models
+            .join("d1/d2/d3/d4/d5/d6/deep6.gguf")
+            .to_string_lossy()
+            .into_owned();
+        let deep7 = models
+            .join("d1/d2/d3/d4/d5/d6/d7/deep7.gguf")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            got.files.iter().any(|f| f.path == deep6),
+            "a file at depth 6 is listed: {deep6}"
+        );
+        assert!(
+            !got.files.iter().any(|f| f.path == deep7),
+            "a file at depth 7 is not: {deep7}"
+        );
+    }
+
+    // ── Entries: at most 5000 per folder, then truncated ───────────────────
+    {
+        for i in 0..5001 {
+            file(&format!("many/f{i:04}.gguf"), 1);
+        }
+        let (m, _lines) = core(true, true);
+        let got = m.model_files(&member).expect("served");
+        assert!(got.truncated, "5001 entries in one folder pass the bound");
+        let many = got.files.iter().filter(|f| f.path.contains("many")).count();
+        assert!(many <= 5000, "the bound is 5000 entries, not more: {many}");
+    }
+
+    // ── A folder that is not there: an OK answer with the keyed error ──────
+    {
+        std::fs::remove_dir_all(&models).expect("remove models dir");
+        let (m, _lines) = core(true, true);
+        let got = m
+            .model_files(&member)
+            .expect("a missing folder is not the call's failure");
+        assert_eq!(got.dir, models.to_string_lossy());
+        assert_eq!(got.files, Vec::new(), "nothing to list");
+        assert!(!got.truncated);
+        assert_eq!(
+            got.error,
+            Some(Reason {
+                key: "models-dir-unreadable".into(),
+                args: vec![models.to_string_lossy().into_owned()],
+            }),
+            "the folder's own keyed error, the picker's text"
+        );
+    }
+    // ── The folder path is a regular file: the same answer ─────────────────
+    {
+        std::fs::write(&models, b"not a folder").expect("file at the folder path");
+        let (m, _lines) = core(true, true);
+        let got = m
+            .model_files(&member)
+            .expect("not a folder is not the call's failure");
+        assert_eq!(got.files, Vec::new());
+        assert_eq!(
+            got.error,
+            Some(Reason {
+                key: "models-dir-unreadable".into(),
+                args: vec![models.to_string_lossy().into_owned()],
+            })
+        );
+    }
+}
+
+/// M3 review G2: the models-folder listing's bound counts the ENTRIES THE WALK
+/// VISITS, not the rows it keeps. A bound on the rows alone leaves a tree of a
+/// hundred thousand sidecars read in full, by the service's own account, on
+/// every request. The walk stops at [`MODELS_WALK_MAX_ENTRIES`] entries
+/// visited and answers `truncated` true; the bound is lowered through
+/// [`Manager::with_walk_max_entries`], and the marker file under a subfolder
+/// shows WHERE it stopped: a walk that stops inside the first folder never
+/// descends to the marker. A tree below the bound is listed whole, with
+/// `truncated` false.
+#[cfg(test)]
+pub(crate) fn manager_model_files_walk_bound_e2e() {
+    use fakes::{FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService};
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let core = |entries: usize| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+        .with_walk_max_entries(entries)
+    };
+    let plain_core = || {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(FakePasswords::new())
+    };
+    // A fresh redirect per block: the bound counts the entries of the tree, so
+    // no block may inherit another's files.
+    let fresh = || -> std::path::PathBuf {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let models = crate::paths::instance_models_dir();
+        std::fs::create_dir_all(&models).expect("models dir");
+        models
+    };
+    let file = |models: &std::path::Path, rel: &str| {
+        let p = models.join(rel);
+        std::fs::create_dir_all(p.parent().expect("parent")).expect("parent dir");
+        std::fs::write(&p, b"g").expect("file");
+    };
+
+    // ── The bound's own number, and that it is not the rows bound ──────────
+    assert_eq!(
+        MODELS_WALK_MAX_ENTRIES, 50_000,
+        "the bound of entries visited is 50 000"
+    );
+    const {
+        assert!(
+            MODELS_WALK_MAX_ENTRIES > MODELS_WALK_MAX_FILES,
+            "the entries bound is not the rows bound wearing another name"
+        );
+    }
+
+    // ── The walk stops inside the first folder: the marker is never reached ─
+    {
+        let models = fresh();
+        for i in 0..250 {
+            file(&models, &format!("side{i:03}.txt"));
+        }
+        file(&models, "sub/marker.gguf");
+
+        let m = core(200);
+        let got = m.model_files(&member).expect("served");
+        assert_eq!(got.error, None, "the folder reads");
+        assert!(
+            got.truncated,
+            "251 entries visited pass a bound of 200, and not one row was kept: {got:?}"
+        );
+        assert_eq!(
+            got.files,
+            Vec::new(),
+            "the walk stopped inside the first folder: the marker under `sub` is not listed"
+        );
+    }
+
+    // ── Entries, not rows: 150 rows under the rows bound, 250 entries over ──
+    {
+        let models = fresh();
+        for i in 0..150 {
+            file(&models, &format!("m{i:03}.gguf"));
+        }
+        for i in 0..100 {
+            file(&models, &format!("s{i:03}.txt"));
+        }
+        let m = core(200);
+        let got = m.model_files(&member).expect("served");
+        assert!(
+            got.truncated,
+            "250 entries visited pass a bound of 200, and the rows are far under \
+             the rows bound, so the rows cannot explain the flag: {} rows",
+            got.files.len()
+        );
+        assert!(
+            got.files.len() < 200,
+            "the walk keeps no more rows than the entries it visited: {}",
+            got.files.len()
+        );
+        assert!(
+            got.files.iter().all(|f| f.path.ends_with(".gguf")),
+            "every kept row is a model file: {got:?}"
+        );
+    }
+
+    // ── Below the bound: the whole tree, the flag false ────────────────────
+    {
+        let models = fresh();
+        for i in 0..150 {
+            file(&models, &format!("m{i:03}.gguf"));
+        }
+        for i in 0..100 {
+            file(&models, &format!("s{i:03}.txt"));
+        }
+        file(&models, "sub/marker.gguf");
+        let marker = models
+            .join("sub/marker.gguf")
+            .to_string_lossy()
+            .into_owned();
+
+        let m = core(1000);
+        let got = m.model_files(&member).expect("served");
+        assert!(!got.truncated, "251 entries under a bound of 1000");
+        assert_eq!(got.files.len(), 151, "every model file of the tree");
+        assert!(
+            got.files.iter().any(|f| f.path == marker),
+            "the walk descended: {marker}"
+        );
+
+        // The default bound, untouched by the seam: the same tree is whole.
+        let m = plain_core();
+        let got = m.model_files(&member).expect("served");
+        assert!(
+            !got.truncated,
+            "the default bound is far above a tree of 251 entries"
+        );
+        assert_eq!(got.files.len(), 151, "the default bound lists the tree");
     }
 }

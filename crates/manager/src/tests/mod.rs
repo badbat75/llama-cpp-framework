@@ -84,6 +84,12 @@ fn data_root_e2e() {
     // ── Manager core: the tensor list of the model info reply (J1) ───────
     crate::manager::service::manager_model_tensors_e2e();
 
+    // ── Manager core: the node's models folder listing (ModelFiles, M3) ──
+    crate::manager::service::manager_model_files_e2e();
+
+    // ── Manager core: the models walk's bound of entries visited (M3 G2) ──
+    crate::manager::service::manager_model_files_walk_bound_e2e();
+
     // ── Manager core: SetServerProfile, the verb that writes instances.ini ─
     crate::manager::service::manager_set_server_profile_e2e();
 
@@ -155,6 +161,10 @@ fn data_root_e2e() {
     #[cfg(target_os = "linux")]
     dbus_client::manager_dbus_client_model_profiles_as_e2e();
 
+    // ── pai-core's client: the node's models folder over the bus (M3 G1) ──
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_model_files_e2e();
+
     // ── pai-core's client of the manager over a stream ──────────────────
     // pai_core::client::pipe against manager::pipe::serve_stream, on a
     // Unix socket pair (the named pipe's OS-neutral protocol).
@@ -164,6 +174,10 @@ fn data_root_e2e() {
     // ── pai-core's client over a stream: a model profile's life ─────────
     #[cfg(unix)]
     pipe_client::manager_pipe_client_model_profiles_e2e();
+
+    // ── pai-core's client: the node's models folder over a stream (M3 G1) ─
+    #[cfg(unix)]
+    pipe_client::manager_pipe_client_model_files_e2e();
 
     // ── Manager core: acting for a signed-in user (the bff names a member)
     crate::manager::service::manager_principal_e2e();

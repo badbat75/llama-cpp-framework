@@ -260,6 +260,38 @@ fn node_info_row(info: pai_core::client::NodeInfoReply) -> NodeInfoRow {
     )
 }
 
+/// One row of `ModelFiles`' list, as the bus answers it: `(s path, t size,
+/// t shards, b has_category, s category)`, the list `a(sttbs)`. The bus has no
+/// null, so the category travels with its flag the way `NodeGpuRow`'s Vulkan
+/// pair does: a file of the folder itself is the flag false and the empty
+/// string, not a category of nothing.
+type ModelFileBusRow = (String, u64, u64, bool, String);
+
+/// The `ModelFiles` reply as the bus answers it: `(s dir, a(sttbs) files,
+/// b truncated, (s key, as args))`: the folder as an absolute path, the rows
+/// in the walk's order, the flag saying the walk stopped at its bound, and the
+/// folder's keyed why (`key` the empty string when the folder read).
+type ModelFilesRow = (String, Vec<ModelFileBusRow>, bool, (String, Vec<String>));
+
+fn model_files_row(reply: pai_core::client::ModelFilesReply) -> ModelFilesRow {
+    (
+        reply.dir,
+        reply
+            .files
+            .into_iter()
+            .map(|f| {
+                let (has_category, category) = match f.category {
+                    Some(c) => (true, c),
+                    None => (false, String::new()),
+                };
+                (f.path, f.size, f.shards, has_category, category)
+            })
+            .collect(),
+        reply.truncated,
+        reply.error.map(|e| (e.key, e.args)).unwrap_or_default(),
+    )
+}
+
 #[zbus::interface(name = "org.privateai.Manager1")]
 impl<S, A, R> ManagerInterface<S, A, R>
 where
@@ -417,6 +449,37 @@ where
     ) -> Result<NodeInfoRow, Error> {
         let who = requester_as(&header, principal)?;
         Ok(node_info_row(self.core(move |m| m.node_info(&who)).await?))
+    }
+
+    /// `ModelFiles`: the node's one models folder as the model-file picker's
+    /// list, `(s dir, a(sttbs) files, b truncated, (s key, as args))`, the
+    /// parts of `model_files_row`. The gate of [`Self::devices`]: `control`
+    /// asked of polkit WITHOUT interaction, and a refused read opens no folder.
+    /// A folder that is missing, is not a folder, or cannot be read is a
+    /// SUCCESS with no rows and the keyed `models-dir-unreadable` in the last
+    /// part: the picker's empty list with a text, never an error reply.
+    async fn model_files(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> Result<ModelFilesRow, Error> {
+        let who = requester_of(&header)?;
+        Ok(model_files_row(
+            self.core(move |m| m.model_files(&who)).await?,
+        ))
+    }
+
+    /// `ModelFilesAs`: the same list, asked as a principal the caller vouches
+    /// for: the bff's account, and a current member of `pai`. No polkit
+    /// question at all: the pair is the right.
+    async fn model_files_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+    ) -> Result<ModelFilesRow, Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(model_files_row(
+            self.core(move |m| m.model_files(&who)).await?,
+        ))
     }
 
     async fn status(&self, id: String) -> Result<String, Error> {

@@ -42,7 +42,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   accepted and one refused: no rule separates them. To show the rest of the suite IS satisfiable, patch
   the fixtures in the copy (the colliding text, a `want` count the block's own refusals outgrow, a wire
   signature a slice grew) and rerun to green; every patch is one defect to report, with its line.
-- Flakes: reproduce solo, state it, move on. The manager's D-Bus and gpu-probe tests under load, xtask's
+- Flakes: reproduce solo, state it, move on. The manager's D-Bus and gpu-probe tests under load, the
+  e2e's colliding-writes gate phase (`the first write returns`, a 5 s `GATE_WAIT`) when a cargo build
+  runs beside the suite (the suite alone: 142 s, a solo e2e beside a build: 669 s), xtask's
   script-sandbox tests (one temp dir per process), the bff's `tests/session.rs` timing tests, `fe`'s
   `ServerSave.test.tsx` navigation test `1b.36b: the edits-dropped alert stays until the page is left`
   (one of 3100 under `--maxWorkers=4`, green solo and on the rerun), the UX
@@ -108,7 +110,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `models.ini.disabled` is in effect. An instance IS a section of `instances.ini`.
 - Manager verbs, refusals and records: e2e phases are `pub(crate) fn` called in sequence by ONE `#[test]`
   (the GUI's `save_flow::run` likewise); create/remove verbs have no test of their own. A value check the
-  manager answers needs an arm in the bff's 422 field map. A shard-count bound is name math. Judge a
+  manager answers needs an arm in the bff's 422 field map. A shard-count bound is name math
+  (`gguf_shape::split_shard_suffix` gives `(base, index)`, NEVER the total: read it from
+  `stem.rsplit_once("-of-")`). `manager/service.rs` has no module-scope `use std::path::Path`, so a free
+  fn there writes `&std::path::Path`. Judge a
   write by the render it produces (the startup count only when the render starts MORE than the one on
   disk; a profile switch changes no model profile). The model-file check is a DELTA. A probe cache keeps
   the parsed rows; a serial probe answers queued readers with the probe they waited for.
@@ -297,7 +302,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `redundant_closure` (pass `&other`); `iter().any(|x| *x == y)` is `manual_contains`; a `Result` whose
   error carries an axum `Response` is `result_large_err`; a pub builder over 7 args takes
   `#[allow(clippy::too_many_arguments)]`; a tuple past `type_complexity` becomes a module-level `type`; a
-  `///` essay followed by a blank line before the item is a lint.
+  `///` essay followed by a blank line before the item is a lint; a test's `assert!(CONST > CONST)` is
+  `assertions_on_constants`, and the assertion-neutral fix is clippy's own `const { assert!(..) }` block
+  (condition and message byte-identical, the pin moved to compile time).
 
 ### Source lints and strings
 
@@ -307,7 +314,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `binding_lint` reddens the whole `-p pai-config` run when `strings::t` keys and the language file
   differ.
 - A D-Bus signature pin is zbus's own rendering (a struct has no commas); a wire change with new REQUIRED
-  fields reddens a sibling test in the same file whose fixture omits them.
+  fields reddens a sibling test in the same file whose fixture omits them. A signature a COMMENT states is
+  provable in a copy: `panic!("{}", <Row as zbus::zvariant::Type>::SIGNATURE)` in a scratch test (core's
+  `client/dbus.rs` tests pin rows that way, and a reply's own signature prints as
+  `(sa(sttbs)b(sas))`).
 
 ### The bff (Rust)
 

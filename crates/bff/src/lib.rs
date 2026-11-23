@@ -490,7 +490,12 @@ fn router_with_policy(
             write_timeout,
             sessions.clone(),
         ))
-        .merge(node::routes(connect, sessions.clone(), versions_dir))
+        .merge(node::routes(
+            connect,
+            timeout,
+            sessions.clone(),
+            versions_dir,
+        ))
         .merge(hf::routes(fetch, clock, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn_with_state(policy, origin::guard))

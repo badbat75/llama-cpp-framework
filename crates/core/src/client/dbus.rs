@@ -5,8 +5,9 @@
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
 //! `CreateServerProfile`, `DeleteServerProfile` and
-//! `SetInstanceTags` and `SetInstanceLabel` and `ModelInfo` and `NodeInfo` go as the
-//! `As` form of the same method, with the user's name as its first argument
+//! `SetInstanceTags` and `SetInstanceLabel` and `ModelInfo` and `NodeInfo` and
+//! `ModelFiles` go as the `As` form of the same method, with the user's name as
+//! its first argument
 //! (the manager answers a principal for the bff's account alone) and answers
 //! the plain method's shape. The methods that need no right are unchanged,
 //! `Instances` among them: the name the caller vouches for is no credential.
@@ -30,6 +31,8 @@
 //! ModelInfoAs(s principal, s profile)    (the same reply)
 //! NodeInfo() -> (s name, s version, s kernel, s vulkan, a(sssssbss) gpus)
 //! NodeInfoAs(s principal)                (the same reply)
+//! ModelFiles() -> (s dir, a(sttbs) files, b truncated, (s key, as args))
+//! ModelFilesAs(s principal)              (the same reply)
 //! Instances() -> a(sssqasass)      (id, engine, server profile, port, profile
 //!                                   tags, instance tags, label: empty when unset)
 //! ServerProfiles() -> a(ssqass)       (id, engine, port, tags, instance)
@@ -38,8 +41,8 @@
 
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, ModelFacts, ModelInfoReply, ModelProfileSource, NodeDevices, NodeInfoReply,
-    Reason, ServerProfileInfo, TensorRow,
+    ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply, ModelProfileSource,
+    NodeDevices, NodeInfoReply, Reason, ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu, Status};
@@ -219,6 +222,18 @@ type NodeGpuRow = (String, String, String, String, String, bool, String, String)
 /// s kernel, s vulkan, a(sssssbss) gpus)`, the kernel's rows first, then a
 /// Vulkan device no kernel row carries.
 type NodeInfoRow = (String, String, String, String, Vec<NodeGpuRow>);
+
+/// One row of `ModelFiles`' list (M3, `ARCHITECTURE.md`) as the client reads
+/// it: `(s path, t size, t shards, b has_category, s category)`. The bus has no
+/// null, so the category travels with its flag, the way `NodeGpuRow`'s Vulkan
+/// pair does: a file of the folder itself is the flag false and the empty
+/// string.
+type ModelFileRowWire = (String, u64, u64, bool, String);
+
+/// The whole `ModelFiles` reply as the client reads it: `(s dir, a(sttbs)
+/// files, b truncated, (s key, as args))`, the last part the folder's keyed
+/// why, its `key` empty when the folder read.
+type ModelFilesRow = (String, Vec<ModelFileRowWire>, bool, (String, Vec<String>));
 
 /// The text of the wire, `None` when it is empty: the bus carries no null, so
 /// the empty string is the fact the host did not answer, the way the stream's
@@ -538,6 +553,34 @@ impl ManagerClient for DbusClient {
                     },
                 )
                 .collect(),
+        })
+    }
+    fn model_files(&self) -> Result<ModelFilesReply, ClientError> {
+        // `(s dir, a(sttbs) files, b truncated, (s key, as args))`: the folder
+        // as an absolute path, the rows in the walk's order, the flag saying
+        // the walk stopped at its bound, and the folder's keyed why (M3). The
+        // bus has no null: the category travels with its flag, and the why with
+        // its key, an empty key being the folder having read, the way the
+        // stream's `null` says it.
+        let (dir, rows, truncated, (key, args)): ModelFilesRow = match self.acting() {
+            Some(principal) => body(self.call("ModelFilesAs", &(principal,))?)?,
+            None => body(self.call("ModelFiles", &())?)?,
+        };
+        Ok(ModelFilesReply {
+            dir,
+            files: rows
+                .into_iter()
+                .map(
+                    |(path, size, shards, has_category, category)| ModelFileRow {
+                        path,
+                        size,
+                        shards,
+                        category: has_category.then_some(category),
+                    },
+                )
+                .collect(),
+            truncated,
+            error: (!key.is_empty()).then_some(Reason { key, args }),
         })
     }
 }

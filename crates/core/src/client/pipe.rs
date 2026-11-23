@@ -25,6 +25,7 @@
 //! {"method":"Authenticate","user":"alice","password":"..."}
 //! {"method":"ModelInfo","profile":"qwen3"}
 //! {"method":"NodeInfo"}
+//! {"method":"ModelFiles"}
 //! {"method":"Version"}
 //! ```
 //!
@@ -33,7 +34,7 @@
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
 //! `CreateServerProfile`, `DeleteServerProfile`, `CreateModelProfile`,
 //! `DeleteModelProfile`,
-//! `SetInstanceTags`, `Devices` and `ModelInfo` go as the
+//! `SetInstanceTags`, `Devices` and `ModelInfo` and `ModelFiles` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
 //! (the manager answers a principal for the bff's account alone). The methods
 //! that need no right are unchanged, `Instances` and `ServerProfiles` among
@@ -94,8 +95,8 @@
 
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, ModelFacts, ModelInfoReply, ModelProfileSource, NodeDevices, NodeInfoReply,
-    Reason, ServerProfileInfo, TensorRow,
+    ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply, ModelProfileSource,
+    NodeDevices, NodeInfoReply, Reason, ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu};
@@ -759,6 +760,74 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             });
         }
         Ok(NodeInfoReply { os, vulkan, gpus })
+    }
+    fn model_files(&self) -> Result<ModelFilesReply, ClientError> {
+        let v = self.call(self.guarded("ModelFiles", &[]))?;
+        let bad = || ClientError::Other(v.to_string());
+        // The manager writes every key of this document, so a key that is not
+        // there is the shape of no manager, not a folder that left a file out:
+        // every field is read strictly, the way `node_info` reads its texts. A
+        // client that guessed at a missing key would pick a file the node does
+        // not have.
+        let obj = v.as_object().ok_or_else(&bad)?;
+        let text = |o: &serde_json::Map<String, Value>, key: &str| -> Result<String, ClientError> {
+            o.get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(&bad)
+        };
+        let rows = obj
+            .get("files")
+            .and_then(Value::as_array)
+            .ok_or_else(&bad)?;
+        let mut files = Vec::with_capacity(rows.len());
+        for row in rows {
+            let row = row.as_object().ok_or_else(&bad)?;
+            // The row's category: null (a file of the folder itself), or the
+            // first subfolder's name. A number and a list are shapes the
+            // manager never answers.
+            let category = match row.get("category") {
+                None => return Err(bad()),
+                Some(Value::Null) => None,
+                Some(one) => Some(one.as_str().ok_or_else(&bad)?.to_string()),
+            };
+            files.push(ModelFileRow {
+                path: text(row, "path")?,
+                size: row.get("size").and_then(Value::as_u64).ok_or_else(&bad)?,
+                shards: row.get("shards").and_then(Value::as_u64).ok_or_else(&bad)?,
+                category,
+            });
+        }
+        // The folder's keyed why: null (the folder read), or the key with its
+        // args of strings. An unreadable folder is an OK answer with an empty
+        // list, so the key travels inside the reply, never as the call's
+        // failure: the picker shows the empty list with the folder's text.
+        let error = match obj.get("error") {
+            None => return Err(bad()),
+            Some(Value::Null) => None,
+            Some(one) => {
+                let one = one.as_object().ok_or_else(&bad)?;
+                Some(Reason {
+                    key: text(one, "key")?,
+                    args: one
+                        .get("args")
+                        .and_then(Value::as_array)
+                        .ok_or_else(&bad)?
+                        .iter()
+                        .map(|a| a.as_str().map(str::to_string).ok_or_else(&bad))
+                        .collect::<Result<Vec<String>, ClientError>>()?,
+                })
+            }
+        };
+        Ok(ModelFilesReply {
+            dir: text(obj, "dir")?,
+            files,
+            truncated: obj
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .ok_or_else(&bad)?,
+            error,
+        })
     }
 }
 

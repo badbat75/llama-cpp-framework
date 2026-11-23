@@ -3097,3 +3097,174 @@ pub(crate) fn manager_dbus_client_model_profiles_as_e2e() {
         "the membership of the vouched name, asked once per call, never cached"
     );
 }
+
+/// M3 of "Choosing the model file on the web": `ModelFiles` / `ModelFilesAs`
+/// over the bus, with pai-core's client. The frame the picker reads crosses:
+/// the folder as an absolute path, every row with its path, size, shard count
+/// and category, the flag saying the walk stopped at its bound, and the
+/// folder's keyed why INSIDE a success. The bus has no null, so a row's
+/// category travels with its flag and the why with its key: those two crossings
+/// are what this phase pins, the listing's rules are pinned by
+/// `manager_model_files_e2e`. The read opens a folder under this phase's
+/// redirect, so it lives in the e2e.
+pub(crate) fn manager_dbus_client_model_files_e2e() {
+    use crate::manager::service::fakes::{FakeGroup, FakePasswords};
+    use pai_core::client::{ModelFileRow, Reason};
+
+    const BFF: &str = ":1.9";
+    const OTHER: &str = ":1.42";
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let models = crate::paths::instance_models_dir();
+    std::fs::create_dir_all(&models).expect("models dir");
+    let file = |rel: &str, bytes: usize| {
+        let p = models.join(rel);
+        std::fs::create_dir_all(p.parent().expect("parent")).expect("parent dir");
+        std::fs::write(&p, vec![b'g'; bytes]).expect("file");
+    };
+    file("loose.gguf", 5);
+    file("models/big-00001-of-00003.gguf", 1000);
+    file("models/big-00002-of-00003.gguf", 1000);
+    file("mmprojs/mm.GGUF", 30);
+    file("notes.txt", 9);
+    file(".hf-staging/staged.gguf", 99);
+
+    let core = |quiet: bool, entries: usize| {
+        Arc::new(
+            Manager::new(
+                FakeService::new(),
+                FakeAuthority::new(true)
+                    .quietly(quiet)
+                    .bff(&Caller(BFF.into())),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new())
+            .with_passwords(FakePasswords::new())
+            .with_walk_max_entries(entries),
+        )
+    };
+    let row = |rel: &str, size: u64, shards: u64, category: Option<&str>| ModelFileRow {
+        path: models.join(rel).to_string_lossy().into_owned(),
+        size,
+        shards,
+        category: category.map(str::to_string),
+    };
+    let sorted = |rows: Vec<ModelFileRow>| -> Vec<ModelFileRow> {
+        let mut rows = rows;
+        rows.sort_by(|a, b| a.path.cmp(&b.path));
+        rows
+    };
+    let want = || {
+        sorted(vec![
+            row("loose.gguf", 5, 1, None),
+            row("mmprojs/mm.GGUF", 30, 1, Some("mmprojs")),
+            row("models/big-00001-of-00003.gguf", 1000, 3, Some("models")),
+        ])
+    };
+    let frame = |got: pai_core::client::ModelFilesReply| {
+        (got.dir, sorted(got.files), got.truncated, got.error)
+    };
+
+    // ── The bff's own read: the frame crosses whole ────────────────────────
+    let c = core(true, 50_000);
+    let (_server, client) = connect(&c, Some(BFF));
+    let client = Arc::new(client);
+    let got = on("model_files", &client, |c| c.model_files()).expect("the bff's own read");
+    assert_eq!(
+        frame(got),
+        (models.to_string_lossy().into_owned(), want(), false, None),
+        "the folder, the three rows with every field (the second shard, the txt \
+         and the dot-folder left out), the flag false and no why"
+    );
+    assert_eq!(
+        *c.authority().asked_quietly.lock().unwrap(),
+        vec![(Caller(BFF.into()), Action::Control)],
+        "control asked without interaction, the way `NodeInfo` asks it"
+    );
+    assert_eq!(
+        *c.authority().asked.lock().unwrap(),
+        Vec::<(Caller, Action)>::new(),
+        "never asked with a prompt: a file list is worth no challenge"
+    );
+    assert_eq!(
+        *c.service().calls.lock().unwrap(),
+        Vec::<Call>::new(),
+        "the read reaches no service manager"
+    );
+
+    // ── The member's read the bff vouches for: the same frame ──────────────
+    let member = Arc::new(client.acting_for("alice"));
+    assert_eq!(
+        on("model_files as alice", &member, |c| c.model_files()).map(frame),
+        Ok((models.to_string_lossy().into_owned(), want(), false, None)),
+        "the member's read, vouched for by the bff: the same rows"
+    );
+
+    // ── A non-pai principal: refused, no frame ─────────────────────────────
+    let outsider = Arc::new(client.acting_for("bob"));
+    assert_eq!(
+        on("model_files as bob", &outsider, |c| c.model_files()),
+        Err(ClientError::NotAuthorized),
+        "bob is no member of `pai`: no paths of the node's models folder"
+    );
+    assert_eq!(
+        *c.authority().asked_quietly.lock().unwrap(),
+        vec![(Caller(BFF.into()), Action::Control)],
+        "the principal gate decides the right: polkit is asked nothing more"
+    );
+
+    // ── A caller that is not the bff, vouching for a member: refused ───────
+    let c = core(true, 50_000);
+    let (_server, client) = connect(&c, Some(OTHER));
+    let client = Arc::new(client);
+    assert_eq!(
+        on("model_files as alice", &client, |c| c
+            .acting_for("alice")
+            .model_files()),
+        Err(ClientError::NotAuthorized),
+        "only the bff's account vouches"
+    );
+
+    // ── A caller polkit refuses the quiet check: refused ───────────────────
+    let c = core(false, 50_000);
+    let (_server, client) = connect(&c, Some(OTHER));
+    let client = Arc::new(client);
+    assert_eq!(
+        on("model_files", &client, |c| c.model_files()),
+        Err(ClientError::NotAuthorized),
+        "no control, no list"
+    );
+
+    // ── The flag: a walk that stops at its bound says so across the bus ────
+    let c = core(true, 2);
+    let (_server, client) = connect(&c, Some(BFF));
+    let client = Arc::new(client);
+    let got = on("model_files bounded", &client, |c| c.model_files()).expect("served");
+    assert!(
+        got.truncated,
+        "the walk stopped after 2 entries of the 5 the folder holds: {got:?}"
+    );
+    assert!(
+        got.files.len() <= 2,
+        "the list is cut with the flag: {}",
+        got.files.len()
+    );
+
+    // ── A folder that is not there: the keyed why inside a success ─────────
+    std::fs::remove_dir_all(&models).expect("remove models dir");
+    assert_eq!(
+        on("model_files gone", &client, |c| c.model_files()),
+        Ok(pai_core::client::ModelFilesReply {
+            dir: models.to_string_lossy().into_owned(),
+            files: Vec::new(),
+            truncated: false,
+            error: Some(Reason {
+                key: "models-dir-unreadable".into(),
+                args: vec![models.to_string_lossy().into_owned()],
+            }),
+        }),
+        "the bus carries the why as the (key, args) pair, an empty key being the \
+         folder having read: the picker shows an empty list with a text"
+    );
+}

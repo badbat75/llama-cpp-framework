@@ -31,7 +31,8 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// list of the node's profiles, and `CreateInstance` and `RemoveInstance`,
 /// each with its `As` form, and `ModelInfo` with its `As` form, the layer
 /// facts of one saved model profile, and `NodeInfo` with its `As` form, the
-/// node's own info.
+/// node's own info; 3 also carries `ModelFiles` with its `As` form, the node's
+/// one models folder as the model-file picker's list.
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -85,6 +86,9 @@ enum Request {
     ModelInfo(String, Option<Principal>),
     /// The node's own info: its OS and kernel, the Vulkan word and the rows.
     NodeInfo(Option<Principal>),
+    /// The node's one models folder: its path, its `.gguf` rows, the walk's
+    /// bound and the folder's keyed why.
+    ModelFiles(Option<Principal>),
     Authenticate(String, String),
 }
 
@@ -282,6 +286,10 @@ impl Request {
             // may spawn the Vulkan child. It takes no argument.
             "NodeInfo" => Request::NodeInfo(None),
             "NodeInfoAs" => Request::NodeInfo(principal().map(Some)?),
+            // The models folder list: guarded as `Devices` is, because the
+            // manager, not the caller, reads the folder. It takes no argument.
+            "ModelFiles" => Request::ModelFiles(None),
+            "ModelFilesAs" => Request::ModelFiles(principal().map(Some)?),
             "Authenticate" => Request::Authenticate(arg("user")?, arg("password")?),
             _ => return None,
         })
@@ -518,6 +526,35 @@ where
                             })),
                         }))
                         .collect::<Vec<_>>(),
+                })
+            }),
+        // The node's one models folder, the document of the design: `dir` the
+        // folder as an absolute path, `files` one row per `.gguf` with its
+        // bytes, its shard count and its category (the first subfolder, `null`
+        // for a file of the folder itself), `truncated` the walk's bound, and
+        // `error` the folder's keyed why. A folder that is missing, is not a
+        // folder, or cannot be read is an OK answer with `files` empty and the
+        // key there: the picker's empty list with a text, never the call's
+        // failure.
+        Request::ModelFiles(principal) => requester(caller, principal)
+            .and_then(|who| manager.model_files(&who))
+            .map(|reply| {
+                json!({
+                    "dir": reply.dir,
+                    "files": reply
+                        .files
+                        .iter()
+                        .map(|f| json!({
+                            "path": f.path,
+                            "size": f.size,
+                            "shards": f.shards,
+                            "category": f.category,
+                        }))
+                        .collect::<Vec<_>>(),
+                    "truncated": reply.truncated,
+                    "error": reply
+                        .error
+                        .map(|e| json!({"key": e.key, "args": e.args})),
                 })
             }),
         // The empty caller too goes to the core, which answers only the bff.

@@ -381,6 +381,39 @@ pub struct NodeInfoReply {
     pub gpus: Vec<NodeGpu>,
 }
 
+/// One model file of the node's models folder, as the file list of
+/// [`ModelFilesReply`] carries it (M3 of "Choosing the model file on the web",
+/// `ARCHITECTURE.md`): the absolute path (the value a pick writes into the
+/// profile, naming the same file on every instance), the bytes of the file
+/// (the first shard's, for a split model), the number of shards of a split
+/// model (1 for a single file), and the first subfolder under the models
+/// folder (the GUI's `model_scan::Category::subdir` layout: `models`,
+/// `mmprojs`, `mtps`, `dflashs`), `None` for a file that sits in the folder
+/// itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFileRow {
+    pub path: String,
+    pub size: u64,
+    pub shards: u64,
+    pub category: Option<String>,
+}
+
+/// The node's one models folder, as [`ManagerClient::model_files`] answers it:
+/// the folder as an absolute path, the `.gguf` files under it (regular files,
+/// any case, recursive to the manager's depth bound, a split model once as its
+/// first shard, symlinked directories not followed, dot-folders skipped, at
+/// most the manager's entry bound of them and then `truncated` true), and
+/// `error`: the keyed [`Reason`] the folder answered nothing (missing, not a
+/// folder, unreadable). That answer is a SUCCESS of the call, not a refusal:
+/// the picker shows the empty list with the folder's own text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFilesReply {
+    pub dir: String,
+    pub files: Vec<ModelFileRow>,
+    pub truncated: bool,
+    pub error: Option<Reason>,
+}
+
 /// What the configurator asks the manager.
 pub trait ManagerClient {
     fn list_instances(&self) -> Result<Vec<String>, ClientError>;
@@ -647,6 +680,23 @@ pub trait ManagerClient {
     fn node_info(&self) -> Result<NodeInfoReply, ClientError> {
         Err(ClientError::Other(
             "this transport of the manager has no NodeInfo".into(),
+        ))
+    }
+    /// The node's one models folder as the model-file picker's list
+    /// ([`ModelFilesReply`], M3 of "Choosing the model file on the web",
+    /// `ARCHITECTURE.md`): the manager walks the folder (the bff's account
+    /// cannot read it), so the read is guarded exactly as `devices` is:
+    /// `control` asked without interaction, and as every `As` method for the
+    /// bff's read for a signed-in user, who must be a current member of `pai`;
+    /// a caller with no right is [`ClientError::NotAuthorized`] with the
+    /// folder never opened.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn model_files(&self) -> Result<ModelFilesReply, ClientError> {
+        Err(ClientError::Other(
+            "this transport of the manager has no ModelFiles".into(),
         ))
     }
     /// Whether `password` is `user`'s OS password, and whether that user may

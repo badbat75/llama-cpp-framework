@@ -2983,10 +2983,10 @@ folder of "One models folder for every engine", below; the bounds stay.) Per **n
 to the node's pool and may be assigned to several instances. The listing is the union of the distinct
 effective `ModelsDir`s of the engine's server profiles (each `ModelsDir`, else
 `paths::instance_models_dir()`), each folder with the server profiles that use it. The manager walks
-them (new `ModelFiles` / `ModelFilesAs`, `configure`, a current `pai` member as for every `As` method):
+them (new `ModelFiles` / `ModelFilesAs`; as built in M3, 2026-11-23: `control` asked quietly, as `Devices`, since the one folder is world-readable (0755 today, 2775 after F3) and a password prompt for a listing gains nothing; the `As` form for a current `pai` member as for every `As` method):
 regular files ending `.gguf` (any case), recursive to depth 6, symlinked directories not followed,
-dot-folders skipped (`.hf-staging`, the store's staging), at most 5000 entries per folder (then
-`truncated: true`), a split model shown once as its first shard (`-00001-of-0000N.gguf`, what llama.cpp
+dot-folders skipped (`.hf-staging`, the store's staging), at most 5000 rows listed and 50 000 entries visited (every entry, before filtering) per walk, either
+bound ending it with `truncated: true` (as built in M3, 2026-11-23), a split model shown once as its first shard (`-00001-of-0000N.gguf`, what llama.cpp
 loads), a folder that cannot be read answered as that folder's `error` and not as the route's failure.
 The value offered is the **absolute** path, so it names the same file on every instance whatever its
 working directory. Risk accepted: a `pai` member can point a `ModelsDir` anywhere and so list `.gguf`
