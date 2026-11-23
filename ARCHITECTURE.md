@@ -3026,11 +3026,15 @@ no cache; the walk is cheap and the page asks when the picker opens.
   nothing; no session is 401 and fetches nothing; 401, 403 and 404 map to `hf-repo-unavailable`; a 3xx
   to `hf-repo-moved`; a second call within 10 minutes fetches nothing; a third concurrent call is 429;
   `value` carries `hf-file` only for an ambiguous tag.
-- **M3. `ModelFilesAs` and `GET /api/node/model-files`.** Done when, on temp folders named by two server
-  profiles (one shared by two profiles, one unset taking the redirected default): files listed by
-  absolute path, shards collapsed, depth and entry bounds hold, a symlinked folder is not followed, a
-  dot-folder is skipped, an unreadable folder is its own `error`, a non-`pai` principal is refused, and
-  the bff relays the reply.
+- **M3. `ModelFilesAs` and `GET /api/node/model-files`** (amended 2026-11-21 by "One models folder for
+  every engine" (3): one folder). The manager lists the node's one models folder:
+  `paths::instance_models_dir()` until F1 introduces `paths::models_dir()` and points the listing at the
+  new folder (a one-line change in F1). Reply `{"source":"local","dir":"<abs>","files":[...],
+  "truncated":bool,"error":null|{key,args}}`. Done when, on a redirected temp root: files listed by
+  absolute path, shards collapsed, the depth and entry bounds hold (`truncated` true past them), a
+  symlinked folder is not followed, a dot-folder is skipped, a missing or unreadable folder is a 200
+  with `files` empty and its keyed `error`, a non-`pai` principal is refused, and the bff relays the
+  reply.
 - **M4. The pickers.** The designer's brief, then the fe: `hf-repo` and `model` as pickers fed by M2 and
   M3 (whether free text stays is the brief's). Done when: the designer's review.
 - **Later**: the token (item 13's state), the store source (Part 2), `mmproj` and drafter pickers from
@@ -3170,15 +3174,18 @@ field; the Models tab's scans, Browse, downloads and the hardware window read `p
 The shipped defaults lose `ModelsDir`. A model profile's `model` stays a path anywhere (absolute or
 relative to the instance's directory): only where the framework puts and lists files is fixed.
 
-**(3) The picker's M3 amended.** `ModelFilesAs` lists `paths::models_dir()` alone, which supersedes
+**(3) The picker's M3 amended.** `ModelFilesAs` lists the one models folder alone
+(`paths::instance_models_dir()` until F1 introduces `paths::models_dir()`; slice order of 2026-11-23: M3
+before F1), which supersedes
 decision 2 of (8): `{"source":"local","dir":"/abs","files":[...],"truncated":false,"error":null}`, same
 file rows. The manager keeps the walk (the bff could now read the folder itself, but the hub of step 14
 lists a node's folder through the manager, so one path serves both).
 
 **(4) Slices** (each test first; before M3).
 
-- **F1. `pai-core`.** `paths::models_dir()`, `ServerConfig` without `models_dir`, `LLAMA_CACHE` from
-  it. Done when: a server file holding `ModelsDir` loads and its render has no `ModelsDir` line;
+- **F1. `pai-core`.** `paths::models_dir()` (introduced here, replacing `paths::instance_models_dir()`,
+  which M3's listing uses until then), `ServerConfig` without `models_dir`, `LLAMA_CACHE` from it, and
+  `ModelFilesAs` pointed at it. F1, F2 and F3 ship in one build and one deploy. Done when: a server file holding `ModelsDir` loads and its render has no `ModelsDir` line;
   `LLAMA_CACHE` equals `paths::models_dir()` whatever the file says; the redirected root gives
   `<root>/models`; `checks.rs` no longer names `ModelsDir`.
 - **F2. The clients.** The bff, `pai`, the GUI and the manager callers. Done when: the bff's server read
@@ -3192,7 +3199,7 @@ lists a node's folder through the manager, so one path serves both).
   on the user's install, `stat` shows the home 0751 after an instance start and the models folder
   `drwxrwsr-x private-ai pai`; the MSI text checks show the
   new folder's SDDL with `pai` and `S-1-5-80-0` modify.
-- Then **M3** as amended in (3).
+- **M3** as amended in (3) is built before F1 (order of 2026-11-23); F1 only repoints its folder.
 
 **(5) Decisions (user, 2026-11-21).** 1. Linux path `/var/lib/private-ai/models`, the service user's
 home opened to 0751 as above (the architect had recommended `/var/lib/private-ai-models`). 2. The
