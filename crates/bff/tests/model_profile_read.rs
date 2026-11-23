@@ -1192,28 +1192,27 @@ async fn a_name_in_the_request_is_never_the_principal() {
 
 // ── The route ───────────────────────────────────────────────────────────
 
-/// `POST` and `DELETE` on the section path are not served: the method is not
-/// routed, so the section is never read.
+/// `POST` on the section path is not served: the method is not routed, so the
+/// section is never read. `DELETE` IS served there since MP2
+/// (`DELETE /api/profiles/model/{id}`, pinned in `model_profile_create.rs`).
 #[tokio::test]
-async fn post_and_delete_on_the_section_path_are_not_served() {
+async fn post_on_the_section_path_is_not_served() {
     let app = app_holding(FILE_ALPHA, "");
     let cookie = app.sign_in_as(USER).await;
-    for method in [Method::POST, Method::DELETE] {
-        let request = Request::builder()
-            .method(method.clone())
-            .uri("/api/profiles/model/alpha")
-            .header(header::COOKIE, cookie.clone())
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json!({ "values": {} }).to_string()))
-            .expect("request");
-        let reply = app.send(request).await;
-        assert_eq!(
-            reply.status,
-            StatusCode::METHOD_NOT_ALLOWED,
-            "{method} /api/profiles/model/alpha: {}",
-            reply.body
-        );
-    }
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/profiles/model/alpha")
+        .header(header::COOKIE, cookie)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "values": {} }).to_string()))
+        .expect("request");
+    let reply = app.send(request).await;
+    assert_eq!(
+        reply.status,
+        StatusCode::METHOD_NOT_ALLOWED,
+        "POST /api/profiles/model/alpha: {}",
+        reply.body
+    );
     assert_eq!(app.connects.load(Ordering::SeqCst), 0, "no connect");
     assert!(app.calls().is_empty(), "{:?}", app.calls());
 }

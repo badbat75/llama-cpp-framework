@@ -51,6 +51,10 @@
 //! `GET /api/profiles/model/{id}/model-info` is the layer facts of one model
 //! profile's model, relayed from the manager's `ModelInfoAs`; see
 //! [`model_info`].
+//! `POST /api/profiles/model` creates one model profile, a copy of one the pool
+//! holds or a new one from a pick, and it is born switched off and assigned
+//! nothing; see [`create`]. `DELETE /api/profiles/model/{id}` removes one the
+//! pool holds switched off and assigned nothing; see [`remove`].
 
 use crate::origin::body_refusal;
 use crate::server::{revision, runs, TimedOut, WriteState};
@@ -60,7 +64,7 @@ use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use pai_core::client::{ClientError, ManagerFile, ModelInfoReply};
+use pai_core::client::{ClientError, ManagerFile, ModelInfoReply, ModelProfileSource};
 use pai_core::{assign, checks, ini};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -776,6 +780,246 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
     json_body(headers, body)?
         .get("enabled")
         .and_then(Value::as_bool)
+}
+
+/// `POST /api/profiles/model` `{"id", "from"}`, a copy of the pool's model
+/// profile `from`, or `{"id", "values"}`, a new one from a pick ([`pick`]): the
+/// answer is 201 `{"id"}` once the manager wrote it. The session is read first,
+/// so with no session the manager is not even connected to, and the body's shape
+/// answers next, as on the switch and on the server profile's create: a body
+/// nothing can be made of is 400 `model-profiles-malformed` ([`requested`]) and
+/// reaches no manager at all.
+///
+/// The write is then one call of one connect made for the session's user, under
+/// `write_timeout`, the write's own limit: the manager is the one that checks
+/// the name, the values and both pool files, being the one that writes, and its
+/// refusals are answered by [`create_failure`]. It writes the section at the end
+/// of `models.ini.disabled`: the list's row for the new model profile is
+/// `enabled: false` with no assignments, and a create never overwrites a name
+/// either file holds, which is what makes a retried create answer 409.
+pub(crate) async fn create(
+    connect: Connect,
+    write_timeout: Duration,
+    sessions: Arc<Sessions>,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_refusal(&rejection, "model-profiles-malformed"),
+    };
+    let Some(requested) = requested(&headers, &body) else {
+        return error(StatusCode::BAD_REQUEST, "model-profiles-malformed", &[]);
+    };
+    let user = identity.user;
+    let Requested { id, source } = requested;
+    let answer = id.clone();
+    let ask = tokio::task::spawn_blocking(move || {
+        connect(Some(user.as_str()))?.create_model_profile(&id, &source)
+    });
+    match tokio::time::timeout(write_timeout, ask).await {
+        Ok(Ok(Ok(()))) => {
+            (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response()
+        }
+        Ok(Ok(Err(failure))) => create_failure(&sessions, &session, failure),
+        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+    }
+}
+
+/// `DELETE /api/profiles/model/{id}`: 204 with no body once the manager removed
+/// the section. The session is read first, so with no session the manager is not
+/// even connected to, as on every route behind the sign-in page. The manager
+/// judges the delete on the state under its own lock, and its refusal is the
+/// answer ([`delete_failure`]): a model profile of `models.ini` is 409
+/// `model-profile-enabled`, one a key of `assignments.ini` names is 409
+/// `model-profile-assigned` naming the instances, and a name neither pool file
+/// holds is 404 `no-model-profile-named`. A page that lists a model profile the
+/// pool no longer holds is that 404; the rule is the manager's, so a stale row
+/// cannot delete what it does not see.
+pub(crate) async fn remove(
+    connect: Connect,
+    write_timeout: Duration,
+    sessions: Arc<Sessions>,
+    id: String,
+    headers: HeaderMap,
+) -> Response {
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let user = identity.user;
+    let ask = tokio::task::spawn_blocking(move || {
+        connect(Some(user.as_str()))?.delete_model_profile(&id)
+    });
+    match tokio::time::timeout(write_timeout, ask).await {
+        Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(Err(failure))) => delete_failure(&sessions, &session, failure),
+        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+    }
+}
+
+/// What a create asks for: the new model profile's name and the source the
+/// manager writes it from.
+struct Requested {
+    id: String,
+    source: ModelProfileSource,
+}
+
+/// The body of `POST /api/profiles/model`, as JSON of the right content type
+/// ([`json_body`]) shaped as a create: an object whose only fields are `id` and
+/// exactly one of `from` and `values`; `id` and `from` text ([`text`]); `values`
+/// the pick of a new model profile ([`pick`]). `None` is the 400
+/// `model-profiles-malformed`, and it is the whole of the shape rule: no name
+/// and no value is judged here, the manager checks those and refuses, being the
+/// one that writes. So a create of a name that is taken, `*`, or `a b` reaches
+/// the manager and answers 409 or 422, never a 400 of the bff's own.
+fn requested(headers: &HeaderMap, body: &[u8]) -> Option<Requested> {
+    let binding = json_body(headers, body)?;
+    let top = binding.as_object()?;
+    if !top
+        .keys()
+        .all(|key| key == "id" || key == "from" || key == "values")
+    {
+        return None;
+    }
+    let id = text(top.get("id")?)?;
+    let source = match (top.get("from"), top.get("values")) {
+        (Some(from), None) => ModelProfileSource::From(text(from)?),
+        (None, Some(values)) => pick(values)?,
+        _ => return None,
+    };
+    Some(Requested { id, source })
+}
+
+/// The pick that starts a new model profile, the `values` of a create: one
+/// `model` file, or a Hugging Face `hf-repo` with its optional `hf-file`. Every
+/// key of the object is one of these three in their exact spelling, and every
+/// value is text ([`text`]): a value that is not refuses the whole pick, it does
+/// not drop its key, so an `hf-file` with a line break in it is no create and
+/// not a source of two keys. The three go in no other combination: `model`
+/// beside `hf-repo`, `hf-file` alone, an empty pick, and a key of the save's
+/// list (`ctx-size`, or `Model` in another letter case) name no source the
+/// manager can write, so the body is no create.
+fn pick(values: &Value) -> Option<ModelProfileSource> {
+    let map = values.as_object()?;
+    let (mut model, mut repo, mut file) = (None, None, None);
+    for (key, value) in map {
+        let text = text(value)?;
+        match key.as_str() {
+            "model" => model = Some(text),
+            "hf-repo" => repo = Some(text),
+            "hf-file" => file = Some(text),
+            _ => return None,
+        }
+    }
+    match (model, repo, file) {
+        (Some(model), None, None) => Some(ModelProfileSource::Model(model)),
+        (None, Some(repo), None) => Some(ModelProfileSource::Hf { repo, file: None }),
+        (None, Some(repo), Some(file)) => Some(ModelProfileSource::Hf {
+            repo,
+            file: Some(file),
+        }),
+        _ => None,
+    }
+}
+
+/// The text a create carries: a string, its spaces and tabs trimmed off the ends
+/// and not empty once trimmed, holding no control character beyond a tab. A line
+/// break, a NUL or a DEL would end the line the manager builds from it, the same
+/// rule the save's values have ([`parse_body`]), and no reader of the file keeps
+/// a space or a tab at the ends of a value, so they are trimmed here as the save
+/// trims them. The name is text on the same rule: its own check, the manager's,
+/// is the one that refuses a `*`, a space in the middle, a name too long.
+fn text(value: &Value) -> Option<String> {
+    let text = value.as_str()?;
+    if text.chars().any(|c| c.is_control() && c != '\t') {
+        return None;
+    }
+    let text = text.trim_matches([' ', '\t']);
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// The answer to a create the manager refused. Its name is taken, by both pool
+/// files: 409 `model-profile-name-taken` naming it, with no field, and the
+/// session lives on. A content check is 422 with its key, its values and the
+/// field the form marks ([`create_field`]). The manager refused the signed-in
+/// user: 403 and the session ends ([`not_administrator`]). No manager, and a
+/// manager that answers later than the limit, is 503, the write never known to
+/// have landed: a retried create of the same name is the 409 that shows what
+/// happened. Anything else is 502, the manager's detail left out.
+fn create_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+    match failure {
+        ClientError::Invalid(refusal) if refusal.key == "model-profile-name-taken" => {
+            let args = refusal
+                .values
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            keyed(StatusCode::CONFLICT, "model-profile-name-taken", &args)
+        }
+        ClientError::Invalid(refusal) => refused(
+            refusal.key,
+            &refusal.values,
+            Some(&create_field(refusal.key, &refusal.values)),
+        ),
+        ClientError::NotAuthorized => not_administrator(sessions, session),
+        ClientError::Unavailable => {
+            error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+        }
+        _ => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+    }
+}
+
+/// The answer to a delete the manager refused. Every refusal of the delete names
+/// the model profile it is about and has no field to mark: a name neither pool
+/// file holds is 404, a model profile of `models.ini` and one an
+/// `assignments.ini` key names are 409, the last naming the instances in its
+/// values. Any other check the manager runs is 422 with its key and its values,
+/// as a model info refusal is ([`model_info_refused`]). The refusal of the
+/// signed-in user ends that session; the other answers keep it.
+fn delete_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+    match failure {
+        ClientError::Invalid(refusal) => {
+            let args = refusal
+                .values
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            keyed(
+                match refusal.key {
+                    "no-model-profile-named" => StatusCode::NOT_FOUND,
+                    "model-profile-enabled" | "model-profile-assigned" => StatusCode::CONFLICT,
+                    _ => StatusCode::UNPROCESSABLE_ENTITY,
+                },
+                refusal.key,
+                &args,
+            )
+        }
+        ClientError::NotAuthorized => not_administrator(sessions, session),
+        ClientError::Unavailable => {
+            error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
+        }
+        _ => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+    }
+}
+
+/// The field a create refusal marks: the control the form highlights. The
+/// checks of a create are about the form's three fields, not about the keys of a
+/// section, so this is not the save's [`field_of`]: the name's check marks `id`,
+/// the copy source that is not there marks `from`, and the two rules about a
+/// pick mark `values`. A check that names the key it is about,
+/// `comment-markers`, marks that key, as its `args[0]`.
+fn create_field(key: &str, args: &[String]) -> String {
+    match key {
+        "invalid-model-profile-id" => String::from("id"),
+        "no-model-profile-named" => String::from("from"),
+        "model-profile-no-model" | "model-profile-bad-source" => String::from("values"),
+        _ => args.first().cloned().unwrap_or_default(),
+    }
 }
 
 /// `GET /api/profiles/model/{id}`: the document of one model profile, the entry of the

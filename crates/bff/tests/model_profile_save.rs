@@ -1706,10 +1706,12 @@ async fn save_body_over_the_size_limit_is_413_and_reaches_no_manager() {
 }
 
 /// The method the contract does not list is the router's 405, and asks the
-/// manager nothing. The save and the read are the methods of that path.
+/// manager nothing. The read, the save and the delete are the methods of that
+/// path: MP2 serves `DELETE /api/profiles/model/{id}` (pinned in
+/// `model_profile_create.rs`).
 #[tokio::test]
-async fn save_is_the_only_write_method_the_model_profile_path_serves() {
-    for method in [Method::POST, Method::DELETE, Method::PATCH] {
+async fn no_other_method_on_the_model_profile_path_is_served() {
+    for method in [Method::POST, Method::PATCH] {
         let app = app_holding(FILE_ON, FILE_OFF);
         let cookie = app.sign_in().await;
         let builder = Request::builder()

@@ -174,7 +174,9 @@ pub(crate) fn router_with(
 /// `PUT /api/instances/{id}/tags`, the instance create
 /// `POST /api/instances` and the removal `DELETE /api/instances/{id}`
 /// (`instances::routes`), the model-profile list
-/// `GET /api/profiles/model`, the model profile save `PUT /api/profiles/model/{id}`, the model profile
+/// `GET /api/profiles/model`, the model profile create `POST /api/profiles/model`,
+/// the model profile save `PUT /api/profiles/model/{id}`, the model profile
+/// removal `DELETE /api/profiles/model/{id}`, the model profile
 /// switch `PUT /api/profiles/model/{id}/enabled` and its layer facts
 /// `GET /api/profiles/model/{id}/model-info`. The boot read
 /// `GET /api/instances/{id}/boot` is gated by a session too, and reads the
@@ -257,7 +259,8 @@ pub fn router_with_session_and_roots(
 
 /// `router_with_session` with the manager's calls of a WRITE given their own,
 /// longer limit: the server file's save, the model profile save and the model profile switch
-/// run under `write_timeout`, as do the three association writes
+/// run under `write_timeout`, as do the model profile create and removal and the
+/// three association writes
 /// (`instance_profiles.rs`); every read keeps `timeout`, and so does the boot
 /// write and the control verbs (the control routes are handed `timeout`). A
 /// manager busy writing is not cut off at the limit that is right for a read.
@@ -373,6 +376,31 @@ fn router_with_policy(
             )
         }
     };
+    let create_model_profile = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |headers: axum::http::HeaderMap,
+              body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>| {
+            model_profiles::create(
+                connect.clone(),
+                write_timeout,
+                sessions.clone(),
+                headers,
+                body,
+            )
+        }
+    };
+    let delete_model_profile = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
+            model_profiles::remove(
+                connect.clone(),
+                write_timeout,
+                sessions.clone(),
+                id,
+                headers,
+            )
+        }
+    };
     router_with(connect.clone(), timeout, sessions.clone(), os_root)
         .merge(session::routes(sessions.clone()))
         .route(
@@ -386,10 +414,15 @@ fn router_with_policy(
             sessions.clone(),
             key,
         ))
-        .route("/api/profiles/model", axum::routing::get(model_profiles))
+        .route(
+            "/api/profiles/model",
+            axum::routing::get(model_profiles).post(create_model_profile),
+        )
         .route(
             "/api/profiles/model/{id}",
-            axum::routing::get(read_model_profile).put(save_model_profile),
+            axum::routing::get(read_model_profile)
+                .put(save_model_profile)
+                .delete(delete_model_profile),
         )
         .route(
             "/api/profiles/model/{id}/enabled",

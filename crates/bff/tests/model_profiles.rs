@@ -893,11 +893,13 @@ async fn a_failure_that_is_not_a_refusal_keeps_the_session() {
     }
 }
 
-/// The route is read-only: another method is 405 and asks the manager nothing
-/// (not even a connection), signed in or not.
+/// The list and the create are the methods of this path (MP2's
+/// `POST /api/profiles/model`, pinned in `model_profile_create.rs`). Any other
+/// method is 405 and asks the manager nothing (not even a connection), signed
+/// in or not.
 #[tokio::test]
 async fn model_profiles_refuse_another_method_without_asking_the_manager() {
-    for method in [Method::POST, Method::PUT, Method::DELETE] {
+    for method in [Method::PUT, Method::PATCH, Method::DELETE] {
         let app = app_holding(FILE_ON, FILE_OFF);
         let cookie = app.sign_in().await;
         let request = Request::builder()

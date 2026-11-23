@@ -2000,6 +2000,41 @@ before you report.
   literals (`pipe.rs:2517`, `service.rs:20410` and `:20420`, a case and a reply list past rustfmt's
   width): production is clean, so report them, do not reformat a test module.
 
+## Slice MP2 (2026-11-23): the bff's model profile create and delete
+
+- A verb added to a path another suite already owns reddens THAT suite's "the method the contract does not
+  list is the router's 405" loop: `grep -n "METHOD_NOT_ALLOWED" crates/bff/tests/*.rs` and read each verb
+  list. MP2 (`POST /api/profiles/model`, `DELETE /api/profiles/model/{id}`) reddened three, one per file
+  (`model_profile_read.rs` `post_and_delete_on_the_section_path_are_not_served`, `model_profile_save.rs`
+  `save_is_the_only_write_method_the_model_profile_path_serves`, `model_profiles.rs`
+  `model_profiles_refuse_another_method_without_asking_the_manager`), each naming one of the two new verbs
+  among the 405s. No code answers 405 and 204 for one request, so the loops are the tester's: drop the
+  served verb, the rest stay 405. Proved by copying the tree, dropping ONLY the verb, and running the crate
+  whole: 655 green.
+- `cargo test -p <crate>` stops at the FIRST failing test binary, so a whole-crate run reports the reds of
+  the files that ran and NOTHING after them: those three reds surfaced one per run over three runs. A
+  whole-crate run is `cargo test -p <crate> --no-fail-fast`, and its red list is
+  `grep -n "^---- .* stdout" -A 6` (file, line, the `left:`/`right:` pair).
+- `char::is_control()` includes `\t`, so a create gate that refuses "no control character" refuses the very
+  tab its own trim rule strips (the fixture is `"  /models/a.gguf\t"`). The bff trims spaces and tabs, so
+  its value rule is `c.is_control() && c != '\t'`; the manager's KEY rule (MP1 review) keeps `\t` because a
+  key is never trimmed.
+- A source gate must refuse a non-text value outright, never drop that key: dropping an `hf-file` whose
+  value carries a line break leaves `hf-repo` alone, a valid source of two keys, so a body the test pins
+  400-with-zero-connects answers 201. Loop the map and `text(value)?` each value; a key outside the
+  allowed three is `return None`.
+- A create or delete is ONE call of ONE connect, so it takes only `write_timeout` (no read phase, no
+  `WriteState` two-limit shape), and 201 is the tuple `(StatusCode::CREATED, Json(json!({"id": id})))`.
+  The delete's 404 and the two 409 ride the refusal's own KEY through the module's `keyed`, not
+  `not_found`: the echo rule of `checks::model_profile_id` drops a `*`, and the manager names the id as the
+  page spelled it. The 422 field map is NOT the save's `field_of`: a create's checks are about the form's
+  three controls (`invalid-model-profile-id` to `id`, `no-model-profile-named` to `from`,
+  `model-profile-no-model` / `model-profile-bad-source` to `values`), and only `comment-markers`, which
+  names the key, takes `args[0]`.
+- `cargo fmt -p <crate> --check | grep "^Diff in"` lists the files rustfmt wants: with the tester's
+  untracked test file in the tree that list is the proof that applying the formatter moves no test. Here it
+  named `src/lib.rs` alone, so `cargo fmt -p pai-bff` was safe.
+
 ## Slice 21 TP1 review (2026-11-23): D1 the card's sheet, D2 an empty list, D3 a pending read
 
 - A review whose fix is "the sheet gained no rule" is pinned by tests that read `index.css` as TEXT, and

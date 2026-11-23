@@ -941,6 +941,13 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   `E0407 ... is not a member of trait` per verb, `E0432` for the row type the trait returns,
   `E0599` for a new `ClientError` variant. Count them and list them: a red list that names ONLY
   missing slice items is also the proof the tests carry no typo.
+- A verb added to a path an existing suite pins as "not served" reddens THAT suite's 405 loop, and the
+  reply names which verb is served: a verb the file's fake has no handler for reads `502 client-other`
+  (the route asked the manager), a create with an empty body reads `400 model-profiles-malformed` (the
+  route ran). The design decides who owns the loop: drop the served verb, keep the rest 405 (those are
+  day-one guards), and point the doc comment at the file that pins the new verb. Renaming a retargeted
+  test whose name asserted that very absence goes stale in a cross-reference in another role's skill:
+  report the rename, editing the coder's skill is not the tester's.
 - The bff's `ManagerClient::instances()` default body is `Err(Other)`, so a fake
   that never overrides it makes every LIST route (`GET /api/profiles/model`) answer
   502 `client-other`, while a route that does NOT read it (the model-profile switch:
@@ -2581,3 +2588,34 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
   `dirty` boolean set by any edit sends the key, and the test that types the text back is the coder's red,
   brief-backed. Keep the body that states the brief's case (type, type back, expect 0 PUTs), and report
   the flag as the defect: a "user touched it" state cannot express the equality.
+
+## The write limit of a bff route, and a name the bff does not judge (MP2 review, 2026-11-23)
+- The mutant of a route's LIMIT goes on the ROUTER WIRING (`crates/bff/src/lib.rs`: the closure that
+  hands `write_timeout,` to `model_profiles::create` / `::remove`), not in the route file: inside the
+  route the identifier `timeout` is not in scope, so a `timeout`-for-`write_timeout` swap there is a
+  COMPILE red (no behaviour read), and the call text
+  `match tokio::time::timeout(write_timeout, ask).await` matches every write route of the file at once.
+  Each wiring snippet is unique thanks to the verb name, so one mutant lands on one route; the create's
+  red is the 201 assert, the delete's is the 204 assert of the same test, which is the proof the two
+  limits are per-route.
+- A one-`delay` fake pins the pair of limits with a delay between them (read 200 ms, write 900 ms,
+  delay 350 ms): a `thread::sleep` never ends early, so the mutant is red deterministically, and 550 ms
+  of headroom keeps the green run quiet on a loaded machine. `DEADLINE` (5 s) must clear every request
+  of the test: two 350 ms writes plus the sign-ins are ~0.8 s.
+- A route that trims with `trim_matches([' ', '\t'])` and rejects `is_control() && c != '\t'` answers,
+  per ARCHITECTURE.md 3700-3716 ("the bff judges no name, the manager checks those"): a tab at the ends
+  of an `id` is trimmed and reaches the manager TRIMMED (the 201 answers the trimmed id), a tab INSIDE
+  travels untouched and answers the manager's 422 `invalid-model-profile-id` marking `id`. A 400 on
+  such a body is the bff judging a name, so the pin asserts the call the stub received carries the tab.
+  The 400 family of the same `text` helper is: missing key, empty, spaces-and-tabs-only (id, `from`,
+  and each of the three pick values), so those cases ride the file's existing 400 loop.
+- `Reply::assert_error` compares the WHOLE doc `{"key", "args"}`, so a refusal answered with no `field`
+  (the delete's generic 422 in `delete_failure`: any key that is not the delete's own three) rides the
+  existing (key, args, status) loop as `UNPROCESSABLE_ENTITY`, and the same test would red on a stray
+  `field`. `delete_failure` does NOT special-case `model-profile-name-taken` the way `create_failure`
+  does (409 there), so a 409-shaped key on a delete is a 422: pin only the key the design names.
+- The warm Linux target dir of this repo has NO `debug/deps`: test binaries live under
+  `debug/build/<crate>/<hash>/out` (and `cargo test` prints that path as the executable). An absent
+  `deps` is not a cold tree, and a 0.4 s "Finished" after editing a test file is a real rebuild: prove
+  it by the binary's mtime and by the target's `running N tests` count matching the file's
+  `#[tokio::test]` count.
