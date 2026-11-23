@@ -577,14 +577,39 @@ Each is one React component, reused by every page.
     ([2.5.7](https://www.w3.org/TR/WCAG22/#dragging-movements)) **(preference: buttons only)**.
 - **Rule list** (an ordered list of small records edited in place: the model profile page's Tensor
   placement, brief 21): a `fieldset` Field whose content after the legend sits in one wrapper `div`
-  (one grid cell at 720 px), holding a `ul role="list"` of `li`, each one `fieldset` named by a
-  visible numbered legend ("Rule 2"), its controls in a wrapping flex row (label and control one
-  item), a full-width line for a long control (a regex) and for its error. Rows keyed by an id the
-  page gives them, never by index. Add appends and focuses the new row's first control; Remove (a
-  secondary button, "Remove" plus the hidden legend) moves focus to the next row, else the previous,
-  else Add; no Confirm, Discard puts it back. Named choices are the editor; the raw value stays
+  (one grid cell at 720 px) and whose legend is drawn as every field label (`legend.field-label`), so
+  it reads like the Fields beside it. The cell holds a `ul role="list"` of `li`, each one `fieldset`
+  named by a visible numbered legend ("Rule 2"). A row's controls are a wrapping flex row aligned
+  at the bottom (`align-items: flex-end`). Each item puts its label **above** its control, never
+  beside it, so every control of a line starts at the same height whatever its label's length; the
+  remove icon button (below) is the row's last item, on the controls' line. A long control (a regex)
+  and the errors take a full line. At 320 px and at 200 % text the items wrap one per line, each
+  control full width. Rows are keyed by an id the page gives them, never by index. The add icon
+  button sits **under** the list, at its start, and appends a row and focuses that row's first
+  control. Remove moves focus to the next row, else the previous, else the add button. There is no
+  Confirm: Discard puts a removed row back. Named choices are the editor; the raw value stays
   editable in a text Field applied on Enter or blur **(preference: no reorder buttons while the raw
   text can reorder)**.
+- **Icon buttons of a list** (user, 2026-11-23: "an x is enough... a + in the row below"): every
+  list that adds and removes items in place (the instance tags' chips, the Tensor placement rules)
+  uses icons, never a text pill.
+  - Remove: an `x` icon button on the item.
+  - Add: one `plus` icon button after the list (beside the chips in their wrapping row; under a
+    list of rows).
+  - The visible content is the icon alone (`aria-hidden`); the name is visually hidden text that
+    says the item: "Remove Rule 2", "Remove tag gpu", "Add rule", "Add tag"
+    ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value); 2.5.3 does not apply, there is no
+    visible text).
+  - The target is at least 24 by 24 px ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)).
+    Beside 40 px controls (a row of selects) the button is a 40 px square, so it lines up with them.
+    Inside a chip it stays the 24 px x, and the chips' + the 32 px circle (`.tag-add`).
+  - Remove has no border or fill (the row around it is the box). Add keeps the `--control` outline,
+    so the one way to grow the list reads as a control even after an empty-list line.
+  - The focus ring is the shared one. Under forced colours the icon is `ButtonText` and the outline
+    `ButtonBorder`.
+  - A destructive action on a real thing (delete a server profile, remove an instance) stays a text
+    button with Confirm in place: the icons are for an edit that Discard or one more click undoes
+    **(preference)**.
 - **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
   (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
   the label on one line, cut with an ellipsis where the row is narrower than it (the chip at most the row's width; the x's name carries the full label; a cut chip, on hover or focus, shows a temporary `.chip-full` pill over it with the whole label, wrapping, leaving the x uncovered, hidden by Escape: WCAG 1.4.13; profile chips are focusable for it), wrapping anywhere only under `@media (max-width: 15em)`, the user's large text on a narrow screen (user, 2026-11-21) and, when it can be removed, a 24 px

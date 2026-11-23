@@ -535,3 +535,65 @@ Tensor kind. Clear only the edited control's key.
   and picking a device clears it.
 
 No `fe/ux` state changed, so I did not rerun the UX check (it passed with 0 failing at the TP2 review).
+
+## TP1b: the rule row's layout and its icon buttons (user feedback, 2026-11-23)
+
+**What the user saw, on the deployed TP2 page at desktop width (and why):**
+- "Tensor" sits beside its select while "Goes on" sits above its own, so the two selects stand at
+  different heights. Each item is a wrapping flex row (the D4 fix), so a label that fits beside its
+  control stays there and one that does not wraps above it.
+- Remove is a 40 px pill standing on a third line.
+- The selects cut their text ("Embedding table (token_", "ROCm0: AMD Radeon A").
+- "Rules" is drawn as plain text while "Rules as text" is a bold field label.
+
+User's words: "the rows are all misaligned; a pill button labelled Remove is not needed when it sits
+on the same row: an x is enough (for every list); Add too: a + in the row below is enough (ask the
+expert)". `fe/DESIGN.md` 5.2 "Rule list" and "Icon buttons of a list" now hold the rules.
+
+**Decisions.**
+1. **Labels above controls, in every item of a rule's row**, and the row aligned at the bottom, so
+   all the controls of a line share one top edge. This agrees with the user. The label column stays:
+   it is the form's layout at 720 px and wider, and "Rules" becomes a field label like "Rules as text"
+   (`legend.field-label`), which is what made the indent look wrong.
+2. **Remove is an `x` icon button at the end of the row.** Agreed. It is 40 px square, so it lines up
+   with the selects, borderless, named "Remove Rule N".
+3. **Add is a `plus` icon button under the list.** Agreed, as the chips' + already is. It keeps an
+   outline, so after the empty-list line it still reads as a control. It is named "Add rule". The one
+   difference from the user is a preference of mine: it is a 40 px outlined square, not a bare glyph,
+   to keep a clear target beside text.
+4. **The selects get more of the line**: Tensor `flex: 2 1 18rem`, Goes on `flex: 2 1 16rem`, Layers
+   a fixed `8rem`. With the 40 px x, at 1280 px both selects show their whole text for the GUI's
+   kinds and the stub's GPU names. A closed select still cuts a longer text at 320 px; its open list
+   shows the whole text.
+5. **Lists touched**: only `fe/src/TensorPlacement.tsx` and its CSS. The instance tags' chips
+   (`InstanceTagChips`) already follow the pattern (24 px x, 32 px +). The profile pages' Delete
+   stays a text button with Confirm in place.
+
+**Strings**: `model-profile-ot-remove` changes from `Remove` to `Remove {0}`, filled with the rule's
+legend, in the visually hidden span. No other text changes.
+
+**Criteria (one tester and coder run, about 6 criteria).**
+- **21 T.18** "Rules" is a `legend.field-label`, drawn as the "Rules as text" label (a CSS-reading
+  test: the same declarations apply to both).
+- **21 T.19** In a rule's row each item (Tensor, Layers, Goes on, Pattern) holds its label then its
+  control as block boxes, label above (`display: flex; flex-direction: column`). The row has
+  `align-items: flex-end`, so in a browser the tops of Tensor, Layers and Goes on on one line are
+  equal (fe/ux and the review measure it; jsdom pins the CSS).
+- **21 T.20** Remove: a button with only the `x` icon (`aria-hidden`) and a `visually-hidden` span
+  `model-profile-ot-remove` filled with "Rule N", so its name is "Remove Rule N"; no visible text;
+  `width` and `min-height` 40 px, no border, no fill; the last item of the row. Focus after a
+  removal is unchanged (21 T.7).
+- **21 T.21** Add: a button with only the `plus` icon (`aria-hidden`) and a `visually-hidden` span
+  `model-profile-ot-add`, so its name is "Add rule"; 40 by 40 px, `--control` outline; after the
+  list (or the empty line), before the end of the wrapper `div`; its id is unchanged. Focus after Add
+  is unchanged (21 T.7).
+- **21 T.22** Sizes: Tensor `flex: 2 1 18rem`, Goes on `flex: 2 1 16rem`, Layers `flex: 0 0 8rem`, all
+  `min-width: 0`, their controls `width: 100%`. Remove is `align-self: flex-end`. `HearthTokens.test.ts`
+  H1a.12's list gains the two 40 px buttons under their classes (the coder names them).
+- **21 T.23** No sideways scroll and no item past its `li` at 1280, 760 and 320 px, 100 % and 200 %
+  text, light and dark, with the five long rules of the TP1 review. At 320 px each item takes its own
+  line. Under forced colours both icons stay visible (`ButtonText`).
+
+**Older tests that change**: the TP1 tests that find Remove by its name keep "Remove Rule N", and
+those that read its visible text "Remove" change; the Add button's name is unchanged.
+`fe/ux` `model-profile-placement` stays the state, and the review measures it.

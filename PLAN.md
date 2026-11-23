@@ -39,7 +39,7 @@ as the column says. A requirement still open must be covered by a step.
 | W4 | AI scaffolding as standard as possible, readable by other harnesses | Met: `AGENTS.md`, shared role files, `.agents/skills/` |
 | W5 | A maintained plan: closed points removed, evidence in the commit log, so an agent starting from zero knows what to do | Met: this file and `git log` |
 | W6 | The coordinator or the user can change the plan when needed | Met: rule in `AGENTS.md` |
-| W7 | Each agent has its own skills, which it can update itself or the coordinator can | Met: `.agents/skills/` |
+| W7 | Each agent has its own skill, saying how it works in this project and the pitfalls met so far, which it can update itself or the coordinator can | Met: `.agents/skills/` |
 | W8 | Everything in English; only the conversation with the user may be in their language | Applies to every step |
 | W9 | Displayed text in a dedicated file, ready for more languages | Met: `crates/config/strings/` |
 | W10 | Agents run only the tests of the part they work on, plus linter and format check; the user runs the full suite once, on main after the merge, before installing | Applies to every step |
@@ -1193,7 +1193,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     already names the GPU), and Server profiles entering the menu with its page (slice 17a).
     In progress: 2j, brief 21 (`fe/briefs/21-tensor-placement.md`, 2026-11-22: a Tensor placement card
     of rule rows, tensor kind, layers, device, the raw rules editable as text; TP1 T.1 to T.9 built
-    2026-11-23; TP2 T.10 to T.13 built 2026-11-23; left TP3 T.14 to T.17; the brief's two questions, a
+    2026-11-23; TP2 T.10 to T.13 built 2026-11-23; TP1b T.18 to T.23 (the rule row aligned, an x to remove and a + to add: the user's feedback on the deployed page, 2026-11-23) in progress; left TP3 T.14 to T.17; the brief's two questions, a
     tensor picker and Move up/down for rules, taken as recommended: not now). Slice 17 started 2026-11-22 at the user's request, beside 2j: the designer refreshes brief 16 against main first, brief 16 refreshed (60eb2bd); 17a (the Server profiles list and page, the form moved off the instance
     page) built 2026-11-23; 17b (create and delete a server profile) built 2026-11-23; next 17f (instance labels and the
     504 texts, after IL2) and TP2, one `fe/` user at a time; 17c to 17e wait for 17f.
