@@ -3,6 +3,7 @@
 
 pub mod bff;
 mod control;
+pub mod hf;
 mod instance_profiles;
 mod instances;
 pub mod listen;
@@ -58,6 +59,12 @@ pub const DEVICES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// `ARCHITECTURE.md` "About and node info" fixes it: the manager's Vulkan child
 /// has 8 s of its own and the reads around it fill up to this.
 pub const NODE_INFO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The bound of the Hugging Face listing read (`GET /api/hf/files`), as
+/// `ARCHITECTURE.md` "Choosing the model file on the web" (2) fixes it: above
+/// the runner's own 20 s (`max-time` of `pai_core::hf::bff_curl_config`), so
+/// the route answers the refusal curl's bound left the answer unsaid.
+pub const HF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 
 /// The bff's HTTP routes: `GET /api/version`, `GET /api/instances` from the
 /// system's manager, `/api/session` through the system's authenticator,
@@ -123,6 +130,7 @@ fn system_router(policy: origin::HostPolicy) -> Result<axum::Router, std::io::Er
         policy,
         pai_core::bff_cfg::versions_dir(),
         std::path::PathBuf::from("/"),
+        hf::runner(),
     ))
 }
 
@@ -209,6 +217,33 @@ pub fn router_with_session(
     router_with_session_and_write_timeout(connect, timeout, timeout, auth, clock, key)
 }
 
+/// `router_with_session` with the Hugging Face fetch the
+/// `GET /api/hf/files` route lists through (ARCHITECTURE.md, "Choosing the
+/// model file on the web", slice M2): the service hands its curl runner
+/// ([`hf::runner`]), a test hands a fake. Every other builder hands the runner
+/// too, so the route is served by the service and by every test router alike.
+pub fn router_with_session_and_hf(
+    connect: Connect,
+    timeout: std::time::Duration,
+    auth: std::sync::Arc<dyn session::Authenticator>,
+    clock: session::Clock,
+    key: [u8; 16],
+    fetch: std::sync::Arc<dyn pai_core::hf::Fetch + Send + Sync>,
+) -> axum::Router {
+    router_with_policy(
+        connect,
+        timeout,
+        timeout,
+        auth,
+        clock,
+        key,
+        origin::HostPolicy::loopback(),
+        pai_core::bff_cfg::versions_dir(),
+        std::path::PathBuf::from("/"),
+        fetch,
+    )
+}
+
 /// `router_with_session` with the folder of the package version files that
 /// `GET /api/node` reads handed in: [`router_with_session`] and every builder
 /// of the service reads the folder of this install
@@ -256,6 +291,7 @@ pub fn router_with_session_and_roots(
         origin::HostPolicy::loopback(),
         versions_dir,
         os_root,
+        hf::runner(),
     )
 }
 
@@ -285,6 +321,7 @@ pub fn router_with_session_and_write_timeout(
         origin::HostPolicy::loopback(),
         pai_core::bff_cfg::versions_dir(),
         std::path::PathBuf::from("/"),
+        hf::runner(),
     )
 }
 
@@ -304,9 +341,10 @@ fn router_with_policy(
     policy: origin::HostPolicy,
     versions_dir: Option<std::path::PathBuf>,
     os_root: std::path::PathBuf,
+    fetch: std::sync::Arc<dyn pai_core::hf::Fetch + Send + Sync>,
 ) -> axum::Router {
     use axum::extract::Path;
-    let sessions = session::sessions(auth, clock);
+    let sessions = session::sessions(auth, clock.clone());
     let read = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
@@ -452,7 +490,8 @@ fn router_with_policy(
             write_timeout,
             sessions.clone(),
         ))
-        .merge(node::routes(connect, sessions, versions_dir))
+        .merge(node::routes(connect, sessions.clone(), versions_dir))
+        .merge(hf::routes(fetch, clock, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn_with_state(policy, origin::guard))
         .layer(axum::middleware::from_fn(framing))
@@ -482,6 +521,7 @@ pub fn router_with_session_and_hosts(
         origin::HostPolicy::new(hosts, listen),
         pai_core::bff_cfg::versions_dir(),
         std::path::PathBuf::from("/"),
+        hf::runner(),
     )
 }
 
@@ -511,6 +551,7 @@ pub fn router_with_session_and_host_source(
         origin::HostPolicy::with_source(listen, hosts, source),
         pai_core::bff_cfg::versions_dir(),
         std::path::PathBuf::from("/"),
+        hf::runner(),
     )
 }
 

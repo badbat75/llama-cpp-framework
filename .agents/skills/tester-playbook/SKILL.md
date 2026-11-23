@@ -66,6 +66,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Include the verb's own first distinguishing line in the snippet of a gate copied verbatim into every
   guarded verb, so the snippet matches once.
 - Run nothing else with cargo on the crate while a prove loop rewrites the real source.
+- A pin of a SEAM (a function the production code must call, whose stub the tester added) is red on the
+  stub, and its teeth show only with the seam wired: the prove loop applies the simulated fix first, shows
+  the pin green, then mutates (the mutant the brief names, and its twin at the other end of the seam), and
+  restores. A mutant of a "the argv reaching the child" pin is invisible when it mutates the argv builder
+  the pin compares against: mutate the CALLER, and let the equality pin face a builder that adds an arg.
 - Prove a red that cannot be shown in the real tree (test-side reds behind an earlier red, pins behind a
   compile-blocked phase, pins in a long phase) in a scratch copy:
   `rsync -a --exclude build --exclude .git --exclude dist --exclude node_modules <repo> /tmp/<x>` plus a
@@ -401,6 +406,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A refusal travels as `{"key","args":[<strings>]}` built by each route module's own
   `keyed(status, key, &[&str])`; `session::error` takes `&[u64]`, so a string arg (a repo, a path) needs
   the route's helper, not the session's.
+- `cargo test -p pai-bff <word>` filters test NAMES: naming the test FILE runs 0 tests and prints
+  `N filtered out` for every target, which reads as a clean run. Reach a file with `--test <name>`.
+- A fake that parks a blocking call with `while !*released { cvar.wait_timeout(guard, T) }` re-arms `T`
+  forever: the parked task never wakes on its own, and the `#[tokio::test]` runtime drop blocks on the
+  abandoned `spawn_blocking` task, so the binary hangs past every deadline (no `test result:` line).
+  Bound the WHOLE wait with an `Instant` deadline, above the route's own timeout.
+- A route that wraps `spawn_blocking` in `tokio::time::timeout` holds the semaphore permit until the
+  abandoned task ends, so a slot-comes-back pin must keep the fetch hung across the follow-up calls: a
+  released fetch puts the slots back by itself and the pin passes on the bug.
 
 ### The web UI (fe/)
 

@@ -160,6 +160,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the test's own "two in flight" assertion.
 - After a change, look for stale text: the route list in doc comments and the brief's own failure lines
   (a 503 the design later made 504) can be wrong; follow the design, report the stale pin.
+- A concurrency slot is held by the async handler, never moved into `spawn_blocking`: the timeout path
+  drops the handler, its permit goes with it, the abandoned task keeps none (hf.rs, the G1 pin).
+- A cache keyed by repo keeps what no caller owns (the tree: commit + files), never the built answer:
+  every request applies its own tag and file with `build_listing`, so no caller's tag leaks (hf.rs D1).
+- A test reads one function's body as text (`fn_body`): the caller of a builder seam names no
+  `Command::new` and no `.args(`, so the seam builds the command and the caller only spawns it (hf.rs G2).
 
 ### The web UI (fe/): running and CSS
 
