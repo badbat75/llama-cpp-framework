@@ -981,7 +981,7 @@ existing key:
 - the Overview's New instance (17c.1, not built): after the tiles or `instances-empty`;
 - the Models list's New model profile (brief 22, 22 C.1, not built): after the table or the empty
   line, outside the filter.
-Destructive actions stay text buttons with Confirm in place (delete a profile, remove an instance).
+Delete becomes a − icon button beside the page's status, still with Confirm in place (user, 2026-11-23: brief 22, 22D2, 22 D2.8 for the server profile page).
 Buttons that are not a list's add keep their words (Show quants, the Save bar).
 
 **17b2.5 The UX check.** The `server-profiles-new` state still opens the form through the + (the

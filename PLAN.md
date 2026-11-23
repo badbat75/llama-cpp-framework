@@ -1222,6 +1222,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     After 17f (user, 2026-11-23: "the + touches the row above; New server profile should be a + at the end
     of the list"): TP1c (brief 21, 21 T.24, room above the +) and 17b2 (brief 16, 17b2.1 to 17b2.5, a list's
     add is a + after the list, its accessible name unchanged; the same rule amended into 17c.1 and 22 C.1).
+    Then 22D2 (brief 22, 22 D2.1 to D2.10: Delete as a − beside a status row on both profile pages, the Save
+    bar sticky at the top; user, 2026-11-23: "put a minus right of the status and the edit commands at the
+    top", the bar at the top confirmed) and the UX audit, brief 24 (A1 to A10, 26 criteria, ranked: A1 run
+    an instance from its tile, A2 the switch on the model profile page, A3 "Served by" on the Models list),
+    after the user's "the designer should know these things" and "few clicks to reach an action"; the
+    principles are DESIGN.md section 1, 6 to 14.
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.

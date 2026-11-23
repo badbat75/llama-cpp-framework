@@ -24,6 +24,36 @@ order, defaults and checks, and says where it differs on purpose.
 5. **Smallest design that does the job.** Reuse a component of section 5 before adding one; add a
    token or a pattern here only when a slice needs it.
 
+Rules every brief applies without being asked (user, 2026-11-23: "the designer should know these
+things"; "pochi click per raggiungere un'azione"). Each is a preference grounded in common
+admin-console practice unless a criterion is cited:
+
+6. **Primary actions on screen without scrolling.** A page's commands (Save, Discard, Start, Stop,
+   Delete) sit at its top, beside the status they change, and stay reachable while the page scrolls
+   (the Save bar sticky at the top).
+7. **Few clicks to an action.** The common tasks of a list (start or stop an instance, switch a
+   profile on or off) are on its row or tile, not only on the detail page. A brief counts the clicks
+   from the Overview for the task it touches, and puts a shortcut where the count passes 2.
+8. **Lists add and remove with icons.** An `x` on the item, one `+` after the list, a `−` beside the
+   status of a thing that is deleted from its own page; each with its words visually hidden, and a
+   Confirm in place for anything that cannot be undone.
+9. **A control has room from what it does not belong to.** At least `--space-3` between a list and
+   the control after it, and `--space-3` between a button and the group it opens. Group by distance:
+   less room inside a group than between groups.
+10. **Status beside its control.** A thing's state (on or off, running, used by) is a sentence or a
+    badge next to the control that changes it, on its page and on its list row, so no one has to go
+    to another page to act on what they read.
+11. **Show the relations an administrator acts on.** A list shows what each row is used by or serves
+    (instances of a profile, profiles of an instance), so the question "what breaks if I change this"
+    is answered on the list.
+12. **Every empty or failed state says what to do next,** with the control to do it when there is one
+    (the `+` of an empty list, Read again for a failed read).
+13. **A page names how to reach the thing it manages:** an instance shows its address, with a way to
+    copy it.
+14. **Measure before handing over:** the brief states sizes, gaps and alignment as numbers, and the
+    review measures them in the three engines at 1280 and 320 px. Passing axe-core is not a layout
+    review.
+
 ## 2. Information architecture
 
 ### 2.1 The map
@@ -295,7 +325,7 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   breaks (`body { overflow-wrap: break-word }`, inherited); a flex item that holds text needs
   `anywhere`, since `break-word` leaves its minimum width at the longest word
   ([CSS Text 3](https://www.w3.org/TR/css-text-3/#overflow-wrap-property); brief 10 R1.1, R1.2).
-- **Sticky save bar**: the scroll container sets `scroll-padding-bottom` to the bar's rendered height
+- **Sticky save bar** (at the top since brief 22 22D2: read `top` for `bottom` below): the scroll container sets `scroll-padding-bottom` to the bar's rendered height
   plus `--space-3`, kept current as the bar grows (an alert and its button can triple it at phone
   width: 242 px measured at 375 px in the 1b review), so a focused field is never hidden behind it; a
   fixed guess does not do. The bar's own buttons cancel that padding with an equal negative
@@ -618,9 +648,10 @@ Each is one React component, reused by every page.
     so the one way to grow the list reads as a control even after an empty-list line.
   - The focus ring is the shared one. Under forced colours the icon is `ButtonText` and the outline
     `ButtonBorder`.
-  - A destructive action on a real thing (delete a server profile, remove an instance) stays a text
-    button with Confirm in place: the icons are for an edit that Discard or one more click undoes
-    **(preference)**.
+  - Delete of a real thing (a model or server profile) is a `minus` icon button, outlined like Add,
+    at the right of the page's status row (`div.page-status` under the `h1` and summary), named
+    "Delete model profile" and the like, and always opening a Confirm in place under the row (user,
+    2026-11-23, brief 22 22D2). A list's rows carry no delete.
 - **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
   (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
   the label on one line, cut with an ellipsis where the row is narrower than it (the chip at most the row's width; the x's name carries the full label; a cut chip, on hover or focus, shows a temporary `.chip-full` pill over it with the whole label, wrapping, leaving the x uncovered, hidden by Escape: WCAG 1.4.13; profile chips are focusable for it), wrapping anywhere only under `@media (max-width: 15em)`, the user's large text on a narrow screen (user, 2026-11-21) and, when it can be removed, a 24 px
@@ -636,7 +667,7 @@ Each is one React component, reused by every page.
   arrows move `aria-activedescendant`, the active option drawn with the inset focus ring; choosing
   one adds it at once ([APG Combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/)). These
   icon-only buttons hold their words in a visually hidden span.
-- **Save bar**: sticky at the bottom of a form, always rendered on an editable form. Left: a status
+- **Save bar**: sticky at the top of a form (from brief 22 22D2, user 2026-11-23: the edit commands at the top; before it, at the bottom), right after the page's status row, always rendered on an editable form; its scroll padding and the buttons' negative margin are on the top edge. Left: a status
   line (`role="status"`); right: **Discard** and **Save changes**. Both use `aria-disabled="true"`,
   not `disabled`, while there is nothing to save, so focus never drops when the form becomes clean
   ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)); a click then does nothing. While a save

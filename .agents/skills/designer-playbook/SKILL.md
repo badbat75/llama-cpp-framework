@@ -100,6 +100,12 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
 - Lucide shapes can be checked without `node_modules`:
   `curl -s https://unpkg.com/lucide-static@1.74.0/icons/<name>.svg` (the version `Icon.tsx` copies from).
 
+- Apply `fe/DESIGN.md` principles 6 to 14 to every brief unasked: actions at the top and sticky; at
+  most 2 clicks from the Overview for a common task (shortcut on the row or tile); list add and
+  remove as `+` and `x`, delete as `−` beside the status; `--space-3` between a list and its
+  control; status beside its control; relations shown on lists; empty states with their next action;
+  the instance's address; sizes as numbers, measured.
+
 ## Pitfalls
 
 - jsdom applies no CSS, so check specificity by eye: `input[type='text']` (0,1,1) with `font: inherit`
@@ -161,3 +167,5 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
 - Before making a model profile key editable, check the save's accepted list (`api-contract.md`
   "Accepted keys", `WEB_MODEL_PROFILE_KEYS`): a key outside it is 400, so the brief names the bff
   change first. The profile document has no `assignments`; only the list rows do.
+- The user had to ask for the + spacing, list icons, delete beside the status and actions on top: a
+  brief that passes axe-core can still fail the user; check the brief against principles 6 to 14.

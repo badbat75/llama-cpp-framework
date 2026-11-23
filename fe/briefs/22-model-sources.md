@@ -540,3 +540,110 @@ dark, at 100 % and 200 % text (`build/ux-review/22d.js`, `22d2.js`, `22d3.js`; s
 - Cancel takes the focus, and nothing scrolls sideways.
 
 No UX check state changed, so the check was not run again.
+
+## 22D2: Delete as a − beside the status, and the edit commands at the top (user feedback, 2026-11-23)
+
+The user, on the deployed 22D, verbatim: "si ok delete, ma metti un meno alla destra dello status e i
+comandi di modifica in alto nelle pagine del modello, così [non] devo scorrere fino alla fine". In
+English: yes, Delete works, but put a minus to the right of the status and the edit commands at the
+top of the model profile pages, so the user does not have to scroll to the end. One sub-slice, **10
+criteria (22 D2.1 to 22 D2.10)**. It amends 22 D.1, 17b2.4's sentence "destructive actions stay text
+buttons", and `fe/DESIGN.md`'s Save bar, Confirm in place and Icon buttons of a list.
+
+**Decisions** (preferences, each following the user's words):
+- **The − goes on the model profile page only, in a status row under the summary line.** The page
+  is where the profile's status is a sentence. The Models list's rows already carry the on/off switch
+  in a dense table, and a destructive icon on every row, a click away from the switch, would invite
+  mistakes. The list keeps no delete.
+- **The server profile page follows** (17b2.6 below): the same row, with its "used by" status and a
+  −. The two delete flows keep reading the same.
+- **The Save bar moves to the top of every form page** (model profile, server profile): the first
+  thing after the page's status row, sticky at the viewport's top. It is one component (`SaveBar.tsx`,
+  used by `ModelProfilePage.tsx` and `ServerForm.tsx`), so one rule serves both. The Instance page has
+  no Save bar.
+- **Delete keeps a confirm.** The − only opens the Confirm in place, which keeps its words, its focus
+  rules and 22D's answers.
+
+**22 D2.1 The status row.** Right after the summary line (`p.model-profile-summary`), a `div.page-status`:
+a flex row that wraps, `gap: var(--space-3)`, `align-items: center`. It holds:
+- the status paragraph (`flex: 1 1 16rem`): `model-profile-off` when switched off (the existing
+  text); when switched on, `model-profile-on` (new: `This model profile is switched on: its engine
+  serves it. To delete it, switch it off first in the list of all model profiles.`);
+- then, only when switched off, the − button (22 D2.2), last in the row so it sits at the
+  paragraph's right, or under it when the row wraps (320 px, 200 %).
+The old bottom paragraphs go: `model-profile-off` before the settings `section`, the muted
+`model-profile-delete-needs-off` and the bottom Delete button. The key `model-profile-delete-needs-off`
+leaves the strings file.
+
+**22 D2.2 The − button.** `id="model-profile-delete"`, `type="button"`, `aria-expanded`. Its content:
+- a new `minus` icon (`aria-hidden`; `Icon.tsx` gains it, the same 24-unit stroke family as `plus`);
+- a `span.visually-hidden` holding `model-profile-delete` ("Delete model profile"), so its accessible
+  name stays exactly that ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)). There is no
+  visible text, so 2.5.3 does not apply.
+Its box is a 40 px square with the `--control` outline, as `.ot-add`, sharing that rule, plus
+`flex: none`. Under forced colours the icon is `ButtonText`.
+
+**22 D2.3 The confirm opens under the row.** The 22 D.2 group comes right after `div.page-status`, full
+width, with `margin-top: var(--space-3)`. Everything else of 22 D.2 to 22 D.7 stands:
+- the focus moves to Cancel; Cancel or Escape returns it to the −;
+- the status line and the alert live in the group;
+- a 204 replaces everything after the `h1`;
+- the 404 and 504 rules stand.
+
+**22 D2.4 Switched on meanwhile.** After the 409 `model-profile-enabled` and its read again, the row
+says `model-profile-on` and the − is gone. The refusal's `p#model-profile-delete-refused[role=alert]
+[tabindex=-1]` comes right after the row and takes the focus (17b review D2).
+
+**22 D2.5 The Save bar at the top.** On the model profile page, `SaveBar` renders inside the settings
+`section`, right after its `h2` (before the jump list and the cards), with the same content: the status
+line, the alert place, Discard and Save changes. At 1280 px and wider it is the first item of the
+content column (`grid-column: 1`); the rail starts beside it.
+
+**22 D2.6 Sticky at the top.** `.save-bar` changes:
+- `position: sticky; top: 0`;
+- the border on its bottom edge (`border-bottom: 1px solid var(--control)`), only its bottom corners
+  round;
+- the same shadow, background and wrap.
+The scroll padding moves with it: `html:has(.save-bar)` sets `scroll-padding-top` (not bottom) to
+`calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3))`, and `.save-bar button` takes the
+equal negative `scroll-margin-top`. A field focused under the bar is then scrolled clear of it, and
+focusing a bar button scrolls nothing
+([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)). Below a viewport height of
+32rem the bar is static and both rules are 0, as today; it then sits at the top of the settings.
+
+**22 D2.7 The focus order** ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)): back link, the
+page's `h1` (when focused), the status row's −, the confirm group when open, the Save bar (Discard,
+Save changes, and its alert's button), the jump list, then the cards. Unchanged:
+- a save's own checks and refusals still move the focus to the marked field (the bar's top padding
+  keeps the field clear of the bar);
+- a save that succeeds leaves the focus on Save changes;
+- the bar's alerts keep their roles.
+
+**22 D2.8 The server profile page follows** (amends 16 17b.6 to 17b.9 and 17b2.4). Under its `h1`, a
+`div.page-status` holds a paragraph and a − (`id="server-profile-delete"`):
+- the paragraph is `server-profile-unused` (new: `No instance uses this server profile.`) when the
+  document's `instance` is `null`, and `server-profile-used-by` (new: `Used by instance {0}. To
+  delete this server profile, give that instance another one first.`) when it names one;
+- the − is there only when unused, named by the visually hidden `server-profile-delete`;
+- the confirm opens under the row; the 409's `server-profile-in-use` paragraph comes after the row
+  and takes the focus.
+The bottom Delete button after the Value list goes. The Value list's "Used by" row stays (it is
+data).
+
+**22 D2.9 Widths.** At 320 px, at 200 % text, and at 1280 and 1600 px, in both themes: no sideways
+scroll ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)). The − wraps under the status text without
+leaving its row. The sticky bar never covers a focused control.
+
+**22 D2.10 Strings and tests.** The strings file gains `model-profile-on`, `server-profile-unused`
+and `server-profile-used-by`, and loses `model-profile-delete-needs-off`. These tests change:
+- 22D's tests that find the bottom button or the muted line;
+- 17b's that assert the button after the Value list;
+- the Save bar tests that pin `bottom: 0`, `scroll-padding-bottom` and `scroll-margin-bottom`
+  (`index.css` 2165 to 2222);
+- the UX check states `model-profile-delete` and `server-profile-delete`, which find the opener by
+  id.
+
+**Open for the user (the build proceeds on this reading):** the Save bar has been sticky at the
+bottom of the viewport since 2h, so in a normal window Save and Discard were always on screen. If
+"the edit commands" meant only Delete, 22 D2.5 to 22 D2.7 can be dropped and the bar stays at the
+bottom.
