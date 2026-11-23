@@ -158,3 +158,6 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
 - A tile's chips take no Tab stop because its link leads to a page showing every tag whole: chips
   elsewhere need that page too, or text.
 - Fixtures that leave a new field out keep the tests that find a link by its old name green.
+- Before making a model profile key editable, check the save's accepted list (`api-contract.md`
+  "Accepted keys", `WEB_MODEL_PROFILE_KEYS`): a key outside it is 400, so the brief names the bff
+  change first. The profile document has no `assignments`; only the list rows do.

@@ -404,9 +404,20 @@ Each is one React component, reused by every page.
     title and a `chevron-down` at the far end, turned 180 degrees when open, no transition; the
     button has no border or fill, the heading's font, full width, at least 32 px high. The intro
     stays outside the body, so the closed card still says why it reads only; the body is `hidden`
-    when closed (out of the tab order and the accessibility tree) and holds nothing focusable.
+    when closed (out of the tab order and the accessibility tree) and holds nothing focusable,
+    except the Assets card's model source picker (brief 22, 22E), which a page check or refusal on
+    `model`, `hf-repo` or `hf-file` opens the card for, as a jump does.
     Closed on every arrival, no storage; Save and Discard leave it as it is; a jump to it opens it
-    in the same commit as the list's close. Read as "Assets, heading level 3", "Assets, button,
+    in the same commit as the list's close. **Since brief 23 (K1, K2), every card of the two long
+    forms** (the model profile page's 12 and the server profile page's 5) uses this pattern: open by
+    default (Assets closed), the closed card ids remembered per page kind in
+    `localStorage['pai-cards:<page>']` (try/catch, defaults when empty or blocked), the intro inside
+    the body except for Assets, and the card opened in a `flushSync` before any focus moves into it
+    (jump, client check, refusal). Other pages do not collapse (brief 23 decision 1).
+  - **Expand all / Collapse all** (brief 23 K.7): before the first card, a `div[role="group"]` named
+    "Cards" holding two secondary buttons, always active, that open or close every card of the
+    page; the focus stays on the pressed button and a visually hidden polite status says the
+    outcome; the row wraps at 320 px. Read as "Assets, heading level 3", "Assets, button,
     collapsed" ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)). Under forced colours it
     reads as a control by its text and chevron, no border.
   - **Summary line** (08 H11a.1): right under the model profile page's `h1`, a plain `p` in `--muted`
@@ -754,6 +765,17 @@ Each is one React component, reused by every page.
   the `h1` is replaced by one paragraph (`tabindex="-1"`, focused) saying it was done and a link to
   the list; no message travels to another page **(preference: no modal for a two-button question; it
   reflows at 320 px)**.
+- **Model source picker** (`ModelSource`, brief 22: the New model profile form and the Assets card):
+  a `fieldset` of radios, "A model file" and "A Hugging Face repo" (the create form adds "A copy of
+  another model profile"), then only the checked choice's controls; switching keeps each choice's
+  text and moves no focus ([3.2.2](https://www.w3.org/TR/WCAG22/#on-input)). The model file is the
+  tag suggestions' APG combobox (list in the flow, no automatic selection) over the models folder,
+  at most 50 options and a polite status line for the count, the loading, the empty or unreadable
+  folder. The repo is a text field and a "Show quants" button (never a fetch per keystroke) that
+  lists the repo's files as a radio group. Only a listed item is a new value (user, 2026-11-23):
+  typing filters or names the repo, never stands as the value; a saved value the lists cannot show
+  is kept, with a line saying so, and saved unchanged until a pick replaces it; a list that fails
+  says why and offers to read again.
 - **Restart offer** (a write that a running instance only applies at its next start: brief 16 17d):
   right after the status line that names the instances, one secondary button "Restart `<id>`"
   (`rotate-cw`) per instance, then its own status line and alert (Action feedback). It appears without

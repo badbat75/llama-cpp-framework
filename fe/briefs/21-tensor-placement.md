@@ -597,3 +597,50 @@ legend, in the visually hidden span. No other text changes.
 **Older tests that change**: the TP1 tests that find Remove by its name keep "Remove Rule N", and
 those that read its visible text "Remove" change; the Add button's name is unchanged.
 `fe/ux` `model-profile-placement` stays the state, and the review measures it.
+
+## TP1b review (designer, 2026-11-23)
+
+I rebuilt `fe/dist` and drove the card in Chromium, Firefox and WebKit at 1600, 1280, 760 and 320 px,
+light and dark, 100 % and 200 % text, plus forced colours in Chromium
+(`build/ux-review/tp1c.js`, `tp1d.js`, log `tp1/run5.txt`, shots `tp1/tp1b-*.png`). I measured each
+control's top, size and whether its text is cut. `npm --prefix fe/ux run check`: 168 states per
+browser, 0 failing; it measures neither control heights nor text cuts.
+**Verdict: not accepted. D1 must be fixed; D2 and D3 are small.**
+
+- 21 T.18 met: "Rules" is weight 600 at 17 px, as the "Rules as text" label (34 px at 200 %).
+- 21 T.20 and T.21 met:
+  - The x is 40 by 40 px, with no border or fill, named "Remove Rule N", with no visible text, on the
+    line of the Goes on select.
+  - The + is 40 by 40 px, outlined, named "Add rule", under the list.
+  - Under forced colours both draw in the system text colour.
+- 21 T.19 met where a line has only selects: at 1600 px, rule 2's Tensor, Goes on and x share one
+  top. Not met with a Layers or Pattern field (D1).
+- 21 T.22 met except D2.
+- 21 T.23: no page scroll anywhere, but D1 and D2 break the rows.
+- The selects' text: "Embedding table (token_embd)" is whole wherever Tensor has a line or a share of
+  one. "ROCm0: AMD Radeon AI PRO R9700 / RDNA4" is cut in a shared line (263 px at 1600, 382 at 1280,
+  where the rail leaves the control column 430 px). That cut is not avoidable at those widths without
+  dropping the label column; the open list shows the whole name.
+
+**D1 (must fix): the Layers and Pattern inputs are far too tall.** The shared
+`input[type='text'] { flex: 1 1 16rem }` (`index.css` 1572-1574) also applies inside the new column
+items (`.ot-layers` 1865, `.ot-pattern` 1896), where a flex basis is a height:
+- The Layers input is 110 px tall.
+- The Pattern input is 256 px tall (512 at 200 %).
+- With the row aligned at the bottom, rule 1's Tensor select stands 70 px below the Layers label:
+  the misalignment the user reported, now on another field
+  (`build/ux-review/tp1/tp1b-chromium-1600-light.png`).
+
+Fix: `.ot-rule-row input, .ot-rule-row select { flex: none; }`, the width coming from `width: 100%`.
+Pin it with the CSS test, and with a browser measure that every control of a line is 40 px tall (42
+in WebKit) and shares one top.
+
+**D2 (small).** `.ot-layers { flex: 0 0 8rem }` (`index.css` 1869) cannot shrink. At 200 % text it is
+256 px wide in a 190 px column (1280 px window) or a 238 px one (320), spilling its rule by 18 to 66 px
+in all three engines; the page does not scroll. Fix: `flex: 0 1 8rem; min-width: 0`.
+
+**D3 (small, preference).** The rules sit with no space between them, so "Rule 2" reads as a line of
+rule 1 just under its x. Give `#model-profile-ot-rules li + li` a `margin-top: var(--space-4)`.
+
+Screenshot for the user: `build/ux-review/tp1/tp1b-chromium-1600-light.png` shows the state now,
+D1 included. `tp1b-chromium-1280-dark.png` is the user's case (one embedding rule, dark).

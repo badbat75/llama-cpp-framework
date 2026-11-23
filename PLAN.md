@@ -1086,6 +1086,20 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     Moved ahead (user, 2026-11-23, asked again): M1 then M2, M3 in parallel listing today's
     `paths::instance_models_dir()`, then M4 with MP3's create form sharing the picker; F1 to F3 later as
     one unit in one deploy. M1 in progress.
+    Then M3b (`ARCHITECTURE.md` ~3038): the bff's model profile save takes `model`, `hf-repo` and
+    `hf-file`, only from the lists (user, 2026-11-23: no free text; `hf-file` checked against the repo's
+    listing at save). The web side is brief 22 (`fe/briefs/22-model-sources.md`, MP3 and M4 together):
+    22D delete (can run now), 22P the shared picker (after M2, M3), 22C the New form with Copy as a third
+    "Start from" (after 22P), 22E the picker on the Assets card (after M3b). Decided (user, 2026-11-23):
+    Copy inside New; Delete shown on any switched-off profile, the 409 naming the instances; only
+    listed items.
+    **Collapsible cards** (user, 2026-11-23: "the assets section opens collapsed ... it could be applied
+    to every section, with collapse-all and expand-all controls"): brief 23
+    (`fe/briefs/23-collapsible-cards.md`): the cards of the two long forms collapse, each card's state
+    remembered per page kind, Expand all and Collapse all before the first card. Decided (user,
+    2026-11-23): cards start open (Assets closed), only the model profile and server profile pages.
+    Slices K1 (pattern, model profile page, controls; after 2j's last part) and K2 (server profile
+    page).
     Then (user, 2026-11-21): the Hugging Face token is handled through authentication, for gated and
     private repos and downloads: the architect designs it with item 13's machine-wide state (options:
     "Sign in with Hugging Face" OAuth from the web UI, or a token an administrator enters; stored once by

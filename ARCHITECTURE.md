@@ -3035,6 +3035,29 @@ no cache; the walk is cheap and the page asks when the picker opens.
   symlinked folder is not followed, a dot-folder is skipped, a missing or unreadable folder is a 200
   with `files` empty and its keyed `error`, a non-`pai` principal is refused, and the bff relays the
   reply.
+- **M3b. The save takes the model source, from the lists only** (added 2026-11-23, brief 22E; the user chose the check of `hf-file` against the repo's listing at save, accepting that a save fails while Hugging Face is unreachable and the cache is cold; after M2
+  and M3, before M4). Today the web save refuses `model`, `hf-repo` and `hf-file` (they are in
+  `checks::MODEL_PROFILE_KEYS_NOT_ON_WEB`). They move to `WEB_MODEL_PROFILE_KEYS`, with one rule on the
+  section as the save leaves it: exactly one source, `model`, or `hf-repo` with an optional `hf-file`
+  (the page sends the chosen source and `null` for the other keys); otherwise 422
+  `model-profile-bad-source` (MP1's key) `field` `model`. **Who enforces "listed only"**: the bff, at
+  the save, and only for a value that differs from the one on disk (a `model` the GUI or `pai` wrote
+  elsewhere stays saveable while the page leaves it alone). `model`: a member of M3's listing, asked
+  through `ModelFilesAs` in the same save (the manager's folder: `paths::instance_models_dir()` until F1,
+  then `paths::models_dir()`, nothing in this slice changes); not listed is 422
+  `model-profile-model-not-listed` `[path]` `field` `model`. `hf-repo`: `valid_repo_id` (422
+  `hf-repo-invalid` `field` `hf-repo`); `hf-file`: a file of M2's listing of that repo, read through
+  M2's cache (warm: the picker just listed it), not listed 422 `model-profile-file-not-listed` `[repo,
+  file]` `field` `hf-file`; HF failing at that moment answers M2's keys (`hf-repo-unavailable`,
+  `hf-repo-moved`, a 503 for no answer) with nothing written. The manager adds nothing: a `pai` member
+  may already name any path through the GUI or `pai` (the same trust), and the manager has no network
+  for the HF half; its existing checks still run (text, comment markers, the model-file check for a
+  profile in effect). Done when: a save of a listed `model` writes it and drops `hf-repo`/`hf-file`;
+  of a listed repo and file writes both and drops `model`; an unlisted path, an unlisted file, an
+  invalid repo, both sources, and `hf-file` without `hf-repo` are each refused with the key and field
+  above and no write asked; an unchanged out-of-folder `model` saves with another key changed; HF
+  down at a changed `hf-file` refuses with nothing written; the key lists' pin test moves the three
+  keys; each against the fake manager and a fake `Fetch`.
 - **M4. The pickers.** The designer's brief, then the fe: `hf-repo` and `model` as pickers fed by M2 and
   M3 (whether free text stays is the brief's). Done when: the designer's review.
 - **Later**: the token (item 13's state), the store source (Part 2), `mmproj` and drafter pickers from
