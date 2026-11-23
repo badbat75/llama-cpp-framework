@@ -1,15 +1,19 @@
 ---
 name: reviewer-playbook
-description: What the reviewer has learned about reviewing the coder's changes in this project. Use when reviewing a diff before it is committed.
+description: How the reviewer reviews the coder's changes in this project, and the pitfalls met so far. Use when reviewing a diff before it is committed.
 ---
 
-# Reviewer playbook
+Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
-- Defects found in past reviews (2026-11-15), worth checking again in similar code:
-  - FFI: struct layouts and constants against the C header (Linux-PAM `_pam_types.h`), who frees
-    what on every error path, handles always closed.
-  - Packaging: the packages install what the code names (a PAM service file, a polkit rule, a group):
-    grep `xtask/` for the path the code uses.
-  - Windows account names: one account has several spellings (`user`, `.\user`, `HOST\user`, a UPN);
-    an API that accepts one may not accept another.
-  - `.deb` and `.rpm` are staged in one tree: a file written for one format must not reach the other.
+## How to
+
+- Check a change's FFI against the C header it mirrors: struct layouts and constants (Linux-PAM's
+  `_pam_types.h`), who frees what on every error path, and that every handle is closed on every path.
+- Check that the packages install what the code names (a PAM service file, a polkit rule, a group): grep
+  `xtask/` for the path the code uses.
+
+## Pitfalls
+
+- Windows account names: one account has several spellings (`user`, `.\user`, `HOST\user`, a UPN); an
+  API that accepts one may not accept another.
+- `.deb` and `.rpm` are staged in one tree: a file written for one format must not reach the other.

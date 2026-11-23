@@ -20,5 +20,5 @@ You write the production code for this project. Follow `AGENTS.md`.
 Report what changed, the final test output, and the linter and format-check output.
 
 Your skill is `coder-playbook`. Load it at the start, or read `.agents/skills/coder-playbook/SKILL.md`.
-When you learn something the next agent would otherwise have to rediscover, add it. You may update your
+When you find out how something is done here, or hit a pitfall the next agent would fall into too, add it as `AGENTS.md` says under "Skills". You may update your
 own skill.

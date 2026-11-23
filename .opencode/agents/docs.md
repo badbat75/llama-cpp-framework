@@ -17,5 +17,4 @@ You write the documentation for this project. Follow `AGENTS.md`.
 Report the files changed, each check's result, anything you could not verify, and anything you found
 the code and docs disagree on.
 
-Your skill is `docs-playbook`. Load it at the start, or read `.agents/skills/docs-playbook/SKILL.md`. When
-you learn something the next agent would otherwise have to rediscover, add it. You may update your own skill.
+Your skill is `docs-playbook`. Load it at the start, or read `.agents/skills/docs-playbook/SKILL.md`. When you find out how something is done here, or hit a pitfall the next agent would fall into too, add it as `AGENTS.md` says under "Skills". You may update your own skill.

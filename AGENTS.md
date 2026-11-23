@@ -114,7 +114,14 @@ The user runs the full suite, once, on the main branch after the merge and befor
 
 Each role has a skill in `.agents\skills\` in the standard `SKILL.md` format; `.claude\skills` is a symlink to that directory. Beside the role playbooks (`coordinator-playbook`, `architect-playbook`, `designer-playbook`, `tester-playbook`, `coder-playbook`, `reviewer-playbook`, `docs-playbook`) are the task skills: `optimize-preset`, `bench-spec`, `write-docs` and `release`.
 
-- A skill holds what its role has learned and is not obvious. Rules stay in this file.
+- A skill says how its role does the work in this project. Rules stay in this file. It has two sections:
+  - "How to": commands that work, conventions, where things are, procedures. Written as instructions.
+    Add to it when you find out how something is done here, and change it when that changes.
+  - "Pitfalls": traps met so far that a careful agent would still fall into, one line each. Add one when
+    something went wrong in a way that was not obvious.
+- When a pitfall becomes a way of working, rewrite it as a step in "How to" (or as a rule in this file)
+  and remove it from "Pitfalls".
+- Only what is specific to this project or its tools. General good practice does not go in a skill.
 - An agent can update its own skill. The coordinator can update any of them.
 - Keep them short, and remove what stops being true. Say why in the commit, like any other change.
 
