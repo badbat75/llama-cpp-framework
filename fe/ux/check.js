@@ -326,6 +326,49 @@ const STATES = [
     ],
   },
   {
+    // Brief 16, slice 17b (17b.11): the create form of the list page, opened
+    // on the widest pool, so the check reads the fields, the buttons and the
+    // long table together at 320 px and at 200 % text. The opener carries the
+    // plus of Icon.tsx, so its selector names the icon, not a text the strings
+    // file does not carry yet; `main form` is the form 17b.1 asks for, the
+    // page's only form.
+    name: 'server-profiles-new',
+    set: 'session=admin&pool=long',
+    hash: '#/profiles/server',
+    expect: [
+      { selector: '#page-heading', text: S['server-profiles-title'] },
+      {
+        selector: 'main button:has(svg path[d="M5 12h14"])',
+        message: 'the opener of the create form: the button with the plus',
+      },
+    ],
+    open: {
+      click: 'main button:has(svg path[d="M5 12h14"])',
+      then: 'main form',
+    },
+  },
+  {
+    // Brief 16, slice 17b (17b.7): the Confirm in place of the delete, on the
+    // page of the widest profile of `pool=long`, which runs nowhere
+    // (stub.py answers that id with `instance` null). The marker text is the
+    // key 17b.10 adds: absent from the strings file it names a button of the
+    // text "undefined", so the state fails until the slice lands, as it asks.
+    name: 'server-profile-delete',
+    set: 'session=admin&pool=long',
+    hash: `#/profiles/server/${LONG_POOL_ID}`,
+    expect: [
+      { selector: '#page-heading', text: LONG_POOL_ID },
+      {
+        selector: `main button:has-text("${S['server-profile-delete']}")`,
+        message: 'the delete, offered while the profile runs nowhere',
+      },
+    ],
+    open: {
+      click: `main button:has-text("${S['server-profile-delete']}")`,
+      then: 'main [role="group"]',
+    },
+  },
+  {
     name: 'model-profiles',
     set: 'session=admin',
     hash: '#/profiles/model',

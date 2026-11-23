@@ -453,8 +453,10 @@ replaces everything after the `h1` (the Value list, the form, the save bar) by a
 unsaved-changes question no longer asks (the file is gone).
 
 **17b.9 Delete refusals.** In the group's alert, by `writeFailure`: 409 `client-server-profile-in-use`
-(then the document is read again, so the Used by row names the instance and the button goes); 404
-`client-no-server-profile` (the page then reads again and shows `server-profile-not-found`); 503, 502,
+(then the document is read again, so the Used by row names the instance and the button goes; the
+in-use text then stays in a `p[role="alert"][tabindex="-1"]` right after the Value list, which takes
+the focus: 17b review D2); 404 `client-no-server-profile` (the page then reads again and shows
+`server-profile-not-found`, that paragraph `tabindex="-1"` and focused); 503, 502,
 401 (Sign in button, focus back to `confirm-delete` after it), 403.
 
 **17b.10 Strings.** The strings file gains exactly 17b's keys of section 2.
@@ -893,3 +895,50 @@ with the long pool, the box scrolls: 590 of 286 px at 100 % text and 1092 to 109
 (`build/ux-review/sp17a/fix2-*.png`). `npm --prefix fe/ux run check`: 156 states per browser, 0
 failing, `server-profile` among them. The 8 Hostname target-size findings of note N2 did not show in
 this run. I have not checked why, so N2 stays open until U17e.
+
+## 17b review (designer, 2026-11-23)
+
+I read the 17b diff (`ServerProfiles.tsx` 165 to 605, `ServerProfilePage.tsx` 127 to 510,
+`en_US.json`, `fe/ux/`) and drove it in Chromium, Firefox and WebKit (`build/ux-review/17b.js`,
+shots in `build/ux-review/17b/`). **Verdict: two defects, D1 and D2.**
+
+- 17b.1 and 17b.2 met. The opener has `aria-expanded`, and the form is named by its `h2`, with Name
+  and Port (each with its About toggle), Create, Cancel, status and alert. The focus lands on Name.
+  Port opens on 9932 when the pool holds 8080 and 9931. Cancel, Escape and the opener all close the
+  form, with the focus back on the opener.
+- 17b.4 met: the body, `aria-disabled` while sending, and a 201 going to the new page.
+- 17b.6 to 17b.8 met. Delete shows only while the profile is unused. The group is named by its
+  question, the focus is on Cancel, and Shift+Tab reaches Delete. A 204 replaces the page with the
+  focused paragraph and the back link. Nothing scrolls sideways at 320 px and 200 % with the 32-character id
+  (form and group).
+- 17b.10 met, and the 17b keys are in the strings file. The tester's states `server-profiles-new` (the form open on the long
+  pool) and `server-profile-delete` (the group open on the unused long profile) match 17b.1 and 17b.7.
+- **D1 (17b.3, 17b.5): the focus moves before the error renders.** `ServerProfiles.tsx` 366 and
+  424/429 set the errors and call `focus()` in the same tick, so the field is focused while it has
+  no `aria-describedby` yet, and a screen reader can read "Name, edit text" without the error.
+  There is no alert for a field error, so the error may never be heard. 17b.3 says "after its
+  error renders". Fix: set the errors inside `flushSync`, then focus, as `ServerForm.tsx` 559 to
+  579 does.
+- **D2 (17b.9): after a 409 `client-server-profile-in-use`, the focus drops to `body` and the
+  alert vanishes.** The read again (`ServerProfilePage.tsx` 271 to 279) names the instance, so the
+  Delete button and its group unmount, with the focused button and the alert inside them. All three
+  engines end with `document.activeElement` = `body` and no alert on the page
+  ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order),
+  [4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)). The 404 path (281 to 285) loses the
+  focus the same way when the page turns into `server-profile-not-found`. 17b.9 is amended: after
+  the 409's read again, the in-use text stays in a `p[role="alert"][tabindex="-1"]` right after the
+  Value list (where the button was), and that paragraph takes the focus; after the 404's read
+  again, the `server-profile-not-found` paragraph takes the focus (`tabindex="-1"`).
+- `npm --prefix fe/ux run check`: 168 states per browser, 0 failing, the two new 17b states
+  included. After D1 and D2 are fixed, a re-check of the focus is enough (`build/ux-review/17b.js`).
+
+**Re-check (2026-11-23): D1 and D2 fixed, 17b accepted.** Checked in Chromium, Firefox and WebKit
+(`build/ux-review/17b.js`, with a `focusin` log of each field's `aria-describedby` at the moment it
+takes the focus):
+- After a refused id, and after an empty Name, Name already carries its error when it is focused.
+- After a 409, the focus is on `p#server-profile-in-use[role="alert"]` reading the in-use text, and
+  Used by names `coder`.
+- After a 404, the focus is on the `server-profile-missing` paragraph.
+- Nothing scrolls sideways at 320 px and 200 %.
+
+No UX check state changed, so the check was not re-run.

@@ -417,6 +417,14 @@ class Handler(SimpleHTTPRequestHandler):
                 if STATE["key"] == "withheld":
                     doc["withheld"] = ["OpencodeApiKey"]
                 return self.json(200, doc)
+            # Brief 16 slice 17b (the state `server-profile-delete` of check.js):
+            # the widest profile of the `pool=long` list, the page the Confirm in
+            # place opens on. The list says it runs nowhere, so the document
+            # answers with `instance` null, as 17b.6 asks it to.
+            if pid == LONG_TAG + "x":
+                doc = dict(SERVER_DOC)
+                doc["instance"] = None
+                return self.json(200, doc)
             return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
         if p == "/api/profiles/model":
             return self.json(200, MODEL_PROFILES)
@@ -468,6 +476,39 @@ class Handler(SimpleHTTPRequestHandler):
                 )
             return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
         return self.send_error(404, "no PUT of " + p)
+
+    def do_POST(self):
+        p = urlparse(self.path).path
+        # The body is drained even where the route is not served, so a write
+        # never sits in a socket nobody reads.
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        # Brief 16 slice 17b (17b.4, the state `server-profiles-new` of
+        # check.js): the list page creates a profile here, and the bff's reply
+        # is 201 with the new id. The check opens the form and reads it; it
+        # never presses Create, so the answer is a plain 201.
+        if p == "/api/profiles/server":
+            try:
+                new_id = json.loads(body)["id"]
+            except (ValueError, KeyError):
+                return self.json(400, {"key": "server-profile-malformed", "args": []})
+            return self.json(201, {"id": new_id})
+        return self.send_error(404, "no POST of " + p)
+
+    def do_DELETE(self):
+        p = urlparse(self.path).path
+        # Brief 16 slice 17b (17b.8, the state `server-profile-delete` of
+        # check.js): a profile's page deletes the file here, and the bff's
+        # reply is 204. The check opens the confirm and reads it; it never
+        # presses the verb.
+        if p.startswith("/api/profiles/server/") and p.count("/") == 4:
+            pid = unquote(p.split("/")[4])
+            if pid == "default" or pid == LONG_TAG + "x":
+                self.send_response(204)
+                self.end_headers()
+                return
+            return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
+        return self.send_error(404, "no DELETE of " + p)
 
 
 # The constructor binds and listens, so the port printed is one a request on it

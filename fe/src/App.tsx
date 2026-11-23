@@ -757,8 +757,9 @@ function Page({
     )
   }
   if (route.page === 'server-profiles') {
-    // The pool, read again at every arrival (16 17a.3).
-    return <ServerProfiles onSignedOut={onSignedOut} />
+    // The pool, read again at every arrival (16 17a.3), and the create form of
+    // 17b, whose sign-in dialog renews the session.
+    return <ServerProfiles onSignedOut={onSignedOut} onRenewed={onRenewed} />
   }
   if (route.page === 'server-profile') {
     // One profile: its "Used by" fact and the Server form (16 17a.5).

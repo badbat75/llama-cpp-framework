@@ -88,6 +88,38 @@ export const EN: Record<string, string> = {
     'unset: the instance that runs this profile uses its own folder',
   'instance-server-title': 'Server profile',
   'instance-server-none': 'None',
+  // Brief 16 slice 17b: the create form on the pool list, and the delete of a
+  // profile no instance runs on its page. `1a strings` in App.test.tsx pins
+  // these against strings/en_US.json, so the sheet gains exactly 17b.10.
+  'server-profiles-new': 'New server profile',
+  'server-profiles-new-title': 'New server profile',
+  'server-profile-name': 'Name',
+  'server-profile-name-hint':
+    '1 to 32 characters: a-z, 0-9 and -, starting with a letter or a digit. It names the file server@<name>.ini and cannot be changed later.',
+  'server-profile-port-hint':
+    'The network port llama-server listens on. Filled in with the first port from 9931 up that no server profile uses; change it if you like. Two instances cannot run on the same address and port.',
+  'create-button': 'Create',
+  'create-cancel': 'Cancel',
+  'create-creating': 'Creating…',
+  'field-error-required': 'Enter a value.',
+  'create-unknown':
+    'The manager did not answer in time, so it may or may not have been created. The list shows it if it was.',
+  'server-profile-delete': 'Delete server profile',
+  'server-profile-delete-question':
+    'Delete the server profile {0}? Its settings file is removed, with any unsaved changes on this page. This cannot be undone.',
+  'confirm-delete': 'Delete',
+  'confirm-cancel': 'Cancel',
+  'confirm-deleting': 'Deleting…',
+  'server-profile-deleted': 'The server profile {0} was deleted.',
+  'api-client-server-profile-exists':
+    'The server profile {0} is already there.',
+  'api-client-server-profile-in-use':
+    'The server profile {0} is already used by instance {1}.',
+  'api-client-no-server-profile': 'There is no server profile of that name.',
+  'api-server-profile-bad-id':
+    "invalid server profile id `{0}`: use lowercase letters, digits and '-', starting with a letter or digit, up to 32 characters",
+  'api-unknown-engine':
+    'unknown engine `{0}`: this manager serves the engine llama.cpp',
   'api-client-not-authorized':
     'Not authorized: the system refused this request.',
   'api-client-unavailable':
@@ -1459,6 +1491,25 @@ export type BffOptions = {
     init?: RequestInit,
   ) => Response | Promise<Response>
   /**
+   * POST /api/profiles/server (brief 16, 17b.4): the reply to the n-th create
+   * (from 1), given the parsed body `{"engine","id","port"}`.
+   * Default 201 `{"id": <the body's id>}`, the reply the page goes to.
+   */
+  serverProfileCreate?: (
+    body: unknown,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * DELETE /api/profiles/server/{id} (brief 16, 17b.8): the reply to the n-th
+   * delete (from 1) of the decoded id. Default 204.
+   */
+  serverProfileDelete?: (
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
    * POST /api/instances/{id}/start, /stop or /restart: the reply to the n-th
    * run action (from 1, all three counted together). Default 204.
    */
@@ -1593,6 +1644,29 @@ export function fakeBff(options: BffOptions = {}) {
       const p = options.serverProfiles ?? SERVER_PROFILES
       if (Array.isArray(p)) return Promise.resolve(reply(200, p))
       return answer(p, init)
+    }
+    if (route === 'POST /api/profiles/server') {
+      const n = calls.filter(
+        (c) => c.method === 'POST' && c.path === '/api/profiles/server',
+      ).length
+      return Promise.resolve(
+        options.serverProfileCreate
+          ? options.serverProfileCreate(body, n, init)
+          : reply(201, { id: (body as { id?: string })?.id ?? '' }),
+      )
+    }
+    const serverProfileDelete =
+      /^DELETE \/api\/profiles\/server\/([^/]+)$/.exec(route)
+    if (serverProfileDelete) {
+      const id = decodeURIComponent(serverProfileDelete[1]!)
+      const n = calls.filter(
+        (c) => c.method === 'DELETE' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.serverProfileDelete
+          ? options.serverProfileDelete(id, n, init)
+          : reply(204),
+      )
     }
     const modelInfo = /^GET \/api\/profiles\/model\/([^/]+)\/model-info$/.exec(
       route,

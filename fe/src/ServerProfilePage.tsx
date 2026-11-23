@@ -1,14 +1,25 @@
 // One server profile's page (#/profiles/server/<id>, signed in): the back link,
-// the id, the instance that runs the profile, and the Server form, moved here
-// from the instance page (fe/briefs/16-server-profiles-and-instances.md,
-// 16 17a.5 to 17a.9). The file is GET /api/profiles/server/{id}: today's server
-// document plus `instance`, the instance that runs it, and the save goes to the
-// same route.
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+// the id, the instance that runs the profile, the Delete of a profile no
+// instance runs, and the Server form, moved here from the instance page
+// (fe/briefs/16-server-profiles-and-instances.md, 16 17a.5 to 17a.9 and 17b.6
+// to 17b.9). The file is GET /api/profiles/server/{id}: today's server document
+// plus `instance`, the instance that runs it, and the save and the delete go to
+// the same route.
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
+import {
+  apiError,
+  call,
+  isRecord,
+  sessionEnded,
+  sessionRevoked,
+  type Reply,
+} from './api.ts'
+import Dialog from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
 import { instanceHref, modelProfileIdUnreadable } from './route.ts'
+import SignIn from './SignIn.tsx'
 import ServerForm, {
   type Runs,
   type ServerDoc,
@@ -116,6 +127,30 @@ export default function ServerProfilePage({
   })
   // Whether the form on screen has edits to lose.
   const dirty = useRef(false)
+  // The Confirm in place of the delete (16 17b.7 to 17b.9), and the delete's
+  // own answers: its status line, its alert, and the sign-in in its dialog.
+  const [confirming, setConfirming] = useState(false)
+  // True while the delete runs: the group's two buttons go inactive (17b.8).
+  const [deleting, setDeleting] = useState(false)
+  // A second press while one runs sends nothing.
+  const sendingDelete = useRef(false)
+  const [deleteStatus, setDeleteStatus] = useState('')
+  const [deleteAlert, setDeleteAlert] = useState<{
+    text: string
+    signIn: boolean
+  } | null>(null)
+  // The sign-in in the confirm's dialog (16 17b.9).
+  const [asking, setAsking] = useState(false)
+  // True once the file is gone: the page is the one paragraph of 17b.8.
+  const [deleted, setDeleted] = useState(false)
+  // The delete's 409 outlives the group: the read again takes the delete with
+  // it, so the in-use text stays in a paragraph of its own, after the Used by
+  // list (17b review D2).
+  const [inUse, setInUse] = useState<string | null>(null)
+  // The delete's 404: the page reads again and the focus goes to the paragraph
+  // saying the profile is not there (17b review D2).
+  const [focusMissing, setFocusMissing] = useState(false)
+  const opener = useRef<HTMLButtonElement>(null)
 
   // The arrival focus (fe/DESIGN.md 2.3, 16 17a.5): the shell raises its focus
   // request on a navigation, and the session read that brings this page is an
@@ -165,6 +200,13 @@ export default function ServerProfilePage({
     setReads((n) => n + 1)
   }
 
+  /** The file read again beside what is on screen, the page keeping its form
+   * and the confirm its alert: the read of a 409 and a 404 answers the row the
+   * refusal speaks of (16 17b.9). */
+  function reread() {
+    setReads((n) => n + 1)
+  }
+
   /** A sign-in in the bar's dialog: the form stays for the same user; for
    * another one its edits are dropped and the file is read again. */
   function renewed(session: Session) {
@@ -182,6 +224,136 @@ export default function ServerProfilePage({
     return kept
   }
 
+  // The paragraph of a delete that went through takes the focus (16 17b.8).
+  useEffect(() => {
+    if (deleted) document.getElementById('server-profile-deleted')?.focus()
+  }, [deleted])
+
+  // The paragraph that takes the group's place when its answer outlives it
+  // takes the focus, so the focus does not end on the body (17b review D2).
+  useEffect(() => {
+    if (inUse !== null) {
+      document.getElementById('server-profile-in-use')?.focus()
+    } else if (focusMissing) {
+      document.getElementById('server-profile-missing')?.focus()
+    }
+  }, [inUse, focusMissing, answer])
+
+  /** Cancel, or Escape: the group goes and the focus returns to the opener;
+   * Escape is inert while the delete runs (16 17b.7). While the delete runs
+   * nothing closes: the group, its question and its status line stay as they
+   * are and the focus does not move (17b review R1). */
+  function closeConfirm() {
+    if (sendingDelete.current) return
+    setConfirming(false)
+    setDeleteAlert(null)
+    setDeleteStatus('')
+    setInUse(null)
+    opener.current?.focus()
+  }
+
+  /** The delete (16 17b.8): `DELETE` of the profile's file, its answers
+   * 16 17b.9. */
+  async function doDelete() {
+    if (sendingDelete.current) return
+    sendingDelete.current = true
+    setDeleting(true)
+    setDeleteAlert(null)
+    setInUse(null)
+    setFocusMissing(false)
+    setDeleteStatus(t('confirm-deleting'))
+    let answer: Reply | undefined
+    try {
+      answer = await call(`/api/profiles/server/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+    } catch {
+      answer = undefined
+    }
+    sendingDelete.current = false
+    setDeleting(false)
+    setDeleteStatus('')
+    if (answer === undefined) {
+      setDeleteAlert({ text: t('request-failed'), signIn: false })
+      return
+    }
+    if (answer.ok) {
+      // The file is gone: the page is the paragraph saying so (16 17b.8).
+      setDeleted(true)
+      return
+    }
+    if (sessionEnded(answer)) {
+      setDeleteAlert({ text: t('session-ended-retry'), signIn: true })
+      return
+    }
+    if (sessionRevoked(answer)) {
+      setDeleteAlert({ text: t('session-revoked'), signIn: false })
+      return
+    }
+    const error = apiError(answer.body)
+    if (error !== null && error.key === 'client-server-profile-in-use') {
+      // An instance took the profile while the page was open: the alert says
+      // so, and the read again names that instance (16 17b.9). The read again
+      // takes the delete and its group with it, so the words go on living in a
+      // paragraph of their own, which takes the focus (17b review D2).
+      const text = t('api-client-server-profile-in-use', ...error.args)
+      setDeleteAlert({ text, signIn: false })
+      setInUse(text)
+      reread()
+      return
+    }
+    if (error !== null && error.key === 'client-no-server-profile') {
+      // The profile is gone: the read again shows the page that says so, and
+      // that page's paragraph takes the focus (17b review D2).
+      setDeleteAlert({ text: t('api-client-no-server-profile'), signIn: false })
+      setFocusMissing(true)
+      reread()
+      return
+    }
+    setDeleteAlert({
+      text:
+        error?.key === 'client-unavailable'
+          ? t('api-client-unavailable')
+          : t('request-failed'),
+      signIn: false,
+    })
+  }
+
+  /** A sign-in in the confirm's dialog (16 17b.9): the page keeps what it
+   * holds, the group stays open and the focus returns to the verb; nothing is
+   * sent again. */
+  function signedIn(session: Session) {
+    const kept = renewed(session)
+    flushSync(() => {
+      setAsking(false)
+      if (kept) setDeleteAlert(null)
+    })
+    if (!kept) return
+    document.getElementById('confirm-delete')?.focus()
+  }
+
+  function closeAsking() {
+    flushSync(() => setAsking(false))
+    document.getElementById('confirm-delete')?.focus()
+  }
+
+  if (deleted) {
+    // The file is gone: the page is the one paragraph that says so, focused,
+    // and the link back to the list (16 17b.8). The form went with the profile,
+    // so the page asks nothing about unsaved changes any more, and no message
+    // travels to the list.
+    return (
+      <>
+        <PageHeading text={id} />
+        <p id="server-profile-deleted" tabIndex={-1}>
+          {t('server-profile-deleted', id)}
+        </p>
+        <p>
+          <a href="#/profiles/server">{t('server-profile-back')}</a>
+        </p>
+      </>
+    )
+  }
   if (modelProfileIdUnreadable(id)) {
     return (
       <>
@@ -206,7 +378,11 @@ export default function ServerProfilePage({
       <PageHeading text={id} />
       {missing ? (
         // No profile by that name: the message, and nothing else (16 17a.6).
-        <p>{t('server-profile-not-found', id)}</p>
+        // The paragraph is a place the focus can take: the read again after a
+        // delete lands here and the group is gone (17b review D2).
+        <p id="server-profile-missing" tabIndex={-1}>
+          {t('server-profile-not-found', id)}
+        </p>
       ) : (
         <>
           {read !== null && (
@@ -220,6 +396,43 @@ export default function ServerProfilePage({
                 </dd>
               )}
             </dl>
+          )}
+          {inUse !== null && (
+            <p
+              id="server-profile-in-use"
+              role="alert"
+              tabIndex={-1}
+              className="alert"
+            >
+              {inUse}
+            </p>
+          )}
+          {/* A profile no instance runs is deleted from its own page, the
+              delete asked in the page (16 17b.6, fe/DESIGN.md 5.2). */}
+          {read !== null && read.instance === null && (
+            <>
+              <button
+                ref={opener}
+                type="button"
+                id="server-profile-delete"
+                className="secondary"
+                aria-expanded={confirming}
+                onClick={() => setConfirming(true)}
+              >
+                {t('server-profile-delete')}
+              </button>
+              {confirming && (
+                <ConfirmDelete
+                  id={id}
+                  status={deleteStatus}
+                  alert={deleteAlert}
+                  running={deleting}
+                  onConfirm={() => void doDelete()}
+                  onCancel={closeConfirm}
+                  onSignIn={() => setAsking(true)}
+                />
+              )}
+            </>
           )}
           <section>
             <h2>{t('server-title')}</h2>
@@ -243,7 +456,97 @@ export default function ServerProfilePage({
           </section>
         </>
       )}
+      {/* The sign-in the confirm's alert offers (16 17b.9): the page and its
+          group stay behind it. */}
+      {asking && (
+        <Dialog title={t('signin-title')} onClose={closeAsking}>
+          <SignIn
+            required={false}
+            inDialog
+            onSignedIn={signedIn}
+            onCancel={closeAsking}
+          />
+        </Dialog>
+      )}
     </>
+  )
+}
+
+/** The confirm in place of the delete (fe/DESIGN.md 5.2, 16 17b.7 to 17b.9):
+ *  the question that names the profile, the verb and Cancel, the status line
+ *  and the alert place. It is mounted while the delete is asked, so its words
+ *  and its alert are its own: closing it clears all of them. */
+function ConfirmDelete({
+  id,
+  status,
+  alert,
+  running,
+  onConfirm,
+  onCancel,
+  onSignIn,
+}: {
+  /** The profile's id, named in the question. */
+  id: string
+  status: string
+  alert: { text: string; signIn: boolean } | null
+  /** True while the delete runs: both buttons go inactive, Escape is inert. */
+  running: boolean
+  onConfirm: () => void
+  onCancel: () => void
+  onSignIn: () => void
+}) {
+  const uid = useId()
+  const questionId = `${uid}-question`
+
+  // The focus moves to Cancel, the verb is one Tab away (16 17b.7).
+  useEffect(() => {
+    document.getElementById('confirm-cancel')?.focus()
+  }, [])
+
+  return (
+    <div
+      role="group"
+      aria-labelledby={questionId}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && !running) onCancel()
+      }}
+    >
+      <p id={questionId}>{t('server-profile-delete-question', id)}</p>
+      <div className="save-actions">
+        <button
+          type="button"
+          id="confirm-delete"
+          className="primary"
+          aria-disabled={running || undefined}
+          onClick={onConfirm}
+        >
+          {t('confirm-delete')}
+        </button>
+        <button
+          type="button"
+          id="confirm-cancel"
+          className="secondary"
+          aria-disabled={running || undefined}
+          onClick={onCancel}
+        >
+          {t('confirm-cancel')}
+        </button>
+      </div>
+      <p role="status" className="save-status" aria-live="polite">
+        {status}
+      </p>
+      {alert !== null && <p role="alert">{alert.text}</p>}
+      {alert?.signIn && (
+        <button
+          type="button"
+          id="session-sign-in"
+          className="secondary"
+          onClick={onSignIn}
+        >
+          {t('session-sign-in')}
+        </button>
+      )}
+    </div>
   )
 }
 
