@@ -104,7 +104,7 @@ fn a_peer_without_the_manager_object_is_unavailable() {
     let c = core(true, &[]);
     let (_server, client) = serve_at(&c, "/org/privateai/Elsewhere", Some(":1.42"));
     let client = Arc::new(client);
-    let each: [(&str, ClientCall); 15] = [
+    let each: [(&str, ClientCall); 16] = [
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
         }),
@@ -112,6 +112,9 @@ fn a_peer_without_the_manager_object_is_unavailable() {
         ("instances", |c| c.instances().err()),
         ("set_instance_tags", |c| {
             c.set_instance_tags("default", &["edge".into()]).err()
+        }),
+        ("set_instance_label", |c| {
+            c.set_instance_label("default", "Coding box").err()
         }),
         ("status", |c| c.status("default").err()),
         ("start", |c| c.start("default").err()),
@@ -985,6 +988,162 @@ pub(crate) fn manager_dbus_client_e2e() {
         let _ = std::fs::remove_file(sys.join("server@gpu.ini"));
         let _ = std::fs::remove_file(sys.join("server@nowhere.ini"));
         let _ = std::fs::remove_file(sys.join("server@lan-2.ini"));
+    }
+
+    // ── The label of an instance, over the wire ───────────────────────────
+    // `Instances` answers the label beside the id, the engine and the port, so
+    // the web UI shows one row out of one read: the label the section carries,
+    // nothing when it carries none. `SetInstanceLabel` is the plain verb `(ss)`:
+    // the text is written trimmed, the empty text REMOVES the key, and every
+    // refusal is the core's own error with the record untouched. A label another
+    // instance carries, ignoring case, is `instance-label-taken`. Nothing here
+    // touches a unit: the label is metadata, and the instance is running.
+    {
+        let seeded = "[default]\nServerProfile = gpu\n\n[gpu-1]\nServerProfile = gpu\nLabel = GPU box\nnote = keep me\n";
+        std::fs::write(sys.join("instances.ini"), seeded).expect("record");
+        std::fs::write(
+            sys.join("server@gpu.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("gpu profile");
+        let c = core(true, &[]);
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let rows = client.instances().expect("instances");
+        assert_eq!(
+            rows.iter()
+                .map(|i| (i.id.as_str(), i.engine.as_str(), i.port, i.label.as_deref(),))
+                .collect::<Vec<_>>(),
+            vec![
+                ("default", "llama.cpp", 8080, None),
+                ("gpu-1", "llama.cpp", 8080, Some("GPU box")),
+            ],
+            "the label of the section and no label for a section that names none, \
+             the engine and the port of the same row for the fallback"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "the list is answered with no identity, as the list of ids is"
+        );
+        assert_eq!(calls(&c), vec![], "reading the list touches no unit");
+
+        assert_eq!(
+            client.set_instance_label("default", "  Coding box "),
+            Ok(()),
+            "a text with hanging space"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = gpu\nLabel = Coding box\n\n[gpu-1]\nServerProfile = gpu\nLabel = GPU box\nnote = keep me\n",
+            "the key written trimmed, every other byte of the record kept"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure)],
+            "the guarded call a write is: configure asked of the sender"
+        );
+        assert_eq!(
+            calls(&c),
+            vec![],
+            "a relabel touches no unit: the instance runs the whole time"
+        );
+        assert_eq!(
+            client.instances().expect("instances")[0].label.as_deref(),
+            Some("Coding box"),
+            "the write reads back over the same wire"
+        );
+
+        assert_eq!(
+            client.set_instance_label("default", ""),
+            Ok(()),
+            "the empty text clears the label"
+        );
+        let cleared =
+            "[default]\nServerProfile = gpu\n\n[gpu-1]\nServerProfile = gpu\nLabel = GPU box\nnote = keep me\n";
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            cleared,
+            "the Label line is removed, never left empty"
+        );
+        assert_eq!(
+            client.instances().expect("instances")[0].label,
+            None,
+            "the cleared label is no label, and the UI falls back to engine and port"
+        );
+
+        // An instance writing the label it already carries is not a clash with
+        // itself.
+        assert_eq!(
+            client.set_instance_label("gpu-1", "GPU box"),
+            Ok(()),
+            "the label of the instance itself"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure); 3],
+            "one configure ask per accepted call"
+        );
+
+        assert_eq!(
+            client.set_instance_label("lan-3", "Coding box"),
+            Err(ClientError::NoInstance),
+            "lan-3 is no instance"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                client.set_instance_label(bad, "Coding box"),
+                Err(ClientError::InvalidId),
+                "id {bad:?}"
+            );
+        }
+        for text in [
+            "z".repeat(pai_core::checks::LABEL_MAX + 1),
+            "two\nlines".to_string(),
+            "tab\there".to_string(),
+            "a;b".to_string(),
+            "Box #1".to_string(),
+        ] {
+            let got = client
+                .set_instance_label("default", &text)
+                .expect_err("the rule");
+            let want =
+                pai_core::checks::instance_label(&text).expect_err("the rule refuses it too");
+            match got {
+                ClientError::Invalid(refusal) => assert_eq!(
+                    (refusal.key, refusal.values.as_slice()),
+                    (want.key, want.values.as_slice()),
+                    "{text:?}: the client decodes the rule's own refusal"
+                ),
+                other => panic!("{text:?}: {other:?}"),
+            }
+        }
+        assert_eq!(
+            client.set_instance_label("default", "GPU BOX"),
+            Err(ClientError::Invalid(pai_core::checks::Refusal {
+                key: "instance-label-taken",
+                values: vec!["GPU BOX".to_string(), "gpu-1".to_string()],
+            })),
+            "the label of gpu-1, ignoring case, is taken, and the refusal names who holds it"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            cleared,
+            "refused calls write nothing"
+        );
+
+        // A client with no sender is refused, as every guarded call is.
+        let (_server, anonymous) = connect(&c, None);
+        assert_eq!(
+            anonymous.set_instance_label("default", "Coding box"),
+            Err(ClientError::NotAuthorized)
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            cleared,
+            "the refused write left the record"
+        );
+        std::fs::write(sys.join("instances.ini"), seeded).expect("restore the record");
+        let _ = std::fs::remove_file(sys.join("server@gpu.ini"));
     }
 
     // ── Creating, listing and deleting a server profile, over the bus ─────

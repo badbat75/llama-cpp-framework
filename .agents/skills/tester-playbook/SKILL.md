@@ -17,12 +17,22 @@ a trap that recurs; a slice's history does not belong here.
   compiles, not a hung test).
 - Look up a strings key in `fe/src/strings/en_US.json` before believing a text red: `en()` throws
   `no English for <key> in the test` for a key that does not exist.
+- Name a test by the brief's criteria number, carried with the brief's own prefix: a page of brief 16
+  cites `16 17b.9:`, never bare `17b.9:` (that id belongs to brief 17's UX pass). A defect a review found
+  in a closed slice is cited by the review's label at the END of the title (`… (17b review D2)`): the
+  criteria number says which rule is pinned, the label says which defect it closes, so one rule can be
+  pinned twice as it grows stricter.
 
 ## Proving a red, and what a run proves
 
 - A Rust test that cannot compile is not a red. Before reporting a list of reds, write a throwaway test
   that exercises the new signature, run it, delete it, then write the real tests. A throwaway proves
   reachability only (it compiles, a value is constructible), never that a call site exists: call it a probe.
+- A stub of a manager verb that does not exist yet: `ManagerError::Io(std::io::ErrorKind::Unsupported)`
+  (`ManagerError` has no `Other`), and the phase's refusal helper must take `key: &'static str`, because
+  `checks::Refusal.key` is `&'static str`: a `&str` closure argument is a lifetime red, not a test red.
+  `serde_json::from_str` inside a `json!` literal needs `::<serde_json::Value>` (the macro's `Into<Value>`
+  leaves `T` ambiguous).
 - A stub that adds a field to a struct other crates build as a literal is a COMPILE red there. Grep
   `Struct {`, run `cargo check --workspace --all-targets --exclude pai-config` before reporting, and fill
   each literal with the value its own fixture implies. A new field on a wire struct reds every target that
@@ -78,7 +88,9 @@ a trap that recurs; a slice's history does not belong here.
   in the tests" claims are stale test code and are the tester's to fix.
 - Never run `cargo fmt -p <crate>` (without `--check`) when the tree carries other roles' uncommitted
   lines: it rewrites the whole crate. List the hunks with `--check | grep '^Diff in'`, hand-apply your own
-  and prove with `--check` answering 0 and a `git status --porcelain` before/after diff.
+  and prove with `--check` answering 0 and a `git status --porcelain` before/after diff. Where only Rust
+  lines are yours, a `cargo fmt -p <crate>` is acceptable if a `git diff --stat` taken before and after
+  moves the counts of YOUR files alone: keep both listings and quote them.
 
 ## Cargo runs
 
@@ -118,6 +130,12 @@ a trap that recurs; a slice's history does not belong here.
   uncalled phase is invisible, its solo run looks green.
 - A refusal aborts at its own phase, so every later phase is "unproven, not passed": prove each phase
   alone and report the blocked ones as blocked.
+- The same test masks its own later reds: `pai-manager`'s service phases AND its D-Bus/pipe client
+  phases are calls of ONE `data_root_e2e`, so a full run prints only the first panic. Prove each later
+  red by cutting the earlier block out of the real source (a python line-range delete that asserts its
+  two anchor lines first), run `--lib data_root_e2e` (~7 s incremental), restore with `cp` + `cmp -s`.
+- A helper that trims a line's end (`str::trim_end`) erases a trailing non-breaking space: pin a
+  Unicode-whitespace value with the raw line, never with the file's `keys_of`-style helper.
 - A unit test over a temp dir is not a data-root e2e: it passes with no seam at all. A phase that drives a
   real save goes through `config_seam_e2e` (redirect, save through the seam, reload, assert).
 - A phase shares ONE tree. By a late block earlier blocks have added and removed files: pin names (present
@@ -137,6 +155,20 @@ a trap that recurs; a slice's history does not belong here.
   rewrite the file with one explicit key before an accepted delete.
 - Two of the slice's own pins of ONE rule that disagree: the design's wording decides (a design naming
   `ini::text::section_text` means its bytes verbatim). Retarget the loose pin.
+- A fixture text that one phase accepts as the write and a neighbour section carries as its taken value
+  collides with a case-insensitive uniqueness rule: rename the NEIGHBOUR's fixture text (keep the
+  canonical accepted text), and sweep the literal across EVERY file carrying that fixture with a count
+  assert (`s.count(x)` per file), then hand-fix the case-variant texts of the taken pins, the reader
+  expectations and the self-write. A refusal-block's record count is the number of refusals its loops
+  make (bad + markers + taken): a later pin added to the block leaves the literal short.
+- A wire shape that grows (a D-Bus row signature) reds every pin of it AND every tuple literal that
+  reads it, in phases of older slices: sweep `grep -n <signature>` and the tuple types crate-wide, and
+  update the stale signature in the prose of the test's own header comment.
+- A phase that rewrites a file a LATER phase reads as its `base` reds that later phase when its payload
+  equals what the earlier phase left (a compare-and-swap then accepts a stale content). Snapshot both
+  files at the phase's start and write them back at its end, as the file's sibling phases do.
+- A mutant of a validation gate is shown only on a tree green in that phase first: with an unrelated
+  fixture red upstream the panic you print is the fixture, not the gate.
 - A rule about the KEYS of a request cannot be pinned through client tables whose variants carry fixed
   keys: use the raw-wire tables (`manager/pipe.rs`, `manager/dbus.rs`).
 - A manager verb gets one phase pinned over all three transports (direct, pipe, D-Bus); a bound a client
@@ -217,6 +249,15 @@ a trap that recurs; a slice's history does not belong here.
   effect before its parent's, so a fixture handing ONE `Response` to every call starves the second reader.
 - Retargeting an old pin onto another field or a moved read: amend the old test to the new rule and say in
   a comment which slice retired the old one.
+- A 422 whose `field` names a control the form checks itself (a port) is UNREACHABLE with a value that
+  check refuses: the check sends nothing, so the reply never arrives. Pin it with a value the check
+  accepts, and the args exactly as the bff sends them.
+- Keys added to the shared `EN` map red `App.test.tsx` `1a strings` for every one not yet in
+  `src/strings/en_US.json`: that IS the strings-file pin of a text criterion. Report it as an intended
+  red of the slice, not as collateral damage from touching the fake.
+- A page check that does not exist reds as "Unable to find the bar's alert text", never as a request
+  count: the check is absent so the save went out. That is the right red when a sibling test of the
+  same slice proves, on the same fixture, that the PUT does go out.
 
 ### Async settling (the trap that recurs)
 
@@ -238,6 +279,9 @@ a trap that recurs; a slice's history does not belong here.
 - `role="status"` has no name from content: find it with `getAllByRole('status').find(el =>
   el.textContent?.trim() === text)`, and pin an absence by the same filter, never `queryByRole(.., {name})`.
   A page-level live region breaks every page-wide status count: pin the count the brief rules.
+- A `loaded()`-style helper that accepts any shape of a read's answer (a table, or the empty text) must
+  poll with `waitFor` over a predicate: one `queryByRole` snapshot races the reply and reds with a DOM
+  dump showing the element it sought.
 
 ### jsdom and CSS pins
 
@@ -248,9 +292,30 @@ a trap that recurs; a slice's history does not belong here.
 - Absence pins: `queryAllByRole(..)` with `toHaveLength(0)` (greens both no-list and empty-list shapes);
   never `.value` on a `queryByRole(..)!`; index options from `options.length - 1`, never by a literal.
   An absence pin of a LATER sub-slice's key is structural (`nextElementSibling` is null), not `en(key)`.
+  `queryByRole('group')` is never unique on a page with a form (every field's `<fieldset>` is a group):
+  a disclosure's open and gone pins carry the group's accessible name.
+- A focus-at-open pin is read BEFORE the test presses any other control of the opened thing (a hint
+  toggle takes the focus), and the control it names is declared above it.
+- A text that must be there WHEN the focus lands (an error before the screen reader reads the field):
+  attach a `focus` listener that records, at that moment, the `aria-describedby` names and whether the
+  text is in the region, then press. Asserting the text and the focus afterwards is GREEN when both
+  rendered in the same tick with the focus first, which is the defect.
+- An `aria-disabled` control is not a shield: its handler runs on click. Pin "inactive" by pressing it
+  and asserting the open thing is still THERE (the same element), its status line unchanged, the focus
+  not moved to the opener, and the request count still one. Then resolve the request that was already
+  in flight and pin the reply's outcome: that is the case the review found.
+- A terminal state (deleted, not found) is pinned as NOT carrying: after it, change the address to
+  another id and pin the other page (its h1, its own rows, the read of its route) and the absence of the
+  first id's paragraph. A keyed remount passes this on day one: it is a guard, not a red.
+- A refusal text must outlive the re-read that follows it (16 17b.9): the re-read drops the control the
+  refusal was about, so the pin waits for the re-read to land (the row names the new state) and only
+  then looks for the text, in the element the criteria name (`p[role="alert"][tabindex="-1"]`), focused.
 - CSS-reading helpers: the block walker starts at depth 1 after the opening `{`; a rule inside `@media`
   also matches a flat regex; match descendant rules by their WHOLE selector (whitespace normalised); an
   at-rule's body is a list of RULES. A pin of a declaration's exact text must tolerate inner newlines.
+- A CSS pin naming a class the brief leaves to the coder (its section 6: "named by the class the coder
+  gives them") is an assumption you are writing into the contract: the reader's `found 0` is the red, and
+  the name you chose must be in the report, because the coder has to use exactly that class.
 - Frozen allowlists compared with `toEqual` move with the brief: a new class reds `Reflow.test.ts` R1.8
   `CLASSES`; a new `overflow-wrap` reds R1.1; a ruled size reds `HearthTokens.test.ts` H1a.12 (ordered
   list, one rule's entries in the test loop's order; per-card sets are sorted on both sides); a
@@ -265,6 +330,10 @@ a trap that recurs; a slice's history does not belong here.
 
 ### Nav and order literals
 
+- A brief's "Older tests that change" section is the fan-out list: work every row of it before reporting.
+  Where a row retargets an old pin (a refusal that gains a control), delete that row from the old table
+  and cite the new test file in a comment; where the prior sub-slice pinned an absence structurally
+  (`nextElementSibling` is null), retarget the same selector onto the thing this slice adds.
 - A new nav entry lands in about a dozen order lists. Sweep every standalone `en('nav-...'),` line (and the
   `EN[...]` variants), then check tails (`grep -L` for the new key; `grep -rn "slice(-[0-9]"` for windowed
   lists) and `NodePage`'s list. Also rewrite what the sweep cannot: a `parseRoute` pin of `not-found` for
@@ -288,6 +357,11 @@ a trap that recurs; a slice's history does not belong here.
 - Playwright `waitFor()` counts a `.visually-hidden` element as visible; `hasText` is a normalised
   substring of `textContent`. One marker cannot pin a `count` together with a `text` only one element
   carries: split them. A `hover: { on, then }` acts on the FIRST match of `on`.
+- Name a disclosure the state opens by its production icon: `button:has(svg path[d="M5 12h14"])` (the plus;
+  `M12 5v14` is shared with arrow-down, the table sort). `main form` is unique (the sign-in form sits in a
+  dialog) and `main [role="group"]` outside the model pages. A marker text interpolated raw from
+  `S['key']` names the text "undefined" and fails the state today, pinning it the moment the key lands;
+  a `?.`-guarded one degrades to a selector-only marker that passes loosely today. Pick per state.
 - Verify the LENGTH of a repeated-character fixture literal with `python3`, not by eye.
 
 ## Behaviour that cannot run here

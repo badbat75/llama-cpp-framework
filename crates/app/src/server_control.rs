@@ -849,6 +849,7 @@ pub mod fake {
                     port: 0,
                     profile_tags: vec![],
                     instance_tags: vec![],
+                    label: None,
                 }],
                 fail_instances: None,
                 files: Files::default(),
@@ -881,6 +882,7 @@ pub mod fake {
                 port,
                 profile_tags: vec![],
                 instance_tags: vec![],
+                label: None,
             }];
             self
         }
@@ -1027,6 +1029,7 @@ pub mod fake {
                 port: 0,
                 profile_tags: Vec::new(),
                 instance_tags: Vec::new(),
+                label: None,
             }])
         }
         fn status(&self, _id: &str) -> Result<InstanceState, ClientError> {

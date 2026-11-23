@@ -274,6 +274,7 @@ impl ManagerClient for FakeManager {
             port: 0,
             profile_tags: vec![],
             instance_tags: vec![],
+            label: None,
         }])
     }
     fn start(&self, id: &str) -> Result<(), ClientError> {

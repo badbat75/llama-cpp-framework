@@ -5,7 +5,7 @@
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
 //! `CreateServerProfile`, `DeleteServerProfile` and
-//! `SetInstanceTags` and `ModelInfo` and `NodeInfo` go as the
+//! `SetInstanceTags` and `SetInstanceLabel` and `ModelInfo` and `NodeInfo` go as the
 //! `As` form of the same method, with the user's name as its first argument
 //! (the manager answers a principal for the bff's account alone) and answers
 //! the plain method's shape. The methods that need no right are unchanged,
@@ -22,13 +22,16 @@
 //! CreateServerProfileAs(s principal, s engine, s profile, q port)
 //! DeleteServerProfileAs(s principal, s engine, s profile)
 //! SetInstanceTagsAs(s principal, s instance, as tags)
+//! SetInstanceLabel(s instance, s label)
+//! SetInstanceLabelAs(s principal, s instance, s label)
 //! ModelInfo(s profile) -> (s model, (b has_info, t block_count, b moe,
 //!                                    t expert_count, t expert_used),
 //!                          (s key, as args))
 //! ModelInfoAs(s principal, s profile)    (the same reply)
 //! NodeInfo() -> (s name, s version, s kernel, s vulkan, a(sssssbss) gpus)
 //! NodeInfoAs(s principal)                (the same reply)
-//! Instances() -> a(sssqasas)          (id, engine, port, profile tags, instance tags)
+//! Instances() -> a(sssqasass)      (id, engine, server profile, port, profile
+//!                                   tags, instance tags, label: empty when unset)
 //! ServerProfiles() -> a(ssqass)       (id, engine, port, tags, instance)
 //! Version() -> (s version, u protocol)
 //! ```
@@ -57,10 +60,19 @@ pub const INTERFACE: &str = "org.privateai.Manager1";
 const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
 
 /// One row of `Instances`, as the bus answers it: `(s id, s engine,
-/// s server_profile, q port, as profile_tags, as instance_tags)`, the whole
-/// list one `a(sssqasas)`. A section naming no server profile is the empty
-/// string, which the client reads as none.
-type InstanceRow = (String, String, String, u16, Vec<String>, Vec<String>);
+/// s server_profile, q port, as profile_tags, as instance_tags, s label)`,
+/// the whole list one `a(sssqasass)`. A section naming no server profile is
+/// the empty string, which the client reads as none; so is a section with no
+/// label (the bus has no null).
+type InstanceRow = (
+    String,
+    String,
+    String,
+    u16,
+    Vec<String>,
+    Vec<String>,
+    String,
+);
 
 /// One row of `ServerProfiles`, as the bus answers it: `(s id, s engine,
 /// q port, as tags, s instance)`, the whole list one `a(ssqass)`. A profile no
@@ -387,13 +399,18 @@ impl ManagerClient for DbusClient {
             // over the pipe.
             .filter(|row| !row.2.is_empty())
             .map(
-                |(id, engine, server_profile, port, profile_tags, instance_tags)| InstanceInfo {
-                    id,
-                    engine,
-                    server_profile: Some(server_profile),
-                    port,
-                    profile_tags,
-                    instance_tags,
+                |(id, engine, server_profile, port, profile_tags, instance_tags, label)| {
+                    InstanceInfo {
+                        id,
+                        engine,
+                        server_profile: Some(server_profile),
+                        port,
+                        profile_tags,
+                        instance_tags,
+                        // The bus has no null: the empty string is "this
+                        // section has no label".
+                        label: (!label.is_empty()).then_some(label),
+                    }
                 },
             )
             .collect())
@@ -415,6 +432,13 @@ impl ManagerClient for DbusClient {
         match self.acting() {
             Some(principal) => self.call("SetInstanceTagsAs", &(principal, instance, tags)),
             None => self.call("SetInstanceTags", &(instance, tags)),
+        }
+        .map(|_| ())
+    }
+    fn set_instance_label(&self, instance: &str, label: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("SetInstanceLabelAs", &(principal, instance, label)),
+            None => self.call("SetInstanceLabel", &(instance, label)),
         }
         .map(|_| ())
     }
@@ -544,16 +568,18 @@ mod tests {
 
     /// The row `Instances` answers, as the client reads it: one D-Bus struct
     /// `(s id, s engine, s server_profile, q port, as profile_tags,
-    /// as instance_tags)`, the list `a(sssqasas)`. Slice 13 puts the server
-    /// profile after the engine: a client that reads five fields never learns
-    /// the name, and the only name left to it is the id, which is not the
-    /// file the instance reads.
+    /// as instance_tags, s label)`, the list `a(sssqasass)`. Slice 13 puts the
+    /// server profile after the engine: a client that reads five fields never
+    /// learns the name, and the only name left to it is the id, which is not
+    /// the file the instance reads. Slice IL1 puts the label last, as `s`: the
+    /// bus has no null, so the empty string carries "this instance has no
+    /// label", the reading every other text of the row already has.
     #[test]
     fn the_instances_row_is_the_struct_with_the_server_profile() {
         assert_eq!(
             <InstanceRow as Type>::SIGNATURE.to_string(),
-            "(sssqasas)",
-            "the row is a struct of two strings, the profile, a uint16 and two arrays of strings"
+            "(sssqasass)",
+            "the row is a struct of two strings, the profile, a uint16, two arrays of strings and the label"
         );
     }
 

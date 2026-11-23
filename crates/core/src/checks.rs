@@ -56,6 +56,8 @@ pub const KEYS: &[&str] = &[
     "instance-protected",
     "instance-running",
     "instance-no-model-profiles",
+    "instance-bad-label",
+    "instance-label-taken",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -150,6 +152,8 @@ impl Refusal {
             "instance-protected" => strings::fill("instance-protected", &[&v(0)]),
             "instance-running" => strings::fill("instance-running", &[&v(0)]),
             "instance-no-model-profiles" => strings::fill("instance-no-model-profiles", &[&v(0)]),
+            "instance-bad-label" => strings::fill("instance-bad-label", &[&v(0)]),
+            "instance-label-taken" => strings::fill("instance-label-taken", &[&v(0), &v(1)]),
             other => other.to_string(),
         }
     }
@@ -910,6 +914,30 @@ pub fn tags_rule(tags: &[String]) -> Result<(), Refusal> {
         if !bad.is_empty() {
             return Err(refuse(bad));
         }
+    }
+    Ok(())
+}
+
+/// The most characters of one instance's label (the `Label` key of its
+/// `instances.ini` section).
+pub const LABEL_MAX: usize = 64;
+
+/// One instance's label: spaces and tabs trimmed at both ends, then empty
+/// (the caller removes the key) or 1 to [`LABEL_MAX`] characters with no
+/// control character and no `;` or `#` ([`comment_markers`]: the INI reader
+/// cuts a value at one of those). The key lives on one line of
+/// `instances.ini`, so a control character is a second line. Each refusal
+/// carries the trimmed text, the one the file would have held.
+pub fn instance_label(text: &str) -> Result<(), Refusal> {
+    let label = text.trim_matches([' ', '\t']);
+    if label.is_empty() {
+        return Ok(());
+    }
+    if label.contains([';', '#']) {
+        return Err(Refusal::new("comment-markers", &[&label]));
+    }
+    if label.chars().count() > LABEL_MAX || label.chars().any(char::is_control) {
+        return Err(Refusal::new("instance-bad-label", &[&label]));
     }
     Ok(())
 }
@@ -3573,6 +3601,66 @@ top-p = 0.95\r\n";
     /// The `Tags` value as the file writes it: a comma-separated list.
     fn tags(v: &str) -> Vec<String> {
         v.split(',').map(String::from).collect()
+    }
+
+    /// An instance's label (IL1, the `Label` key of its `instances.ini`
+    /// section): spaces and tabs trimmed at both ends, so empty after the trim
+    /// is the clear and passes; otherwise 1 to [`LABEL_MAX`] characters, with no
+    /// control character (the key lives in one line of the file) and no `;` or
+    /// `#` (the INI reader cuts the value there, answered by the marker rule).
+    /// Every refusal carries the label it refused and travels over the wire.
+    #[test]
+    fn an_instance_label_is_trimmed_text_of_up_to_64_plain_characters() {
+        for text in [
+            "",
+            "   ",
+            "\t ",
+            "Coding box",
+            "  Coding box\t",
+            &"z".repeat(LABEL_MAX),
+            // A `[` in the value is no section header: the key is read whole.
+            "box [0]",
+            "Coding  Box",
+        ] {
+            assert_eq!(instance_label(text), Ok(()), "{text:?}");
+        }
+        let long = "z".repeat(LABEL_MAX + 1);
+        for text in [
+            long.as_str(),
+            "two\nlines",
+            "tab\there",
+            "nul\0end",
+            "bell\u{7}",
+            // The trim is of spaces and tabs only: a newline at either end is
+            // a control character, not a space to strip.
+            "\n",
+            "x\n",
+        ] {
+            let r = instance_label(text).expect_err(&format!("{text:?}"));
+            assert_eq!(r.key, "instance-bad-label", "{text:?}: {r:?}");
+            assert!(KEYS.contains(&r.key), "{} missing from checks::KEYS", r.key);
+            assert_eq!(
+                Refusal::decode(&r.encode()),
+                Some(r.clone()),
+                "wire round trip: {r:?}"
+            );
+            assert!(
+                !r.values.is_empty(),
+                "the refusal names the label it refused: {r:?}"
+            );
+        }
+        for text in ["a;b", "Coding #1", "#leading", ";"] {
+            let r = instance_label(text).expect_err(&format!("{text:?}"));
+            assert_eq!(r.key, "comment-markers", "{text:?}: {r:?}");
+            assert_eq!(
+                Refusal::decode(&r.encode()),
+                Some(r.clone()),
+                "wire round trip: {r:?}"
+            );
+        }
+        // The refusal carries the trimmed text, the one the file would hold.
+        let r = instance_label("  a;b  ").expect_err("a marker inside");
+        assert_eq!(r.values, vec!["a;b".to_string()], "{r:?}");
     }
 
     /// `chat-template-kwargs` is parsed by llama.cpp as a JSON object

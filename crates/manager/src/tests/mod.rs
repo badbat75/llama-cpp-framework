@@ -90,6 +90,9 @@ fn data_root_e2e() {
     // ── Manager core: the tags of an instance, and the list with them ────
     crate::manager::service::manager_instance_tags_e2e();
 
+    // ── Manager core: the label of an instance (IL1) ──────────────────────
+    crate::manager::service::manager_instance_label_e2e();
+
     // ── Manager core: creating and deleting the node's server profiles ────
     crate::manager::service::manager_server_profile_crud_e2e();
 

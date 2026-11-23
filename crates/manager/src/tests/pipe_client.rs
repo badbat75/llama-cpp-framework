@@ -919,6 +919,175 @@ pub(crate) fn manager_pipe_client_e2e() {
         hang_up(server, client);
     }
 
+    // ── The label of an instance, end to end ─────────────────────────────
+    // The same verb as over D-Bus, over the named pipe's frame: `Instances`
+    // answers the label beside the id, the accepted text lands trimmed, the
+    // empty text REMOVES the key, and every refusal is the core's own error
+    // with the record untouched. The label is metadata: no unit is touched and
+    // the instance runs the whole time.
+    {
+        let seeded =
+            "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = big\nLabel = GPU box\n";
+        std::fs::write(sys.join("instances.ini"), seeded).expect("record");
+        let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
+
+        // No identity, no write, as every guarded verb.
+        let c = core(true, &[]);
+        let (server, client) = connect(&c, &Caller(String::new()));
+        assert_eq!(
+            client.set_instance_label("default", "Coding box"),
+            Err(ClientError::NotAuthorized),
+            "no identity, no label change"
+        );
+        assert_eq!(
+            text_of("instances.ini"),
+            seeded,
+            "a refused call writes no record"
+        );
+        assert_eq!(asked(&c), vec![], "a call with no identity asks nobody");
+        hang_up(server, client);
+
+        let c = core(true, &[]);
+        let (server, client) = connect(&c, &alice);
+        assert_eq!(
+            client
+                .instances()
+                .expect("instances")
+                .iter()
+                .map(|r| (r.id.as_str(), r.label.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![("default", None), ("lan-2", Some("GPU box"))],
+            "the label of the section, and no label for a section that names none"
+        );
+        assert_eq!(asked(&c), vec![], "the list is answered with no identity");
+
+        assert_eq!(
+            client.set_instance_label("default", "  Coding box "),
+            Ok(()),
+            "a text with hanging space"
+        );
+        assert_eq!(
+            text_of("instances.ini"),
+            "[default]\nServerProfile = default\nLabel = Coding box\n\n[lan-2]\nServerProfile = big\nLabel = GPU box\n",
+            "the key written trimmed, every other byte of the record kept"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(alice.clone(), Action::Configure)],
+            "the guarded call a write is: configure asked of the caller"
+        );
+        assert_eq!(calls(&c), vec![], "a relabel touches no unit");
+        assert_eq!(
+            client.instances().expect("instances")[0].label.as_deref(),
+            Some("Coding box"),
+            "the write reads back over the same frame"
+        );
+
+        assert_eq!(
+            client.set_instance_label("default", ""),
+            Ok(()),
+            "the empty text clears the label"
+        );
+        assert_eq!(
+            text_of("instances.ini"),
+            seeded,
+            "the Label line is removed, never left empty"
+        );
+        assert_eq!(
+            client.instances().expect("instances")[0].label,
+            None,
+            "the cleared label is no label, and the UI falls back to engine and port"
+        );
+
+        // An instance writing the label it already carries is not a clash with
+        // itself.
+        assert_eq!(
+            client.set_instance_label("lan-2", "GPU box"),
+            Ok(()),
+            "the label of the instance itself"
+        );
+        assert_eq!(
+            client.set_instance_label("lan-3", "Coding box"),
+            Err(ClientError::NoInstance),
+            "lan-3 is no instance"
+        );
+        for bad in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                client.set_instance_label(bad, "Coding box"),
+                Err(ClientError::InvalidId),
+                "id {bad:?}"
+            );
+        }
+        for text in [
+            "z".repeat(pai_core::checks::LABEL_MAX + 1),
+            "two\nlines".to_string(),
+            "a;b".to_string(),
+            "Box #1".to_string(),
+        ] {
+            let got = client
+                .set_instance_label("default", &text)
+                .expect_err("the rule");
+            let want =
+                pai_core::checks::instance_label(&text).expect_err("the rule refuses it too");
+            match got {
+                ClientError::Invalid(refusal) => assert_eq!(
+                    (refusal.key, refusal.values.as_slice()),
+                    (want.key, want.values.as_slice()),
+                    "{text:?}: the client decodes the rule's own refusal"
+                ),
+                other => panic!("{text:?}: {other:?}"),
+            }
+        }
+        assert_eq!(
+            client.set_instance_label("default", "GPU BOX"),
+            Err(ClientError::Invalid(Refusal {
+                key: "instance-label-taken",
+                values: vec!["GPU BOX".to_string(), "lan-2".to_string()],
+            })),
+            "the label lan-2 carries, ignoring case, is taken, and the refusal names who holds it"
+        );
+        assert_eq!(
+            text_of("instances.ini"),
+            seeded,
+            "refused calls write nothing"
+        );
+
+        // (IL1 review D1) The label is unique among OTHER instances, over the
+        // frame too: lan-2 changing only the letter case of its own label
+        // relabels itself, and the new case stays taken for the neighbours.
+        assert_eq!(
+            client.set_instance_label("lan-2", "GPU BOX"),
+            Ok(()),
+            "lan-2 carries `GPU box`: the same text in another case is its own \
+             label, not a label another instance holds"
+        );
+        assert_eq!(
+            text_of("instances.ini"),
+            "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = big\nLabel = GPU BOX\n",
+            "the file holds the new case, every other byte kept"
+        );
+        assert_eq!(
+            client.instances().expect("instances")[1].label.as_deref(),
+            Some("GPU BOX"),
+            "the new case reads back over the same frame"
+        );
+        assert_eq!(
+            client.set_instance_label("default", "gpu box"),
+            Err(ClientError::Invalid(Refusal {
+                key: "instance-label-taken",
+                values: vec!["gpu box".to_string(), "lan-2".to_string()],
+            })),
+            "the new case is still taken by lan-2 for another instance"
+        );
+        assert_eq!(
+            text_of("instances.ini"),
+            "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = big\nLabel = GPU BOX\n",
+            "the refusal wrote nothing"
+        );
+        hang_up(server, client);
+        std::fs::write(sys.join("instances.ini"), record.as_bytes()).expect("restore instances");
+    }
+
     // ── The `As` form over a stream: the bff vouches for a member ────────
     // The frame names `SetServerProfileAs` and carries the principal beside
     // the verb's own arguments; the caller is the bff's service account and

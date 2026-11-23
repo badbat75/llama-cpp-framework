@@ -144,6 +144,7 @@ fn row(id: &str, profile: &str, port: u16) -> InstanceInfo {
         port,
         profile_tags: Vec::new(),
         instance_tags: Vec::new(),
+        label: None,
     }
 }
 

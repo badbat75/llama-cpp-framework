@@ -465,6 +465,16 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                     if profile.is_empty() {
                         continue;
                     }
+                    // The pipe has a null: `null` is "this section has no
+                    // label". The field is new, so a row of an older manager
+                    // answers none: that row simply carries no label. A field
+                    // that is no text and not `null` is a shape, like every
+                    // other one.
+                    let label = match row.get("label") {
+                        None | Some(Value::Null) => None,
+                        Some(Value::String(text)) => Some(text.clone()),
+                        Some(_) => return Err(ClientError::Other(v.to_string())),
+                    };
                     out.push(InstanceInfo {
                         id,
                         engine,
@@ -472,6 +482,7 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                         port: u16::try_from(port).map_err(|_| ClientError::Other(v.to_string()))?,
                         profile_tags,
                         instance_tags,
+                        label,
                     })
                 }
                 _ => return Err(ClientError::Other(v.to_string())),
@@ -521,6 +532,12 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         self.call_unit(self.guarded(
             "SetInstanceTags",
             &[("instance", json!(instance)), ("tags", json!(tags))],
+        ))
+    }
+    fn set_instance_label(&self, instance: &str, label: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "SetInstanceLabel",
+            &[("instance", json!(instance)), ("label", json!(label))],
         ))
     }
     fn devices(&self) -> Result<NodeDevices, ClientError> {
@@ -968,7 +985,7 @@ mod tests {
         vec!["edge".to_string(), "v2".to_string()]
     }
 
-    const EVERY_METHOD: [(&str, Call); 17] = [
+    const EVERY_METHOD: [(&str, Call); 18] = [
         ("list_instances", |c| c.list_instances().err()),
         ("instances", |c| c.instances().err()),
         ("devices", |c| c.devices().err()),
@@ -993,6 +1010,9 @@ mod tests {
         }),
         ("set_instance_tags", |c| {
             c.set_instance_tags("lan-2", &tags()).err()
+        }),
+        ("set_instance_label", |c| {
+            c.set_instance_label("lan-2", "Coding box").err()
         }),
         ("authenticate", |c| {
             c.authenticate("alice", "s3cret-Pw").err()
@@ -1182,6 +1202,7 @@ mod tests {
                     port: 8080,
                     profile_tags: vec!["edge".into(), "v2".into()],
                     instance_tags: vec![],
+                    label: None,
                 },
                 InstanceInfo {
                     id: "lan-2".into(),
@@ -1190,6 +1211,7 @@ mod tests {
                     port: 8081,
                     profile_tags: vec![],
                     instance_tags: vec!["gpu".into()],
+                    label: None,
                 },
             ],
             "the row's fields, in the manager's order"
@@ -1219,6 +1241,60 @@ mod tests {
             matches!(got, Err(ClientError::Other(_))),
             "an older manager's list, a row naming no profile, is refused: {got:?}"
         );
+    }
+
+    /// The `label` of slice IL1, read as the design answers it: the text the
+    /// manager wrote, `null` for a section with no `Label` key (the web UI
+    /// falls back to the engine and the port), and a row of an older manager
+    /// that answers no field at all is no label, not a refused list. A field
+    /// that is no text and not `null` is a reply of the wrong shape, said as
+    /// `Other` like every other one.
+    #[test]
+    fn an_instances_row_label_is_the_text_null_or_no_field() {
+        let row = |label: &str| {
+            format!(
+                "{{\"id\": \"default\", \"engine\": \"llama.cpp\", \"server_profile\": \"big\", \
+                 \"port\": 8080, \"profile_tags\": [], \"instance_tags\": [], \"label\": {label}}}"
+            )
+        };
+        for (body, want) in [
+            (row("\"Coding box\""), Some("Coding box")),
+            (row("null"), None),
+        ] {
+            let (client, _) = client_on(input(&[
+                json!({"ok": [serde_json::from_str::<serde_json::Value>(&body).expect("row")]}),
+            ]));
+            let rows = client.instances().expect("the list");
+            assert_eq!(
+                rows[0].label.as_deref(),
+                want,
+                "the row reads {want:?} out of {body}"
+            );
+        }
+        // The field is new: a manager that does not know it answers no field,
+        // and its list is still a list, with no label on any row.
+        let (client, _) = client_on(input(&[json!({"ok": [
+            {"id": "default", "engine": "llama.cpp", "server_profile": "big", "port": 8080, "profile_tags": [], "instance_tags": []},
+        ]})]));
+        let rows = client.instances().expect("the older manager's list");
+        assert_eq!(
+            rows.len(),
+            1,
+            "a row with no label field is a row like any other"
+        );
+        assert_eq!(
+            rows[0].label, None,
+            "no field is no label, not a failure of the list"
+        );
+        for label in ["5", "true", "[]", "{}"] {
+            let (client, _) = client_on(input(&[
+                json!({"ok": [serde_json::from_str::<serde_json::Value>(&row(label)).expect("row")]}),
+            ]));
+            assert!(
+                matches!(client.instances(), Err(ClientError::Other(_))),
+                "a label that is no text: {label}"
+            );
+        }
     }
 
     // ── The node's devices (G2, ARCHITECTURE.md 1) ──────────────────────
@@ -2165,7 +2241,7 @@ mod tests {
     #[test]
     fn every_method_sends_its_request() {
         let contents = "[Qwen 3 (v2) é]\nmodel = /models/q.gguf\n";
-        let cases: [(Call, Value); 16] = [
+        let cases: [(Call, Value); 17] = [
             (
                 |c| c.boot_enabled("lan-2").err(),
                 json!({"method": "BootEnabled", "id": "lan-2"}),
@@ -2245,6 +2321,10 @@ mod tests {
             (
                 |c| c.set_instance_tags("lan-2", &tags()).err(),
                 json!({"method": "SetInstanceTags", "instance": "lan-2", "tags": ["edge", "v2"]}),
+            ),
+            (
+                |c| c.set_instance_label("lan-2", "Coding box").err(),
+                json!({"method": "SetInstanceLabel", "instance": "lan-2", "label": "Coding box"}),
             ),
         ];
         for (f, request) in cases {
@@ -2546,7 +2626,7 @@ mod tests {
     #[test]
     fn an_acting_client_sends_the_as_forms() {
         let refused = error_reply("InvalidId", "InvalidId");
-        let cases: [Case; 10] = [
+        let cases: [Case; 11] = [
             (
                 "start",
                 |c| c.start("default").err(),
@@ -2605,6 +2685,11 @@ mod tests {
                 "set_instance_tags",
                 |c| c.set_instance_tags("lan-2", &tags()).err(),
                 json!({"method": "SetInstanceTagsAs", "principal": "alice", "instance": "lan-2", "tags": ["edge", "v2"]}),
+            ),
+            (
+                "set_instance_label",
+                |c| c.set_instance_label("lan-2", "Coding box").err(),
+                json!({"method": "SetInstanceLabelAs", "principal": "alice", "instance": "lan-2", "label": "Coding box"}),
             ),
         ];
         for (method, act, request) in cases {

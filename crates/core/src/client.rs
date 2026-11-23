@@ -188,6 +188,11 @@ pub struct ManagerVersion {
 /// section verbatim: the server file the instance reads is
 /// `server@<server_profile>.ini`, not one named after the id. `None` is a
 /// manager of an older protocol, which answers no field.
+///
+/// `label` is the `Label` of the instance's section, trimmed as the writer
+/// wrote it (IL1): the name the web UI shows beside the id. `None` is no
+/// label, which is what a section with no `Label` key is, and what a manager
+/// of an older protocol answers: the UI falls back to the engine and the port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceInfo {
     pub id: String,
@@ -196,6 +201,7 @@ pub struct InstanceInfo {
     pub port: u16,
     pub profile_tags: Vec<String>,
     pub instance_tags: Vec<String>,
+    pub label: Option<String>,
 }
 
 /// One compute device of the node, as the engine's own probe reported it: the
@@ -453,9 +459,6 @@ pub trait ManagerClient {
     }
     /// Creates the instance `id` of the engine `engine`, pointing it at the
     /// server profile `server_profile`. Guarded as a write of a served file is.
-    ///
-    /// STUB (slice 16, tester): the verb exists so the tests compile; the
-    /// manager's rule and every transport's body are the coder's.
     fn create_instance(
         &self,
         engine: &str,
@@ -470,9 +473,6 @@ pub trait ManagerClient {
     /// Removes the instance `id`: its unit, its record section, its assignment
     /// sections and its model-profile render, leaving the server profile, the
     /// model profiles and the state. Guarded as a write of a served file is.
-    ///
-    /// STUB (slice 16, tester): the verb exists so the tests compile; the
-    /// manager's rule and every transport's body are the coder's.
     fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
         let _ = id;
         Err(ClientError::Other(
@@ -529,9 +529,6 @@ pub trait ManagerClient {
     /// file holds (`ClientError::Invalid` with `model-profile-name-taken`).
     /// Guarded as a write of a served file is.
     ///
-    /// STUB (slice MP1, tester): the verb exists so the tests compile; the
-    /// manager's rule and every transport's body are the coder's.
-    ///
     /// The default body is for a transport that speaks to a manager of an
     /// older protocol: the call is one it cannot make, said as
     /// [`ClientError::Other`]. A transport that speaks the method overrides it.
@@ -551,9 +548,6 @@ pub trait ManagerClient {
     /// naming the instances, and a name neither file holds is
     /// `no-model-profile-named` (all `ClientError::Invalid`). Guarded as a write
     /// of a served file is.
-    ///
-    /// STUB (slice MP1, tester): the verb exists so the tests compile; the
-    /// manager's rule and every transport's body are the coder's.
     ///
     /// The default body is for a transport that speaks to a manager of an
     /// older protocol: the call is one it cannot make, said as
@@ -577,6 +571,26 @@ pub trait ManagerClient {
         let _ = (instance, tags);
         Err(ClientError::Other(
             "this transport of the manager has no SetInstanceTags".into(),
+        ))
+    }
+    /// Writes the label of the instance `instance` (IL1): the text the web UI
+    /// shows beside the id, with the spaces and tabs of its ends trimmed; the
+    /// empty text removes the key, leaving no label. Guarded as a write of a
+    /// served file is: a caller who may not configure is
+    /// [`ClientError::NotAuthorized`], a text the rule refuses is
+    /// [`ClientError::Invalid`] with `instance-bad-label` or `comment-markers`,
+    /// a label another instance of the node holds is [`ClientError::Invalid`]
+    /// with `instance-label-taken`, and an id the record lacks is
+    /// [`ClientError::NoInstance`], each with nothing written. It works while
+    /// the instance runs: the label is nothing the engine reads.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn set_instance_label(&self, instance: &str, label: &str) -> Result<(), ClientError> {
+        let _ = (instance, label);
+        Err(ClientError::Other(
+            "this transport of the manager has no SetInstanceLabel".into(),
         ))
     }
     /// The node's compute devices, from the engine's own probe, with the

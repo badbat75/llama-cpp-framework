@@ -60,6 +60,9 @@ enum Request {
     SetServerProfile(String, String, Option<Principal>),
     /// `instance`, `tags`: the record's own tags of an instance.
     SetInstanceTags(String, Vec<String>, Option<Principal>),
+    /// `instance`, `label`: the label of an instance, the text the web UI shows
+    /// beside its id (IL1). The empty text removes the key.
+    SetInstanceLabel(String, String, Option<Principal>),
     /// `engine`, `profile`, `port`: writes a new server profile (`0` leaves
     /// the file no `Port` key).
     CreateServerProfile(String, String, u16, Option<Principal>),
@@ -203,6 +206,12 @@ impl Request {
             "SetInstanceTagsAs" => {
                 Request::SetInstanceTags(arg("instance")?, tags()?, principal().map(Some)?)
             }
+            // The label verb: the instance and the text the web UI shows beside
+            // its id. The text is required, and `""` is a text: the clear.
+            "SetInstanceLabel" => Request::SetInstanceLabel(arg("instance")?, arg("label")?, None),
+            "SetInstanceLabelAs" => {
+                Request::SetInstanceLabel(arg("instance")?, arg("label")?, principal().map(Some)?)
+            }
             // The create of a server profile: the engine, the name and the port.
             "CreateServerProfile" => {
                 Request::CreateServerProfile(arg("engine")?, arg("profile")?, port()?, None)
@@ -308,7 +317,9 @@ where
         // One object per instance, the two tag lists kept apart: the web UI
         // shows the profile's first and says which is which. The server
         // profile of a section that names none is the empty string, the same
-        // answer the bus gives.
+        // answer the bus gives. The label is JSON `null` when the section has
+        // none: the pipe has a null, so the row says "no label" and not "an
+        // empty label".
         Request::Instances => Ok(json!(manager
             .instances()
             .iter()
@@ -319,6 +330,7 @@ where
                 "port": i.port,
                 "profile_tags": i.profile_tags,
                 "instance_tags": i.instance_tags,
+                "label": i.label,
             }))
             .collect::<Vec<_>>())),
         Request::Status(id) => manager.status(&id).map(|s| json!(state_name(s))),
@@ -362,6 +374,10 @@ where
         // The record's own tags of one instance.
         Request::SetInstanceTags(instance, tags, principal) => requester(caller, principal)
             .and_then(|who| manager.set_instance_tags(&who, &instance, &tags))
+            .map(|()| Value::Null),
+        // The label of one instance, the text the web UI shows beside its id.
+        Request::SetInstanceLabel(instance, label, principal) => requester(caller, principal)
+            .and_then(|who| manager.set_instance_label(&who, &instance, &label))
             .map(|()| Value::Null),
         // A new server profile. The port travels as an integer and 0 is no
         // port, so the file the core writes carries no `Port` key.
@@ -1170,6 +1186,142 @@ mod tests {
             requests(&[
                 json!({"method": "SetInstanceTagsAs", "principal": "alice", "instance": "../x", "tags": ["edge"]}),
                 json!({"method": "SetInstanceTagsAs", "principal": "bob", "instance": "../x", "tags": ["edge"]}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("InvalidId", "InvalidId"),
+                error("NotAuthorized", "NotAuthorized")
+            ],
+            "a member reaches the core's own checks, a caller outside `pai` is refused"
+        );
+        assert_eq!(
+            asked_admin(&admins),
+            vec!["alice".to_string(), "bob".to_string()],
+            "the membership of the name the request vouches for, once per call"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![],
+            "polkit asked, so the call ran as the bff's own, not for the principal"
+        );
+        assert_eq!(asked_bff(&c), vec![bff(); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `SetInstanceLabel` asks the authority for configure as the connection's
+    /// caller, like the tags verb; a refused caller changes nothing. Every id
+    /// here is one the core refuses before it reads a record, so nothing reaches
+    /// `paths::` (this unit test does not redirect the data root).
+    #[test]
+    fn the_label_change_asks_configure_and_a_refused_caller_changes_nothing() {
+        let c = core(false);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "SetInstanceLabel", "instance": "a_b", "label": "Coding box"}),
+                json!({"method": "SetInstanceLabel", "instance": "default", "label": "Coding box"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("NotAuthorized", "NotAuthorized"),
+                error("NotAuthorized", "NotAuthorized")
+            ]
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 2]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// The refusals of the label verb, over the wire: an id that is no id,
+    /// answered first, then a text the rule refuses, its message the encoded
+    /// refusal the client decodes. The rule is answered before the record is
+    /// read, so a refused text touches no path, and nothing is done.
+    #[test]
+    fn the_label_of_an_invalid_id_or_a_refused_text_is_answered() {
+        let refusal = |text: &str| -> String {
+            pai_core::checks::instance_label(text)
+                .expect_err("the rule refuses this text")
+                .encode()
+        };
+        let c = core(true);
+        let long = "z".repeat(pai_core::checks::LABEL_MAX + 1);
+        let (result, replies) = serve(
+            &c,
+            alice(),
+            requests(&[
+                json!({"method": "SetInstanceLabel", "instance": "a_b", "label": "Coding box"}),
+                json!({"method": "SetInstanceLabel", "instance": "", "label": "Coding box"}),
+                json!({"method": "SetInstanceLabel", "instance": "default", "label": &long}),
+                json!({"method": "SetInstanceLabel", "instance": "default", "label": "two\nlines"}),
+                json!({"method": "SetInstanceLabel", "instance": "default", "label": "a;b"}),
+                json!({"method": "SetInstanceLabel", "instance": "default", "label": "Box #1"}),
+            ]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(
+            replies,
+            vec![
+                error("InvalidId", "InvalidId"),
+                error("InvalidId", "InvalidId"),
+                error("Invalid", &refusal(&long)),
+                error("Invalid", &refusal("two\nlines")),
+                error("Invalid", &refusal("a;b")),
+                error("Invalid", &refusal("Box #1")),
+            ],
+            "the id first, then the text, the rule's answer encoded as every Invalid reply is"
+        );
+        assert_eq!(asked(&c), vec![(alice(), Action::Configure); 6]);
+        assert_eq!(calls(&c), vec![]);
+    }
+
+    /// `instance` is a required string and `label` a required string, the empty
+    /// one included (it is the clear): a frame missing one, carrying one of the
+    /// wrong type, a principal that disagrees with the `As` spelling, or a
+    /// method spelled otherwise, is no request.
+    #[test]
+    fn a_malformed_label_request_is_a_bad_request() {
+        for body in [
+            json!({"method": "SetInstanceLabel", "label": "Coding box"}),
+            json!({"method": "SetInstanceLabel", "instance": "default"}),
+            json!({"method": "SetInstanceLabel", "instance": 5, "label": "Coding box"}),
+            json!({"method": "SetInstanceLabel", "instance": "default", "label": 5}),
+            json!({"method": "SetInstanceLabel", "instance": "default", "label": null}),
+            json!({"method": "SetInstanceLabel", "instance": "default", "label": ["Coding box"]}),
+            json!({"method": "SetInstanceLabel", "instance": "default", "label": {"l": "box"}}),
+            json!({"method": "SetInstanceLabelAs", "principal": "alice", "instance": "default"}),
+            json!({"method": "SetInstanceLabel", "principal": "alice", "instance": "default", "label": "Coding box"}),
+            json!({"method": "setInstanceLabel", "instance": "default", "label": "Coding box"}),
+            json!({"method": "SetInstanceLabel", "instance": "default", "labels": "Coding box"}),
+        ] {
+            let c = core(true);
+            let (result, replies) = serve(&c, alice(), requests(std::slice::from_ref(&body)));
+            assert!(result.is_err(), "{body}");
+            assert_eq!(replies.len(), 1, "{body}: {replies:?}");
+            assert_bad_request(&replies[0], &body.to_string());
+            assert_eq!(asked(&c), vec![], "{body}");
+            assert_eq!(calls(&c), vec![], "{body}");
+        }
+    }
+
+    /// The `As` form of the label verb carries the principal and runs for the
+    /// bff's account alone: a member's call reaches the core's own checks, a
+    /// principal outside `pai` is refused, the membership asked for the name
+    /// sent, polkit never asked for a principal.
+    #[test]
+    fn the_label_as_form_acts_for_the_principal() {
+        let (c, admins) = principal_core(FakePasswords::new());
+        let (result, replies) = serve(
+            &c,
+            bff(),
+            requests(&[
+                json!({"method": "SetInstanceLabelAs", "principal": "alice", "instance": "../x", "label": "Coding box"}),
+                json!({"method": "SetInstanceLabelAs", "principal": "bob", "instance": "../x", "label": "Coding box"}),
             ]),
         );
         assert!(result.is_ok(), "{result:?}");

@@ -271,11 +271,23 @@ where
         self.core(|m| m.list_instances()).await
     }
 
-    /// `Instances`: one row per instance, `(sssqasas)`, the third field the
+    /// `Instances`: one row per instance, `(sssqasass)`, the third field the
     /// name of the server profile its section names (the empty string when it
     /// names none), the last two arrays the tags of that profile and the tags
-    /// of its own section. Answered to any caller, as the list of ids is.
-    async fn instances(&self) -> Vec<(String, String, String, u16, Vec<String>, Vec<String>)> {
+    /// of its own section, the last field the label of its section (the
+    /// empty string when it has none: the bus has no null). Answered to any
+    /// caller, as the list of ids is.
+    async fn instances(
+        &self,
+    ) -> Vec<(
+        String,
+        String,
+        String,
+        u16,
+        Vec<String>,
+        Vec<String>,
+        String,
+    )> {
         self.core(|m| {
             m.instances()
                 .into_iter()
@@ -287,6 +299,7 @@ where
                         i.port,
                         i.profile_tags,
                         i.instance_tags,
+                        i.label.unwrap_or_default(),
                     )
                 })
                 .collect()
@@ -641,6 +654,35 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.set_instance_tags(&who, &instance, &tags))
+            .await?)
+    }
+
+    /// `SetInstanceLabel`: the label of one instance, `(ss)`. The empty text
+    /// removes the key.
+    async fn set_instance_label(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        instance: String,
+        label: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.set_instance_label(&who, &instance, &label))
+            .await?)
+    }
+
+    /// `SetInstanceLabel` for `principal`, the principal first as every `As`
+    /// method has it (`sss`).
+    async fn set_instance_label_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        instance: String,
+        label: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.set_instance_label(&who, &instance, &label))
             .await?)
     }
 
@@ -1877,10 +1919,11 @@ pub(crate) fn manager_dbus_e2e() {
             .expect("restore the fixture record");
     }
 
-    // ── Instances and the tags of an instance: `(a(sssqasas))` and `(sas)` ─
+    // ── Instances and the tags of an instance: `(a(sssqasass))` and `(sas)` ─
     // `Instances` answers one row per instance: id, engine, the name of the
     // server profile its section names, port, the tags of that profile, the
-    // tags of its own section. The name is there because the file the instance
+    // tags of its own section, and the label of slice IL1 (the bus has no
+    // null, so a section naming no label answers the empty string). The name is there because the file the instance
     // runs is not named after the instance, and a client that reads a server
     // file cannot invent it. It asks nobody anything, as the list of ids does.
     // `SetInstanceTags` answers the unit and writes one key of one section.
@@ -1902,11 +1945,21 @@ pub(crate) fn manager_dbus_e2e() {
         let r = call(&client, "Instances", &()).expect("Instances");
         assert_eq!(
             r.body().signature().to_string(),
-            "a(sssqasas)",
-            "an array of a struct of two strings, the server profile, a uint16 and two arrays of strings"
+            "a(sssqasass)",
+            "an array of a struct of two strings, the server profile, a uint16, two arrays of strings and the label"
         );
         assert_eq!(
-            body::<Vec<(String, String, String, u16, Vec<String>, Vec<String>)>>(&r),
+            body::<
+                Vec<(
+                    String,
+                    String,
+                    String,
+                    u16,
+                    Vec<String>,
+                    Vec<String>,
+                    String,
+                )>,
+            >(&r),
             vec![(
                 "default".to_string(),
                 "llama.cpp".to_string(),
@@ -1914,9 +1967,10 @@ pub(crate) fn manager_dbus_e2e() {
                 8080u16,
                 vec!["edge".to_string(), "v2".to_string()],
                 vec!["gpu".to_string(), "edge".to_string()],
+                String::new(),
             )],
             "the server profile the section names, the port of that profile, its tags, \
-             and the section's own trimmed"
+             and the section's own trimmed, and no label: the bus has no null"
         );
         assert_eq!(
             *c.authority().asked.lock().unwrap(),
@@ -1995,6 +2049,184 @@ pub(crate) fn manager_dbus_e2e() {
             "[default]\nServerProfile = default\n",
         )
         .expect("restore the record");
+    }
+
+    // ── The label of an instance (IL1): the text the web UI shows beside the id
+    // `SetInstanceLabel(ss)` answers the unit: the text trimmed at both ends
+    // into the section's `Label` key, the empty text REMOVING the key. The
+    // `Instances` row grows one field at the end, `s label`: the bus has no
+    // null, so the empty string is "this section has no label", and the UI falls
+    // back to the engine and the port of the same row. A label another instance
+    // carries, ignoring case, is `instance-label-taken`; a text the rule refuses
+    // is `instance-bad-label` and one with a `;` or a `#` is `comment-markers`,
+    // each with the record untouched. A body of the wrong shape is zbus's own
+    // error, never one of the manager's.
+    {
+        // The two files this block rewrites, as the blocks before left them,
+        // so the blocks after read what they read without this block.
+        let fixture = std::fs::read_to_string(sys.join("instances.ini")).expect("record");
+        let profile = std::fs::read_to_string(sys.join("server@default.ini")).expect("profile");
+        let seeded = "[default]\nServerProfile = default\n\n[gpu-1]\nServerProfile = gpu-1\nLabel = GPU box\nnote = keep me\n";
+        std::fs::write(sys.join("instances.ini"), seeded).expect("record");
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
+        )
+        .expect("profile");
+        let c = Arc::new(Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            FakeResolver::lan(),
+        ));
+        let (_server, client) = connect(&c, Some(":1.42"));
+        type Rows = Vec<(
+            String,
+            String,
+            String,
+            u16,
+            Vec<String>,
+            Vec<String>,
+            String,
+        )>;
+        let row = |id: &str, profile: &str, port: u16, label: &str| {
+            (
+                id.to_string(),
+                "llama.cpp".to_string(),
+                profile.to_string(),
+                port,
+                Vec::<String>::new(),
+                Vec::<String>::new(),
+                label.to_string(),
+            )
+        };
+
+        let r = call(&client, "Instances", &()).expect("Instances");
+        assert_eq!(
+            r.body().signature().to_string(),
+            "a(sssqasass)",
+            "the row grows by the label at its end"
+        );
+        assert_eq!(
+            body::<Rows>(&r),
+            vec![
+                row("default", "default", 8080, ""),
+                row("gpu-1", "gpu-1", 0, "GPU box"),
+            ],
+            "a section with no Label is the empty string, the engine and the port \
+             travel beside the label in the same row"
+        );
+
+        let r = call(&client, "SetInstanceLabel", &("default", "  Coding box "))
+            .expect("SetInstanceLabel of default");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            "[default]\nServerProfile = default\nLabel = Coding box\n\n[gpu-1]\nServerProfile = gpu-1\nLabel = GPU box\nnote = keep me\n",
+            "the key written trimmed, every other byte of the record kept"
+        );
+
+        assert!(
+            matches!(
+                call(&client, "SetInstanceLabel", &("default", ""))
+                    .ok()
+                    .map(|r| r.body().signature().to_string()),
+                Some(s) if s.is_empty()
+            ),
+            "the empty text is accepted, and answers the unit"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            seeded,
+            "the empty text removed the Label line, not left it empty"
+        );
+        assert_eq!(
+            body::<Rows>(&call(&client, "Instances", &()).expect("Instances"))[0].6,
+            "",
+            "the row answers no label after the clear"
+        );
+
+        for (args, kind, needle) in [
+            (("default", "GPU BOX"), "Invalid", "instance-label-taken"),
+            (("default", "a;b"), "Invalid", "comment-markers"),
+            (("default", "Coding #1"), "Invalid", "comment-markers"),
+            (
+                ("default", "z".repeat(65).as_str()),
+                "Invalid",
+                "instance-bad-label",
+            ),
+            (("default", "two\nlines"), "Invalid", "instance-bad-label"),
+            (("lan-3", "Coding box"), "NoInstance", ""),
+            (("a_b", "Coding box"), "InvalidId", ""),
+        ] {
+            let e =
+                call(&client, "SetInstanceLabel", &args).expect_err(&format!("{args:?} refused"));
+            assert_eq!(e.0, err_name(kind), "{args:?}: {e:?}");
+            if !needle.is_empty() {
+                assert!(
+                    e.1.contains(needle),
+                    "the refusal key travels in the message: {args:?}: {e:?}"
+                );
+            }
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            seeded,
+            "every refusal above wrote nothing"
+        );
+
+        // The rule is unique among OTHER instances: gpu-1 carries `GPU box`, so
+        // the same text in another case is its own label. The bus accepts it,
+        // writes the new case, and the row reads it back.
+        assert!(
+            matches!(
+                call(&client, "SetInstanceLabel", &("gpu-1", "GPU BOX"))
+                    .ok()
+                    .map(|r| r.body().signature().to_string()),
+                Some(s) if s.is_empty()
+            ),
+            "an instance relabelling the case of its own label is no clash: ()"
+        );
+        assert_eq!(
+            body::<Rows>(&call(&client, "Instances", &()).expect("Instances"))[1].6,
+            "GPU BOX",
+            "the row carries the new case of gpu-1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            seeded.replacen("Label = GPU box", "Label = GPU BOX", 1),
+            "the new case, and every other byte kept"
+        );
+        std::fs::write(sys.join("instances.ini"), seeded).expect("restore the record");
+
+        // The signature is `(ss)`: an id and a text. zbus answers a shape
+        // mismatch with its own error, never one of the manager's.
+        for e in [
+            call(&client, "SetInstanceLabel", &("default",)).expect_err("one string"),
+            call(&client, "SetInstanceLabel", &("default", 7u32))
+                .expect_err("a number where a string belongs"),
+            call(
+                &client,
+                "SetInstanceLabel",
+                &("default", vec!["x".to_string()]),
+            )
+            .expect_err("an array where a string belongs"),
+        ] {
+            assert!(
+                !e.0.starts_with("org.privateai.Manager1."),
+                "not the manager's error: {e:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
+            seeded,
+            "a body the method does not take writes nothing"
+        );
+        std::fs::write(sys.join("instances.ini"), fixture).expect("restore the record");
+        std::fs::write(sys.join("server@default.ini"), profile).expect("restore the profile");
     }
 
     // ── ReadFile says when it withheld the API key ───────────────────────
@@ -2962,6 +3194,86 @@ pub(crate) fn manager_dbus_principal_e2e() {
             &client,
             "SetInstanceTags",
             &("alice", "default", vec!["edge".to_string()]),
+        )
+        .expect_err("the plain verb with three arguments");
+        assert!(
+            !e.0.starts_with("org.privateai.Manager1."),
+            "not the manager's error: {e:?}"
+        );
+
+        // The record as the phase's fixture has it, for the blocks after.
+        std::fs::write(
+            sys.join("instances.ini"),
+            "[default]\nServerProfile = default\n",
+        )
+        .expect("restore the record");
+    }
+
+    // ── The member's label of an instance, vouched by the bff ─────────────
+    // `SetInstanceLabelAs(s principal, s instance, s label)`: the principal
+    // first, as every `As` method has it. An implementation taking the
+    // principal last reads "alice" as the instance id and answers InvalidId, so
+    // the shape is pinned. A member's text reaches the core's own rule; a
+    // non-member is refused and writes nothing.
+    {
+        std::fs::write(
+            sys.join("instances.ini"),
+            "[default]\nServerProfile = default\n\n[gpu-1]\nServerProfile = gpu-1\nLabel = GPU box\n",
+        )
+        .expect("instances.ini");
+        std::fs::write(sys.join("server@default.ini"), ini).expect("server@default.ini");
+        let record_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
+
+        let r = call(
+            &client,
+            "SetInstanceLabelAs",
+            &("alice", "default", "  Coding box "),
+        )
+        .expect("SetInstanceLabelAs for a member");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            record_of("instances.ini"),
+            "[default]\nServerProfile = default\nLabel = Coding box\n\n[gpu-1]\nServerProfile = gpu-1\nLabel = GPU box\n",
+            "a member's label lands, trimmed, and the other section is kept"
+        );
+
+        let e = call(
+            &client,
+            "SetInstanceLabelAs",
+            &("bob", "default", "Office box"),
+        )
+        .expect_err("SetInstanceLabelAs for a non-member");
+        assert_eq!(e.0, format!("{PREFIX}NotAuthorized"), "{e:?}");
+
+        // The rule runs for the vouched caller as it does for a plain one: a
+        // label the node already has, ignoring case, is refused.
+        let e = call(
+            &client,
+            "SetInstanceLabelAs",
+            &("alice", "default", "GPU BOX"),
+        )
+        .expect_err("a label gpu-1 already carries");
+        assert_eq!(e.0, format!("{PREFIX}Invalid"), "{e:?}");
+        assert!(
+            e.1.contains("instance-label-taken"),
+            "the refusal key travels in the message: {e:?}"
+        );
+        assert_eq!(
+            record_of("instances.ini"),
+            "[default]\nServerProfile = default\nLabel = Coding box\n\n[gpu-1]\nServerProfile = gpu-1\nLabel = GPU box\n",
+            "the refused calls wrote nothing"
+        );
+
+        // The `As` spelling is the only one carrying a principal: the plain
+        // verb takes two arguments, `(ss)`.
+        let e = call(
+            &client,
+            "SetInstanceLabel",
+            &("alice", "default", "Coding box"),
         )
         .expect_err("the plain verb with three arguments");
         assert!(

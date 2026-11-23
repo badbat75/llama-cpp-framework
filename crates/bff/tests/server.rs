@@ -532,6 +532,7 @@ impl ManagerClient for FakeManager {
                 port: 8080,
                 profile_tags: Vec::new(),
                 instance_tags: Vec::new(),
+                label: None,
             })
             .collect())
     }

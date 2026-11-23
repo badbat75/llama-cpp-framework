@@ -429,6 +429,7 @@ fn info(id: &str) -> InstanceInfo {
         port: 0,
         profile_tags: Vec::new(),
         instance_tags: Vec::new(),
+        label: None,
     }
 }
 

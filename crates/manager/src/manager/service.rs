@@ -1842,6 +1842,82 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
+    /// Replaces the `Label` key of the instance's own section of the record:
+    /// the text the web UI shows beside the id (IL1). Guarded as
+    /// `set_instance_tags` is: the principal and the `configure` gate, the
+    /// `writing` lock, and one action record for the whole call, done or
+    /// refused. The rule is `pai_core::checks::instance_label`, applied before
+    /// the record is read; the text lands trimmed by that very rule, spaces
+    /// and tabs at the ends and nothing else, and the empty text, after the
+    /// trim, REMOVES the key (never an empty key), so the reader sees no label
+    /// and the UI falls back to the engine and the port. A label equal to
+    /// ANOTHER instance's, ignoring letter case, is refused
+    /// `instance-label-taken` naming who holds it, judged under the write
+    /// lock; the section being written is never the one the rule compares
+    /// against, so an instance changing the letter case of its own label
+    /// relabels itself. The label is nothing the engine reads: a running
+    /// instance is relabelled without a stop, and nothing is rendered.
+    pub fn set_instance_label<W: AsRequester>(
+        &self,
+        who: &W,
+        instance: &str,
+        label: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            valid_id(instance)?;
+            pai_core::checks::instance_label(label).map_err(ManagerError::Invalid)?;
+            let label = label.trim_matches([' ', '\t']);
+            let dir = crate::paths::engine_config_dir();
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let record = read_record(&dir.join(INSTANCES_FILE)).map_err(io)?;
+            let sections = pai_core::ini::parse_sections(&record);
+            if !sections.iter().any(|section| section.id == instance) {
+                return Err(ManagerError::NoInstance);
+            }
+            // Unique on the node, ignoring letter case: two rows with one
+            // name defeat the point of a name. Not judged against the
+            // fallback text, nor against ids. The section being written is
+            // never one of the ones compared: an instance changing the letter
+            // case of its own label relabels itself, it does not clash with
+            // the text it already carries, and that text stays taken for every
+            // other instance.
+            if !label.is_empty() {
+                let taken = label.to_lowercase();
+                if let Some(other) = sections.iter().find(|section| {
+                    section.id != instance
+                        && section
+                            .keys
+                            .get("Label")
+                            .is_some_and(|held| held.trim().to_lowercase() == taken)
+                }) {
+                    return Err(ManagerError::Invalid(pai_core::checks::Refusal {
+                        key: "instance-label-taken",
+                        values: vec![label.to_string(), other.id.clone()],
+                    }));
+                }
+            }
+            let text = if label.is_empty() {
+                pai_core::ini::text::remove_key(&record, instance, "Label")
+            } else {
+                pai_core::ini::text::set_key(&record, instance, "Label", label)
+            };
+            write_served_file(
+                &dir.join(INSTANCES_FILE),
+                &ConfigFile::Models,
+                &text,
+                &*self.group,
+            )
+            .map_err(io)
+        };
+        let answer = run();
+        self.record_action("set_instance_label", instance, Some(&who), &answer);
+        answer
+    }
+
     /// Writes a new server profile of the engine `engine`: `server@<profile>.ini`
     /// rendered from the server config's defaults with `port` (`None` leaves the
     /// file no `Port` key, so the default port answers), written as a save
@@ -2136,6 +2212,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     port,
                     profile_tags,
                     instance_tags: list(section.keys.get("Tags")),
+                    // No `Label` key, or a blank one, is no label: the UI
+                    // falls back to the engine and the port of this row.
+                    label: section
+                        .keys
+                        .get("Label")
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty()),
                 }
             })
             .collect();
@@ -12141,6 +12224,495 @@ pub(crate) fn manager_instance_tags_e2e() {
         assert_eq!(
             keys_of(&text_of(INSTANCES_FILE), "default", "Tags"),
             vec!["Tags = gpu".to_string()],
+            "only the accepted call wrote"
+        );
+    }
+}
+/// The label of an instance, the `Label` key of its own section of
+/// `instances.ini` (IL1): the text the web UI shows beside the id. `Instances`
+/// answers it beside the id, the engine and the port, to any caller as the list
+/// of ids is; `SetInstanceLabel` writes the record, guarded as a write of a
+/// served file is: `configure` first, the `As` form answered only for the bff's
+/// account and a current member of `pai`, and one record of the action log per
+/// call, done or refused. The text is trimmed by `checks::instance_label`, so
+/// the file holds no hanging space; the empty text, after the trim, REMOVES the
+/// key (never an empty key), and the row answers no label. A label another
+/// instance of the node carries, ignoring letter case, is refused
+/// `instance-label-taken`. A label is metadata: the manager passes nothing to
+/// the engine, so a running instance is relabelled without a stop.
+#[cfg(test)]
+pub(crate) fn manager_instance_label_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core = |allow: bool, passwords: FakePasswords, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_passwords(passwords)
+        .with_log(log)
+    };
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    let keys_of = |text: &str, id: &str, key: &str| -> Vec<String> {
+        section(text, id)
+            .lines()
+            .filter(|line| line.trim_start().starts_with(&format!("{key} ")))
+            .map(|line| line.trim_end().to_string())
+            .collect()
+    };
+    // Every line of the section that mentions the key, in any spacing, so a
+    // cleared key shows up here and not only as an empty `keys_of`.
+    let lines_with = |text: &str, id: &str, key: &str| -> Vec<String> {
+        section(text, id)
+            .lines()
+            .filter(|line| line.trim_start().starts_with(key))
+            .map(|line| line.trim_end().to_string())
+            .collect()
+    };
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    let refused = |key: &'static str, values: &[&str]| -> Result<(), ManagerError> {
+        Err(ManagerError::Invalid(pai_core::checks::Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }))
+    };
+    // The record: `default` has no label, `gpu-1` carries one beside a
+    // hand-spaced tags list, a comment and a key of its own, and `lan-2` points
+    // at `default`'s profile.
+    const SEEDED: &str = "# the manager's own record\n[default]\nServerProfile = default\n\n[gpu-1]\nServerProfile = gpu-1\nLabel = GPU box\nTags = gpu , edge \n; a note\nnote = keep me\n\n[lan-2]\nServerProfile = default\nTags = lan\n";
+    std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8080\nHostname = 127.0.0.1\nTags = edge,v2\n",
+    )
+    .expect("default profile");
+    std::fs::write(
+        sys.join("server@gpu-1.ini"),
+        "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
+    )
+    .expect("gpu-1 profile");
+
+    {
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        let rows = m.instances();
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            vec!["default", "gpu-1", "lan-2"]
+        );
+        assert_eq!(
+            rows[0].label, None,
+            "a section with no Label key is no label, not an empty text"
+        );
+        assert_eq!(
+            rows[1].label.as_deref(),
+            Some("GPU box"),
+            "the key of the section, as it was written"
+        );
+        assert_eq!(
+            rows[2].label, None,
+            "a section of another instance is untouched by its neighbour's key"
+        );
+        assert_eq!(
+            (rows[1].engine.as_str(), rows[1].port),
+            ("llama.cpp", 8081),
+            "the engine and the port travel beside the label: the UI falls back \
+             to them, in one read, when there is no label"
+        );
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        let before = listing();
+
+        assert_eq!(
+            m.set_instance_label(&desktop, "default", "  Coding box "),
+            Ok(()),
+            "a text with hanging space"
+        );
+        let written = text_of(INSTANCES_FILE);
+        assert_eq!(
+            keys_of(&written, "default", "Label"),
+            vec!["Label = Coding box".to_string()],
+            "one key, trimmed at both ends"
+        );
+        assert_eq!(
+            written,
+            SEEDED.replacen(
+                "[default]\nServerProfile = default\n",
+                "[default]\nServerProfile = default\nLabel = Coding box\n",
+                1
+            ),
+            "every other byte of the record kept, the comment and the other sections included"
+        );
+        assert_eq!(
+            m.instances()[0].label.as_deref(),
+            Some("Coding box"),
+            "the write reads back"
+        );
+
+        assert_eq!(m.set_instance_label(&desktop, "default", "Box two"), Ok(()));
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "default", "Label"),
+            vec!["Label = Box two".to_string()],
+            "one key after two writes, not two"
+        );
+
+        // The limits are inclusive: 64 characters, and the spaces of the ends.
+        let at_limit = "z".repeat(pai_core::checks::LABEL_MAX);
+        assert_eq!(
+            m.set_instance_label(&desktop, "default", &format!(" {at_limit} ")),
+            Ok(()),
+            "64 characters, trimmed"
+        );
+        assert_eq!(m.instances()[0].label.as_deref(), Some(at_limit.as_str()));
+
+        // The empty text removes the key: the reader sees no label.
+        assert_eq!(m.set_instance_label(&desktop, "default", ""), Ok(()));
+        assert_eq!(
+            lines_with(&text_of(INSTANCES_FILE), "default", "Label"),
+            Vec::<String>::new(),
+            "the line is gone, not left empty"
+        );
+        assert_eq!(m.instances()[0].label, None, "the removed key is no label");
+        // Clearing a section that has no label is accepted and writes nothing.
+        let cleared = text_of(INSTANCES_FILE);
+        assert_eq!(m.set_instance_label(&desktop, "default", "   "), Ok(()));
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            cleared,
+            "a clear of a section with no label leaves the record as it is"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "the verb writes the record and no file of its own"
+        );
+        assert_eq!(
+            m.service().calls.lock().unwrap().clone(),
+            Vec::<fakes::Call>::new(),
+            "the label is nothing the engine reads: a relabel does not stop, \
+             start or restart the instance, which is running the whole time"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_instance_label" target="default" caller=":1.42" principal=- outcome=ok"#
+                    .to_string();
+                5
+            ],
+            "one record per call: the verb's action, the instance as its target, the caller, no principal as a bare -, ok"
+        );
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        let seed = text_of(INSTANCES_FILE);
+        let before = listing();
+
+        assert_eq!(
+            m.set_instance_label(&desktop, "lan-3", "Coding box"),
+            Err(ManagerError::NoInstance),
+            "an id that is no section of the record"
+        );
+        for id in ["", "../x", "Default", "a_b"] {
+            assert_eq!(
+                m.set_instance_label(&desktop, id, "Coding box"),
+                Err(ManagerError::InvalidId),
+                "not an instance id at all: {id:?}"
+            );
+        }
+
+        let long = "z".repeat(pai_core::checks::LABEL_MAX + 1);
+        for text in [
+            long.as_str(),
+            "two\nlines",
+            "tab\there",
+            "nul\0end",
+            "bell\u{7}",
+        ] {
+            assert_eq!(
+                m.set_instance_label(&desktop, "default", text),
+                refused("instance-bad-label", &[text]),
+                "{text:?}"
+            );
+        }
+        for text in ["a;b", "Coding #1", "#leading", ";"] {
+            assert_eq!(
+                m.set_instance_label(&desktop, "default", text),
+                refused("comment-markers", &[text]),
+                "{text:?}"
+            );
+        }
+        // Unique on the node, ignoring letter case: the label of another
+        // instance is refused, and the refusal names who holds it.
+        for text in ["GPU BOX", "gpu box", "  GPU box  "] {
+            let trimmed = text.trim();
+            assert_eq!(
+                m.set_instance_label(&desktop, "default", text),
+                refused("instance-label-taken", &[trimmed, "gpu-1"]),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            m.set_instance_label(&desktop, "gpu-1", "GPU box"),
+            Ok(()),
+            "an instance already holding the label is writing it to itself, not a clash"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            seed,
+            "every refusal above wrote nothing, and the accepted relabel of gpu-1 \
+             wrote the text the section already had"
+        );
+        assert_eq!(listing(), before, "and created no file");
+        let mut want = vec![
+            r#"action="set_instance_label" target="lan-3" caller=":1.42" principal=- outcome="NoInstance""#.to_string(),
+            r#"action="set_instance_label" target="" caller=":1.42" principal=- outcome="InvalidId""#.to_string(),
+            r#"action="set_instance_label" target="../x" caller=":1.42" principal=- outcome="InvalidId""#.to_string(),
+            r#"action="set_instance_label" target="Default" caller=":1.42" principal=- outcome="InvalidId""#.to_string(),
+            r#"action="set_instance_label" target="a_b" caller=":1.42" principal=- outcome="InvalidId""#.to_string(),
+        ];
+        want.extend(
+            vec![
+                r#"action="set_instance_label" target="default" caller=":1.42" principal=- outcome="Invalid""#.to_string();
+            12
+            ],
+        );
+        want.push(
+            r#"action="set_instance_label" target="gpu-1" caller=":1.42" principal=- outcome=ok"#
+                .to_string(),
+        );
+        assert_eq!(
+            records(&lines),
+            want,
+            "one record per refused call, the refusals of the rule all as Invalid"
+        );
+    }
+
+    // (IL1 review D1) The label is unique among OTHER instances. The section
+    // writing the text is never the one the rule compares against: an instance
+    // changing only the letter case of its own label relabels itself, it does
+    // not clash with the text it already carries.
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, FakePasswords::new(), log);
+        let before = listing();
+        let relabelled = SEEDED.replacen("Label = GPU box", "Label = GPU BOX", 1);
+
+        assert_eq!(
+            m.set_instance_label(&desktop, "gpu-1", "GPU BOX"),
+            Ok(()),
+            "gpu-1 carries `GPU box`: the same text in another case is its own \
+             label, not a label another instance holds"
+        );
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "gpu-1", "Label"),
+            vec!["Label = GPU BOX".to_string()],
+            "the file holds the new case, on one key"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            relabelled,
+            "every other byte of the record kept"
+        );
+        assert_eq!(
+            m.instances()[1].label.as_deref(),
+            Some("GPU BOX"),
+            "the new case reads back"
+        );
+        assert_eq!(
+            m.set_instance_label(&desktop, "gpu-1", "gpu BOX"),
+            Ok(()),
+            "again only the case: a second case-only relabel of the same instance"
+        );
+        // Skipping the writer's own section takes nothing off the rule: the new
+        // case of gpu-1 is still taken for every OTHER instance.
+        for text in ["gpu box", "GPU BOX", "  Gpu Box  "] {
+            let trimmed = text.trim();
+            assert_eq!(
+                m.set_instance_label(&desktop, "default", text),
+                refused("instance-label-taken", &[trimmed, "gpu-1"]),
+                "{text:?}: taken by gpu-1, ignoring case, and the refusal names it"
+            );
+        }
+        assert_eq!(
+            m.set_instance_label(&desktop, "lan-2", "gpu BOX"),
+            refused("instance-label-taken", &["gpu BOX", "gpu-1"]),
+            "and not only for the instance that held the label first"
+        );
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            SEEDED.replacen("Label = GPU box", "Label = gpu BOX", 1),
+            "the refusals wrote nothing, the accepted relabel is the only change"
+        );
+        assert_eq!(
+            listing(),
+            before,
+            "the verb writes the record and no file of its own"
+        );
+        assert_eq!(
+            records(&lines),
+            {
+                let mut want = vec![
+                    r#"action="set_instance_label" target="gpu-1" caller=":1.42" principal=- outcome=ok"#
+                        .to_string();
+                    2
+                ];
+                want.extend(vec![
+                    r#"action="set_instance_label" target="default" caller=":1.42" principal=- outcome="Invalid""#.to_string();
+                    3
+                ]);
+                want.push(
+                    r#"action="set_instance_label" target="lan-2" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+                );
+                want
+            },
+            "one record per call: the two accepted relabels ok, every refusal Invalid"
+        );
+    }
+
+    // (IL1 review D2) The trim of the verb is the trim of the rule: spaces and
+    // tabs at the ends, nothing else (`checks::instance_label`). A text whose
+    // ends carry a non-breaking space, or another Unicode space, is a label the
+    // rule accepts: it lands in the file exactly as the rule saw it, or the verb
+    // refuses it. What never happens is a silent trim by a wider rule, which
+    // writes, and clears, a text the check never saw.
+    {
+        // The file's line byte for byte: `keys_of` trims the line's end, and
+        // U+00A0 is whitespace for `str::trim_end`.
+        let raw_key = |text: &str, id: &str, key: &str| -> Vec<String> {
+            section(text, id)
+                .lines()
+                .filter(|line| line.trim_start().starts_with(&format!("{key} ")))
+                .map(|line| line.to_string())
+                .collect()
+        };
+        for text in [
+            "\u{a0}Coding box",
+            "Coding box\u{a0}",
+            " \u{3000}Coding box \u{a0} ",
+            "\u{a0}",
+            "\u{205f}\u{3000}",
+        ] {
+            std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+            let log = FakeActionLog::new();
+            let lines = log.lines.clone();
+            let m = core(true, FakePasswords::new(), log);
+            let seed = text_of(INSTANCES_FILE);
+            // The text the rule sees, and accepts: no control character and no
+            // comment marker, so a refusal here is the verb's own choice.
+            let checked = text.trim_matches([' ', '\t']);
+            assert!(
+                pai_core::checks::instance_label(text).is_ok(),
+                "{text:?}: the rule accepts this text"
+            );
+            let got = m.set_instance_label(&desktop, "default", text);
+            let written = text_of(INSTANCES_FILE);
+            match got {
+                Ok(()) => assert_eq!(
+                    raw_key(&written, "default", "Label"),
+                    vec![format!("Label = {checked}")],
+                    "{text:?}: the accepted text lands as the rule saw it, spaces \
+                     and tabs trimmed at the ends and nothing else"
+                ),
+                Err(ManagerError::Invalid(_)) => {
+                    assert_eq!(written, seed, "{text:?}: a refusal wrote nothing");
+                }
+                Err(other) => panic!("{text:?}: {other:?}, the rule's refusal or nothing"),
+            }
+            assert_eq!(
+                records(&lines).len(),
+                1,
+                "one record for the call, {text:?}"
+            );
+        }
+    }
+
+    {
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, FakePasswords::new(), log);
+        let seed = text_of(INSTANCES_FILE);
+        assert_eq!(
+            m.set_instance_label(&desktop, "default", "Coding box"),
+            Err(ManagerError::NotAuthorized),
+            "a caller the authority refuses"
+        );
+        assert_eq!(text_of(INSTANCES_FILE), seed, "the refusal wrote nothing");
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="set_instance_label" target="default" caller=":1.42" principal=- outcome=refused"#
+                    .to_string()
+            ],
+            "the guard's refusal is recorded"
+        );
+
+        let m = core(true, FakePasswords::new(), FakeActionLog::new());
+        assert_eq!(
+            m.set_instance_label(&member, "default", "Coding box"),
+            Ok(()),
+            "the bff's account, for a member of `pai`"
+        );
+        assert_eq!(
+            m.set_instance_label(&outsider, "default", "Coding box"),
+            Err(ManagerError::NotAuthorized),
+            "the bff's account, for a caller outside `pai`"
+        );
+        let vouching = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.set_instance_label(&vouching, "default", "Coding box"),
+            Err(ManagerError::NotAuthorized),
+            "a caller that is not the bff vouches for nobody"
+        );
+        assert_eq!(
+            keys_of(&text_of(INSTANCES_FILE), "default", "Label"),
+            vec!["Label = Coding box".to_string()],
             "only the accepted call wrote"
         );
     }

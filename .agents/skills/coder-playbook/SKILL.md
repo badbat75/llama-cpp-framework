@@ -36,7 +36,10 @@ a trap that recurs; a slice's history does not belong here.
   asserts stays the tester's. Report the file.
 - Several reds are unsatisfiable together (two pins of one value, an `ends_with` against a trailing newline,
   a count that two tests read differently): prove it in a copy in minutes and report the pair, do not pad
-  production.
+  production. Name the witness pair, the two calls whose texts differ in one letter's case, one expected
+  accepted and one refused: no rule separates them. To show the rest of the suite IS satisfiable, patch the
+  fixtures in the copy (the colliding text, a `want` count the block's own refusals outgrow, a wire
+  signature a slice grew) and rerun to green; every patch is one defect to report, with its line.
 - Flakes to state, not chase: the manager's D-Bus and gpu-probe tests under load, xtask's script-sandbox
   tests (one temp dir per process), the bff's `tests/session.rs` timing tests, the UX check's pre-existing
   states. Reproduce solo, state it, move on.
@@ -80,6 +83,13 @@ a trap that recurs; a slice's history does not belong here.
 - To enumerate the reds a panic hides in a one-test e2e, work in a tree copy: rewrite each `assert!(cond,
   msg)` to a non-fatal `eprintln!` mark, run with `--nocapture` (captured stdout prints only on failure),
   and grep the marks.
+- To run ONE phase of the manager's `tests::data_root_e2e` solo, add a probe `#[test]` to
+  `crates/manager/src/tests/mod.rs` in a copy (`crate::manager::service::<phase>()`; `self::<mod>::<phase>()`
+  for a phase of a `tests/` submodule), and to prove a rule inside a phase, extract the phase's `{ … }` block
+  into a `pub(crate) fn` with the giant fn's scope bindings re-added (`sys`, `record`, `alice`, `bob`).
+  Every phase sets the process-wide `PRIVATE_AI_DATA_ROOT`, so several probes in one run MUST use
+  `--test-threads=1`: in parallel they read each other's temp dirs, and a probe that fails at an early
+  assertion of a phase it never reached is that cross-talk, not a red.
 - Arithmetic with a ceiling: "saturating, divide last" is `checked_mul(..).and_then(..).map_or(MAX, |x|
   x / d)`, not a `saturating_mul` chain.
 - Library traps seen: `nix` features (`fs` for `OFlag`, `feature` for `uname`); `Command::get_args()`
@@ -128,6 +138,10 @@ a trap that recurs; a slice's history does not belong here.
   by the render it produces (the startup count only when the render starts MORE than the one on disk; a
   profile switch changes no model profile). The model-file check is a DELTA. A probe cache keeps the
   parsed rows; a serial probe answers queued readers with the probe they waited for.
+- A manager rule is pinned a second time by the refusal tables of `manager/dbus.rs` and `manager/pipe.rs`
+  (the wire phase lists `(args, kind, needle)` rows). Change the rule and those rows are the last reds of
+  `data_root_e2e`, one row at a time, and a row that pins the case the new rule accepts is a witness pair
+  with the phase that pins the new rule: report the pair, change no test.
 - Packaging: `components::of` is a PREFIX ladder (a rule for a file inside an owned folder must come
   first); `windows/package.rs`'s `bundled` map is keyed by the dist label; the engine revision is
   `components::LLAMA_CPP_REVISION` and a bump moves the packages' Depends. Pin a file that must land in
@@ -222,6 +236,25 @@ a trap that recurs; a slice's history does not belong here.
 - A sub-slice's page-wide test helpers (`h3s(main)`, a "no other word" loop over `document.body`) are
   reddened by the NEXT sub-slice's new heading or nav label: the brief amends them; prove it in a copy.
 - Two tests in one file can pin incompatible DOM for the same fixture: report the pair.
+- In `fe/`, a `<fieldset>` IS `role="group"`: `GroupField` (and the `GpuSplit` fieldset) put 14 groups on a
+  Server-form page, so a test's unnamed `within(main).queryByRole('group')` can never be `null` there and
+  can never find one. Prove it by listing `getAllByRole('group')` in a copy. A `role="region"` with no name
+  IS named by its contents, so a "right after the opener" node can answer a named query.
+- An effect that should run "when X was raised" cannot re-arm off a counter that only rises (the second
+  raise equals the first, the effect sleeps): do the follow-up call from the handler that raised it, in the
+  same batch, so the alert and the fresh read commit together, before the row is gone.
+- An `aria-disabled` button is no shield, its `onClick` runs: guard the shared handler itself (a disclosure's
+  Cancel, its opener and its Escape all call one close) on the same ref the send sets, so the whole close,
+  focus move included, is inert while the request runs.
+- A ref a parent owns and a child WRITES must be named `*Ref`: the react-hooks `immutability` lint reddens
+  `x.current = true` when `x` arrived as a prop (it trusts only a `useRef` local of that very function).
+- "The focus never ends on body" when the focused node leaves with the answer: keep the answer's words in a
+  state that OUTLIVES that node (a confirm group unmounts when the read again takes the verb away), render
+  them as `p[role="alert"][tabindex="-1"]` where the node stood, and focus it from an effect whose deps carry
+  the read that lands. A test that reads `within(main).getByText(text)` wants that text on screen ONCE, so
+  the group's alert and the surviving paragraph must never both carry it when the test looks.
+- A shared tree means shared output: one `npm --prefix fe test` tail can interleave another role's vitest run
+  (its counts, a file that exists nowhere in this tree). Judge a run by the failing file names you can open.
 
 ### The UX check
 
