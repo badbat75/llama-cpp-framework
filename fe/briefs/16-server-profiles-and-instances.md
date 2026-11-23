@@ -245,6 +245,8 @@ them.
 | `instance-label-saving` | `Saving the label…` | 17f |
 | `instance-label-saved` | `The instance is now named {0}.` | 17f |
 | `instance-label-cleared` | `The label is removed: the instance is named {0} again.` | 17f |
+| `api-instance-bad-label` | ``invalid instance label `{0}`: use 1 to 64 characters with no control character, or leave it empty to remove the label`` (proposed for the toml line IL1 adds; copied from what IL1 commits) | 17f |
+| `api-instance-label-taken` | ``the label `{0}` is already used by instance {1}: pick another one`` (proposed, as above) | 17f |
 | `write-timeout` | `Not confirmed: the manager did not answer in time, so this may or may not have been done. The page shows what the manager holds once it answers.` | 17f |
 | `delete-unknown` | `Not confirmed: the manager did not answer in time, so it may or may not have been removed. The list shows it if it is still there.` | 17f |
 
@@ -466,32 +468,38 @@ test asserts Port's value for the four example lists and that opening the form s
 Decided by the user, 2026-11-23: an instance can be given a free label; until it has one the web UI
 names it by its engine and its server profile's port (`llama.cpp :9931`), and the id, which never
 changes, is shown small beside it as the stable key. This replaces brief 20 decision 5 (the nav's
-`id · server profile`); the server profile leaves the nav and stays on the instance page (17a.10).
+`id · server profile`): the menu entry is the name only (user, 2026-11-23); the server profile shows on
+the instance page (17a.10).
 
-**The API, assumed** (the architect's section in `ARCHITECTURE.md` had not landed when this part was
-written; the tester takes the key names from it, and this part changes only where it differs):
-`GET /api/instances` items gain `label` (string or `null`; `engine` and `port` are already there, the
-port being the server profile's, 0 when unread); `PUT /api/instances/{id}/label` takes `{"label": <text
-or null>}` and answers 200 `{"label"}`; a label the rule refuses is 422 with `field` `label` and its
-own key and text (proposed `instance-bad-label` `[label]`, the rule the architect's); 404
-`client-no-instance`; 401, 403 `session-not-administrator`; 503 `client-unavailable` (not asked); 504
-`client-timeout` (asked, outcome unknown); 502 `client-other`. Whether the bff trims is the
-architect's; the page sends the text trimmed and `null` for an empty one.
+**The API** (`ARCHITECTURE.md` "Instance labels", slice IL2; the tester takes the key names from
+there and from this paragraph, which copies them): `GET /api/instances` items gain `label`, a string
+or `null` (`engine` and `port` are already there, the port being the server profile's, 0 when
+unread). `PUT /api/instances/{id}/label` takes `{"label": <string>}` and answers **204 with no
+body**. The manager trims spaces and tabs at both ends; an empty label after the trim **removes**
+the label (there is no `null` in the body). The rule (`checks::instance_label`): empty, or 1 to 64
+characters with no control character and no `;` or `#`. Refusals: 400 `instance-malformed` (a body
+that is not that object); 422 `instance-bad-label` `[label]` or `comment-markers` `[label]`, both with
+`field` `label`; 409 `instance-label-taken` `[label, other-id]` (another instance has that label,
+letter case ignored; not compared with ids or the engine-and-port name); 404 `client-no-instance`;
+401 (nothing asked); 403 `session-not-administrator` (the session ends); 503 `client-unavailable`
+(before the hand-over: nothing done); 504 `client-timeout` (after it: outcome unknown); 502
+`client-other`. It works while the instance runs and needs no restart.
 
 **17f.1 The name.** One function, `instanceName(item)`, used by every place below: the item's
 `label` when it is a non-empty string (as the bff gives it, not translated); else
 `instance-name-auto` with the engine and the port when the port is above 0; else the id. The reader
-takes `label` as a non-empty string or `null` (missing, `""`, not a string). The id is shown beside
+takes `label` as a non-empty string or `null` (missing, `null`, `""`, not a string). The id is shown beside
 the name everywhere the name shows, except when the name IS the id (the last case), where it would
 say the same twice.
 
 **17f.2 The nav.** Each instance link of the host list (20 N.5) holds the `box` icon then
-`span.nav-instance` with: the name as text; a `span.visually-hidden` reading `instance-id-said` with
-the id; and `span.nav-instance-id[aria-hidden="true"]` with the id, on a line of its own below the
-name, at `--fs-sm`. Accessible name `llama.cpp :9931, instance default`; visible `llama.cpp :9931`
-over `default` (every visible word in the name, in order: 2.5.3). The server profile and the
-`nav-instance-profile*` keys leave the nav (both keys removed when unused). With the name being the
-id, the span holds the id alone, as before N1.
+`span.nav-instance` holding **the name only** (user, 2026-11-23, closing N3): the label, or
+`llama.cpp :9931`, or the id when that is the name. No server profile and no id in the entry; the
+link's accessible name is the name. The `nav-instance-profile` and `nav-instance-profile-shown` keys
+and the hidden and `aria-hidden` spans of 20 N.5 go. Labels are unique on the node (the manager's
+rule), but two unlabelled instances can show the same `engine :port` (two stopped instances on one
+port): the entries stay told apart by their order and their page, where the id shows (17f.4); the
+menu does not add the id (the user's choice).
 
 **17f.3 The tiles.** The Overview tile's link (`a.tile-id`) reads the name; under the tile's head a
 `p.instance-id` reads `instance-id-shown` with the id (absent when the name is the id). The link's
@@ -515,32 +523,32 @@ closes it, drops the typing and puts the focus on the opener. Only one form is o
 page: the form is part of the header, not a page edit, so it does not arm the unsaved-changes
 question.
 
-**17f.6 The save.** Enter or `instance-label-save` sends `PUT /api/instances/<id>/label` with the
-text trimmed, `null` when it is empty. A text equal to the current label (or empty when there is
-none) sends nothing and closes the form. Meanwhile the status reads `instance-label-saving` and both
-buttons are `aria-disabled`; a second press sends nothing. 200: the form closes, the focus goes to
-the opener, the status after the opener reads `instance-label-saved` with the new name, or
-`instance-label-cleared` with the engine-and-port name for a `null`; the app's instance list is read
+**17f.6 The save.** Enter or `instance-label-save` sends `PUT /api/instances/<id>/label` with
+`{"label": <the text trimmed>}`, `""` when it is empty (the clear). A trimmed text equal to the current
+label (or empty when there is none) sends nothing and closes the form. Meanwhile the status reads `instance-label-saving` and both
+buttons are `aria-disabled`; a second press sends nothing. 204: the form closes, the focus goes to
+the opener, the status after the opener reads `instance-label-saved` with the trimmed text sent, or
+`instance-label-cleared` with the name the item then has (`instance-name-auto`, or the id) for `""`; the app's instance list is read
 again, so the `h1`, the title, the nav and the tiles follow (no optimistic name).
 
-**17f.7 Refusals.** By `writeFailure`: a 422 with `field` `label` → its text under the field,
-`aria-invalid="true"`, `aria-describedby` the error, focus to the field; any other 422 → `api-other`
-in the alert; 404 `client-no-instance` → `instance-not-found`; 503 → `api-client-unavailable`; 504
+**17f.7 Refusals.** By `writeFailure`: 422 `instance-bad-label` → `api-instance-bad-label`, 422
+`comment-markers` → `api-comment-markers` (both `field` `label`) and 409 `instance-label-taken` →
+`api-instance-label-taken` (label, other id), each under the field, `aria-invalid="true"`,
+`aria-describedby` the error, focus to the field; any other 422 → `api-other` in the alert; 400
+`instance-malformed` → `request-failed`; 404 `client-no-instance` → `instance-not-found`; 503 → `api-client-unavailable`; 504
 `client-timeout` → `write-timeout` in the alert, then the list is read again (the label shown is the
 manager's); 401 → `session-ended-retry` and the Sign in button, focus back to `instance-label-save`
 after the sign-in, the typing kept (3.3.7); 403 → `session-revoked`. The form stays open with what was
 typed after every failure.
 
-**17f.8 Long labels.** A label of the longest the rule allows (assumed 64 characters with no break
-point, and one of 64 with spaces) and a 32-character id cause no sideways scroll at 320 px and 200 %
+**17f.8 Long labels.** A label of the longest the rule allows (64 characters with no break point, and
+one of 64 with spaces) and a 32-character id cause no sideways scroll at 320 px and 200 %
 text: the `h1` wraps (`overflow-wrap: anywhere` as today), the nav's name breaks inside the pill
-(`.nav-instance` keeps `anywhere`), the tile's link and `p.instance-id` wrap in the tile
+(`.nav-instance` keeps `anywhere` and its `flex: 1 1 4rem`), the tile's link and `p.instance-id` wrap in the tile
 (`overflow-wrap: anywhere` on both: they are grid or flex items, the min-content trap of
 `fe/DESIGN.md` 4), and the field takes the form's width. `index.css` gains `.instance-id` (`--fs-sm`,
-`--muted`, `overflow-wrap: anywhere`, margin 0) and `.nav-instance-id` (`display: block`,
-`--fs-sm`); `--muted` on `--accent-soft` (the current nav pill) is checked by the UX check's axe
-pass, and the id takes the pill's `--accent` instead if it falls under 4.5:1
-([1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)). Both classes join R1.8's list.
+`--muted`, `overflow-wrap: anywhere`, margin 0), which joins R1.8's list; `--muted` on `--bg` and
+`--surface` is an existing token pair ([1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)).
 
 **17f.9 Keyboard and names.** The header's Tab order: Start, Stop, Restart, Start at boot,
 Rename, then (open) Label, Save label, Cancel. The opener exposes `aria-expanded`
@@ -568,17 +576,17 @@ No 504 reaches `request-failed`.
 **17f.12 The UX check.** `fe/ux/stub.py`: the one instance answers `"label": null` and port 9931
 (named `llama.cpp :9931`); `list=many` gives `default` a label `Coding assistant`, `coder` none with
 a port, `embed` none and port 0 (named by its id), and the 40-character `MANY_ID` a 64-character
-label with no break point; `PUT /api/instances/{id}/label` answers 200 with the label sent.
+label with no break point; `PUT /api/instances/{id}/label` answers 204.
 `check.js`: `instance-page` expects the `h1` `llama.cpp :9931` and `p.instance-id`; a new state
-`instance-rename` (`#/instances/default`, click Rename, expect the Label field); `nav-open` and
-`overview-tiles` expect the 64-character label and the small ids. The designer runs it.
+`instance-rename` (`#/instances/default`, click Rename, expect the Label field); `nav-open` expects the
+64-character label in the menu; `overview-tiles` expects it and the tiles' small ids. The designer runs it.
 
 **Tests that change**: every test that finds an instance link, a tile link or the instance `h1` by
 the id (`App`, `NodeNav`, `NodesMenu1`, `NodesMenu2`, `HearthNav`, `HearthIcons`, `InstanceTiles`,
 `HearthTiles`, `InstanceTileChips`, `Instances`, `InstancePage`, `RunControls`, `InstanceTags`,
 `InstanceTagChips`, `ServerProfiles1`, `ServerProfilePage1`): with a fixture of `port` 0 and no label
 the name is the id and they keep passing; the fixtures that set a port need the name. The 20 N.5
-tests of `id · profile` are retired by 17f.2. `test/bff.ts` gains `label` and the `PUT`.
+tests of `id · profile` are retired by 17f.2 (the entry is the name only). `test/bff.ts` gains `label` and the `PUT`.
 
 **Out of scope of 17f**: a label in the create form (17c: the new instance is named by engine and
 port until renamed); a label for a server profile; sorting or searching by label; the director's
@@ -828,10 +836,8 @@ Tests that change: `InstancePage` (a section after Server profile), `test/bff.ts
   the fix to U17e, which edits the form's fields. If the fix should come with slice 17 instead, it fits
   17b (10 criteria) as one more criterion, and the designer writes it after measuring the rows.
 
-- **N3 (for the user, nothing waits on it).** 17f drops the server profile from the nav entry that you
-  chose on 2026-11-22 (`default · qwen-27b`): the entry becomes the name (label, or `llama.cpp :9931`)
-  with the id small under it, and the profile shows on the instance page. Recommended: drop it, since a
-  third word would not fit the 224 px menu at 200 % text. The other choice is to keep it as a third line.
+- N3 is answered (user, 2026-11-23): the menu entry shows the name only, the label or engine and port,
+  with no server profile and no id (17f.2).
 
 ## 17a review (designer, 2026-11-23)
 

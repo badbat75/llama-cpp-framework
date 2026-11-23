@@ -124,10 +124,9 @@ Decided with the user on 2026-11-14.
   read gave instances and keep the last success through a failed read. An instance link is the
   instance's **name** (user, 2026-11-23; brief 16 17f, replacing brief 20 decision 5's
   `id · server profile` once 17f is built): its free label, else its engine and its server profile's
-  port (`llama.cpp :9931`), else the id; the id, which never changes, shows small under the name
-  (`span.nav-instance-id`, hidden from the reader, a visually hidden ", instance <id>" in its place),
-  except when the name is the id. The same name, with "ID <id>" small under it (`.instance-id`),
-  heads the Overview tile and the instance page. The name and id sit in `span.nav-instance`, which
+  port (`llama.cpp :9931`), else the id; the menu entry is the name only, with no server profile
+  and no id (user, 2026-11-23). The same name, with "ID <id>" small under it (`.instance-id`; the
+  id never changes), heads the Overview tile and the instance page. The name and id sit in `span.nav-instance`, which
   keeps `overflow-wrap: anywhere` beside the icon. Then the **Profiles** group: a `p.nav-label` and a `ul` labelled by it, with "Server
   profiles" (`server` icon, from slice 17a, which builds its page) then "Model profiles" (`layers`).
   Last, in a `ul` of its own with no label, **About** (`info` icon), one for the framework. Each
