@@ -3802,6 +3802,58 @@ already `configure`) and delete unused ones (exactly what the rule allows); with
 **Decided (user, 2026-11-22):** 1 (a), create from `hf-repo` now with the `model` rule loosened; 2 (a),
 a clone copies the source's tags.
 
+### Instance labels (user, 2026-11-23): accepted (user, 2026-11-23), a label beside a fixed id
+
+The user's words (2026-11-23, translated): "at some point let me rename the instance too (if it still
+makes sense, since for me the instance is engine + port)". **Kept**: the id, which names the unit
+(`llama.cpp@<id>`), the Windows service and its virtual account, the sections of `instances.ini` and
+`assignments.ini`, the state folder and the log; it never changes after create. **Added**: one
+framework key, `Label`, in the instance's `instances.ini` section, written only by the manager.
+**Removed**: nothing. Rejected: a real rename of the id (a new Windows account SID, state and log
+moved, journal history left under the old unit, a halfway rename to recover) and a name derived
+only from engine and port (it changes with the server profile, and two stopped instances can share a
+port).
+
+- **What the web UI shows**: the label when set; otherwise `<engine> :<port>` (`llama.cpp :9931`) from
+  the fields `ListInstances` already answers (`engine`, `port` of the instance's server profile), the id
+  shown as the secondary, stable name. The wording and layout are the designer's (brief 16, 17f).
+- **The text rule** (`pai-core` `checks::instance_label`): spaces and tabs trimmed at both ends; then
+  empty, or 1 to 64 characters with no control character and no `;` or `#` (`checks::comment_markers`:
+  the INI reader would cut the value). Refusal `instance-bad-label` `[label]`, or `comment-markers`
+  `[label]`.
+- **Empty clears it**: `SetInstanceLabel(id, "")` (after the trim) removes the `Label` line from the
+  section, so the reader sees no label and the UI falls back to engine and port; never an empty key.
+- **Unique on the node** (preference: two rows with one name defeat the point of a name): a label
+  equal to another instance's label, ignoring letter case, is refused `instance-label-taken`
+  `[label, other-id]`, judged under the manager's write lock. It is not compared with the fallback
+  text nor with ids.
+- **Who**: `configure`, as `SetInstanceTags`; works while the instance runs (nothing the engine reads
+  changes, no render, no restart). The `As` form for the bff, answered only to the bff's account for a
+  current `pai` member. One action-log record per call. Trust boundaries unchanged.
+- **Protocol**: `SetInstanceLabel(instance, label)` `(ss)` and `SetInstanceLabelAs` (principal first, as
+  every `As`), `NoInstance` for an id the record lacks; `ListInstances` rows gain `label` (empty string
+  when unset on D-Bus, `null` on the pipe). The D-Bus row signature grows by one field: local skew needs
+  a broken install (the packages pin `-core`), and the director's link will negotiate `Version`.
+
+**Slices** (test first; Linux, the Windows code type-checked):
+- **IL1. The manager and `pai-core`.** `checks::instance_label`, `InstanceInfo.label`, the reader of
+  `Label`, `SetInstanceLabel` and `SetInstanceLabelAs` on D-Bus, the pipe and `ManagerClient`. Done
+  when: `"  Coding box "` writes `Label = Coding box` under `[<id>]`, every other byte of
+  `instances.ini` kept, and `ListInstances` answers it with `engine` and `port`; `""` and `"   "` remove
+  the line and the row's label is empty/`null`; 65 characters, a control character are
+  `instance-bad-label`, `a;b` is `comment-markers`, `CODING BOX` on another instance is
+  `instance-label-taken` `[CODING BOX, <other>]`, an unknown id is `NoInstance`, each with no file
+  changed; a running instance is relabelled without a stop; the `As` forms refuse a non-member and a
+  non-bff caller; through D-Bus and the pipe each; each crate's clippy and fmt green.
+- **IL2. The bff.** `PUT /api/instances/{id}/label` `{"label": string}`: 204; 400 `instance-malformed`
+  for a body that is not that object; 422 `instance-bad-label` / `comment-markers` with `field`
+  `label`; 409 `instance-label-taken` with its args; 404 `client-no-instance`; 403 ending the session;
+  401 asking nothing; the write limit and W1/W2's rule (503 before the hand-over, 504 `client-timeout`
+  after it, a lost manager after the hand-over included). `GET /api/instances` rows gain `label`
+  (string or `null`). Done when: `crates/bff/tests` pin each answer above against the fake manager,
+  the stub received the trimmed label, and the list carries `label`; the docs agent adds the route to
+  `fe/briefs/api-contract.md` and `crates/bff/README.md`.
+
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,

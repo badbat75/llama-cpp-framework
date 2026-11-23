@@ -1110,6 +1110,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     from the web"): `CreateModelProfile(As)` (from a model file, an `hf-repo`, or a clone of another
     profile's section and tags, never its assignments) and `DeleteModelProfile(As)`; the manager's
     "needs `model`" rule loosened to `model` or a download key. Slices MP1 to MP3; MP1 (the manager) and MP2 (the bff routes) built 2026-11-23; MP3 with slice 17.
+    **Instance labels** (user, 2026-11-23: "let me rename the instance, if it still makes sense, since for
+    me the instance is engine + port"; chosen: a label beside a fixed id, built inside slice 17): an
+    instance shows its label when set, otherwise its engine and port ("llama.cpp :9931"); the id never
+    changes and is shown small. Design `ARCHITECTURE.md` "Instance labels" (a `Label` key in
+    `instances.ini`, 1 to 64 characters, unique on the node ignoring case, empty clears it); slices IL1
+    (manager and `pai-core`) and IL2 (bff), then the web UI as brief 16's 17f. IL1 in progress.
     W1 built 2026-11-23: the bff's nine single-call writes answer 504 `client-timeout` once the call
     reached the manager (`timeout_answer`, shared with the saves). W2 built 2026-11-23: the run verbs, `boot_write` and `tags_write` move to
     `write_timeout` (`boot_read` keeps the read limit), and a manager `Unavailable` after the call was
