@@ -1083,6 +1083,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     with item 13's machine-wide state), the endpoint fixed to huggingface.co, every models folder of the
     node's server profiles grouped by folder (superseded the same day: one models folder per node). Slices M1 listing into `pai-core`, M2 `GET /api/hf/files`,
     M3 the manager's `ModelFilesAs` and `GET /api/node/model-files`, M4 the pickers (designer first).
+    Moved ahead (user, 2026-11-23, asked again): M1 then M2, M3 in parallel listing today's
+    `paths::instance_models_dir()`, then M4 with MP3's create form sharing the picker; F1 to F3 later as
+    one unit in one deploy. M1 in progress.
     Then (user, 2026-11-21): the Hugging Face token is handled through authentication, for gated and
     private repos and downloads: the architect designs it with item 13's machine-wide state (options:
     "Sign in with Hugging Face" OAuth from the web UI, or a token an administrator enters; stored once by
