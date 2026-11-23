@@ -367,8 +367,8 @@ is at least 24 by 24 px ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minim
 
 ### 22C: the New model profile form (10)
 
-**22 C.1 The form opens.** As 17b.1: on the list page, after the intro and before the filter, a
-secondary button `model-profiles-new` with the `plus` icon and `aria-expanded="false"`; pressing it sets
+**22 C.1 The form opens.** As 17b.1 with 17b2 (brief 16): on the list page, after the table (or the
+empty line), the list's + icon button named `model-profiles-new` with `aria-expanded="false"`; pressing it sets
 `true` and shows right after it a `form` named by its `h2` `model-profiles-new-title`, holding:
 `p` `model-profiles-new-note`; the Name field (`model-profile-name`, hint `model-profile-name-hint`, text
 input, `autocomplete="off"`, `spellcheck="false"`); the picker (22P) with legend

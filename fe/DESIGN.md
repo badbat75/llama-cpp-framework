@@ -606,7 +606,7 @@ Each is one React component, reused by every page.
   uses icons, never a text pill.
   - Remove: an `x` icon button on the item.
   - Add: one `plus` icon button after the list (beside the chips in their wrapping row; under a
-    list of rows).
+    list of rows or a table, `--space-3` below it). The same + opens a list's create form.
   - The visible content is the icon alone (`aria-hidden`); the name is visually hidden text that
     says the item: "Remove Rule 2", "Remove tag gpu", "Add rule", "Add tag"
     ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value); 2.5.3 does not apply, there is no
@@ -751,8 +751,9 @@ Each is one React component, reused by every page.
   repeated in every row of a table, one region for the table, just above it, whose messages name the
   row; one write at a time, every row's control `aria-disabled` while it runs.
 
-- **Create form in place** (New server profile, New instance: brief 16): a secondary button with the
-  `plus` icon and `aria-expanded`
+- **Create form in place** (New server profile, New instance: brief 16; New model profile: brief 22):
+  the list's Add icon button ("Icon buttons of a list": a `plus`, its words visually hidden) at the
+  end of the list, `margin-top: var(--space-3)` (user, 2026-11-23, brief 16 17b2), with `aria-expanded`
   ([APG Disclosure](https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/)) reveals right after it a
   `form` named by its heading: the fields, Create (primary) and Cancel, a status line and the alert
   place. Opening moves the focus to the first field; Cancel or the opener closes it, clears it and puts

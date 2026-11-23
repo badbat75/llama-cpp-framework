@@ -597,7 +597,7 @@ view of several nodes (the same rule then, per node).
 ### 17c: create and remove an instance (12)
 
 **17c.1 The create form opens.** On the Overview, after the tiles (or `instances-empty`), inside the
-instances `section`, a secondary button `instances-new` (`plus`, `aria-expanded`), as 17b.1; it opens a
+instances `section`, the list's + icon button named `instances-new` (`aria-expanded`), as 17b2.2; it opens a
 `form` named by an `h3` `instances-new-title` (the section's heading is the `h2`), with
 Name (`instance-name`, hint `instance-name-hint`) and Server profile (`instance-new-server`, hint
 `instance-new-server-hint`, a native `select`), the paragraph `instance-new-note`, Create and Cancel,
@@ -942,3 +942,48 @@ takes the focus):
 - Nothing scrolls sideways at 320 px and 200 %.
 
 No UX check state changed, so the check was not re-run.
+
+## 17b2: the + at the end of a list (user feedback, 2026-11-23)
+
+The user, on the deployed build: "anche new server profile dovrebbe essere un + in coda alla lista"
+(New server profile should be a + at the end of the list too). This follows the rule they set for
+the tensor rules: an x and a + hold for every list (`fe/DESIGN.md` 5.2 "Icon buttons of a list").
+Today the opener is a text pill with a `plus` icon, placed between the intro and the table
+(`ServerProfiles.tsx` 172 to 175, 292 to 302). One sub-slice of 5 criteria, after 17f (both touch
+`ServerProfiles.tsx` and `index.css`).
+
+**17b2.1 Place.** The opener comes after the table, or after `server-profiles-empty` when the pool is
+empty, outside the `.table-scroll` box. The create form opens right after it, below the list. Nothing
+stands between the intro and the table any more. As before, there is no opener while loading or
+after a failed read.
+
+**17b2.2 Look.** The opener is the list's Add icon button (`fe/DESIGN.md` "Icon buttons of a list"):
+- only the `plus` icon (`aria-hidden`), and a `span.visually-hidden` holding `server-profiles-new`;
+- a 40 px square with the `--control` outline, drawn by the same rule as `.ot-add` (share the class
+  or the rule, not a copy), left-aligned;
+- `margin-top: var(--space-3)` from the table or the empty line, as 21 T.24;
+- `ButtonText` under forced colours.
+The id `server-profiles-new` and `aria-expanded` stay. Its accessible name stays exactly "New server
+profile" ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)): a screen reader announces "New
+server profile, button, collapsed", and a voice user can say "click New server profile". 2.5.3 does
+not apply: there is no visible text.
+
+**17b2.3 Behaviour unchanged.** 17b.1 to 17b.5 stand as written, apart from the place:
+- opening moves the focus to Name;
+- Cancel, Escape and the opener each close the form and put the focus back on the +;
+- Port's default is computed as before.
+The Tab order follows the page: the table's links, then the +, then the form when it is open
+([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)). Tests that find the opener by its name or id
+keep working; a test that asserts it comes before the table changes.
+
+**17b2.4 The same rule on every list with an add.** Each opener is the + after its list, named by its
+existing key:
+- the Overview's New instance (17c.1, not built): after the tiles or `instances-empty`;
+- the Models list's New model profile (brief 22, 22 C.1, not built): after the table or the empty
+  line, outside the filter.
+Destructive actions stay text buttons with Confirm in place (delete a profile, remove an instance).
+Buttons that are not a list's add keep their words (Show quants, the Save bar).
+
+**17b2.5 The UX check.** The `server-profiles-new` state still opens the form through the + (the
+selector by id or by name, the hidden text included), and nothing scrolls sideways at 320 px or
+200 %.

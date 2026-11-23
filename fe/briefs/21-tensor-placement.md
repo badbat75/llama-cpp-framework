@@ -666,3 +666,15 @@ at 1280 and 320 px, in light and dark, at 100 % and 200 % text:
 TP1b accepted. Screenshots for the user: `build/ux-review/tp1/tp1b2-chromium-1280-dark-one.png`
 (one embedding rule) and `tp1b2-chromium-1280-dark-several.png` (a MoE experts rule with layers
 20-23, the embedding table, a Custom pattern).
+
+## TP1c: room above the + (user feedback, 2026-11-23)
+
+The user, on the deployed build: "il bottone + è attaccato alla riga sopra" (the + touches the row
+above it). The cause: `ul.check-list` has `margin: 0` (`index.css` ~1743), and `.ot-add` (~1951) has no
+margin of its own, so the + sits on the last rule's bottom edge.
+
+- **21 T.24** The Add rule `+` (`.ot-add`) has `margin-top: var(--space-3)` (12 px), so its top edge
+  is 12 px below the last rule's `li`, and below the `model-profile-ot-none` line when there is no
+  rule. That is less than the `--space-4` between two rules, so the + reads as the list's own control
+  and not as another rule **(preference)**. Nothing else moves. The tester pins the sheet rule as the
+  TP1b sheet tests do; the designer measures it in the three browsers at the review.

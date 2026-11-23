@@ -1219,6 +1219,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     tensor picker and Move up/down for rules, taken as recommended: not now). Slice 17 started 2026-11-22 at the user's request, beside 2j: the designer refreshes brief 16 against main first, brief 16 refreshed (60eb2bd); 17a (the Server profiles list and page, the form moved off the instance
     page) built 2026-11-23; 17b (create and delete a server profile) built 2026-11-23; next 17f (instance labels and the
     504 texts, after IL2) and TP2, one `fe/` user at a time; 17c to 17e wait for 17f.
+    After 17f (user, 2026-11-23: "the + touches the row above; New server profile should be a + at the end
+    of the list"): TP1c (brief 21, 21 T.24, room above the +) and 17b2 (brief 16, 17b2.1 to 17b2.5, a list's
+    add is a + after the list, its accessible name unchanged; the same rule amended into 17c.1 and 22 C.1).
     Built: G1 and G2 (66b2bb3) and the web UI's GPU card, GD1 and GD2 (2026-11-21). Left, the
     designer's preferences for a later pass: at 1280 px Move down drops under Move up, and the "Free
     memory as of" line and Auto/Even sit in the form's label column, away from the weights.
