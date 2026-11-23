@@ -3,7 +3,7 @@
 `PLAN.md` step 10 items 13 and 13a (profiles and instances end to end); `ARCHITECTURE.md` "Nodes and
 instances", slices 14, 15 and 16 (all served: `crates/bff/README.md` "The server profile pool", "The
 association routes", "Creating and removing an instance"; `fe/briefs/api-contract.md`). The web UI part
-is slice 17. It is split in five sub-slices of at most 12 criteria each, built in this order, each with
+is slice 17. It is split in five sub-slices of at most 12 criteria each, built in the order of the table (17f, added on 2026-11-23, comes before 17c), each with
 its own tests. Criteria are numbered **17a.n** to **17e.n** here, and **test names cite them with the
 brief's number first, `16 17a.4`**, because brief 17's UX pass already has tests named `17a.n`
 (`U17aSkeletons.test.tsx`, its skeletons), as brief 20 cites `20 N.4`.
@@ -12,9 +12,10 @@ brief's number first, `16 17a.4`**, because brief 17's UX pass already has tests
 |---|---|---|---|
 | 17a | The Server profiles list, a server profile's page with the Server form moved there, the nav entry; the instance page stops reading `/api/instances/{id}/server` | 12 | TP1 (2j) committed: shared files, section 3 "17a and 2j" |
 | 17b | Create and delete a server profile | 10 | 17a |
-| 17c | Create and remove an instance; the start refused for no model profile | 12 | 17a |
-| 17d | The restart offer; the instance's server profile switch | 11 | 17a, and the whole of 2j (17d.4 edits the model profile page) |
-| 17e | The instance's model profiles | 11 | 17a |
+| 17f | The instance's name: a free label, else engine and port, the id small; Rename; the "not confirmed" texts of a 504 | 12 | 17b (it amends `writeFailure`, which 17b brings); the bff's label route (`ARCHITECTURE.md`, the architect's slice) built first |
+| 17c | Create and remove an instance; the start refused for no model profile | 12 | 17a, 17f |
+| 17d | The restart offer; the instance's server profile switch | 11 | 17a, 17f, and the whole of 2j (17d.4 edits the model profile page) |
+| 17e | The instance's model profiles | 11 | 17a, 17f |
 
 The old routes `GET`/`PUT /api/instances/{id}/server` are removed from the bff once no fe code calls
 them (`ARCHITECTURE.md` slice 14, "The old route stays"): after 17a none does, so the removal may ride
@@ -233,6 +234,19 @@ them.
 | `instance-models-all-on` | `Every switched-on model profile is served here from the next start.` | 17e |
 | `instance-models-all-off` | `Only the model profiles switched on below are served here from the next start.` | 17e |
 | `instance-models-all-restart` | `Saved: restart the instance to apply.` | 17e |
+| `instance-name-auto` | `{0} :{1}` (engine, port) | 17f |
+| `instance-id-shown` | `ID {0}` | 17f |
+| `instance-id-said` | `, instance {0}` | 17f |
+| `instance-rename` | `Rename` | 17f |
+| `instance-label` | `Label` | 17f |
+| `instance-label-hint` | `A name of your own for this instance, shown in the menu, on the overview and on this page. Leave it empty to name the instance by its engine and port again. The ID does not change.` | 17f |
+| `instance-label-save` | `Save label` | 17f |
+| `instance-label-cancel` | `Cancel` | 17f |
+| `instance-label-saving` | `Saving the label…` | 17f |
+| `instance-label-saved` | `The instance is now named {0}.` | 17f |
+| `instance-label-cleared` | `The label is removed: the instance is named {0} again.` | 17f |
+| `write-timeout` | `Not confirmed: the manager did not answer in time, so this may or may not have been done. The page shows what the manager holds once it answers.` | 17f |
+| `delete-unknown` | `Not confirmed: the manager did not answer in time, so it may or may not have been removed. The list shows it if it is still there.` | 17f |
 
 Reused, unchanged: `server-title`, `server-loading`, `server-load-failed`, `server-port`, the whole
 Server form's keys, `save-*`, `instance-not-found`, `session-ended-retry`, `session-revoked`,
@@ -244,7 +258,8 @@ Server form's keys, `save-*`, `instance-not-found`, `session-ended-retry`, `sess
 `api-load-on-startup-over-max`, `api-load-on-startup-unlimited`. `server-intro` is no longer used
 after 17a and is removed then (`strings.test.ts`: every key used).
 
-**One failure mapping for every new write** (`writeFailure(key, args)`, used by 17b to 17e): 401 →
+**One failure mapping for every new write** (`writeFailure(key, args)`, used by 17b to 17f; 17f.10
+adds its 504 rule: a 504 `client-timeout` is "not confirmed", never `request-failed`): 401 →
 `session-ended-retry` and the Sign in button; `session-not-administrator` → `session-revoked`; a key
 listed with a text in this brief or already in `en_US.json` as `api-<key>` → that text filled with
 `args`; `client-no-instance` → `instance-not-found` with the instance id; `client-unavailable` →
@@ -445,6 +460,129 @@ unsaved-changes question no longer asks (the file is gone).
 Tests that change: none beyond the new ones (`test/bff.ts` gains the POST and DELETE). The 17b.1
 test asserts Port's value for the four example lists and that opening the form sends no request; the
 17b.3 test clears Port before Create.
+
+### 17f: the instance's name and the "not confirmed" texts (12)
+
+Decided by the user, 2026-11-23: an instance can be given a free label; until it has one the web UI
+names it by its engine and its server profile's port (`llama.cpp :9931`), and the id, which never
+changes, is shown small beside it as the stable key. This replaces brief 20 decision 5 (the nav's
+`id · server profile`); the server profile leaves the nav and stays on the instance page (17a.10).
+
+**The API, assumed** (the architect's section in `ARCHITECTURE.md` had not landed when this part was
+written; the tester takes the key names from it, and this part changes only where it differs):
+`GET /api/instances` items gain `label` (string or `null`; `engine` and `port` are already there, the
+port being the server profile's, 0 when unread); `PUT /api/instances/{id}/label` takes `{"label": <text
+or null>}` and answers 200 `{"label"}`; a label the rule refuses is 422 with `field` `label` and its
+own key and text (proposed `instance-bad-label` `[label]`, the rule the architect's); 404
+`client-no-instance`; 401, 403 `session-not-administrator`; 503 `client-unavailable` (not asked); 504
+`client-timeout` (asked, outcome unknown); 502 `client-other`. Whether the bff trims is the
+architect's; the page sends the text trimmed and `null` for an empty one.
+
+**17f.1 The name.** One function, `instanceName(item)`, used by every place below: the item's
+`label` when it is a non-empty string (as the bff gives it, not translated); else
+`instance-name-auto` with the engine and the port when the port is above 0; else the id. The reader
+takes `label` as a non-empty string or `null` (missing, `""`, not a string). The id is shown beside
+the name everywhere the name shows, except when the name IS the id (the last case), where it would
+say the same twice.
+
+**17f.2 The nav.** Each instance link of the host list (20 N.5) holds the `box` icon then
+`span.nav-instance` with: the name as text; a `span.visually-hidden` reading `instance-id-said` with
+the id; and `span.nav-instance-id[aria-hidden="true"]` with the id, on a line of its own below the
+name, at `--fs-sm`. Accessible name `llama.cpp :9931, instance default`; visible `llama.cpp :9931`
+over `default` (every visible word in the name, in order: 2.5.3). The server profile and the
+`nav-instance-profile*` keys leave the nav (both keys removed when unused). With the name being the
+id, the span holds the id alone, as before N1.
+
+**17f.3 The tiles.** The Overview tile's link (`a.tile-id`) reads the name; under the tile's head a
+`p.instance-id` reads `instance-id-shown` with the id (absent when the name is the id). The link's
+accessible name is the name plus `instance-id-said` (visually hidden span inside the link), so two
+tiles labelled alike are told apart (2.4.4).
+
+**17f.4 The instance page.** The `h1` reads the name; right after it a `p.instance-id` reads
+`instance-id-shown` (absent when the name is the id); the title is `<name> | Private AI Framework`.
+The route stays `#/instances/<id>`. The Server profiles list's Used by cell and the profile page's
+Used by row (17a.3, 17a.5) link with the name, the id after it in a `span.instance-id`
+(`instance-id-shown`), so the list says which instance by the word the menu uses. Messages that
+name an instance (`Restart {0}`, `instance-not-found`, the removal and switch texts) keep the id.
+
+**17f.5 Rename opens.** In the instance header, after Start at boot, a secondary button
+`instance-rename` with `aria-expanded="false"`. Pressing it sets `true` and shows right after it a
+`form` with the field Label (`instance-label`, hint `instance-label-hint`, text input,
+`autocomplete="off"`, `spellcheck="false"`), holding the current label (empty when none), its text
+selected, the focus in it; then `instance-label-save` (primary) and `instance-label-cancel`; then a
+`role="status"` line and the alert place. Cancel, Escape in the form, or the opener pressed again
+closes it, drops the typing and puts the focus on the opener. Only one form is open at a time on the
+page: the form is part of the header, not a page edit, so it does not arm the unsaved-changes
+question.
+
+**17f.6 The save.** Enter or `instance-label-save` sends `PUT /api/instances/<id>/label` with the
+text trimmed, `null` when it is empty. A text equal to the current label (or empty when there is
+none) sends nothing and closes the form. Meanwhile the status reads `instance-label-saving` and both
+buttons are `aria-disabled`; a second press sends nothing. 200: the form closes, the focus goes to
+the opener, the status after the opener reads `instance-label-saved` with the new name, or
+`instance-label-cleared` with the engine-and-port name for a `null`; the app's instance list is read
+again, so the `h1`, the title, the nav and the tiles follow (no optimistic name).
+
+**17f.7 Refusals.** By `writeFailure`: a 422 with `field` `label` → its text under the field,
+`aria-invalid="true"`, `aria-describedby` the error, focus to the field; any other 422 → `api-other`
+in the alert; 404 `client-no-instance` → `instance-not-found`; 503 → `api-client-unavailable`; 504
+`client-timeout` → `write-timeout` in the alert, then the list is read again (the label shown is the
+manager's); 401 → `session-ended-retry` and the Sign in button, focus back to `instance-label-save`
+after the sign-in, the typing kept (3.3.7); 403 → `session-revoked`. The form stays open with what was
+typed after every failure.
+
+**17f.8 Long labels.** A label of the longest the rule allows (assumed 64 characters with no break
+point, and one of 64 with spaces) and a 32-character id cause no sideways scroll at 320 px and 200 %
+text: the `h1` wraps (`overflow-wrap: anywhere` as today), the nav's name breaks inside the pill
+(`.nav-instance` keeps `anywhere`), the tile's link and `p.instance-id` wrap in the tile
+(`overflow-wrap: anywhere` on both: they are grid or flex items, the min-content trap of
+`fe/DESIGN.md` 4), and the field takes the form's width. `index.css` gains `.instance-id` (`--fs-sm`,
+`--muted`, `overflow-wrap: anywhere`, margin 0) and `.nav-instance-id` (`display: block`,
+`--fs-sm`); `--muted` on `--accent-soft` (the current nav pill) is checked by the UX check's axe
+pass, and the id takes the pill's `--accent` instead if it falls under 4.5:1
+([1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)). Both classes join R1.8's list.
+
+**17f.9 Keyboard and names.** The header's Tab order: Start, Stop, Restart, Start at boot,
+Rename, then (open) Label, Save label, Cancel. The opener exposes `aria-expanded`
+([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)); the field's name is its visible label and
+its hint and error are described ([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions));
+outcomes are the status line, failures the alert
+([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)); the focus never drops when the form closes
+or its buttons go `aria-disabled` ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)).
+
+**17f.10 "Not confirmed" for every write.** A 504 `client-timeout` (the bff's W1, W2: the call
+reached the manager and its outcome is unknown) shows, in the alert of the write that got it:
+- Start, Stop, Restart (`failureText`, `InstancePage.tsx` 152), Start at boot, the tags field, the
+  label, and 17d's and 17e's writes: `write-timeout`; then what that place shows is read again (the
+  list for the run verbs, tags and label, which the state poll already does; the boot read for Start
+  at boot; the section's read in 17d and 17e).
+- A create (17b, 17c): `create-unknown`, the list read again, as for a 503 today.
+- A delete or remove (17b, 17c): `delete-unknown`, the document or the list read again.
+A 503 `client-unavailable` stays `api-client-unavailable` (not asked, nothing done). `writeFailure`
+gains the rule; the three run controls, boot and the tags field, which do not use it, get the same.
+No 504 reaches `request-failed`.
+
+**17f.11 The texts.** The strings file gains exactly 17f's keys of section 2 and loses
+`nav-instance-profile` and `nav-instance-profile-shown`.
+
+**17f.12 The UX check.** `fe/ux/stub.py`: the one instance answers `"label": null` and port 9931
+(named `llama.cpp :9931`); `list=many` gives `default` a label `Coding assistant`, `coder` none with
+a port, `embed` none and port 0 (named by its id), and the 40-character `MANY_ID` a 64-character
+label with no break point; `PUT /api/instances/{id}/label` answers 200 with the label sent.
+`check.js`: `instance-page` expects the `h1` `llama.cpp :9931` and `p.instance-id`; a new state
+`instance-rename` (`#/instances/default`, click Rename, expect the Label field); `nav-open` and
+`overview-tiles` expect the 64-character label and the small ids. The designer runs it.
+
+**Tests that change**: every test that finds an instance link, a tile link or the instance `h1` by
+the id (`App`, `NodeNav`, `NodesMenu1`, `NodesMenu2`, `HearthNav`, `HearthIcons`, `InstanceTiles`,
+`HearthTiles`, `InstanceTileChips`, `Instances`, `InstancePage`, `RunControls`, `InstanceTags`,
+`InstanceTagChips`, `ServerProfiles1`, `ServerProfilePage1`): with a fixture of `port` 0 and no label
+the name is the id and they keep passing; the fixtures that set a port need the name. The 20 N.5
+tests of `id · profile` are retired by 17f.2. `test/bff.ts` gains `label` and the `PUT`.
+
+**Out of scope of 17f**: a label in the create form (17c: the new instance is named by engine and
+port until renamed); a label for a server profile; sorting or searching by label; the director's
+view of several nodes (the same rule then, per node).
 
 ### 17c: create and remove an instance (12)
 
@@ -689,6 +827,11 @@ Tests that change: `InstancePage` (a section after Server profile), `test/bff.ts
   first". 17a moves the form but changes no control, and its 12 criteria are full, so this brief leaves
   the fix to U17e, which edits the form's fields. If the fix should come with slice 17 instead, it fits
   17b (10 criteria) as one more criterion, and the designer writes it after measuring the rows.
+
+- **N3 (for the user, nothing waits on it).** 17f drops the server profile from the nav entry that you
+  chose on 2026-11-22 (`default · qwen-27b`): the entry becomes the name (label, or `llama.cpp :9931`)
+  with the id small under it, and the profile shows on the instance page. Recommended: drop it, since a
+  third word would not fit the 224 px menu at 200 % text. The other choice is to keep it as a third line.
 
 ## 17a review (designer, 2026-11-23)
 

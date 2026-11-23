@@ -36,7 +36,7 @@ only an administrator can be (section 3). Since slice S1a (`fe/briefs/09-signin-
 | Nav entry | Route | What it holds | `pai-config` equivalent | Who | Slice |
 |---|---|---|---|---|---|
 | Overview | `#/` | Framework version; the instances as tiles under the host name (id as a link, state badge, engine when two or more; Port, Tags, Start at boot); New instance (create form in place, 17c) | (none; the footer status) | administrator (since S1a) | 1a (moves today's page); H6a, H6b (`fe/briefs/08-hearth-h6-overview.md`); S1 (`fe/briefs/09-signin-only.md`); T1 (`fe/briefs/12-instance-tags.md`); 13 (`fe/briefs/13-node-about.md`) |
-| Nodes > *host* > *instance* (shown as `<id> · <server profile>`, brief 20) | `#/instances/<id>` | Header: name, engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Then **Server profile** (the one it runs, a link, and the switch), **Model profiles** (one "Served here" switch per profile of the pool), **Remove instance** (not for `default`, only when stopped). The Server form is no longer here (slice 17a). **Logs** later | Server tab's target, run controls, Settings' "start at boot", View logs | administrator | 1a, 1b, 1c; T1 (port, tags); 17a to 17e (`fe/briefs/16-server-profiles-and-instances.md`); Logs later |
+| Nodes > *host* > *instance* (shown by its name, label or `engine :port`, the id small: brief 16 17f; before it `<id> · <server profile>`, brief 20) | `#/instances/<id>` | Header: name (label, else engine and port; the id small), Rename (17f), engine, port, state badge, Start / Stop / Restart, start at boot, Instance tags. Then **Server profile** (the one it runs, a link, and the switch), **Model profiles** (one "Served here" switch per profile of the pool), **Remove instance** (not for `default`, only when stopped). The Server form is no longer here (slice 17a). **Logs** later | Server tab's target, run controls, Settings' "start at boot", View logs | administrator | 1a, 1b, 1c; T1 (port, tags); 17a to 17e (`fe/briefs/16-server-profiles-and-instances.md`); Logs later |
 | Profiles > Server profiles | `#/profiles/server`, `#/profiles/server/<id>` | The pool: id, port, tags, used by; New server profile (create form in place). A profile's page: Used by, Delete while unused, the whole Server form and save | Server tab (of `default` only) | administrator | 17a, 17b (`fe/briefs/16-server-profiles-and-instances.md`) |
 | Profiles > Model profiles | `#/profiles/model`, `#/profiles/model/<id>` (an old `#/models` or `#/models/<rest>` is rewritten in place to `#/profiles/model` or `#/profiles/model/<rest>`, no history entry: `fe/briefs/05b-profiles-nav.md` 5b.8, 5b.9) | The one mixed model profile list (every engine), each row with its engine and on/off state; the model profile editor, its engine the first row of the Assets card (section 2.2) | Models tab | administrator | 2a (list), 2b (filter), 2c (on/off), 2d (model profile page, read), 2e (plain cards, read: `fe/briefs/02e-model-profile-cards.md`), 2h (save of those cards: `fe/briefs/02h-model-profile-save.md`); GD1, GD2 (GPU distribution: `fe/briefs/14-gpu-distribution.md`); the rest `fe/briefs/02-models.md` section 0; 05b (the Profiles group and the routes) |
 | Nodes > *host* > Node info (after the host's instances, brief 20) | `#/node` (hub mode: `#/nodes/<node>`, `#/node` rewritten to the local node) | The node: host name, OS, kernel, framework version; each installed engine and its GPU backend packages; per GPU (numbered `h3`) vendor, PCI address, driver and Vulkan driver (`GET /api/node`) | (none) | administrator | AN5 (`fe/briefs/18-about-node-info.md`) |
@@ -121,11 +121,14 @@ Decided with the user on 2026-11-14.
   a `p.nav-label`, text with no link, icon or button; hub mode (step 14) makes each a disclosure
   button (`aria-expanded`, controlling its host's list) and changes nothing else (principle 4).
   The host group is always shown, so Node info never vanishes; its instance links appear once a list
-  read gave instances and keep the last success through a failed read. An instance link is its id
-  then its server profile (`serverProfile` of the list), seen as `default · qwen-27b` and heard as
-  "default, server profile qwen-27b" (the `·` and the visible profile `aria-hidden`, a visually
-  hidden phrase in their place: brief 20 decision 5); no profile, the id alone; the id and
-  profile sit in `span.nav-instance`, which keeps `overflow-wrap: anywhere` beside the icon. Then the **Profiles** group: a `p.nav-label` and a `ul` labelled by it, with "Server
+  read gave instances and keep the last success through a failed read. An instance link is the
+  instance's **name** (user, 2026-11-23; brief 16 17f, replacing brief 20 decision 5's
+  `id · server profile` once 17f is built): its free label, else its engine and its server profile's
+  port (`llama.cpp :9931`), else the id; the id, which never changes, shows small under the name
+  (`span.nav-instance-id`, hidden from the reader, a visually hidden ", instance <id>" in its place),
+  except when the name is the id. The same name, with "ID <id>" small under it (`.instance-id`),
+  heads the Overview tile and the instance page. The name and id sit in `span.nav-instance`, which
+  keeps `overflow-wrap: anywhere` beside the icon. Then the **Profiles** group: a `p.nav-label` and a `ul` labelled by it, with "Server
   profiles" (`server` icon, from slice 17a, which builds its page) then "Model profiles" (`layers`).
   Last, in a `ul` of its own with no label, **About** (`info` icon), one for the framework. Each
   group label is text, not a link; nested labelled lists take the same indent and rule, one level
