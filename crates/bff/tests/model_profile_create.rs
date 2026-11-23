@@ -37,9 +37,11 @@
 //!   runs on the way is 422 `{"key", "args"}` with the refusal's own key, its
 //!   values and no field (a delete has no form field to mark).
 //! - A refusal of the signed-in user is 403 `session-not-administrator` and
-//!   ends that session on both routes; no manager is 503
-//!   `client-unavailable`; anything else 502 `client-other`, without the
-//!   manager's detail.
+//!   ends that session on both routes; a manager that took the call and is
+//!   gone when it answers is 504 `client-timeout` (slice W2: the write crossed
+//!   the hand-over, so its outcome is unknown; a connect that never hands one
+//!   over stays 503 `client-unavailable`, pinned in `tests/write_timeouts.rs`);
+//!   anything else 502 `client-other`, without the manager's detail.
 //! - Both are writes, so the manager is given the write's own, longer limit,
 //!   not the one that fits a read: a delay past `TIMEOUT` and within
 //!   `WRITE_TIMEOUT` answers 201 and 204 (a route handed `timeout` is cut off
@@ -969,12 +971,13 @@ async fn a_refusal_of_the_user_is_403_and_ends_the_session_on_both_routes() {
     }
 }
 
-/// No manager is 503 `client-unavailable` on both routes: nothing reached the
-/// manager, so the page can be told nothing changed. A manager that takes the
-/// call and does not answer in the bff's time is 504 `client-timeout`: the
-/// write may have landed (slice W1, `tests/write_timeouts.rs`).
+/// A manager that takes the call and is gone when it answers, and one that
+/// takes it and does not answer in the bff's time, are both 504
+/// `client-timeout` on both routes: the write reached the manager in both, so
+/// it may have landed and the answer never says it did not (slices W1 and W2,
+/// `tests/write_timeouts.rs`).
 #[tokio::test]
-async fn no_manager_is_unavailable_and_a_slow_one_times_out_on_both_routes() {
+async fn a_manager_lost_after_taking_and_a_slow_one_are_504_on_both_routes() {
     let gone = Fixture {
         create: Err(ClientError::Unavailable),
         delete: Err(ClientError::Unavailable),
@@ -984,12 +987,11 @@ async fn no_manager_is_unavailable_and_a_slow_one_times_out_on_both_routes() {
     app.create(json!({"id": "new", "from": "beta"}))
         .await
         .0
-        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]);
-    app.delete("beta").await.0.assert_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "client-unavailable",
-        &[],
-    );
+        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]);
+    app.delete("beta")
+        .await
+        .0
+        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]);
 
     let slow = app_for(Fixture {
         delay: Duration::from_secs(2),

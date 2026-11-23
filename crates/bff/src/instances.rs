@@ -114,7 +114,7 @@ async fn create(
         Ok(Ok(Ok(()))) => {
             (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response()
         }
-        Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure, state.sent()),
         Err(_) => timeout_answer(
             state.timed_out(),
             (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response(),
@@ -172,7 +172,7 @@ async fn remove(
     });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
-        Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure, state.sent()),
         Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
@@ -193,8 +193,17 @@ pub(crate) fn removable(id: &str) -> bool {
 /// an id the rule refuses, 404 `client-no-instance`; the service manager's
 /// refusal 502 `client-service-failed`, its message out of the body. The manager
 /// refused the signed-in user: 403, and the session ends with the right that
-/// authorized it. The rest are the bff's news, and leave the session alive.
-fn write_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+/// authorized it. `Unavailable` (the pipe and the bus answer a broken stream or a
+/// missing reply with it) is 504 `client-timeout` when `write_asked` says the
+/// shared state reached `WRITE_ASKED`, the call sent and its outcome unknown, and
+/// 503 `client-unavailable` when it stayed Idle: the connect never handed
+/// anything over. The rest are the bff's news, and leave the session alive.
+fn write_failure(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    failure: ClientError,
+    write_asked: bool,
+) -> Response {
     match failure {
         ClientError::Invalid(refusal) => refusal_answer(refusal),
         ClientError::NoServerProfile(profile) => keyed(
@@ -224,6 +233,9 @@ fn write_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) 
         ClientError::NotAuthorized => {
             sessions.end(session);
             error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
+        }
+        ClientError::Unavailable if write_asked => {
+            error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
         }
         ClientError::Unavailable => {
             error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])

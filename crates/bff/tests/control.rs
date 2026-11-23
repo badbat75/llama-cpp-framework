@@ -30,7 +30,11 @@
 //!   connected to), 403 `session-not-administrator` (the manager refused
 //!   that user, and the session ends), 404 `client-no-instance` (no
 //!   such instance, or the manager refuses the id), 503 `client-unavailable`
-//!   (no manager, gone, or too slow), 502 `client-service-failed` with empty
+//!   (no manager answers the connect, or a read meets one that is gone or too
+//!   slow), 504 `client-timeout` once a write reached the manager (it is gone
+//!   when it answers, or too slow: the write may have landed, so the answer
+//!   never says it did not; slices W1 and W2, `tests/write_timeouts.rs`), 502
+//!   `client-service-failed` with empty
 //!   `args` when the service manager refused the job (the manager's
 //!   `ClientError::Service`: its message stays in the bff's log), 502
 //!   `client-other` for anything else.
@@ -961,16 +965,19 @@ async fn no_manager_is_unavailable_and_keeps_the_session() {
         .assert_signed_in_as("alice");
 }
 
-/// A manager that is gone during the call is 503, the bff knows nothing was
-/// written. A manager that takes the verb and does not come back is 504
-/// `client-timeout`: the write may have landed, so the answer never says it did
-/// not (slice W1, `tests/write_timeouts.rs`). Both are answered at the bound,
-/// and the session lives on: the bff's own news is no refusal of the user.
+/// A manager that takes the verb and is gone when it answers, and one that
+/// takes it and does not come back, are both 504 `client-timeout`: the verb
+/// reached the manager in both, so the write may have landed and the answer
+/// never says it did not (slices W1 and W2, `tests/write_timeouts.rs`). Both
+/// are answered at the bound, and the session lives on: the bff's own news is
+/// no refusal of the user. A manager that never answers the connect hands
+/// nothing over, and that is the 503 of
+/// `no_manager_is_unavailable_and_keeps_the_session`.
 #[tokio::test]
-async fn a_manager_gone_is_unavailable_and_a_slow_one_times_out() {
+async fn a_manager_lost_after_the_verb_and_a_slow_one_are_both_504() {
     let app = app_verbs(Err(ClientError::Unavailable));
     for r in app.control("default", &app.sign_in().await).await {
-        r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+        r.assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
     }
     let app = app_slow(Duration::from_secs(2));
     let cookie = app.sign_in().await;
@@ -1351,8 +1358,8 @@ async fn the_boot_write_errors() {
         ),
         (
             app_boot_write(Err(ClientError::Unavailable)),
-            StatusCode::SERVICE_UNAVAILABLE,
-            "client-unavailable",
+            StatusCode::GATEWAY_TIMEOUT,
+            "client-timeout",
             false,
         ),
         (

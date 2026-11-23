@@ -38,6 +38,18 @@
 //! (`tests/model_profile_create.rs`) and the associations
 //! (`tests/instance_profiles.rs`); these tests pin only the answer, so they
 //! hold under either limit.
+//!
+//! W2 (the slice after W1) adds the two rules pinned in the last two sections:
+//! - a manager that TAKES the call and then answers `Unavailable` (a broken
+//!   stream, a missing reply) leaves the outcome unknown exactly as a call that
+//!   outlasts the limit does, so it is 504 `client-timeout` with the session
+//!   kept. A connect that fails handed nothing over, so it stays 503: that half
+//!   is green before W2 and must stay green.
+//! - the run verbs, the boot write and the tags write run under the write's
+//!   limit like every other write, so a call longer than the read `TIMEOUT` and
+//!   shorter than `WRITE_TIMEOUT` answers its success (204 for a verb and for
+//!   the tags write, 200 with the flag for the boot write). The boot READ is a
+//!   read: past the read limit it stays 503.
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -51,7 +63,7 @@ use pai_core::client::{
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
@@ -69,6 +81,15 @@ const BLOCK: Duration = Duration::from_millis(1000);
 
 /// How long a test waits for the bff's answer before failing.
 const DEADLINE: Duration = Duration::from_secs(5);
+
+/// How long a call the test lets land: past the read `TIMEOUT`, well inside
+/// `WRITE_TIMEOUT`. A write answered under this pause is answered under the
+/// write's limit and not under the read's.
+const SLOW_CALL_MS: u64 = 250;
+
+/// The boot write is two calls of one connect, so each of them is shorter: two
+/// of these (440 ms) are past the read limit and inside the write's.
+const SLOW_PAIR_CALL_MS: u64 = 220;
 
 /// The client address a sign-in is sent from (the lockout counters key on it).
 const CLIENT: &str = "127.0.0.1:51007";
@@ -91,6 +112,10 @@ struct Live {
     call_pause_ms: Arc<AtomicU64>,
     connect_pause_ms: Arc<AtomicU64>,
     connects: Arc<AtomicUsize>,
+    /// Set after the build: every call the fake takes answers `Unavailable`.
+    call_lost: Arc<AtomicBool>,
+    /// Set after the build: the connect itself fails, no client comes.
+    connect_fails: Arc<AtomicBool>,
 }
 
 impl Live {
@@ -157,6 +182,15 @@ const BOOT_WRITE: Route = Route {
     call: "set_boot_enabled default true",
 };
 
+/// The boot READ, the one read of this file's routes: it keeps the read limit,
+/// so a manager slower than `TIMEOUT` is 503 for it.
+const BOOT_READ: Route = Route {
+    method: Method::GET,
+    uri: "/api/instances/default/boot",
+    body: None,
+    call: "boot_enabled default",
+};
+
 const TAGS_WRITE: Route = Route {
     method: Method::PUT,
     uri: "/api/instances/default/tags",
@@ -207,6 +241,19 @@ impl FakeManager {
             std::thread::sleep(Duration::from_millis(pause));
         }
     }
+
+    /// Received, then lost: the log first, and after the call is handed over
+    /// the answer the transport gives when the stream breaks or the reply is
+    /// missing, `Unavailable`. The write is already out, so its outcome is
+    /// unknown.
+    fn lost(&self, call: &str) -> Result<(), ClientError> {
+        self.received(call);
+        if self.live.call_lost.load(Ordering::SeqCst) {
+            Err(ClientError::Unavailable)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl ManagerClient for FakeManager {
@@ -217,16 +264,13 @@ impl ManagerClient for FakeManager {
         Ok(InstanceState::Inactive)
     }
     fn start(&self, id: &str) -> Result<(), ClientError> {
-        self.received(&format!("start {id}"));
-        Ok(())
+        self.lost(&format!("start {id}"))
     }
     fn stop(&self, id: &str) -> Result<(), ClientError> {
-        self.received(&format!("stop {id}"));
-        Ok(())
+        self.lost(&format!("stop {id}"))
     }
     fn restart(&self, id: &str) -> Result<(), ClientError> {
-        self.received(&format!("restart {id}"));
-        Ok(())
+        self.lost(&format!("restart {id}"))
     }
     fn read_file(&self, _name: &str) -> Result<Option<ManagerFile>, ClientError> {
         Ok(None)
@@ -240,12 +284,11 @@ impl ManagerClient for FakeManager {
         Ok(())
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
-        self.received(&format!("boot_enabled {id}"));
+        self.lost(&format!("boot_enabled {id}"))?;
         Ok(true)
     }
     fn set_boot_enabled(&self, id: &str, enabled: bool) -> Result<(), ClientError> {
-        self.received(&format!("set_boot_enabled {id} {enabled}"));
-        Ok(())
+        self.lost(&format!("set_boot_enabled {id} {enabled}"))
     }
     fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
         Ok((true, true))
@@ -259,12 +302,10 @@ impl ManagerClient for FakeManager {
         id: &str,
         _server_profile: &str,
     ) -> Result<(), ClientError> {
-        self.received(&format!("create-instance {id}"));
-        Ok(())
+        self.lost(&format!("create-instance {id}"))
     }
     fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
-        self.received(&format!("remove-instance {id}"));
-        Ok(())
+        self.lost(&format!("remove-instance {id}"))
     }
     fn create_server_profile(
         &self,
@@ -272,28 +313,23 @@ impl ManagerClient for FakeManager {
         profile: &str,
         _port: Option<u16>,
     ) -> Result<(), ClientError> {
-        self.received(&format!("create-server {profile}"));
-        Ok(())
+        self.lost(&format!("create-server {profile}"))
     }
     fn delete_server_profile(&self, _engine: &str, profile: &str) -> Result<(), ClientError> {
-        self.received(&format!("delete-server {profile}"));
-        Ok(())
+        self.lost(&format!("delete-server {profile}"))
     }
     fn create_model_profile(
         &self,
         profile: &str,
         _source: &ModelProfileSource,
     ) -> Result<(), ClientError> {
-        self.received(&format!("create-model {profile}"));
-        Ok(())
+        self.lost(&format!("create-model {profile}"))
     }
     fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
-        self.received(&format!("delete-model {profile}"));
-        Ok(())
+        self.lost(&format!("delete-model {profile}"))
     }
     fn set_instance_tags(&self, instance: &str, _tags: &[String]) -> Result<(), ClientError> {
-        self.received(&format!("set_instance_tags {instance}"));
-        Ok(())
+        self.lost(&format!("set_instance_tags {instance}"))
     }
 }
 
@@ -340,6 +376,12 @@ impl Reply {
         assert_eq!(self.status, StatusCode::OK, "signed in: {}", self.body);
         assert_eq!(self.json(), json!({ "user": user }), "{}", self.body);
     }
+
+    /// A success answer with no body: 204 (a run verb, the tags write).
+    fn assert_no_content(&self) {
+        assert_eq!(self.status, StatusCode::NO_CONTENT, "{}", self.body);
+        assert_eq!(self.body, "", "204 carries no body");
+    }
 }
 
 /// A router over a manager and an authenticator that never touch the machine,
@@ -355,6 +397,9 @@ fn app() -> App {
         let live = live.clone();
         Arc::new(move |_principal: Option<&str>| {
             live.connects.fetch_add(1, Ordering::SeqCst);
+            if live.connect_fails.load(Ordering::SeqCst) {
+                return Err(ClientError::Unavailable);
+            }
             let pause = live.connect_pause_ms.load(Ordering::SeqCst);
             if pause > 0 {
                 std::thread::sleep(Duration::from_millis(pause));
@@ -515,6 +560,164 @@ impl App {
             self.calls()
         );
     }
+
+    /// W2 (b), the 504 half: the manager TAKES the call and its stream breaks,
+    /// so the answer is `Unavailable` with the write already handed over. Its
+    /// outcome is unknown, so the answer is 504 `client-timeout`, the session
+    /// lives, and the log proves the call really crossed.
+    async fn lost_after_hand_over_is_504(&self, route: &Route) {
+        let cookie = self.sign_in().await;
+        self.live.call_lost.store(true, Ordering::SeqCst);
+        let started = Instant::now();
+        let reply = self.ask_route(route, &cookie).await;
+        reply.assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]);
+        assert!(
+            started.elapsed() < DEADLINE,
+            "answered after {:?}",
+            started.elapsed()
+        );
+        assert_eq!(
+            self.calls(),
+            vec![route.call.to_string()],
+            "{} {}: the call the manager took and lost",
+            route.method,
+            route.uri
+        );
+        assert_eq!(
+            self.live.connects.load(Ordering::SeqCst),
+            1,
+            "one connect, the write's own"
+        );
+        self.session_of(&cookie).await.assert_signed_in_as(USER);
+    }
+
+    /// W2 (b), the 503 half: the connect fails, so nothing was ever handed
+    /// over and the answer stays 503 `client-unavailable`, the session living
+    /// on. Green before W2 and it must stay green: the 504 is only for a call
+    /// that crossed.
+    async fn failed_connect_is_503(&self, route: &Route) {
+        let cookie = self.sign_in().await;
+        self.live.connect_fails.store(true, Ordering::SeqCst);
+        let reply = self.ask_route(route, &cookie).await;
+        reply.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]);
+        assert!(
+            self.calls().is_empty(),
+            "{} {}: the connect failed, so nothing was asked: {:?}",
+            route.method,
+            route.uri,
+            self.calls()
+        );
+        assert_eq!(
+            self.live.connects.load(Ordering::SeqCst),
+            1,
+            "one connect attempted, and failed"
+        );
+        self.session_of(&cookie).await.assert_signed_in_as(USER);
+    }
+
+    /// W2 (a), the success of a write that answers 204 (a run verb, the tags
+    /// write): the manager takes `SLOW_CALL_MS`, longer than the read `TIMEOUT`
+    /// and less than `WRITE_TIMEOUT`, so under the write's limit the write
+    /// lands. Today the same call is cut off by the read limit.
+    async fn write_past_the_read_limit_is_204(&self, route: &Route) {
+        let cookie = self.sign_in().await;
+        self.live
+            .call_pause_ms
+            .store(SLOW_CALL_MS, Ordering::SeqCst);
+        let started = Instant::now();
+        let reply = self.ask_route(route, &cookie).await;
+        reply.assert_no_content();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(SLOW_CALL_MS) && elapsed < WRITE_TIMEOUT,
+            "{} {}: the manager held the call {SLOW_CALL_MS} ms, past the {TIMEOUT:?} read \
+             limit and inside the {WRITE_TIMEOUT:?} write's: answered after {elapsed:?}",
+            route.method,
+            route.uri
+        );
+        assert_eq!(
+            self.calls(),
+            vec![route.call.to_string()],
+            "{} {}: the call the manager took",
+            route.method,
+            route.uri
+        );
+        assert_eq!(
+            self.live.connects.load(Ordering::SeqCst),
+            1,
+            "one connect, the write's own"
+        );
+        self.session_of(&cookie).await.assert_signed_in_as(USER);
+    }
+
+    /// W2 (a), the boot write's success: its two calls of `SLOW_PAIR_CALL_MS`
+    /// (440 ms together) are past the read limit and inside the write's, so the
+    /// answer is 200 with the flag the read-back gave.
+    async fn boot_write_past_the_read_limit_is_200(&self) {
+        let cookie = self.sign_in().await;
+        self.live
+            .call_pause_ms
+            .store(SLOW_PAIR_CALL_MS, Ordering::SeqCst);
+        let started = Instant::now();
+        let reply = self.ask_route(&BOOT_WRITE, &cookie).await;
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        assert_eq!(
+            reply.json(),
+            json!({ "enabled": true }),
+            "the flag the read-back answered"
+        );
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(2 * SLOW_PAIR_CALL_MS) && elapsed < WRITE_TIMEOUT,
+            "the boot write and its read-back took {SLOW_PAIR_CALL_MS} ms each, past the \
+             {TIMEOUT:?} read limit and inside the {WRITE_TIMEOUT:?} write's: answered after \
+             {elapsed:?}"
+        );
+        assert_eq!(
+            self.calls(),
+            vec![
+                "set_boot_enabled default true".to_string(),
+                "boot_enabled default".to_string()
+            ],
+            "the write and the read-back, two calls of one connect"
+        );
+        assert_eq!(
+            self.live.connects.load(Ordering::SeqCst),
+            1,
+            "one connect, the write's own"
+        );
+        self.session_of(&cookie).await.assert_signed_in_as(USER);
+    }
+
+    /// The boot READ's limit, which W2 (a) leaves at the read's: a manager
+    /// slower than `TIMEOUT` is 503 `client-unavailable` for a read, the
+    /// session left alone. Green today, and the guard that the write's limit
+    /// does not reach the reads.
+    async fn boot_read_past_the_read_limit_is_503(&self) {
+        let cookie = self.sign_in().await;
+        self.live
+            .call_pause_ms
+            .store(SLOW_CALL_MS, Ordering::SeqCst);
+        let started = Instant::now();
+        let reply = self.ask_route(&BOOT_READ, &cookie).await;
+        reply.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < WRITE_TIMEOUT,
+            "a read is cut off by the read limit, not by the write's: answered after {elapsed:?}"
+        );
+        assert_eq!(
+            self.calls(),
+            vec!["boot_enabled default".to_string()],
+            "the read was asked, and the read limit ran out on it"
+        );
+        assert_eq!(
+            self.live.connects.load(Ordering::SeqCst),
+            1,
+            "one connect, the read's own"
+        );
+        self.session_of(&cookie).await.assert_signed_in_as(USER);
+    }
 }
 
 // ── The model-profile pool: `model_profiles::create` and `remove` ────────
@@ -617,4 +820,124 @@ async fn a_tags_write_the_manager_never_comes_back_from_is_504() {
 #[tokio::test]
 async fn a_tags_write_of_a_connect_that_never_returns_is_503() {
     app().hung_connect_is_503(&TAGS_WRITE).await;
+}
+
+// ── W2 (b): a manager lost after the hand-over is 504, a failed connect 503 ─
+
+#[tokio::test]
+async fn a_model_profile_create_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&MODEL_CREATE).await;
+}
+
+#[tokio::test]
+async fn a_model_profile_create_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&MODEL_CREATE).await;
+}
+
+#[tokio::test]
+async fn a_model_profile_delete_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&MODEL_REMOVE).await;
+}
+
+#[tokio::test]
+async fn a_model_profile_delete_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&MODEL_REMOVE).await;
+}
+
+#[tokio::test]
+async fn a_server_profile_create_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&SERVER_CREATE).await;
+}
+
+#[tokio::test]
+async fn a_server_profile_create_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&SERVER_CREATE).await;
+}
+
+#[tokio::test]
+async fn a_server_profile_delete_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&SERVER_REMOVE).await;
+}
+
+#[tokio::test]
+async fn a_server_profile_delete_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&SERVER_REMOVE).await;
+}
+
+#[tokio::test]
+async fn an_instance_create_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&INSTANCE_CREATE).await;
+}
+
+#[tokio::test]
+async fn an_instance_create_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&INSTANCE_CREATE).await;
+}
+
+#[tokio::test]
+async fn an_instance_remove_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&INSTANCE_REMOVE).await;
+}
+
+#[tokio::test]
+async fn an_instance_remove_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&INSTANCE_REMOVE).await;
+}
+
+#[tokio::test]
+async fn a_control_verb_the_manager_is_lost_after_taking_is_504() {
+    for route in VERBS {
+        app().lost_after_hand_over_is_504(&route).await;
+    }
+}
+
+#[tokio::test]
+async fn a_control_verb_of_a_connect_that_fails_is_503() {
+    for route in VERBS {
+        app().failed_connect_is_503(&route).await;
+    }
+}
+
+#[tokio::test]
+async fn a_boot_write_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&BOOT_WRITE).await;
+}
+
+#[tokio::test]
+async fn a_boot_write_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&BOOT_WRITE).await;
+}
+
+#[tokio::test]
+async fn a_tags_write_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&TAGS_WRITE).await;
+}
+
+#[tokio::test]
+async fn a_tags_write_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&TAGS_WRITE).await;
+}
+
+// ── W2 (a): the writes under the write limit, the boot read on the read's ───
+
+#[tokio::test]
+async fn a_control_verb_past_the_read_limit_answers_204() {
+    for route in VERBS {
+        app().write_past_the_read_limit_is_204(&route).await;
+    }
+}
+
+#[tokio::test]
+async fn a_tags_write_past_the_read_limit_answers_204() {
+    app().write_past_the_read_limit_is_204(&TAGS_WRITE).await;
+}
+
+#[tokio::test]
+async fn a_boot_write_past_the_read_limit_answers_200() {
+    app().boot_write_past_the_read_limit_is_200().await;
+}
+
+#[tokio::test]
+async fn a_boot_read_past_the_read_limit_is_503() {
+    app().boot_read_past_the_read_limit_is_503().await;
 }

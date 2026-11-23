@@ -1470,7 +1470,10 @@ async fn the_tags_route_answers_only_the_write() {
 // answers 204. Both sit behind the session gate like every other write: with
 // no session 401 `session-required` and the manager is asked nothing; a
 // refusal of the signed-in user 403 `session-not-administrator` ending the
-// session; no manager 503 `client-unavailable`; anything else 502. Each
+// session; a manager that took the write and is gone when it answers 504
+// `client-timeout` (slice W2: the write crossed the hand-over, so its outcome
+// is unknown; a connect that hands nothing over stays 503
+// `client-unavailable`); anything else 502. Each
 // refusal of the manager keeps its key and its args in the body, the
 // manager's own message staying out of it: 409 `instance-exists`,
 // `instance-protected` and `instance-running` naming the id, 404
@@ -1577,8 +1580,10 @@ async fn the_instance_crud_without_a_session_is_refused_and_asks_nothing() {
 }
 
 /// Every answer a create's refusal takes, as the body the page reads: the
-/// manager's key, its args and the field to mark, its message staying out; the
-/// manager's absence 503; anything else 502 `client-other` with no args.
+/// manager's key, its args and the field to mark, its message staying out; a
+/// manager that took the create and was gone when it answered 504
+/// `client-timeout`, the write's outcome being unknown (slice W2,
+/// `tests/write_timeouts.rs`); anything else 502 `client-other` with no args.
 #[tokio::test]
 async fn the_instance_create_answers_the_refusals() {
     let refusal = |key: &'static str, value: &str| {
@@ -1639,8 +1644,8 @@ async fn the_instance_create_answers_the_refusals() {
         ),
         (
             ClientError::Unavailable,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "client-unavailable",
+            StatusCode::GATEWAY_TIMEOUT,
+            "client-timeout",
             &[][..],
             None,
         ),
@@ -1676,8 +1681,10 @@ async fn a_create_failure_that_is_not_a_refusal_keeps_the_detail_out() {
 
 /// Every answer a remove's refusal takes: the protected id and a running one
 /// 409 with the id, no such instance and an id the rule refuses 404
-/// `client-no-instance`, the service manager's failure 502
-/// `client-service-failed` with its message kept out.
+/// `client-no-instance`, a manager that took the remove and was gone when it
+/// answered 504 `client-timeout` (slice W2, `tests/write_timeouts.rs`), the
+/// service manager's failure 502 `client-service-failed` with its message kept
+/// out.
 #[tokio::test]
 async fn the_instance_remove_answers_the_refusals() {
     let refusal = |key: &'static str, value: &str| {
@@ -1713,8 +1720,8 @@ async fn the_instance_remove_answers_the_refusals() {
         ),
         (
             ClientError::Unavailable,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "client-unavailable",
+            StatusCode::GATEWAY_TIMEOUT,
+            "client-timeout",
             &[][..],
         ),
     ] {

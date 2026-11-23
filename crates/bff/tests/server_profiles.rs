@@ -33,7 +33,10 @@
 //!   `client-no-server-profile` `[id]`, a stale revision 409
 //!   `server-changed-elsewhere`.
 //! - A refusal of the signed-in user is 403 `session-not-administrator` and
-//!   ends that session on every route; no manager is 503
+//!   ends that session on every route; a manager that takes a write and is
+//!   gone when it answers is 504 `client-timeout` (slice W2: the write crossed
+//!   the hand-over, so its outcome is unknown), while a read that meets one
+//!   that is gone, or a connect that hands nothing over, is 503
 //!   `client-unavailable`; anything else 502 `client-other`, without the
 //!   manager's detail.
 //! - Every one of these reads and writes moves the session's idle deadline
@@ -823,10 +826,13 @@ async fn a_refusal_of_the_user_is_403_and_ends_the_session_on_every_route() {
     }
 }
 
-/// No manager, and a manager that does not answer in the bff's time, are 503
-/// `client-unavailable` on every route.
+/// A manager that is gone, and one that does not answer in the bff's time, are
+/// 503 `client-unavailable` on the reads. A manager that takes a write and is
+/// gone when it answers is 504 `client-timeout` on the writes: the write
+/// crossed the hand-over, so its outcome is unknown (slice W2,
+/// `tests/write_timeouts.rs`).
 #[tokio::test]
-async fn no_manager_is_unavailable() {
+async fn a_manager_gone_on_a_read_is_503_and_lost_on_a_write_is_504() {
     let app = app_for(Fixture {
         delay: Duration::from_secs(2),
         ..Fixture::pool(&[("big", 8123)])
@@ -842,9 +848,15 @@ async fn no_manager_is_unavailable() {
     gone.create = Err(ClientError::Unavailable);
     gone.delete = Err(ClientError::Unavailable);
     let app = app_for(gone);
-    let replies = [
+    let reads = [
         ("list", app.list().await.0),
         ("document", app.document("big").await.0),
+    ];
+    for (what, reply) in reads {
+        reply.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]);
+        let _ = what;
+    }
+    let writes = [
         (
             "create",
             app.create(json!({"engine": ENGINE, "id": "new", "port": 9000}))
@@ -853,8 +865,8 @@ async fn no_manager_is_unavailable() {
         ),
         ("delete", app.delete("big").await.0),
     ];
-    for (what, reply) in replies {
-        reply.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]);
+    for (what, reply) in writes {
+        reply.assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]);
         let _ = what;
     }
 }

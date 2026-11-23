@@ -841,7 +841,7 @@ pub(crate) async fn create(
         Ok(Ok(Ok(()))) => {
             (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response()
         }
-        Ok(Ok(Err(failure))) => create_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => create_failure(&sessions, &session, failure, state.sent()),
         // The answer cannot see the write and the task keeps running: 503 while
         // the call was never handed over, 504 once it was. A create that landed
         // answers its own 201: the section is there, only the reply's journey
@@ -890,7 +890,7 @@ pub(crate) async fn remove(
     });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
-        Ok(Ok(Err(failure))) => delete_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => delete_failure(&sessions, &session, failure, state.sent()),
         Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
@@ -981,11 +981,19 @@ fn text(value: &Value) -> Option<String> {
 /// files: 409 `model-profile-name-taken` naming it, with no field, and the
 /// session lives on. A content check is 422 with its key, its values and the
 /// field the form marks ([`create_field`]). The manager refused the signed-in
-/// user: 403 and the session ends ([`not_administrator`]). No manager, and a
-/// manager that answers later than the limit, is 503, the write never known to
-/// have landed: a retried create of the same name is the 409 that shows what
+/// user: 403 and the session ends ([`not_administrator`]). `Unavailable` (the
+/// pipe and the bus answer a broken stream or a missing reply with it) is 504
+/// `client-timeout` when `write_asked` says the shared state reached
+/// `WRITE_ASKED`, the create sent and its outcome unknown, and 503
+/// `client-unavailable` when it stayed Idle: the connect never handed anything
+/// over, so a retried create of the same name is the 409 that shows what
 /// happened. Anything else is 502, the manager's detail left out.
-fn create_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+fn create_failure(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    failure: ClientError,
+    write_asked: bool,
+) -> Response {
     match failure {
         ClientError::Invalid(refusal) if refusal.key == "model-profile-name-taken" => {
             let args = refusal
@@ -1001,6 +1009,9 @@ fn create_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError)
             Some(&create_field(refusal.key, &refusal.values)),
         ),
         ClientError::NotAuthorized => not_administrator(sessions, session),
+        ClientError::Unavailable if write_asked => {
+            error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
+        }
         ClientError::Unavailable => {
             error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
         }
@@ -1014,8 +1025,15 @@ fn create_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError)
 /// `assignments.ini` key names are 409, the last naming the instances in its
 /// values. Any other check the manager runs is 422 with its key and its values,
 /// as a model info refusal is ([`model_info_refused`]). The refusal of the
-/// signed-in user ends that session; the other answers keep it.
-fn delete_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+/// signed-in user ends that session; the other answers keep it. `Unavailable` is
+/// 504 `client-timeout` when `write_asked` says the delete was sent, its outcome
+/// unknown, and 503 `client-unavailable` when it was not, as on the create.
+fn delete_failure(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    failure: ClientError,
+    write_asked: bool,
+) -> Response {
     match failure {
         ClientError::Invalid(refusal) => {
             let args = refusal
@@ -1034,6 +1052,9 @@ fn delete_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError)
             )
         }
         ClientError::NotAuthorized => not_administrator(sessions, session),
+        ClientError::Unavailable if write_asked => {
+            error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
+        }
         ClientError::Unavailable => {
             error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
         }

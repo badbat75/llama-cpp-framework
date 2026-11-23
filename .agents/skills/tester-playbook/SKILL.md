@@ -254,13 +254,37 @@ pai-bff` fails "the web UI is not built" until `xtask build framework` has run. 
   (`lib.rs`), so a test pair with a short read limit and a longer write limit is what forces the hand-over;
   `boot_write` is TWO calls of one connect (`set_boot_enabled` then `boot_enabled`), so a blocked boot
   write leaves exactly one line in the log.
-- A manager that ANSWERS `Unavailable` is 503 (the outcome is known, nothing was written) and stays 503;
-  only a call that outlasts the limit becomes 504. Before renaming a test whose name ends
-  "is_unavailable", read which of the two it drives: `tests/server_profiles.rs::no_manager_is_unavailable` and
-  `tests/instances.rs::no_manager_is_unavailable` are the answered kind. The three association writes
+ - A "longer than the read limit, inside the write's" success pair sets the pause per CALL: 250 ms is the
+   single-call number (verb, tags write, boot read) and 220 ms the boot write's, whose two calls sleep 440
+   ms and leave 160 ms of margin under a 600 ms write limit. Pin the elapsed BOTH ways (`elapsed >= the
+   sleep && elapsed < WRITE_TIMEOUT`): the lower bound is what proves a green success really ran past the
+   read limit, an instant fake answers 204 with no rule at all. The boot READ at the same 250 ms is the
+   guard that the write's limit does not reach the reads, and its red reads 200, never 503.
+- W2's `Unavailable` mode rides the same `Live` cell (`call_lost`): the fake logs, then answers
+  `ClientError::Unavailable`, so the log pins that the call crossed and the red of a mapper that still
+  answers 503 reads `left: 503 right: 504` naming `client-unavailable`. A FAILED connect (a `connect_fails`
+  cell returning `Err(Unavailable)`) stays 503 with an empty log: the green guard that the 504 is only for
+  a call that crossed. So `Unavailable` answers 503 only where nothing was handed over (a failed connect,
+  a READ): before renaming a test whose name ends "is_unavailable", read which of the two it drives,
+  `tests/server_profiles.rs::no_manager_is_unavailable` and `tests/instances.rs::no_manager_is_unavailable`
+  are the pre-hand-over kind. The three association writes
   (`tests/instance_profiles.rs::a_write_past_the_write_limit_is_503_and_leaves_the_session`) are
   multi-call and outside the nine single-call handlers of W1, so their 503 pin is not the slice's to edit:
   report it as a collision if the coder widens the change past the done-when's list.
+- W2's green rerun: the coder's six named test-side reds are all of them, and each reads `left: 504
+  right: 503` on `client-timeout`. The judge is one question per site: does the fake `record` the call
+  BEFORE answering the `Unavailable`? Record-then-answer means it crossed, so W2 (b) makes the 503
+  expectation the stale one: `control.rs` (verb loop, boot-write row), `instances.rs` (create and remove
+  refusal rows), `model_profile_create.rs` (create+delete), `server_profiles.rs` (its create and delete
+  rows only, its `profiles`/`read_fail` rows are reads and keep 503). The greens that stay 503 are the
+  pre-hand-over kind: `app_no_manager` / `app_connecting(Err)` and every read (`the_boot_read_errors`,
+  `a_manager_gone_during_the_call_is_unavailable` = the list). Fixed names, for the coder-playbook's map:
+  `a_manager_lost_after_the_verb_and_a_slow_one_are_both_504`,
+  `a_manager_lost_after_taking_and_a_slow_one_are_504_on_both_routes`,
+  `a_manager_gone_on_a_read_is_503_and_lost_on_a_write_is_504`.
+- A format fix of my own hunk inside a crate the coder left uncommitted: `cargo fmt -p <crate> --check
+  | grep '^Diff in'` names the one site, then hand-apply the printed `+` block (never `cargo fmt -p`
+  without `--check`, it rewrites the crate) and prove with the same `--check` answering 0.
 - A rule about the KEYS of a `CreateModelProfile` call cannot be pinned in `src/tests/pipe_client.rs` /
   `dbus_client.rs`: their refusal tables ride `ModelProfileSource`, whose variants carry fixed keys
   (`model`, `hf-repo`, `hf-file`) and a `From` carries none. The cheap tables are the raw-wire ones in
@@ -2640,3 +2664,26 @@ Promise<Response>(() => {}))`. Never `held()` with one shared `Response`: a body
   `deps` is not a cold tree, and a 0.4 s "Finished" after editing a test file is a real rebuild: prove
   it by the binary's mtime and by the target's `running N tests` count matching the file's
   `#[tokio::test]` count.
+
+## A nav entry added to every order list (brief 16, 17a.2, 2026-11-23)
+- A new nav entry lands in ~12 files' order lists. A line sweep that inserts the entry before every
+  standalone `en('nav-model-profiles'),` (and its `EN[...]` / `'nav-...'` variants, indent copied) covers
+  them all; it misses a list written as a `slice(-N)` window, a keys-kept loop (order-free: leave it),
+  and the `NodePage` list, which names no model-profiles line at all. Check the tails afterwards:
+  `for f in $(grep -rl "en('nav-about')," *.tsx); do grep -q nav-server-profiles $f || echo $f; done`
+  finds a file the list-of-files forgot, and `grep -rn "slice(-[0-9]"` finds the windows to widen.
+- What the sweep cannot do is the brief's "tests that change" of this kind: a `parseRoute(hash)` that
+  pinned `{page: 'not-found'}` for the new address, a group's href list pinned to one entry, an
+  `aria-current` case built on "the address is not a route", and a strings pin phrased as "the nav gains
+  no such key". Rewrite each to the new rule and say in a comment which slice retired the old one, so a
+  reader does not read it as drift. A pin of the form `X in S, '5b.2'` becomes the positive one
+  (`S[key]` equals the brief's English), keeping the old case's number in the message.
+- Adding keys to the test mirror `EN` (fe/src/test/bff.ts) is the coder's key signal: `App.test.tsx`'s
+  "1a strings" compares the mirror with `fe/src/strings/en_US.json` key by key, so that one test goes red
+  naming every missing key, and it is the only acceptable red in a strings file area. Never add the keys
+  to `en_US.json` yourself, and never weaken that comparison.
+- After a route move, group the red by cause over the reporter's error lines
+  (`sed -r 's/\x1b\[[0-9;]*m//g' | grep -oE "(TestingLibraryElementError|AssertionError|TypeError): .{0,60}" | sort | uniq -c`):
+  a migrated suite must read "Unable to find role=heading ... Network" (the page is not there), and a
+  `TypeError: unexpected <route>` in the list means the fake bff was asked a route its default answers do
+  not cover, which is a fixture gap and not the slice's red.

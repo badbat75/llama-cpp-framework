@@ -235,7 +235,7 @@ async fn create(
         Ok(Ok(Ok(()))) => {
             (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response()
         }
-        Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure, state.sent()),
         Err(_) => timeout_answer(
             state.timed_out(),
             (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response(),
@@ -307,7 +307,7 @@ async fn remove(
     });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
-        Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure, state.sent()),
         Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
@@ -494,8 +494,17 @@ enum Outcome {
 /// names it. No such profile: 404 naming it. A content check the manager ran is
 /// 422 with its key, its values and the field the form marks. The manager
 /// refused the signed-in user: 403, and the session ends with the right that
-/// authorized it. The rest are the bff's news and leave the session alive.
-fn write_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+/// authorized it. `Unavailable` (the pipe and the bus answer a broken stream or
+/// a missing reply with it) is 504 `client-timeout` when `write_asked` says the
+/// shared state reached `WRITE_ASKED`, the call sent and its outcome unknown,
+/// and 503 `client-unavailable` when it stayed Idle: the connect never handed
+/// anything over. The rest are the bff's news and leave the session alive.
+fn write_failure(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    failure: ClientError,
+    write_asked: bool,
+) -> Response {
     match failure {
         ClientError::ServerProfileExists(profile) => keyed(
             StatusCode::CONFLICT,
@@ -520,6 +529,9 @@ fn write_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) 
         ClientError::NotAuthorized => {
             sessions.end(session);
             error(StatusCode::FORBIDDEN, "session-not-administrator", &[])
+        }
+        ClientError::Unavailable if write_asked => {
+            error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
         }
         ClientError::Unavailable => {
             error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
@@ -550,9 +562,10 @@ fn read_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -
 }
 
 /// The answer to a save the manager could not do, as on the instance's save:
-/// the compare and swap refused is 409 `server-changed-elsewhere`, and
-/// `Unavailable` is 504 `client-timeout` when the write was sent, 503
-/// `client-unavailable` when it was not. The rest are the write's failures.
+/// the compare and swap refused is 409 `server-changed-elsewhere`. The rest are
+/// the write's failures ([`write_failure`]), `Unavailable` included: 504
+/// `client-timeout` when the write was sent, 503 `client-unavailable` when it
+/// was not.
 fn save_failure(
     sessions: &Arc<Sessions>,
     session: &str,
@@ -562,10 +575,7 @@ fn save_failure(
     if matches!(failure, ClientError::Changed) {
         return error(StatusCode::CONFLICT, "server-changed-elsewhere", &[]);
     }
-    if matches!(failure, ClientError::Unavailable) && write_asked {
-        return error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]);
-    }
-    write_failure(sessions, session, failure)
+    write_failure(sessions, session, failure, write_asked)
 }
 
 /// The field a manager refusal marks: the key the refusal names in its first

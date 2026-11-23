@@ -20,8 +20,10 @@
 //! so it ends no session.
 //!
 //! Every failure is `{"key": <strings key>, "args": []}`, never the manager's
-//! detail: the service manager's message stays in the bff's log. A time limit on
-//! one of the three writes answers 503 `client-unavailable` while the call was
+//! detail: the service manager's message stays in the bff's log. The three
+//! writes run under the write's limit and the boot read under the read's. A
+//! limit that runs out, or a manager that answers `Unavailable` (a broken
+//! stream, a missing reply), is 503 `client-unavailable` while the call was
 //! never handed over the manager, and 504 `client-timeout` once it was, the
 //! write's outcome unknown (`server::WriteState`, the server file's save's
 //! rule). The reads keep the 503.
@@ -45,12 +47,27 @@ type Verb = fn(&Client, &str) -> Result<(), ClientError>;
 /// The control routes over the seams: the three verbs and the boot flag, read
 /// and written, and the tags write, all behind a session. The body of the
 /// routes that read one, the boot write and the tags write, is capped by the
-/// one layer in front of the whole router (`lib.rs`).
-pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions>) -> axum::Router {
+/// one layer in front of the whole router (`lib.rs`). The three writes, a boot
+/// switch (the unit's enable plus a daemon reload) and a tags write under the
+/// manager's write lock among them, run under `write_timeout`; the boot read is
+/// a read and keeps `timeout`.
+pub(crate) fn routes(
+    connect: Connect,
+    timeout: Duration,
+    write_timeout: Duration,
+    sessions: Arc<Sessions>,
+) -> axum::Router {
     let verb = |v: Verb| {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |Path(id): Path<String>, headers: HeaderMap| {
-            act(connect.clone(), timeout, sessions.clone(), v, id, headers)
+            act(
+                connect.clone(),
+                write_timeout,
+                sessions.clone(),
+                v,
+                id,
+                headers,
+            )
         }
     };
     let boot = {
@@ -66,7 +83,7 @@ pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions
               body: Result<axum::body::Bytes, BytesRejection>| {
             boot_write(
                 connect.clone(),
-                timeout,
+                write_timeout,
                 sessions.clone(),
                 id,
                 headers,
@@ -81,7 +98,7 @@ pub(crate) fn routes(connect: Connect, timeout: Duration, sessions: Arc<Sessions
               body: Result<axum::body::Bytes, BytesRejection>| {
             tags_write(
                 connect.clone(),
-                timeout,
+                write_timeout,
                 sessions.clone(),
                 id,
                 headers,
@@ -120,12 +137,15 @@ fn restart(client: &Client, id: &str) -> Result<(), ClientError> {
 
 /// `POST /api/instances/{id}/{start,stop,restart}`: 204 with an empty body
 /// once the manager took the job. With no session the manager is not even
-/// connected to. A time limit answers 503 `client-unavailable` while the verb
-/// was never handed over the manager, and 504 `client-timeout` once it was: the
-/// job may have been taken, and a 503 would tell the page nothing was asked.
+/// connected to. The verb runs under the write's limit. A time limit answers
+/// 503 `client-unavailable` while the verb was never handed over the manager,
+/// and 504 `client-timeout` once it was: the job may have been taken, and a 503
+/// would tell the page nothing was asked. A manager that takes the verb and
+/// whose stream dies leaves that same unknown outcome, so it is answered the
+/// same way ([`action_failure`]).
 async fn act(
     connect: Connect,
-    timeout: Duration,
+    write_timeout: Duration,
     sessions: Arc<Sessions>,
     verb: Verb,
     id: String,
@@ -148,9 +168,9 @@ async fn act(
         mine.landed();
         Ok(())
     });
-    match tokio::time::timeout(timeout, ask).await {
+    match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
-        Ok(Ok(Err(failure))) => action_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => action_failure(&sessions, &session, failure, state.sent()),
         Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
@@ -187,13 +207,16 @@ async fn boot_read(
 /// asked. A body the bff cannot read is 400 and the manager is not asked; the
 /// session check runs first, so with no session such a body is 401. A body
 /// over `origin::MAX_BODY` is the extractor's 413, which this handler answers
-/// as its second step, before the manager is connected to. A time limit answers
-/// 503 while the write was never handed over the manager, 504 `client-timeout`
-/// once it was, and 200 with the flag the body asked when the write landed and
-/// only the read-back stayed out of reach.
+/// as its second step, before the manager is connected to. The write and the
+/// read-back run under the write's limit: a time limit answers 503 while the
+/// write was never handed over the manager, 504 `client-timeout` once it was,
+/// and 200 with the flag the body asked when the write landed and only the
+/// read-back stayed out of reach. A manager that takes the write and whose
+/// stream dies leaves that same unknown outcome ([`action_failure`]); a stream
+/// that dies on the read-back, after the write landed, is the 503 of a read.
 async fn boot_write(
     connect: Connect,
-    timeout: Duration,
+    write_timeout: Duration,
     sessions: Arc<Sessions>,
     id: String,
     headers: HeaderMap,
@@ -223,9 +246,9 @@ async fn boot_write(
         mine.landed();
         client.boot_enabled(&id)
     });
-    match tokio::time::timeout(timeout, ask).await {
+    match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(enabled))) => axum::Json(json!({ "enabled": enabled })).into_response(),
-        Ok(Ok(Err(failure))) => action_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => action_failure(&sessions, &session, failure, state.sent()),
         // The write landed and only the read-back stayed out of reach: the unit
         // is as the body asked, so the reply carries that flag.
         Err(_) => timeout_answer(
@@ -252,12 +275,14 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
 /// read is 400 `tags-malformed` and the manager is not asked; the session
 /// check runs first, so with no session such a body is 401. A body over
 /// `origin::MAX_BODY` is the extractor's 413, which this handler answers as
-/// its second step, before the manager is connected to. A time limit answers
-/// 503 while the write was never handed over the manager and 504
-/// `client-timeout` once it was, the list's outcome unknown.
+/// its second step, before the manager is connected to. The write runs under
+/// the write's limit: a time limit answers 503 while the write was never handed
+/// over the manager and 504 `client-timeout` once it was, the list's outcome
+/// unknown. A manager that takes the write and whose stream dies is the same
+/// 504 ([`tags_failure`]).
 async fn tags_write(
     connect: Connect,
-    timeout: Duration,
+    write_timeout: Duration,
     sessions: Arc<Sessions>,
     id: String,
     headers: HeaderMap,
@@ -285,9 +310,9 @@ async fn tags_write(
         mine.landed();
         Ok(())
     });
-    match tokio::time::timeout(timeout, ask).await {
+    match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
-        Ok(Ok(Err(failure))) => tags_failure(&sessions, &session, failure),
+        Ok(Ok(Err(failure))) => tags_failure(&sessions, &session, failure, state.sent()),
         Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
@@ -307,10 +332,16 @@ fn tag_list(headers: &HeaderMap, body: &[u8]) -> Option<Vec<String>> {
 }
 
 /// The answer to a tags write that failed: the verbs' failures
-/// ([`action_failure`]), plus the refusal of the list: 422 with the check's
+/// ([`action_failure`], `write_asked` the shared state's word that the write
+/// was sent), plus the refusal of the list: 422 with the check's
 /// key, its values and `field` "tags", the manager's own message left out of
 /// the body and the session left alive.
-fn tags_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+fn tags_failure(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    failure: ClientError,
+    write_asked: bool,
+) -> Response {
     if let ClientError::Invalid(refusal) = failure {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -322,22 +353,33 @@ fn tags_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -
         )
             .into_response();
     }
-    action_failure(sessions, session, failure)
+    action_failure(sessions, session, failure, write_asked)
 }
 
 /// The answer to a verb or a boot write that failed: 404 for no such instance
 /// or an id the manager refuses, 409 for a state the manager refuses the job
 /// over (a start of an instance with no model profile: `key` and `args` as the
 /// manager named them, no `field`, the page having no control of this form to
-/// mark), 503 when there is no manager, 502 `client-service-failed` when the
-/// service manager refused the job (its message stays out of the body) and 502
-/// `client-other` for anything else.
+/// mark), 502 `client-service-failed` when the service manager refused the job
+/// (its message stays out of the body) and 502 `client-other` for anything
+/// else.
 /// The manager refused the signed-in user: 403
 /// `session-not-administrator` (the sign-in's key for the same fact), and the
 /// session that acted ends with the right that authorized it. The other
 /// answers are the bff's news, not a refusal of the user, so the session
 /// lives on.
-fn action_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError) -> Response {
+/// `Unavailable` (the pipe and the bus answer a broken stream or a missing
+/// reply with it) is 504 `client-timeout` when `write_asked` says the shared
+/// state reached `WRITE_ASKED`, the write sent and its outcome unknown, and 503
+/// `client-unavailable` when it stayed Idle: the connect never handed anything
+/// over. Only a handler that stopped waiting sets Cancelled, so the state a
+/// task hands back is Idle or Asked.
+fn action_failure(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    failure: ClientError,
+    write_asked: bool,
+) -> Response {
     match failure {
         ClientError::NotAuthorized => {
             sessions.end(session);
@@ -350,6 +392,9 @@ fn action_failure(sessions: &Arc<Sessions>, session: &str, failure: ClientError)
             .into_response(),
         ClientError::NoInstance | ClientError::InvalidId => {
             error(StatusCode::NOT_FOUND, "client-no-instance", &[])
+        }
+        ClientError::Unavailable if write_asked => {
+            error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[])
         }
         ClientError::Unavailable => {
             error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])

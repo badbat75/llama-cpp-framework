@@ -629,6 +629,32 @@ Lessons only: the rules are in `AGENTS.md`.
   normalizes a call's arguments and the `use` list order, and a pre-fmt snapshot reports a false MISMATCH
   on pop (the tree moves mid-task: the pop also carried in other agents' `fe/` edits, which are not yours).
 
+### W2 (2026-11-23): the control writes under the write limit, a lost manager after the hand-over is 504
+
+- `control::routes(connect, timeout, write_timeout, sessions)` is the last group that took one limit:
+  `act`, `boot_write` and `tags_write` take `write_timeout`, `boot_read` keeps `timeout`, and `lib.rs`
+  hands the pair. A route's doc has to say which limit its calls run under once the two differ.
+- The mapper rule is one argument: the handler passes `state.sent()` as `write_asked` and the mapper's arm
+  is `ClientError::Unavailable if write_asked => 504 client-timeout` above the plain 503. `sent()` is true
+  ONLY in `WRITE_ASKED`: a write that `landed()` is Done, so the boot write's read-back dying is the read's
+  answer, never a 504, and a failed connect (Idle) stays 503. Put the arm in the shared mapper
+  (`action_failure`, `write_failure`, `create_failure`, `delete_failure`) and forward `write_asked` from the
+  wrappers (`tags_failure`, `server_profiles::save_failure`), so no wrapper re-decides it.
+- W2's "the existing tests stay green" is unachievable at the four sites W1 named as the FAST-503 pins, and
+  no code answers both: the six tests that pin 503 for a call answered `Unavailable` after hand-over
+  (`control.rs::a_manager_gone_is_unavailable_and_a_slow_one_times_out` and `the_boot_write_errors`,
+  `instances.rs::the_instance_create_answers_the_refusals` and `the_instance_remove_answers_the_refusals`,
+  `model_profile_create.rs::no_manager_is_unavailable_and_a_slow_one_times_out_on_both_routes`,
+  `server_profiles.rs::no_manager_is_unavailable`) are the same route, the same fixture shape
+  (`create: Err(Unavailable)` / `app_crud(Err(Unavailable), ..)` / the verb and `set_boot` slots), opposite
+  status, as W2's `*_the_manager_is_lost_after_taking_is_504`. Report the six as the tester's, changing
+  nothing: in `server_profiles.rs::no_manager_is_unavailable` only the create and delete rows move, its
+  `profiles`/`read_fail` rows are READS and stay 503.
+- The base reds, proved in a `git worktree add --detach /tmp/<x> HEAD` with the tester's tests copied in
+  (fresh `CARGO_TARGET_DIR`, `PRIVATE_AI_FE_DIST=<worktree>/crates/bff/fe-fixture`): 12 in
+  `write_timeouts.rs`, 3 of them the W2 (a) successes the read limit cut off (verbs 204, tags 204, boot
+  write 200) and 9 the (b) 504s, one per write route. All 40 green after the change.
+
 ## Slices L3 / L4 (2026-11-22): a key onto the web, and the device bound
 
 - A key that moves INTO `WEB_MODEL_PROFILE_KEYS` reddens the bff's exhaustive off-list test:

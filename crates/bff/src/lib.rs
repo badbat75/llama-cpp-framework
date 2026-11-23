@@ -259,10 +259,11 @@ pub fn router_with_session_and_roots(
 
 /// `router_with_session` with the manager's calls of a WRITE given their own,
 /// longer limit: the server file's save, the model profile save and the model profile switch
-/// run under `write_timeout`, as do the model profile create and removal and the
-/// three association writes
-/// (`instance_profiles.rs`); every read keeps `timeout`, and so does the boot
-/// write and the control verbs (the control routes are handed `timeout`). A
+/// run under `write_timeout`, as do the model profile create and removal, the
+/// server profile pool's create and removal, the instance create and removal,
+/// the three association writes (`instance_profiles.rs`), the control verbs,
+/// the boot write and the tags write (`control::routes` takes both limits);
+/// every read keeps `timeout`, the boot read among them. A
 /// manager busy writing is not cut off at the limit that is right for a read.
 pub fn router_with_session_and_write_timeout(
     connect: Connect,
@@ -432,7 +433,12 @@ fn router_with_policy(
             "/api/profiles/model/{id}/model-info",
             axum::routing::get(read_model_info),
         )
-        .merge(control::routes(connect.clone(), timeout, sessions.clone()))
+        .merge(control::routes(
+            connect.clone(),
+            timeout,
+            write_timeout,
+            sessions.clone(),
+        ))
         .merge(instances::routes(
             connect.clone(),
             write_timeout,
