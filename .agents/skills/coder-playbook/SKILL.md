@@ -605,6 +605,30 @@ Lessons only: the rules are in `AGENTS.md`.
   `None if !changed => client.list_instances()` arm is ruled out (slice 15 "As built"): the save's limit is
   never spent on the state of an instance the record never named.
 
+### W1 (2026-11-23): the write timeout on every bff write route
+
+- One rule, one mapping: `server::timeout_answer(state.timed_out(), done)` is the 3-arm answer of a write
+  route's limit at all 12 sites (Cancelled 503 `client-unavailable`, Asked 504 `client-timeout`, Done the
+  route's own success). A single-call write gates INSIDE the blocking task, after the connect
+  (`if !mine.may_write() { return ..; }`) and marks `mine.landed()` after the manager call; the handler's
+  `Err(_)` arm is the only arm that changes. The `Ok(Ok(Err(failure)))` arm keeps `Unavailable` at 503:
+  four shipped tests answer 503 FAST (`instances.rs` ~1637, `server_profiles.rs` 827-858, `control.rs`
+  973/1354, `model_profile_create.rs` ~985), so a fake failure is not a slow call.
+- `done` is built from what the route asked for, never from a read it can no longer make: a create's 201
+  carries the id the body sent, the boot write answers the flag the body sent (its `boot_enabled` read-back
+  is out of reach), a removal's or a verb's 204 the plain 204. `boot_write` makes TWO manager calls and the
+  fake logs the read-back too, so a 504 test's log check sees only the write line while the fake sleeps
+  past the deadline; the `may_write` early return's value is never read (return the body's flag).
+- W1 changed NO bound: the control verbs ride `timeout` (200 ms in the test builders), not `write_timeout`.
+  `tests/write_timeouts.rs` straddles them (TIMEOUT 200, WRITE_TIMEOUT 600, BLOCK 1000) and holds under
+  either. Every "slow manager is 503" test left in the suite is a READ (`grep -n "does not answer in time"
+  crates/bff/tests/*.rs`: `control.rs` 1262, `server_profiles.rs` 827, `instances.rs` 718/736), and the
+  503 half of each W1 test (connect paused past the limit) is GREEN before the code, the guard.
+- Proving the reds with a tester's UNTRACKED test file: `git stash push -- crates/bff/src` and rerun, then
+  `pop` and `diff -q` every file against a snapshot. Take the snapshot AFTER the last `cargo fmt`: fmt
+  normalizes a call's arguments and the `use` list order, and a pre-fmt snapshot reports a false MISMATCH
+  on pop (the tree moves mid-task: the pop also carried in other agents' `fe/` edits, which are not yours).
+
 ## Slices L3 / L4 (2026-11-22): a key onto the web, and the device bound
 
 - A key that moves INTO `WEB_MODEL_PROFILE_KEYS` reddens the bff's exhaustive off-list test:
@@ -634,10 +658,12 @@ Lessons only: the rules are in `AGENTS.md`.
 
 ### Slice AN4 (2026-11-22): `/api/version` and the node's host facts
 
-- `crates/bff/build.rs` embeds the web UI and exports `PAI_BFF_FE_DIR`: `tests/fe.rs` compares the served
-  bytes with the directory the build CHOSE, so with `fe/dist` present (another agent's `npm run build`) the
-  run reads that. Pin the fixture for a whole-crate run:
-  `PAI_BFF_FE_DIR=$PWD/crates/bff/fe-fixture cargo test -p pai-bff`.
+- `crates/bff/build.rs` embeds the web UI: the directory is `PRIVATE_AI_FE_DIST` when set (absolute,
+  `rerun-if-env-changed`), else `fe/dist` when it holds an `index.html`, else `fe-fixture`. It exports the
+  choice as `PAI_BFF_FE_DIR` (`cargo:rustc-env`), and `tests/fe.rs` compares the served bytes with THAT
+  export, so with `fe/dist` present (another agent's `npm run build`) a run reads that. Pin the fixture for
+  a whole-crate run with the SELECTOR, not the export (setting `PAI_BFF_FE_DIR` in the env does nothing):
+  `PRIVATE_AI_FE_DIST=$PWD/crates/bff/fe-fixture cargo test -p pai-bff` (25 binaries, 676 tests).
 - The bff's test builders hand the router a `timeout` of 200 ms, so a route bound by a LONGER limit (the
   node's info, `NODE_INFO_TIMEOUT` 10 s) must use its own const: `tests/node.rs` uses the 200 ms builder,
   and the fake's `node_info()` sleeps, so a route reading `timeout` reddens on the bound and a blocking

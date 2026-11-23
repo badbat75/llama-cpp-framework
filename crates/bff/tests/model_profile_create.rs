@@ -969,10 +969,12 @@ async fn a_refusal_of_the_user_is_403_and_ends_the_session_on_both_routes() {
     }
 }
 
-/// No manager, and a manager that does not answer in the bff's time, are 503
-/// `client-unavailable` on both routes.
+/// No manager is 503 `client-unavailable` on both routes: nothing reached the
+/// manager, so the page can be told nothing changed. A manager that takes the
+/// call and does not answer in the bff's time is 504 `client-timeout`: the
+/// write may have landed (slice W1, `tests/write_timeouts.rs`).
 #[tokio::test]
-async fn no_manager_is_unavailable_on_both_routes() {
+async fn no_manager_is_unavailable_and_a_slow_one_times_out_on_both_routes() {
     let gone = Fixture {
         create: Err(ClientError::Unavailable),
         delete: Err(ClientError::Unavailable),
@@ -996,12 +998,11 @@ async fn no_manager_is_unavailable_on_both_routes() {
     slow.create(json!({"id": "new", "from": "beta"}))
         .await
         .0
-        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]);
-    slow.delete("beta").await.0.assert_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "client-unavailable",
-        &[],
-    );
+        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]);
+    slow.delete("beta")
+        .await
+        .0
+        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]);
 }
 
 /// A create and a removal are writes, so the manager is given the write's own,

@@ -33,7 +33,7 @@
 //! not have, and 409 for the two refusals of a write.
 
 use crate::origin::body_refusal;
-use crate::server::{self, BodyAnswer, Owner, TimedOut, WriteState};
+use crate::server::{self, timeout_answer, BodyAnswer, Owner, WriteState};
 use crate::session::{error, json_body, Sessions};
 use crate::{Connect, ENGINE_LLAMA_CPP};
 use axum::extract::rejection::BytesRejection;
@@ -164,7 +164,9 @@ fn rows_json(rows: &[ServerProfileInfo]) -> Value {
 /// form marks for a value its own checks refuse), so a body nothing can be made
 /// of reaches no manager; the manager checks the same rules again, being the one
 /// that writes. Its name is taken: 409 `client-server-profile-exists` naming it,
-/// and the session lives on.
+/// and the session lives on. A time limit answers 503 `client-unavailable` while
+/// the call was never handed over the manager, and 504 `client-timeout` once it
+/// was, the write's outcome unknown, as on the pool's save.
 async fn create(
     connect: Connect,
     write_timeout: Duration,
@@ -216,15 +218,28 @@ async fn create(
     let user = identity.user;
     let (engine, id) = (requested.engine, requested.id);
     let answer = id.clone();
-    let ask = tokio::task::spawn_blocking(move || {
-        connect(Some(user.as_str()))?.create_server_profile(&engine, &id, port)
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        // Lost to a handler that already ran out of time, no call is sent: the
+        // 503 it answered stands and no file is written.
+        if !mine.may_write() {
+            return Ok(());
+        }
+        client.create_server_profile(&engine, &id, port)?;
+        mine.landed();
+        Ok(())
     });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => {
             (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response()
         }
         Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Err(_) => timeout_answer(
+            state.timed_out(),
+            (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response(),
+        ),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -265,7 +280,9 @@ fn out_of_range(text: &str, range: &std::ops::RangeInclusive<i32>) -> Response {
 /// `DELETE /api/profiles/server/{id}`: 204 with no body once the manager
 /// removed the file. A profile an instance's record names is 409
 /// `client-server-profile-in-use` naming the profile and the instance; no such
-/// profile, 404 naming it.
+/// profile, 404 naming it. The time limit answers 503 while the call was never
+/// handed over the manager and 504 `client-timeout` once it was, as on the
+/// create.
 async fn remove(
     connect: Connect,
     write_timeout: Duration,
@@ -277,13 +294,21 @@ async fn remove(
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
     };
     let user = identity.user;
-    let ask = tokio::task::spawn_blocking(move || {
-        connect(Some(user.as_str()))?.delete_server_profile(ENGINE_LLAMA_CPP, &id)
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        if !mine.may_write() {
+            return Ok(());
+        }
+        client.delete_server_profile(ENGINE_LLAMA_CPP, &id)?;
+        mine.landed();
+        Ok(())
     });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
         Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -448,15 +473,10 @@ async fn save(
             BodyAnswer::File(_) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
         },
         Ok(Ok(Err(failure))) => save_failure(&sessions, &session, failure, state.sent()),
-        Err(_) => match state.timed_out() {
-            TimedOut::Cancelled => {
-                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
-            }
-            TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
-            TimedOut::Done => {
-                axum::Json(json!({ "revision": written, "running": true })).into_response()
-            }
-        },
+        Err(_) => timeout_answer(
+            state.timed_out(),
+            axum::Json(json!({ "revision": written, "running": true })).into_response(),
+        ),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }

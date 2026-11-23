@@ -617,6 +617,20 @@ const WRITE_ASKED: u8 = 1;
 const WRITE_CANCELLED: u8 = 2;
 const WRITE_DONE: u8 = 3;
 
+/// The answer every write route makes of what its time limit found
+/// ([`WriteState::timed_out`]): 503 `client-unavailable` while no write was
+/// asked, 504 `client-timeout` once one was sent, and `done`, the route's own
+/// success, when every write of the call landed: the save's 200 with `running`
+/// true, a create's 201, a removal's or a verb's 204. The route builds `done`
+/// from what it asked for, never from a read it can no longer make.
+pub(crate) fn timeout_answer(timed: TimedOut, done: Response) -> Response {
+    match timed {
+        TimedOut::Cancelled => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
+        TimedOut::Done => done,
+    }
+}
+
 /// `PUT /api/instances/{id}/server` `{"revision", "values"}`: the Server
 /// form's save of the whole file, as the signed-in user. The answer is
 /// `{"revision", "running"}`, the revision of the text the file holds now and
@@ -733,17 +747,14 @@ pub(crate) async fn save(
         // Done is a write that landed, so the file holds what the form sent and
         // the answer is the save's 200, `running` true, the state the bff
         // cannot read.
-        Err(_) => match state.timed_out() {
-            TimedOut::Cancelled => {
-                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
-            }
-            TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
-            TimedOut::Done => axum::Json(json!({
+        Err(_) => timeout_answer(
+            state.timed_out(),
+            axum::Json(json!({
                 "revision": written,
                 "running": true,
             }))
             .into_response(),
-        },
+        ),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }

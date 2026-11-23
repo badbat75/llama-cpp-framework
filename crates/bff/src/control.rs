@@ -20,9 +20,14 @@
 //! so it ends no session.
 //!
 //! Every failure is `{"key": <strings key>, "args": []}`, never the manager's
-//! detail: the service manager's message stays in the bff's log.
+//! detail: the service manager's message stays in the bff's log. A time limit on
+//! one of the three writes answers 503 `client-unavailable` while the call was
+//! never handed over the manager, and 504 `client-timeout` once it was, the
+//! write's outcome unknown (`server::WriteState`, the server file's save's
+//! rule). The reads keep the 503.
 
 use crate::origin::body_refusal;
+use crate::server::{timeout_answer, WriteState};
 use crate::session::{error, json_body, Sessions};
 use crate::{Client, Connect};
 use axum::extract::rejection::BytesRejection;
@@ -115,7 +120,9 @@ fn restart(client: &Client, id: &str) -> Result<(), ClientError> {
 
 /// `POST /api/instances/{id}/{start,stop,restart}`: 204 with an empty body
 /// once the manager took the job. With no session the manager is not even
-/// connected to.
+/// connected to. A time limit answers 503 `client-unavailable` while the verb
+/// was never handed over the manager, and 504 `client-timeout` once it was: the
+/// job may have been taken, and a 503 would tell the page nothing was asked.
 async fn act(
     connect: Connect,
     timeout: Duration,
@@ -128,11 +135,23 @@ async fn act(
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
     };
     let user = identity.user;
-    let ask = tokio::task::spawn_blocking(move || verb(&connect(Some(user.as_str()))?, &id));
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        // Lost to a handler that already ran out of time, no verb is sent: the
+        // 503 it answered stands and no job is asked.
+        if !mine.may_write() {
+            return Ok(());
+        }
+        verb(&client, &id)?;
+        mine.landed();
+        Ok(())
+    });
     match tokio::time::timeout(timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
         Ok(Ok(Err(failure))) => action_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -168,7 +187,10 @@ async fn boot_read(
 /// asked. A body the bff cannot read is 400 and the manager is not asked; the
 /// session check runs first, so with no session such a body is 401. A body
 /// over `origin::MAX_BODY` is the extractor's 413, which this handler answers
-/// as its second step, before the manager is connected to.
+/// as its second step, before the manager is connected to. A time limit answers
+/// 503 while the write was never handed over the manager, 504 `client-timeout`
+/// once it was, and 200 with the flag the body asked when the write landed and
+/// only the read-back stayed out of reach.
 async fn boot_write(
     connect: Connect,
     timeout: Duration,
@@ -188,15 +210,28 @@ async fn boot_write(
         return error(StatusCode::BAD_REQUEST, "boot-malformed", &[]);
     };
     let user = identity.user;
-    let ask = tokio::task::spawn_blocking(move || {
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<bool, ClientError> {
         let client = connect(Some(user.as_str()))?;
+        if !mine.may_write() {
+            // The handler ran out of time before the flag was handed over and
+            // answered 503: this value is never read.
+            return Ok(enabled);
+        }
         client.set_boot_enabled(&id, enabled)?;
+        mine.landed();
         client.boot_enabled(&id)
     });
     match tokio::time::timeout(timeout, ask).await {
         Ok(Ok(Ok(enabled))) => axum::Json(json!({ "enabled": enabled })).into_response(),
         Ok(Ok(Err(failure))) => action_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        // The write landed and only the read-back stayed out of reach: the unit
+        // is as the body asked, so the reply carries that flag.
+        Err(_) => timeout_answer(
+            state.timed_out(),
+            axum::Json(json!({ "enabled": enabled })).into_response(),
+        ),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -217,7 +252,9 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
 /// read is 400 `tags-malformed` and the manager is not asked; the session
 /// check runs first, so with no session such a body is 401. A body over
 /// `origin::MAX_BODY` is the extractor's 413, which this handler answers as
-/// its second step, before the manager is connected to.
+/// its second step, before the manager is connected to. A time limit answers
+/// 503 while the write was never handed over the manager and 504
+/// `client-timeout` once it was, the list's outcome unknown.
 async fn tags_write(
     connect: Connect,
     timeout: Duration,
@@ -237,13 +274,21 @@ async fn tags_write(
         return error(StatusCode::BAD_REQUEST, "tags-malformed", &[]);
     };
     let user = identity.user;
-    let ask = tokio::task::spawn_blocking(move || {
-        connect(Some(user.as_str()))?.set_instance_tags(&id, &tags)
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        if !mine.may_write() {
+            return Ok(());
+        }
+        client.set_instance_tags(&id, &tags)?;
+        mine.landed();
+        Ok(())
     });
     match tokio::time::timeout(timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
         Ok(Ok(Err(failure))) => tags_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }

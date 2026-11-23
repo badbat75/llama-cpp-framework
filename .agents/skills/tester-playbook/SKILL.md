@@ -110,6 +110,9 @@ future` of a non-async block), run it, then delete it and write the real tests. 
   `Compiling <crate>` before calling anything red or green; force the rebuild by adding a `#[test]` to the
   crate's test module, run, remove it, prove with `cmp` + `grep -c`. An assertion that passes in a run and
   fails deterministically in a probe over the same phase is the stale binary, never a flake.
+- A GREEN rerun reads that line the other way: `Finished ... in 0.07s` with no `Compiling` is a replay of the
+  coder's own fresh build, proven by every test binary's mtime (the paths in the log's `Running` lines)
+  post-dating the newest `*.rs` under `crates/<crate>/`; report that pairing beside the totals.
 - A copy of the tree handed over as "green there" is read with `diff -rq crates <copy>`: it usually carries
   edits in test files BEYOND the diffs quoted (MP1: two diffs quoted, the copy also changed
   `tests/dbus_client.rs` and `tests/pipe_client.rs`), and one of those is the fix a phase needs. Judge
@@ -230,7 +233,10 @@ pai-bff` fails "the web UI is not built" until `xtask build framework` has run. 
   unset-variable run is the fixture; a stale `fe/dist` is overridden with
   `PRIVATE_AI_FE_DIST=$PWD/crates/bff/fe-fixture`. Setting `PAI_BFF_FE_DIR` in the shell does nothing
   (cargo's `rustc-env` wins). `tests/fe.rs` runs on the fixture too (it reads `env!("PAI_BFF_FE_DIR")`
-  and branches on `fixture()`), so a fixture run is 6 green, not a stub failure.
+  and branches on `fixture()`), so a fixture run is 6 green, not a stub failure. This tree has
+  `fe/dist/index.html`, so a plain `cargo test -p pai-bff` needs no variable, while setting
+  `PRIVATE_AI_FE_DIST` reruns the build script and recompiles the lib and EVERY test target of the crate
+  (its `rerun-if-env-changed`): set it only to escape a stale `fe/dist`.
 - A route that validates the instance id against the record answers `no_instance` for every id the fake
   does not list, so a second instance needs a list the test can set: in `crates/bff/tests/server.rs` that
   is `Live::instances` (empty = the one `default`) behind `App::set_instances`. Each `tests/*.rs` has its
@@ -240,6 +246,21 @@ pai-bff` fails "the web UI is not built" until `xtask build framework` has run. 
   0..1800 ms (the 10 ms bound of the token probe) under load. Run them alone, then judge:
   `cargo test -p pai-manager --lib -- --test-threads=1 data_root_e2e` (`dbus_client` is a module of that
   test).
+- The bff's route tests build the router from a `Connect` closure, so a timeout test needs a `Live` cell
+  the test moves AFTER the build (`call_pause_ms`, `connect_pause_ms`): the fake logs the call and only
+  then sleeps, so a 504 pin can assert the manager really received it, and a hung connect answers 503 with
+  an empty log (the guard that the new 504 does not swallow the manager that was never reached).
+  `crates/bff/src/control.rs`'s verbs, boot write and tags write are handed the READ timeout
+  (`lib.rs`), so a test pair with a short read limit and a longer write limit is what forces the hand-over;
+  `boot_write` is TWO calls of one connect (`set_boot_enabled` then `boot_enabled`), so a blocked boot
+  write leaves exactly one line in the log.
+- A manager that ANSWERS `Unavailable` is 503 (the outcome is known, nothing was written) and stays 503;
+  only a call that outlasts the limit becomes 504. Before renaming a test whose name ends
+  "is_unavailable", read which of the two it drives: `tests/server_profiles.rs::no_manager_is_unavailable` and
+  `tests/instances.rs::no_manager_is_unavailable` are the answered kind. The three association writes
+  (`tests/instance_profiles.rs::a_write_past_the_write_limit_is_503_and_leaves_the_session`) are
+  multi-call and outside the nine single-call handlers of W1, so their 503 pin is not the slice's to edit:
+  report it as a collision if the coder widens the change past the done-when's list.
 - A rule about the KEYS of a `CreateModelProfile` call cannot be pinned in `src/tests/pipe_client.rs` /
   `dbus_client.rs`: their refusal tables ride `ModelProfileSource`, whose variants carry fixed keys
   (`model`, `hf-repo`, `hf-file`) and a `From` carries none. The cheap tables are the raw-wire ones in

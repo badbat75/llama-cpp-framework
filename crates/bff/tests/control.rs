@@ -961,10 +961,13 @@ async fn no_manager_is_unavailable_and_keeps_the_session() {
         .assert_signed_in_as("alice");
 }
 
-/// A manager gone during the call, and one that is slower than the bff's
-/// bound, are 503 too.
+/// A manager that is gone during the call is 503, the bff knows nothing was
+/// written. A manager that takes the verb and does not come back is 504
+/// `client-timeout`: the write may have landed, so the answer never says it did
+/// not (slice W1, `tests/write_timeouts.rs`). Both are answered at the bound,
+/// and the session lives on: the bff's own news is no refusal of the user.
 #[tokio::test]
-async fn a_manager_gone_or_too_slow_is_unavailable() {
+async fn a_manager_gone_is_unavailable_and_a_slow_one_times_out() {
     let app = app_verbs(Err(ClientError::Unavailable));
     for r in app.control("default", &app.sign_in().await).await {
         r.assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
@@ -974,7 +977,7 @@ async fn a_manager_gone_or_too_slow_is_unavailable() {
     let asked = Instant::now();
     app.post("/api/instances/default/restart", Some(&cookie))
         .await
-        .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+        .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
     assert!(
         asked.elapsed() < Duration::from_secs(1),
         "answered after {:?}",
@@ -986,7 +989,10 @@ async fn a_manager_gone_or_too_slow_is_unavailable() {
         Some(&cookie),
     )
     .await
-    .assert_error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable");
+    .assert_error(StatusCode::GATEWAY_TIMEOUT, "client-timeout");
+    app.get("/api/session", Some(&cookie))
+        .await
+        .assert_signed_in_as("alice");
 }
 
 /// The service manager refused the job, or the unit failed (the manager's

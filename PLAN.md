@@ -1110,11 +1110,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     from the web"): `CreateModelProfile(As)` (from a model file, an `hf-repo`, or a clone of another
     profile's section and tags, never its assignments) and `DeleteModelProfile(As)`; the manager's
     "needs `model`" rule loosened to `model` or a download key. Slices MP1 to MP3; MP1 (the manager) and MP2 (the bff routes) built 2026-11-23; MP3 with slice 17.
-    W1 (2026-11-23, architect): the bff's nine single-call write handlers (model and server profile
-    create and delete, instance create and remove, control, boot, tags) answer a write that outlasts
-    the write limit after the call reached the manager with 504 `client-timeout`, the session kept, as
-    the saves do, not 503 (the write may have landed); done-when in `ARCHITECTURE.md` after MP3. Runs
-    beside slice 17 (crates/bff only).
+    W1 built 2026-11-23: the bff's nine single-call writes answer 504 `client-timeout` once the call
+    reached the manager (`timeout_answer`, shared with the saves). Left from its review, to design: the
+    run verbs, boot and tags writes still run under the read limit (`lib.rs` hands `control::routes`
+    the read timeout); a manager `Unavailable` after the call was handed over answers 503 where the
+    saves answer 504; and the web UI shows the generic `request-failed` for a 504 on the verbs, boot,
+    tags and the creates and deletes (only the server save reads `client-timeout`): the architect rules
+    the first two, the designer words the third with slice 17.
     **About and node info** (user, 2026-11-22): the About page keeps only the framework's version and
     the operating system, with its version, of the machine the service runs on (the node's bff, or the
     director's); everything else it shows today (host name, engine and GPU runtime versions) moves to the

@@ -57,7 +57,7 @@
 //! pool holds switched off and assigned nothing; see [`remove`].
 
 use crate::origin::body_refusal;
-use crate::server::{revision, runs, TimedOut, WriteState};
+use crate::server::{revision, runs, timeout_answer, WriteState};
 use crate::session::{error, json_body, Sessions};
 use crate::{Client, Connect};
 use axum::body::Bytes;
@@ -441,18 +441,15 @@ pub(crate) async fn set_enabled(
         // the move produced, `running` true and no instance named: the state of
         // the instances the move serves stayed unknown, so the page says to
         // restart.
-        Err(_) => match state.timed_out() {
-            TimedOut::Cancelled => {
-                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
-            }
-            TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
-            TimedOut::Done => axum::Json(json!({
+        Err(_) => timeout_answer(
+            state.timed_out(),
+            axum::Json(json!({
                 "enabled": enabled,
                 "running": true,
                 "restart": [],
             }))
             .into_response(),
-        },
+        ),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -797,6 +794,13 @@ fn flag(headers: &HeaderMap, body: &[u8]) -> Option<bool> {
 /// of `models.ini.disabled`: the list's row for the new model profile is
 /// `enabled: false` with no assignments, and a create never overwrites a name
 /// either file holds, which is what makes a retried create answer 409.
+///
+/// The time limit's answer turns on one fact, the server file's save's rule:
+/// while the call was never handed over the manager it is 503
+/// `client-unavailable`, the manager not reached; from the moment it was, the
+/// write's outcome is unknown and the answer is 504 `client-timeout`, the
+/// session kept. A create whose write landed while the reply stayed blind
+/// answers its own 201.
 pub(crate) async fn create(
     connect: Connect,
     write_timeout: Duration,
@@ -817,15 +821,35 @@ pub(crate) async fn create(
     let user = identity.user;
     let Requested { id, source } = requested;
     let answer = id.clone();
-    let ask = tokio::task::spawn_blocking(move || {
-        connect(Some(user.as_str()))?.create_model_profile(&id, &source)
+    // The write's state, shared with the task: from the moment the call is
+    // handed over the manager its outcome is unknown, so every answer that
+    // cannot see it is 504, never the 503 that tells the page nothing changed.
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        // Lost to a handler that already ran out of time, no call is sent: the
+        // 503 it answered stands and the pool is what it was.
+        if !mine.may_write() {
+            return Ok(());
+        }
+        client.create_model_profile(&id, &source)?;
+        mine.landed();
+        Ok(())
     });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => {
             (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response()
         }
         Ok(Ok(Err(failure))) => create_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        // The answer cannot see the write and the task keeps running: 503 while
+        // the call was never handed over, 504 once it was. A create that landed
+        // answers its own 201: the section is there, only the reply's journey
+        // ran out.
+        Err(_) => timeout_answer(
+            state.timed_out(),
+            (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response(),
+        ),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -839,7 +863,9 @@ pub(crate) async fn create(
 /// `model-profile-assigned` naming the instances, and a name neither pool file
 /// holds is 404 `no-model-profile-named`. A page that lists a model profile the
 /// pool no longer holds is that 404; the rule is the manager's, so a stale row
-/// cannot delete what it does not see.
+/// cannot delete what it does not see. A limit that runs out is 503
+/// `client-unavailable` while the call was never handed over the manager, and
+/// 504 `client-timeout` once it was, as on the create.
 pub(crate) async fn remove(
     connect: Connect,
     write_timeout: Duration,
@@ -851,13 +877,21 @@ pub(crate) async fn remove(
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
     };
     let user = identity.user;
-    let ask = tokio::task::spawn_blocking(move || {
-        connect(Some(user.as_str()))?.delete_model_profile(&id)
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        if !mine.may_write() {
+            return Ok(());
+        }
+        client.delete_model_profile(&id)?;
+        mine.landed();
+        Ok(())
     });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
         Ok(Ok(Err(failure))) => delete_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -1436,18 +1470,12 @@ pub(crate) async fn save(
         Ok(Ok(Ok((running, restart)))) => saved(&written, running, restart),
         Ok(Ok(Err(failure))) => switch_failure(&sessions, &session, failure, state.sent()),
         Ok(Err(_join)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
-        Err(_elapsed) => match state.timed_out() {
-            // The write was never asked: the file is the one that was read.
-            TimedOut::Cancelled => {
-                error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[])
-            }
-            TimedOut::Asked => error(StatusCode::GATEWAY_TIMEOUT, "client-timeout", &[]),
-            // The write landed, or the body asked for the text the file
-            // already holds and nothing was written: the model profile is the one the
-            // body asked for and only the instances' state stayed unknown, so
-            // `running` is true and no instance is named.
-            TimedOut::Done => saved(&written, true, Vec::new()),
-        },
+        // A write never asked leaves the file the one that was read (503); a
+        // write asked has an unknown outcome (504). A write that landed, or a
+        // body that asked for the text the file already holds, leaves the model
+        // profile the one the body asked for: only the instances' state stayed
+        // unknown, so `running` is true and no instance is named.
+        Err(_elapsed) => timeout_answer(state.timed_out(), saved(&written, true, Vec::new())),
     }
 }
 

@@ -19,6 +19,7 @@
 //! body's values.
 
 use crate::origin::body_refusal;
+use crate::server::{timeout_answer, WriteState};
 use crate::session::{error, json_body, Sessions};
 use crate::Connect;
 use axum::extract::rejection::BytesRejection;
@@ -73,7 +74,10 @@ pub(crate) fn routes(connect: Connect, write_timeout: Duration, sessions: Arc<Se
 /// instance and answers 201 `{"id"}` with the id the body sent. Every rule is
 /// the manager's: its refusal of the engine, of the id, of a name taken, of a
 /// server profile that is not there, of one another instance runs, and of an
-/// address in use keeps its key in the body ([`write_failure`]).
+/// address in use keeps its key in the body ([`write_failure`]). The time limit
+/// answers 503 `client-unavailable` while the call was never handed over the
+/// manager, and 504 `client-timeout` once it was, the create's outcome unknown,
+/// as on the server file's save.
 async fn create(
     connect: Connect,
     write_timeout: Duration,
@@ -93,19 +97,28 @@ async fn create(
     };
     let user = identity.user;
     let answer = requested.id.clone();
-    let ask = tokio::task::spawn_blocking(move || {
-        connect(Some(user.as_str()))?.create_instance(
-            &requested.engine,
-            &requested.id,
-            &requested.server_profile,
-        )
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        // Lost to a handler that already ran out of time, no call is sent: the
+        // 503 it answered stands and no instance is created.
+        if !mine.may_write() {
+            return Ok(());
+        }
+        client.create_instance(&requested.engine, &requested.id, &requested.server_profile)?;
+        mine.landed();
+        Ok(())
     });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => {
             (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response()
         }
         Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Err(_) => timeout_answer(
+            state.timed_out(),
+            (StatusCode::CREATED, axum::Json(json!({ "id": answer }))).into_response(),
+        ),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
@@ -133,7 +146,8 @@ fn requested(body: &Value) -> Option<Requested> {
 /// instance away. The protected id and a running one are 409 naming the id, an
 /// id the record does not name is 404 `client-no-instance`, and the service
 /// manager's own refusal is 502 `client-service-failed`, its message staying in
-/// the bff.
+/// the bff. The time limit answers 503 while the call was never handed over the
+/// manager, and 504 `client-timeout` once it was, as on the create.
 async fn remove(
     connect: Connect,
     write_timeout: Duration,
@@ -145,12 +159,21 @@ async fn remove(
         return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
     };
     let user = identity.user;
-    let ask =
-        tokio::task::spawn_blocking(move || connect(Some(user.as_str()))?.remove_instance(&id));
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        if !mine.may_write() {
+            return Ok(());
+        }
+        client.remove_instance(&id)?;
+        mine.landed();
+        Ok(())
+    });
     match tokio::time::timeout(write_timeout, ask).await {
         Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
         Ok(Ok(Err(failure))) => write_failure(&sessions, &session, failure),
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "client-unavailable", &[]),
+        Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
