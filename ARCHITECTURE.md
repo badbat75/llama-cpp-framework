@@ -3771,6 +3771,22 @@ already `configure`) and delete unused ones (exactly what the rule allows); with
   the 504 row on those routes, and the three places that say the 413 comes "before the session is
   read" (every write handler reads the session first and turns the body cap's rejection into 413
   after it, so no session is 401 whatever the body: the gate's rule, which stays).
+- **W2. Every write under the write limit, and a lost manager after the hand-over is 504** (added
+  2026-11-23, from W1's review). (a) `control::routes` gets the read limit (`MANAGER_TIMEOUT`, 5 s:
+  `crates/bff/src/lib.rs` ~435), so the run verbs, `boot_write` and `tags_write` run under it; that is
+  history (the routes predate `WRITE_TIMEOUT`), not a choice, and a boot switch (enable or disable plus
+  a daemon reload, and from P1 a hop through the helper) or a tags write under the manager's write lock
+  is a write like the others. `routes` takes both limits: `boot_read` keeps `MANAGER_TIMEOUT`, `act`,
+  `boot_write` and `tags_write` take `write_timeout`. (b) A manager `Unavailable` (a broken stream, a
+  missing reply) that comes back AFTER the call was handed over leaves the outcome unknown, so it is
+  504 `client-timeout`, as the saves answer through `state.sent()`; before the hand-over (the connect
+  failed) it stays 503. Applies to `write_failure`, `create_failure`, `action_failure` and the other
+  failure mappers of W1's nine routes. Done when: per route, a fake manager that answers `Unavailable`
+  after receiving the call gives 504 and the session lives on, and a connect that fails gives 503; a
+  verb, a boot write and a tags write whose fake manager takes longer than the read limit but less
+  than `write_timeout` answer their success, while the boot read still answers 503 past the read limit;
+  the existing tests stay green. The docs agent then updates `crates/bff/README.md` (the "same 5 s
+  timeout as the read" of the tags and boot writes, the verbs' rows, the 504 rows).
 - **With MT1** (tags, after slice 17): MT1's done-when gains "a delete through `DeleteModelProfile`
   leaves the record without its section" and "a clone carries the source's tags; a create of a new id
   leaves no section for it".

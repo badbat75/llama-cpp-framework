@@ -1111,12 +1111,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     profile's section and tags, never its assignments) and `DeleteModelProfile(As)`; the manager's
     "needs `model`" rule loosened to `model` or a download key. Slices MP1 to MP3; MP1 (the manager) and MP2 (the bff routes) built 2026-11-23; MP3 with slice 17.
     W1 built 2026-11-23: the bff's nine single-call writes answer 504 `client-timeout` once the call
-    reached the manager (`timeout_answer`, shared with the saves). Left from its review, to design: the
-    run verbs, boot and tags writes still run under the read limit (`lib.rs` hands `control::routes`
-    the read timeout); a manager `Unavailable` after the call was handed over answers 503 where the
-    saves answer 504; and the web UI shows the generic `request-failed` for a 504 on the verbs, boot,
-    tags and the creates and deletes (only the server save reads `client-timeout`): the architect rules
-    the first two, the designer words the third with slice 17.
+    reached the manager (`timeout_answer`, shared with the saves). W2 (architect, 2026-11-23; done-when in
+    `ARCHITECTURE.md` after W1), in progress: the run verbs, `boot_write` and `tags_write` move to
+    `write_timeout` (`boot_read` keeps the read limit), and a manager `Unavailable` after the call was
+    handed over is 504 as in the saves. Left: the web UI shows the generic `request-failed` for a 504 on the verbs, boot,
+    tags and the creates and deletes (only the server save reads `client-timeout`), worded by the
+    designer with slice 17.
     **About and node info** (user, 2026-11-22): the About page keeps only the framework's version and
     the operating system, with its version, of the machine the service runs on (the node's bff, or the
     director's); everything else it shows today (host name, engine and GPU runtime versions) moves to the
