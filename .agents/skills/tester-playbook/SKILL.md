@@ -465,6 +465,11 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
   selects reds H1a.12 naming exactly the two missing entries, and its list is per NAME, so the coder's one
   comma group `.ot-tensor select, .ot-goes-on select` passes it and the per-selector CSS pin passes
   (match a selector against `sel.split(',')` of each top rule, not against a whole rule's header).
+- The card's own min-size names sit in H1a.12's per-card SET (`otSizes`, sorted on both sides), not in
+  the `rest` array: a D5-style `min-width: 0` added to a card class moves only that set. The D4/D5 CSS
+  tests are in `TensorPlacement1.test.tsx`, not `Reflow.test.ts`: when the brief's run filter names a
+  file the tests are not in (`-- Reflow`, green: untouched), locate the file by the test title and show
+  the reds with `-t '<title words>'` (`-t 'the sheet'`), and report the filter's own green run.
 - Prettier is part of the test edit: after writing, `npm --prefix fe run format:check` and, on a warn of
   your own files, `npm --prefix fe exec -- prettier --write fe/src/X.test.tsx` (the exec's cwd is the repo
   root, so the paths carry `fe/`; `src/X.test.tsx` answers "No files matching the pattern").
@@ -913,6 +918,10 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
   helper prints `content-type ""` and reads like a harness typo. Say in the report that each of those reds
   is the unrouted path, and pin `the route answers only the write` (GET/POST/DELETE 405, the router before
   the session) as its own test: it is a 404 today and greens with the route.
+  The variant (MP2, `POST`/`DELETE /api/profiles/model`, 2026-11-23): when the PATH is already routed for
+  sibling verbs (`GET /api/profiles/model`, `PUT /api/profiles/model/{id}`), the missing verb answers a bare
+  405, not 404, and EVERY test of the new pair reads `left: 405`. One clean line covers the list: "all N
+  reds are the 405 of a verb the bff does not route yet".
 - Where signing in is impossible (the binary's real authenticator is the machine's manager, 503 under the
   test redirect), pin the gate at the socket (401, the exact body, no `Set-Cookie`) and keep the answer's
   shape pinned at router level with a fake authenticator. Say which level pins what.

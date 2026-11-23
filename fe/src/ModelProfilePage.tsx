@@ -86,6 +86,19 @@ import {
   type GpuProbe,
 } from './GpuSplit.tsx'
 import { setBlocks, type Layout } from './gpuBlocks.ts'
+import {
+  ADD_ID,
+  otNewDevice,
+  otNewRule,
+  otSetLayersText,
+  otTensorId,
+  rowRule,
+  rowsValue,
+  tensorRows,
+  type TensorCardProps,
+  type TensorRow,
+} from './TensorPlacement.tsx'
+import { CUSTOM as OT_CUSTOM } from './tensorRules.ts'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
 import {
@@ -773,6 +786,12 @@ function Content({
     devicesRead.current = true
     readGpuProbe().then(setProbe)
   }, [])
+  // The Tensor placement card (brief 21): the rules of `override-tensor`, one row
+  // each, the page's state as the GPU list's rows are, because the card composes
+  // the one key out of them.
+  const [otRows, setOtRows] = useState<TensorRow[]>(() =>
+    tensorRows(doc.values['override-tensor'] ?? null),
+  )
   // A second Save while one runs sends nothing (137).
   const saving = useRef(false)
   const bar = useSaveBarPadding()
@@ -1028,6 +1047,95 @@ function Content({
     return values
   }
 
+  /** The Tensor placement card's controls (brief 21, 21 T.6): each one rewrites
+   *  its own row and leaves the others, and moves no focus. The key is sent when
+   *  the rows no longer render the loaded rules (21 T.8), so an edit typed and
+   *  typed back is unchanged, and a Layers text `parseLayers` cannot read is a
+   *  change: the pattern stays as the last readable text composed it. */
+  function otEdit(id: number, change: (row: TensorRow) => TensorRow) {
+    setOtRows((rows) => rows.map((row) => (row.id === id ? change(row) : row)))
+  }
+
+  /** Tensor: the row's kind. A row that comes to Custom shows the Custom text it
+   *  remembers for the visit, else the pattern it stands for now; a row that
+   *  leaves Custom keeps its text to remember (21 T.6). */
+  function otKind(id: number, kind: string) {
+    otEdit(id, (row) => ({
+      ...row,
+      kind,
+      ...(kind === OT_CUSTOM
+        ? { customText: row.customText ?? rowRule(row).pattern }
+        : {}),
+    }))
+  }
+
+  /** Layers: the text as typed. The rule's pattern is the kind composed with the
+   *  layers the row carries (21 T.6), so a half-typed text leaves the pattern as
+   *  the last readable text composed it. */
+  function otLayersText(id: number, text: string) {
+    otEdit(id, (row) => otSetLayersText(row, text))
+  }
+
+  /** Pattern: the text as typed. It is the rule's pattern at once (21 T.6), so
+   *  the key follows the text as typed; TP2 checks the text itself at Save. */
+  function otPatternText(id: number, text: string) {
+    otEdit(id, (row) => ({ ...row, customText: text }))
+  }
+
+  /** Goes on: the option's value is the rule's device. */
+  function otDevice(id: number, device: string) {
+    otEdit(id, (row) => ({ ...row, device }))
+  }
+
+  /** Add rule (21 T.7): the embedding table on the first GPU the read lists, on
+   *  CPU when it lists none or has not answered, appended after the rules, the
+   *  focus on its Tensor. The rows are committed (flushSync) before the focus,
+   *  the way a jump opens a card: the Tensor of a row that mounts in this commit
+   *  exists only after it. */
+  function otAdd() {
+    const id = otRows.reduce((max, row) => Math.max(max, row.id), 0) + 1
+    flushSync(() => {
+      setOtRows([...otRows, otNewRule(id, otNewDevice(probe))])
+    })
+    document.getElementById(otTensorId(id))?.focus()
+  }
+
+  /** Remove (21 T.7): the rule goes, and the focus goes to the rule that moved
+   *  up, else to the one before it, else to Add rule. */
+  function otRemove(id: number) {
+    const at = otRows.findIndex((row) => row.id === id)
+    const rows = otRows.filter((row) => row.id !== id)
+    flushSync(() => {
+      setOtRows(rows)
+    })
+    const next = rows[at] ?? rows[at - 1]
+    document
+      .getElementById(next === undefined ? ADD_ID : otTensorId(next.id))
+      ?.focus()
+  }
+
+  /** Whether the rules on screen are an edit of the loaded ones (21 T.8): the key
+   *  is changed when `render` of the rows differs from `render` of the loaded
+   *  rules, so a value the file wrote with an alias, a space or a hand-written
+   *  order reads unchanged, and an edit typed and typed back is unchanged. */
+  function otChanged() {
+    return (
+      rowsValue(otRows) !==
+      rowsValue(tensorRows(loaded.values['override-tensor'] ?? null))
+    )
+  }
+
+  const tensor: TensorCardProps = {
+    rows: otRows,
+    probe,
+    onKind: otKind,
+    onLayersText: otLayersText,
+    onPatternText: otPatternText,
+    onDevice: otDevice,
+    onAdd: otAdd,
+    onRemove: otRemove,
+  }
+
   /** The changed keys as the body of 133 spells them. A number field with its
    * box ticked is a key to remove, and a key the file never had is sent as
    * nothing; with the box unticked, the field sends the number its text holds
@@ -1074,6 +1182,9 @@ function Content({
     }
     // Brief 14: the GPUs fieldset's two composed keys.
     Object.assign(values, gpuChanges())
+    // Brief 21 21 T.8: the rules of `override-tensor`, sent when the rows no
+    // longer render the loaded ones; no rule left is the key's removal.
+    if (otChanged()) values['override-tensor'] = rowsValue(otRows)
     return values
   }
 
@@ -1245,6 +1356,9 @@ function Content({
     )
     setMarks(null)
     setMoved('')
+    // Brief 21 21 T.8: the rules go back to the loaded ones, and the rows'
+    // remembered texts and half-typed fields go with them.
+    setOtRows(tensorRows(loaded.values['override-tensor'] ?? null))
     fields.set({})
     setPhase('idle')
   }
@@ -1407,6 +1521,7 @@ function Content({
           onBoxText={textBoxed}
           errors={fields.errors}
           gpu={gpu}
+          tensor={tensor}
         />
         <SaveBar
           bar={bar}

@@ -694,7 +694,49 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     sliderSizes.map((s) => s.slice(s.indexOf(': ') + 2)),
     '19 G.12: the block slider carries min-height 24px and min-width 0 in the sheet, under a class whose name says blocks, and nothing else of its own',
   ).toEqual(['min-height: 24px', 'min-width: 0'])
-  const rest = sizes.filter((s) => !/\bblocks\b/.test(s))
+  // Brief 21, its TP1 review of 2026-11-23 (fe/briefs/21-tensor-placement.md):
+  // each visible label and its control of a rule row is one flex item of the
+  // row, so each of the three items the review names (Tensor, Goes on,
+  // Pattern) carries min-width 0 and no other size (21 section 6: no new
+  // min-height or min-width beyond min-width: 0 on the row items).
+  // Its D4 re-check of the same day: the select inside the Tensor and Goes on
+  // items keeps its longest option's width, so the fix gives both selects
+  // their own min-width: 0, the items keep theirs. Its D5 second re-check:
+  // the Layers span gets min-width: 0 too, and so its input (the D4 cap
+  // alone is measured against the span, whose min-content is the input's
+  // 10ch). The pin is per name: the
+  // coder writes the two selects as two rules or one comma group (the sheet's
+  // style for a shared declaration, index.css 1399), and the names are
+  // the same either way. Every size in the card stays min-width 0.
+  const otSizes = sizes.filter((s) => /ot-|tensor|placement/.test(s))
+  for (const s of otSizes)
+    expect(
+      s,
+      '21 TP1 review D1, D4 and D5: every size in the Tensor placement card is min-width: 0: no min-height and no other value',
+    ).toMatch(/: min-width: 0$/)
+  expect(
+    [
+      ...new Set(
+        otSizes
+          .flatMap((s) => s.slice(0, s.indexOf(': ')).split(','))
+          .map((p) => p.trim()),
+      ),
+    ].sort(),
+    '21 TP1 review D4 and D5: min-width: 0 is carried by the three row items, by the Layers span and its input, and by both selects inside the Tensor and Goes on items: the D1 fix put each select inside its item, where the auto minimum size keeps its longest option width and the page scrolls sideways at 320 px (build/ux-review/tp1/run2.txt); D5 is the same rule for the Layers span and input, measured 30 px past the column at 200 % text (run3.txt)',
+  ).toEqual(
+    [
+      '.ot-tensor',
+      '.ot-tensor select',
+      '.ot-goes-on',
+      '.ot-goes-on select',
+      '.ot-pattern',
+      '.ot-layers',
+      '.ot-layers input.number',
+    ].sort(),
+  )
+  const rest = sizes.filter(
+    (s) => !/\bblocks\b/.test(s) && !/ot-|tensor|placement/.test(s),
+  )
   expect(
     rest,
     'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9), and the fact row of a tile and its value cell shrink below their content (17b), and the tag suggestion list shrinks to the field (15 section 11 D2)',

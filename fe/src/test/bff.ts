@@ -626,6 +626,40 @@ export const EN: Record<string, string> = {
     "This profile's tensor-split {0} applies to every GPU llama.cpp finds, in its order. Checking GPUs here replaces it.",
   'api-tensor-split-format':
     'tensor-split = `{0}` is not a list of up to 15 numbers of 0 or more, separated by , or /',
+  // Brief 21 (fe/briefs/21-tensor-placement.md), section 2, sub-slice TP1: the
+  // Tensor placement card. Every English is the brief's.
+  'model-profile-tensor-placement': 'Tensor placement',
+  'model-profile-tensor-placement-intro':
+    'Exceptions to the GPU distribution above: tensors that go on a device of their own, whatever their layer does. On a MoE model, sending the experts of some layers to the CPU frees the most VRAM, as MoE CPU layers does for the first ones. llama.cpp also keeps the embedding table in RAM even when it reports every layer on the GPU: put it on a GPU to reclaim that memory, if the card has room. The first rule that matches a tensor wins.\nKey: override-tensor.',
+  'model-profile-ot-rules': 'Rules',
+  'model-profile-ot-none': 'No rules: every tensor goes where its layer goes.',
+  'model-profile-ot-format': String.raw`Layers: empty for every layer, or numbers and ranges such as 10-12, 15. Pattern: a regular expression searched in each tensor's name, such as blk\.1[0-9]\..*_exps.`,
+  'model-profile-ot-rule': 'Rule {0}',
+  'model-profile-ot-tensor': 'Tensor',
+  'model-profile-ot-layers': 'Layers',
+  'model-profile-ot-pattern': 'Pattern',
+  'model-profile-ot-goes-on': 'Goes on',
+  'model-profile-ot-cpu': 'CPU: system memory',
+  'model-profile-ot-no-device': '(no device)',
+  'model-profile-ot-add': 'Add rule',
+  'model-profile-ot-remove': 'Remove',
+  'model-profile-ot-kind-embd': 'Embedding table (token_embd)',
+  'model-profile-ot-kind-ple': 'Per-layer embeddings (per_layer_token_embd)',
+  'model-profile-ot-kind-output': 'Output head (output)',
+  'model-profile-ot-kind-layer': 'Whole layer (blk.N.*)',
+  'model-profile-ot-kind-attn': 'Attention (attn_*)',
+  'model-profile-ot-kind-ssm': 'Linear attention / SSM (ssm_*)',
+  'model-profile-ot-kind-ffn': 'Dense FFN (ffn_up/down/gate)',
+  'model-profile-ot-kind-ffn_up': 'Dense FFN up (ffn_up)',
+  'model-profile-ot-kind-ffn_gate': 'Dense FFN gate (ffn_gate)',
+  'model-profile-ot-kind-ffn_down': 'Dense FFN down (ffn_down)',
+  'model-profile-ot-kind-exps': 'MoE experts (ffn_*_exps)',
+  'model-profile-ot-kind-exps_up': 'MoE experts up (ffn_up_exps)',
+  'model-profile-ot-kind-exps_gate': 'MoE experts gate (ffn_gate_exps)',
+  'model-profile-ot-kind-exps_down': 'MoE experts down (ffn_down_exps)',
+  'model-profile-ot-kind-shexp': 'MoE shared expert (ffn_*_shexp)',
+  'model-profile-ot-kind-router': 'MoE router (ffn_gate_inp)',
+  'model-profile-ot-kind-custom': 'Custom regex…',
   // Brief 19 (fe/briefs/19-layer-sliders.md), section 2, sub-slice LS1: the
   // model facts read and the per-GPU block controls. LS1 adds the keys from
   // model-profile-model-facts-reading to model-profile-gpu-output-layer and

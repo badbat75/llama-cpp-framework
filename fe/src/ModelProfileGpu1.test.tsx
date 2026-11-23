@@ -46,6 +46,9 @@ const GPUS = en('model-profile-gpus')
 const MODE_LABEL = en('model-profile-split-mode')
 const ASSETS = en('model-profile-assets')
 const HARDWARE = en('model-profile-hardware-config')
+// Brief 21 (21 T.2) put the Tensor placement card between this card and
+// Hardware config, so the card that follows GPU distribution is that one.
+const TENSOR_CARD = en('model-profile-tensor-placement')
 /** GD1.2's options, in the GUI's order (MODE_VALUES), with the values the file
  * holds. */
 const MODES = [
@@ -271,7 +274,7 @@ test('GD1.1: the card is a D5.2 Card with h3 GPU distribution, right after the A
   const n = titles.indexOf(GPU)
   expect(n, 'GD1.1: the card is in the list of cards').toBeGreaterThan(-1)
   expect(titles[n - 1], 'GD1.1: right after Assets').toBe(ASSETS)
-  expect(titles[n + 1], 'GD1.1: before Hardware config').toBe(HARDWARE)
+  expect(titles[n + 1], "GD1.1: the next card is brief 21's").toBe(TENSOR_CARD)
   const h3s = within(main)
     .getAllByRole('heading', { level: 3 })
     .map((h) => (h.textContent ?? '').replace(/\s+/g, ' ').trim())
@@ -324,9 +327,10 @@ test('GD1.1: the jump list gains GPU distribution between Assets and Hardware, a
   )
   const n = titles.indexOf(GPU)
   expect(buttons[n - 1], 'GD1.1: the entry follows Assets').toBe(ASSETS)
-  expect(buttons[n + 1], 'GD1.1: the entry precedes Hardware config').toBe(
-    HARDWARE,
-  )
+  expect(
+    buttons[n + 1],
+    "GD1.1: the entry precedes brief 21's Tensor placement",
+  ).toBe(TENSOR_CARD)
   const h3 = within(main).getByRole('heading', { level: 3, name: GPU })
   expect(h3.getAttribute('tabindex'), 'GD1.1: the h3 takes focus').toBe('-1')
   fireEvent.click(entries()[n]!)

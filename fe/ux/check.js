@@ -85,6 +85,10 @@ const AS_OF = S['model-profile-gpu-probed-at'].split('{0}')[0]
 // the places the facts read gives. Absent from the strings file until LS1
 // lands, where the state's marker is the slider alone.
 const BUDGET = S['model-profile-gpu-blocks-budget']?.split('{0}')[0]
+// The legend of the third rule of brief 21's placement state (section 7): the
+// string `model-profile-ot-rule` with the rule's position. Absent from the
+// strings file until TP1 lands, where the state's marker is a legend alone.
+const RULE3 = S['model-profile-ot-rule']?.replace('{0}', '3')
 
 // The states to look at: the stub's /__set query, the route, the expect: the
 // selectors (with the text they carry) only that state shows, the optional
@@ -214,12 +218,14 @@ const STATES = [
       {
         selector: `${NAV_HOST} .nav-instance`,
         count: 4,
-        message: 'the id run of each link: coder answers null and embed has no key, so both are the id alone',
+        message:
+          'the id run of each link: coder answers null and embed has no key, so both are the id alone',
       },
       {
         selector: `${NAV_HOST} .nav-instance [aria-hidden="true"]`,
         count: 2,
-        message: 'the profile shown beside the id, on the two links that have one',
+        message:
+          'the profile shown beside the id, on the two links that have one',
       },
       {
         selector: `${NAV_HOST} .nav-instance [aria-hidden="true"]`,
@@ -327,6 +333,22 @@ const STATES = [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       { selector: 'p', text: BUDGET },
       { selector: 'input[type="range"]' },
+    ],
+  },
+  {
+    name: 'model-profile-placement',
+    // Brief 21, section 7: the Tensor placement card with three rules (the stub
+    // answers `ot=1`): the experts of a run of layers on the CPU, the embedding
+    // table on a GPU, and a hand-written pattern no kind owns, so a Custom row
+    // with its Pattern input shows. The marker is the legend of the last rule;
+    // the device read's as-of line is waited for, the rule selects list the
+    // probe's GPUs.
+    set: 'session=admin&ot=1',
+    hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
+    expect: [
+      { selector: '#page-heading', text: MODEL_PROFILE_ID },
+      { selector: 'p', text: AS_OF },
+      { selector: 'legend', text: RULE3 },
     ],
   },
   {
@@ -588,13 +610,13 @@ async function hovered(page, state) {
  *  answering node: the two tile states ask for list=many themselves, the tags
  *  state for tags=long, the loading ones for load=session or load=slow and the
  *  node states for node=down or node=long, the blocks state for split=layer,
- *  and a state that ran before them leaves none of them behind for the pages
- *  after it. A hash change does not reload the app, so every state starts from
- *  a blank page. */
+ *  the placement state for ot=1, and a state that ran before them leaves none
+ *  of them behind for the pages after it. A hash change does not reload the
+ *  app, so every state starts from a blank page. */
 async function load(page, state) {
   const found = []
   for (const q of [
-    'list=one&tags=few&load=fast&node=ok&split=tensor',
+    'list=one&tags=few&load=fast&node=ok&split=tensor&ot=none',
     state.set,
   ]) {
     const res = await fetch(`${BASE}/__set?${q}`)

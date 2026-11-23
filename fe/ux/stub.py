@@ -45,6 +45,9 @@ STATE = {
     # `tensor` as the document carries it, `layer` with the key removed, the file's
     # mode where the block controls show.
     "split": "tensor",
+    # Brief 21 (21 T.2 to 21 T.9): `ot=1` puts the state's three rules in the
+    # profile, so the Tensor placement card shows its rows and their legends.
+    "ot": "none",
 }
 
 # How long a held read stays open, for the loading states of brief 17 U17a:
@@ -150,6 +153,16 @@ MODEL_PROFILE_DOC = {
         "tensor-split": "0.6,0.4",
     },
 }
+
+# Brief 21 (fe/briefs/21-tensor-placement.md section 7): the rules of the
+# `model-profile-placement` state, `ot=1`: the experts of a run of layers on the
+# CPU, the embedding table on a GPU, and a hand-written pattern no kind owns, so
+# the card shows three rows, their legends, and a Custom row with its Pattern.
+OT_RULES = (
+    r"blk\.(20|21|22|23)\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU,"
+    r"^token_embd\.weight=ROCm0,"
+    r"blk\.1[0-9]\..*_exps=CPU"
+)
 
 # GET /api/profiles/model/<id>/model-info (brief 19, section 7): the facts of the
 # profile's model file, read: 64 blocks and a Mixture of Experts with 8 of 128
@@ -390,6 +403,11 @@ class Handler(SimpleHTTPRequestHandler):
                         k: v for k, v in doc["values"].items() if k != "split-mode"
                     }
                     values["tensor-split"] = "40,25"
+                    doc["values"] = values
+                if STATE["ot"] == "1":
+                    # Brief 21: the Tensor placement state's three rules.
+                    values = dict(doc["values"])
+                    values["override-tensor"] = OT_RULES
                     doc["values"] = values
                 return self.json(200, doc)
             return self.json(404, {"key": "no-model-profile-named", "args": [pid]})

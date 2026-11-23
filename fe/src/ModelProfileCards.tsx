@@ -55,6 +55,7 @@ import {
   type GpuCardProps,
   type GpuProbe,
 } from './GpuSplit.tsx'
+import { TensorPlacement, type TensorCardProps } from './TensorPlacement.tsx'
 import { t } from './strings.ts'
 
 /** A select's option: the value the file holds, the text the user reads. */
@@ -204,6 +205,11 @@ type DeviceRow = RowBase & {
  *  nothing at the page's `onEdit` and sits beside the draft's keys. */
 type GpuRow = RowBase & { kind: 'gpu' }
 
+/** The rules of `override-tensor` (brief 21, 21 T.2): the Tensor placement
+ *  card's one block, a list of rows the page owns, each composing part of the
+ *  key. Like the GPUs fieldset it writes no `onEdit`: the key is the rows'. */
+type TensorCardRow = RowBase & { kind: 'tensor' }
+
 /** The model file's facts line of the GPU distribution card (brief 19, 19 G.2):
  *  one muted paragraph of the card, after its intro and before its first field,
  *  saying what the read of the model file answered. It reads no key of the
@@ -262,6 +268,7 @@ type Row =
   | CheckboxRow
   | DeviceRow
   | GpuRow
+  | TensorCardRow
   | FactsRow
   | NoteRow
   | GroupRow
@@ -401,6 +408,22 @@ const CARDS: CardFields[] = [
         editable: true,
       },
       { kind: 'gpu', key: 'device', label: t('model-profile-gpus'), hint: '' },
+    ],
+  },
+  {
+    // Brief 21 (fe/briefs/21-tensor-placement.md), 21 T.2: after the GPU
+    // distribution card, before the Hardware card. Its one row is the rules
+    // list, which composes `override-tensor` from its rows.
+    id: 'tensor',
+    title: t('model-profile-tensor-placement'),
+    introLines: t('model-profile-tensor-placement-intro').split('\n'),
+    rows: [
+      {
+        kind: 'tensor',
+        key: 'override-tensor',
+        label: t('model-profile-ot-rules'),
+        hint: '',
+      },
     ],
   },
   {
@@ -2007,6 +2030,7 @@ function ModelProfileField({
   onBoxText,
   errors,
   gpu,
+  tensor,
 }: {
   row: FieldRow
   values: Record<string, string>
@@ -2017,6 +2041,7 @@ function ModelProfileField({
   onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
   gpu?: GpuCardProps
+  tensor?: TensorCardProps
 }) {
   if (row.kind === 'note') {
     // 177: a note that speaks for a rule sits only while the rule is not met.
@@ -2074,6 +2099,12 @@ function ModelProfileField({
         moved={gpu.moved}
       />
     )
+  }
+  if (row.kind === 'tensor') {
+    // Brief 21 (fe/briefs/21-tensor-placement.md), 21 T.2: the rules of
+    // `override-tensor`. Its state is the page's (the rows and the device read),
+    // and the fieldset composes the key from the rows, so it writes no `onEdit`.
+    return tensor === undefined ? null : <TensorPlacement {...tensor} />
   }
   // What every control of a read-only card shares: its id, the texts of its
   // field, and the native disabled of criterion 85. Each control's own
@@ -2312,6 +2343,7 @@ function ModelProfileRow({
   onBoxText,
   errors,
   gpu,
+  tensor,
 }: {
   row: Row
   values: Record<string, string>
@@ -2322,6 +2354,7 @@ function ModelProfileRow({
   onBoxText: (key: string, text: string) => void
   errors: Partial<Record<string, string>>
   gpu?: GpuCardProps
+  tensor?: TensorCardProps
 }) {
   if (row.kind === 'group') {
     const heading = `model-profile-group-${row.key}`
@@ -2350,6 +2383,7 @@ function ModelProfileRow({
               onBoxText={onBoxText}
               errors={errors}
               gpu={gpu}
+              tensor={tensor}
             />
           ))}
         </div>
@@ -2367,6 +2401,7 @@ function ModelProfileRow({
       onBoxText={onBoxText}
       errors={errors}
       gpu={gpu}
+      tensor={tensor}
     />
   )
 }
@@ -2432,6 +2467,7 @@ export default function ModelProfileCards({
   onBoxText,
   errors,
   gpu,
+  tensor,
 }: {
   values: Record<string, string>
   loaded: Record<string, string>
@@ -2443,6 +2479,10 @@ export default function ModelProfileCards({
   /** Brief 14: the GPU distribution card's fieldset, the page's GPU state. A
    * page that only shows the file passes none: the fieldset shows nothing. */
   gpu?: GpuCardProps
+  /** Brief 21 (fe/briefs/21-tensor-placement.md): the Tensor placement card's
+   * rules, the page's rows. A page that only shows the file passes none: the
+   * rules show nothing, as the GPUs' fieldset does. */
+  tensor?: TensorCardProps
 }) {
   return (
     <>
@@ -2480,6 +2520,7 @@ export default function ModelProfileCards({
               onBoxText={onBoxText}
               errors={errors}
               gpu={gpu}
+              tensor={tensor}
             />
           ))}
         </Card>

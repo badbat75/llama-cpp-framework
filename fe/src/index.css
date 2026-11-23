@@ -1434,6 +1434,17 @@ legend.field-label {
   #model-profile-gpu-devices > .check-list {
     grid-column: 2;
   }
+
+  /* The Tensor placement card's Rules fieldset (brief 21, its TP1 review D1,
+     2026-11-23): the same fix as the GPU list above. The fieldset is a `.field`,
+     so its legend takes the 200 px label column and the one div after it, the
+     format line, the rules and Add rule, falls into that column too: left alone
+     the rules are wrapped inside 200 px, their selects a few characters wide.
+     Nothing names a grid-row: the empty line and the rules' list come and go
+     with the state, so the cells are placed by the flow. */
+  #model-profile-ot-rules > div {
+    grid-column: 2;
+  }
 }
 
 /* The disclosure in the Assets card's heading (08-hearth-h10-h11.md H11a.9):
@@ -1780,6 +1791,92 @@ ul.check-list {
   min-height: 24px;
   min-width: 0;
   accent-color: var(--accent);
+}
+
+/* The Tensor placement card (brief 21, 21 T.4, and its TP1 review D1,
+   2026-11-23): a rule is a plain fieldset with its legend above and its
+   controls a wrapping flex row, and every item of that row is ONE visible label
+   with the control it labels: label and control as two items, the "Pattern"
+   label ended beside Remove and its input on the next line at 320 px. The items
+   that ask a size are the Tensor select, the widest of the row, the Goes on
+   select, and the Pattern, which takes a line of its own. `min-width: 0` is
+   what lets an item go below its min-content (CSS Flexbox 1): a long device
+   name and a pattern of the whole module name have no break point, the same
+   pair the 15 section 11 C2 review D2 pins for the suggestions list. The class
+   names are the coder's (21 section 6), in the card's own namespace. */
+.ot-rule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Its D4 re-check of the same day: the item holds a label AND a select, and the
+   shared `select` rule sets no width, so the select keeps the width of its
+   longest option and spills the page (a 64-character device: 430 of 320 px,
+   build/ux-review/tp1/run2.txt). The item is therefore a flex row of its own,
+   the four of the rule row, and its select is an item of the item: the basis
+   gives it the room beside the label, its own `min-width: 0` lets it go below
+   its content. One comma group for both selects, the sheet's style for a shared
+   declaration. */
+.ot-tensor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.ot-goes-on {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.ot-tensor select,
+.ot-goes-on select {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+/* The Layers item of a rule row (21 T.4, and its TP1 review D5 of the same
+   day): the span is a flex item of the rule row with no floor of its own, so
+   its min-content is its input's `10ch` and the input's `max-width: 100%` is
+   measured against that same span. It is therefore a flex row of its own, the
+   four of `.ot-rule-row`, with the `min-width: 0` that lets an item go below
+   its min-content (CSS Flexbox 1), as the two select items above are. The
+   Layers item asks no size of its own: the input is about 10 characters wide. */
+.ot-layers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Its D4 re-check of the same day: the Layers input is about 10 characters
+   wide (input.number), so at 200 % text, where the card's control column
+   narrows, it spills the item. The cap keeps it inside, as
+   `.ot-pattern input { width: 100% }` keeps the Pattern input, and its floor
+   (D5) lets it shrink in the row the span above is. */
+.ot-layers input.number {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* The Pattern line: the input is as wide as the line, so the text a kind does
+   not own is whole under its label (21 T.4). */
+.ot-pattern {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.ot-pattern input {
+  width: 100%;
 }
 
 .check-list-actions {

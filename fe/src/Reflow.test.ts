@@ -400,13 +400,19 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // malformed line, so the 720 px grid can place them beside the GPU list. Brief
 // 20 slice N1 (the nodes menu, 20 N.11) adds the twelfth: nav-instance, the
 // text run of an instance link, the span that lets the pill shrink and the long
-// id wrap. A class beside these is a look no brief asked for.
+// id wrap. Brief 21's TP1 review (2026-11-23, D1) adds the row items of the
+// Tensor placement card; the review names their declarations and not their
+// names ("named by the class the coder gives them", 21 section 6), so the card's
+// classes are allowed by the card's own namespace, the `ot` of its strings keys
+// (model-profile-ot-*), and the `tensor`/`placement` of its card title: the
+// test names what that namespace is, and every class outside these and the
+// frozen list is a look no brief asked for.
 const CLASSES =
   `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, and brief 20 N.11 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, and the ids a selector names are the mount point #root and the GPU fieldset the LS1 review places in the grid', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11 and brief 21 TP1 review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -414,14 +420,32 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
       for (const m of part.matchAll(/\.([a-zA-Z][\w-]*)/g)) used.add(m[1]!)
       for (const m of part.matchAll(/#[\w-]+/g)) ids.add(m[0])
     }
+  // Brief 21, its TP1 review (D1): the coder names the classes of the card's
+  // row items, so they are kept in the card's namespace (the comment above
+  // the frozen list), and the review's 720 px rule selects the card by an id.
+  const ofCard = (c: string) => /^(ot|tensor|placement)[-a-z0-9]*$/.test(c)
+  const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
-    [...used].sort(),
-    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, tags-save gone, and nothing else (R1.8: a class the designer did not brief is a look nothing asked for)',
+    [...used].filter((c) => !ofCard(c)).sort(),
+    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, tags-save gone, and nothing else outside the Tensor placement namespace (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(
-    [...ids].sort(),
+    [...used].filter(ofCard).sort(),
+    '21 TP1 review D1: the card of brief 21 is styled by at least one class of its own namespace: the row items the review wraps each label and its control in',
+  ).not.toEqual([])
+  const cardIds = [...ids].filter(ofTensorCard).sort()
+  expect(
+    [...ids].filter((id) => !ofTensorCard(id)).sort(),
     'the ids a rule selects by: #root, the mount point, and #model-profile-gpu-devices, the GPU fieldset the LS1 review (D1) places in the 720 px grid: no other (R1.8)',
   ).toEqual(['#model-profile-gpu-devices', '#root'])
+  expect(
+    cardIds.length,
+    '21 TP1 review D1: one id of the Tensor placement card, the one its 720 px rule places in the control column, as the LS1 review D1 places #model-profile-gpu-devices: no more (R1.8)',
+  ).toBe(1)
+  expect(
+    cardIds[0],
+    '21 TP1 review D1: the id names the Tensor placement card: its heading id model-profile-card-tensor (21 T.2), or the Rules fieldset id the review writes #…ot',
+  ).toMatch(/^#model-profile-(card-tensor|ot(-rules)?)$/)
 })
 
 // ── 12 T1 layout: the tile's facts break (brief 12 section 3, T1 review) ───
@@ -585,4 +609,119 @@ test('20 N1 review D1: .nav-instance declares flex: 1 1 4rem, so "default · qwe
     norm(prop(run.body, 'flex')),
     'D1 (brief 20, N1 review): the run is an item of the wrapping pill with no flex basis, so it takes its content width and drops under the icon at 1280 px and 100 % text: flex',
   ).toBe('1 1 4rem')
+})
+
+// ── 21 TP1 review (the designer, 2026-11-23): D1, the Tensor placement rows ──
+
+test("21 TP1 review D1 (the sheet): in the 720 px block that styles .field, one rule puts the Tensor placement card's wrapper div in grid-column: 2, so from 720 px the format line, the rules and Add rule sit in the control column beside the Rules legend, and not in its 200 px label column", () => {
+  // `index.css` gained no rule for the card, so at 720 px and wider its
+  // wrapper div (21 T.2: everything after the Rules legend is in one div) is
+  // the second grid cell of a field with an empty label cell: it lands in the
+  // 200 px column, every rule's `.field` grid is `200px 0px`, its control
+  // column is 0 px wide, the selects are 18 px and "Remove" stands one letter
+  // per line (build/ux-review/tp1/card-1280.png). The review's fix is the LS1
+  // D1 one: this block places the div in the control column.
+  const grids = atRanges('@media (min-width: 720px)').filter(([open, end]) =>
+    RULES.some(
+      (r) => r.depth > 0 && r.at > open && r.at < end && r.compact === '.field',
+    ),
+  )
+  expect(
+    grids.length,
+    "exactly one 720 px block styles .field, the two-column grid (the 19 LS1 review D1 test pins it): the card's rule must sit where the grid is",
+  ).toBe(1)
+  const [open, end] = grids[0]!
+  const placed = RULES.filter(
+    (r) =>
+      r.depth > 0 &&
+      r.at > open &&
+      r.at < end &&
+      prop(r.body, 'grid-column') !== '' &&
+      /\bdiv\b/.test(r.flat),
+  )
+  const rule = single(
+    placed,
+    'the 720 px rule placing the card wrapper div (the review D1 writes `#…ot fieldset > div`, as LS1 D1 wrote `#model-profile-gpu-devices > .check-list`)',
+  )
+  expect(
+    norm(prop(rule.body, 'grid-column')),
+    "D1: grid-column: the control column, the one beside the 200px label where the field's control is",
+  ).toBe('2')
+  expect(
+    norm(prop(rule.body, 'grid-row')),
+    'D1: no grid-row: the empty line, the list and (in TP2) the coverage lines come and go, so the cells are placed by the flow, never by hand',
+  ).toBe('')
+  expect(
+    rule.flat,
+    'D1: the selector names the Tensor placement card by an id (its heading id model-profile-card-tensor of 21 T.2, or the Rules fieldset id the review writes #…ot) and a div (21 T.2: the one wrapper div)',
+  ).toMatch(/#model-profile-[\w-]*(card-tensor|ot)\b.*\bdiv\b/)
+})
+
+test('21 TP1 review D1 (as its D4 re-check of 2026-11-23 amends it): the Tensor item .ot-tensor declares flex: 1 1 16rem, the Goes on item .ot-goes-on flex: 1 1 12rem and the Pattern item .ot-pattern flex-basis: 100%, each with min-width: 0, so at 320 px the items wrap inside the li and never between a label and its control', () => {
+  // 21 T.4: the rule's controls are a wrapping flex row and each visible label
+  // and its control is ONE item, Tensor asking 16rem, Goes on 12rem, Pattern a
+  // line of its own. With no rule in the sheet the items take their content
+  // width and the pairs break apart: at 320 px the "Pattern" label ends beside
+  // Remove and its input lands on the next line
+  // (build/ux-review/tp1/card-320.png). min-width: 0 on each item is what lets
+  // it go below its min-content (CSS Flexbox 1), the same pair the 15 section
+  // 11 C2 review D2 pins for the suggestions list.
+  // The D4 re-check names the item classes and gives the two select items
+  // their row declarations (display, flex-wrap, align-items, gap, pinned by
+  // TensorPlacement1), so the three sizes are pinned on the named class, not
+  // on "the size properties and nothing else". The pair alone is pinned to
+  // the card namespace, the new `.ot-… select` rules of D4 included: an item
+  // asking a size outside the card is a look no brief asked for (R1.8).
+  const sameSet = (got: string[], want: string[]) =>
+    got.length === want.length &&
+    got.sort().every((n, i) => n === want.sort()[i])
+  const declaring = (names: string[]) =>
+    TOP.filter((r) => sameSet(declared(r.body), names))
+  for (const [sel, name, value, what] of [
+    [
+      '.ot-tensor',
+      'flex',
+      '1 1 16rem',
+      'the Tensor item of 21 T.4 (a select of 17 options)',
+    ],
+    [
+      '.ot-goes-on',
+      'flex',
+      '1 1 12rem',
+      'the Goes on item of 21 T.4 (a select of devices)',
+    ],
+    [
+      '.ot-pattern',
+      'flex-basis',
+      '100%',
+      'the Pattern item of 21 T.4, on a line of its own',
+    ],
+  ] as Array<[string, string, string, string]>) {
+    const item = topBy(sel, `the ${what} (the class the D4 re-check names)`)
+    expect(norm(prop(item.body, name)), `D1: ${what}: ${name}`).toBe(value)
+    expect(
+      norm(prop(item.body, 'min-width')),
+      `D1: ${what} is a flex item floored at its min-content by the auto minimum size, so a long device name pushes the page sideways at 320 px and 200 % text: min-width`,
+    ).toBe('0')
+  }
+  for (const r of declaring(['flex', 'min-width']))
+    for (const p of r.flat.split(','))
+      expect(
+        p.trim(),
+        'a rule declaring flex and min-width and nothing else asks a size: the two select items of 21 T.4, and after D4 the two selects it puts inside them, all of the Tensor placement card: every selector of such a rule names the card (R1.8)',
+      ).toMatch(/^\.ot-/)
+  const basisItems = declaring(['flex-basis', 'min-width'])
+  expect(
+    basisItems.length,
+    'exactly one top-level rule declares flex-basis and min-width and nothing else: the Pattern item, on a line of its own (21 T.4, the review D1)',
+  ).toBe(1)
+  const pattern = single(basisItems, 'the Pattern item')
+  expect(
+    norm(prop(pattern.body, 'flex-basis')),
+    'D1: the Pattern item takes a full row of the rule, so its label is never beside the Remove button (21 T.4, 21 T.9): flex-basis',
+  ).toBe('100%')
+  expect(
+    norm(prop(pattern.body, 'min-width')),
+    'D1: its 120-character pattern has no break point, so the item is as wide as the pattern without this: min-width',
+  ).toBe('0')
 })

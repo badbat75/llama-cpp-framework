@@ -1609,13 +1609,19 @@ test('GD2.10: GD2 keys of section 2 are strings of the suite, and Draft device, 
       ).not.toContain(`${device.id} ${device.name}`)
   }
   // Tensor placement (override-tensor) and the split mode warning strips of 2k
-  // are out of this slice: the card holds the split mode field, with its own
-  // hint once, and the GPUs fieldset.
+  // are out of this card: brief 21 gave Tensor placement a card of its own, so
+  // the GPU card holds the split mode field, with its own hint once, and the
+  // GPUs fieldset.
   const card = cardOf(main, GPU)
-  expect(
-    document.getElementById('model-profile-override-tensor-control'),
-    'GD2.10: Tensor placement is out of scope: the fe has no such field',
-  ).toBeNull()
+  for (const key of [
+    'model-profile-ot-tensor',
+    'model-profile-ot-layers',
+    'model-profile-ot-goes-on',
+  ])
+    expect(
+      within(card).queryByRole('combobox', { name: en(key) }),
+      `GD2.10: no Tensor placement control inside the GPU card: ${key}`,
+    ).toBeNull()
   // `Field.tsx`'s Hint is one paragraph per `\n` of the string, so the hint is
   // counted as the field's hint block and its lines, never as one text.
   const hints = [...card.querySelectorAll('.field-hint')]

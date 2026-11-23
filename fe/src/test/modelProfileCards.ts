@@ -55,8 +55,15 @@ function boxedKeyOf(field: Field): string | undefined {
 
 /** One card: the strings key of its h3, and its fields in the card's order.
  * A card with no field of its own (Assets: its values are a description list,
- * 73) has no About toggle and adds no tab stop. */
-export type Card = { heading: string; fields: Field[] }
+ * 73) has no About toggle and adds no tab stop. `extraStops` are the strings
+ * keys of the controls a card holds that are no field of 2e's table 112, in the
+ * card's order: `fieldTabStops` adds them after the card's fields, so the
+ * whole-page tab path of every model profile page test includes them. */
+export type Card = {
+  heading: string
+  fields: Field[]
+  extraStops?: string[]
+}
 
 export const MODEL_PROFILE_CARDS: Card[] = [
   { heading: 'model-profile-assets', fields: [] },
@@ -68,6 +75,17 @@ export const MODEL_PROFILE_CARDS: Card[] = [
   {
     heading: 'model-profile-gpu-distribution',
     fields: ['model-profile-split-mode'],
+  },
+  // Brief 21 (fe/briefs/21-tensor-placement.md, 21 T.2): the place 02e's 83
+  // gives the card is after GPU distribution, before Hardware config. Its
+  // rules are no field of 2e's table 112, so the card has no field of its own;
+  // its one control that is always there is Add rule, so the whole-page tab
+  // path carries it. The rule rows' controls depend on the value and the
+  // device read, and are pinned in TensorPlacement1.test.tsx.
+  {
+    heading: 'model-profile-tensor-placement',
+    fields: [],
+    extraStops: ['model-profile-ot-add'],
   },
   {
     heading: 'model-profile-hardware-config',
@@ -279,6 +297,20 @@ export function fieldLabels(): string[] {
 /** The About toggle name of every field, in the tab order of 91. */
 export function fieldAboutToggles(): string[] {
   return fieldLabels().map((label) => `${en('field-about')} ${label}`)
+}
+
+/** Every button a card holds, in card and field order: the About toggle of
+ * every field, then, at the end of its own card, the controls of the card's
+ * `extraStops`. The page's own buttons (the jump disclosure and entries, the
+ * Assets disclosure, the save bar) are no card's controls, so a test that
+ * names every button of main puts them around this. */
+export function cardButtons(): string[] {
+  return MODEL_PROFILE_CARDS.flatMap((card) => [
+    ...card.fields.map(
+      (field) => `${en('field-about')} ${labelText(fieldLabel(field))}`,
+    ),
+    ...(card.extraStops ?? []).map((key) => en(key)),
+  ])
 }
 
 /** The identity a field is listed under: its label's strings key, or the
@@ -582,7 +614,7 @@ export function controlEnabled(
  * fixture. */
 export function fieldTabStops(values: Record<string, string>): string[] {
   const stops: string[] = []
-  for (const card of MODEL_PROFILE_CARDS)
+  for (const card of MODEL_PROFILE_CARDS) {
     for (const field of card.fields) {
       const label = labelText(fieldLabel(field))
       stops.push(`${en('field-about')} ${label}`)
@@ -598,6 +630,8 @@ export function fieldTabStops(values: Record<string, string>): string[] {
       const toggle = CHECKBOX_TOGGLES[fieldId(fieldLabel(field))]
       stops.push(toggle === undefined ? label : en(toggle))
     }
+    for (const key of card.extraStops ?? []) stops.push(en(key))
+  }
   return stops
 }
 

@@ -215,7 +215,11 @@ and the rule's own device.
   (from a kind): the Pattern field shows the row's remembered Custom text when it has one from this
   visit, else the current pattern; it becomes the rule's pattern.
 - Layers: at each input, a text `parseLayers` reads sets the pattern to `compose(kind, layers)`; a
-  text it cannot read leaves the pattern as it was (TP2 refuses it at Save).
+  text it cannot read leaves the pattern as the last readable text composed it in this visit (the
+  GUI's "last good value"), not the loaded one: loaded `blk\.(0|1|2)...`, typed `10-12, 15` then
+  `10-`, the rule holds `blk\.(10|11|12|15)...` and, in TP1, Save sends it (ruling of 2026-11-22,
+  reading (a)). TP2's 21 T.11 then refuses Save while the shown Layers text is unreadable, so with
+  TP2 built nothing is sent in that case.
 - Pattern: at each input, the text as typed is the rule's pattern (TP2 checks it at Save); the Tensor
   select keeps showing Custom while the row is edited, even when the text equals a family's pattern.
 - Goes on: the rule's device is the option's value.
@@ -367,3 +371,104 @@ for a new state `model-profile-placement` (expect: the legend `Rule 3`), 1280 an
   GPU, and TP3's counts show what a rule takes. Built as TP4 if asked.
 - **Q2.** Should rules have Move up / Move down (the first match wins)? Recommended: not now; Rules as
   text reorders them, and the GUI has no reorder either.
+
+## TP1 review (designer, 2026-11-23)
+
+I read `tensorRules.ts`, `TensorPlacement.tsx`, the TP1 diff of `ModelProfilePage.tsx`,
+`ModelProfileCards.tsx`, `en_US.json` and `fe/ux`, and the test names. I drove the page in Chromium,
+Firefox and WebKit with the `fe/ux` stub (`ot=1`), at 1280, 760 and 320 px, light and dark, 100 % and
+200 % text (`build/ux-review/tp1.js layout|act`, `tp1shot.js`; shots in `build/ux-review/tp1/`).
+**Verdict: not accepted. D1 must be fixed; D2 and D3 are small.**
+
+- 21 T.1 met: the module and its copied vectors (`tensorRules.test.ts`).
+- 21 T.2 met except D1: the card sits between GPU distribution and Hardware config, its jump entry
+  in place, the two intro lines, the Rules legend and one wrapper `div` in the right order.
+- 21 T.3 met except D2: one `li` per rule in file order, legends "Rule N", renumbered after a removal;
+  an absent key shows `model-profile-ot-none` and no Save.
+- 21 T.4 met in names and roles, not in layout (D1). The group is "Rule 1"; the controls are
+  combobox "Tensor", textbox "Layers", combobox "Goes on", button "Remove Rule 1" (an `aria-label`
+  where the brief asked for a hidden span: the same name, accepted). Pattern is shown only for Custom.
+- 21 T.5 met except D3: CPU first, then the probed GPUs as "id: name", an unlisted value last.
+- 21 T.6 met: Custom from the embedding kind shows `^token_embd\.weight`, and the text typed there
+  comes back after a round trip through Attention; Layers `10-12, 15` then `10-` keeps blocks 10, 11,
+  12 and 15 (the ruling); focus stays on the control.
+- 21 T.7 met: Add focuses the new Tensor select and puts the rule on the first GPU; Remove moves focus
+  to the next rule, and after the last rule to Add rule.
+- 21 T.8 met: an untouched value sends nothing; the PUT carries only `override-tensor` as rendered.
+- 21 T.9 met for the Tab order (Tensor, Layers, Goes on, Remove, Pattern, then Add rule) in all three
+  engines, and no sideways scroll anywhere. Not met for layout (D1). My route for five rules, a
+  120-character pattern and a 64-character device did not apply, so the long values are left to the
+  re-check.
+- `npm --prefix fe/ux run check` (144 states per browser): only the 8 known `instance-server`
+  target-size findings. `model-profile-placement` is clean in all three engines, which axe can pass
+  even with D1.
+
+**D1 (must fix): the rows are unusable at 720 px and wider and badly wrapped at 320 px.**
+`index.css` gained no rule for the card.
+- At 720 px and wider, the outer wrapper `div` (`TensorPlacement.tsx` 237) falls into the 200 px label
+  column. Each rule's `fieldset className="field"` (302) becomes a grid of `200px 0px`, so
+  `.field-control` is 0 px wide. The selects are then 18 px wide and "Remove" stands one letter per line
+  (`build/ux-review/tp1/card-1280.png`).
+- At 320 px each label and its control are separate flex items (305-365): the "Pattern" label ends
+  up beside Remove, and its input lands on the next line (`card-320.png`).
+- Fix:
+  - Place `#…ot fieldset > div` in `grid-column: 2` in the 720 px rule, as LS1's D1 did.
+  - Give each rule a plain `fieldset` with its legend above, not `.field`.
+  - Wrap each label and its control in one span item: Tensor `flex: 1 1 16rem; min-width: 0`, Goes on
+    `flex: 1 1 12rem; min-width: 0`, Pattern `flex-basis: 100%; min-width: 0` with its input full width
+    (21 T.4).
+- Pin it with a test that reads the CSS, as `Reflow.test.ts` does.
+
+**D2 (small).** After the last rule is removed, an empty `ul role="list"` stays beside the
+`model-profile-ot-none` paragraph (`TensorPlacement.tsx` 244, `|| dirty`). 21 T.3 says the paragraph
+comes instead of the list, and an empty list is heard as "list, 0 items". Drop `|| dirty`: focus goes
+to Add rule either way.
+
+**D3 (small).** A rule with device `""` gets its `""` option only once the probe has answered
+(`TensorPlacement.tsx` 183-185). While the probe is pending, the select's value matches no option,
+so it shows "CPU: system memory" while the rule has no device. 21 T.5: the `""` option comes first
+whatever the read.
+
+Comment notes, no defect: `TensorPlacement.tsx` 14 says the manager refuses an unreadable Layers text
+at Save, but it is the page's own check (21 T.11). Lines 15-16 say the Pattern text becomes the rule on
+blur or Enter, but the code takes it at each input, as 21 T.6 says.
+
+**Re-check (2026-11-23): D2 and D3 are fixed; D1 is fixed in placement but its layout fix brings
+D4. Not accepted.** I rebuilt `fe/dist` and drove the page in all three engines at 1280, 760 and
+320 px, light and dark, 100 % and 200 % (`build/ux-review/tp1b.js`, log `tp1/run2.txt`). The route now
+applies: five rules, a 120-character pattern, a 64-character unlisted device and a wrong-case `rocm0`.
+- D1 placement met: from 720 px the Rules legend is in column 1 and the wrapper in column 2 (505 to
+  935 px at 1280); each label and its control is one item; Pattern takes its own line, full width.
+- D2 met: removing the last rule leaves no `ul`, the empty paragraph shows, focus is on Add rule.
+- D3 met: the code puts the `""` option first whatever the probe; the tests pin it.
+- Tab order, focus after Add and Remove, the ruling, the PUT and the names are as in the first pass.
+
+**D4 (must fix): the selects keep the width of their longest option, so the page scrolls sideways.**
+`npm --prefix fe/ux run check` fails `model-profile-placement` at 320 px in all three engines
+(scrollWidth 430 of 320 in Chromium, 427 in Firefox, 436 in WebKit; 778 to 979 at 200 %). Only the 8
+known `instance-server` findings are otherwise left. With my five rules the 64-character device
+select spills at 1280 px as well (59 px in Chromium), and at 760 px three Goes on selects spill.
+- The cause: the select now sits inside the `span.ot-tensor` or `span.ot-goes-on` item
+  (`index.css` 1806-1823), not directly in the flex row. The item has `min-width: 0`, but the select
+  inside it still asks for its own content width; the shared `select` rule sets no width.
+- Fix: make `.ot-tensor` and `.ot-goes-on` flex rows themselves (`display: flex; flex-wrap: wrap;
+  align-items: center; gap: var(--space-2)`), give their select `flex: 1 1 12rem; min-width: 0`, and
+  give `.ot-layers input.number` `max-width: 100%`. At 200 % text on a 1280 px window the second
+  column is 190 px, so the Layers input spills too. Pin it with the CSS test, and with `fe/ux`'s state
+  at 320 px.
+
+**Second re-check (2026-11-23): D4 is fixed. One small defect is left, D5.** I rebuilt `fe/dist`,
+reran `npm --prefix fe/ux run check` and my long-values route (`build/ux-review/tp1b.js layout`, log
+`tp1/run3.txt`) in all three engines at 1280, 760 and 320 px, light and dark, 100 % and 200 %.
+- D4 met: no select leaves its rule anywhere, the 64-character device included, and there is no
+  sideways scroll in any run.
+- The UX check reports only the 8 known `instance-server` target-size findings, and
+  `model-profile-placement` passes in all three engines.
+
+**D5 (small, the last point of 21 T.9).** At 1280 px with 200 % text, both Layers inputs reach x 725
+while the rule's column ends at 695, 30 px past it, in all three engines. The page does not scroll.
+The cause: `.ot-layers` (`index.css` 1850) is a flex item with no `min-width: 0`, so its
+min-content is the input's `10ch`, and the input's `max-width: 100%` is measured against that same
+span. Fix: give `.ot-layers` the same flex row as `.ot-tensor` (`display: flex; flex-wrap: wrap;
+align-items: center; gap: var(--space-2); min-width: 0`) and its input `min-width: 0`. With D5 fixed,
+TP1 is accepted; every other point of 21 T.1 to T.9 is met.

@@ -84,6 +84,12 @@ Lessons only: the rules are in `AGENTS.md`.
   that sets one of those needs its line there, which is the tester's edit. Brief 17 U17c is that red twice over:
   the brief named only `HearthH2a.test.ts`'s list and the tester updated that one, leaving the same list in
   `HearthTokens.test.ts` red, so name BOTH files whenever a CSS rule of that kind is added.
+  A CSS test's per-selector helper (`topStyling`/`single` in `TensorPlacement1.test.tsx`: TOP rules whose
+  comma parts, whitespace-stripped, equal the name) demands EXACTLY ONE top-level rule naming that
+  selector, so a selector that also has its own rule can never join a shared comma group beside it:
+  brief 21 D5's `.ot-layers` gets its own five-declaration rule, not the `.ot-tensor, .ot-goes-on`
+  group. A `flex-basis`-only item is safe there (`topBy`/`declaring` use exact-set equality on the
+  declaration set, so a 6-declaration row rule never joins those pins).
 - `white-space` and `text-align` have NO sheet-wide exhaustive list (unlike `min-height`/`min-width`,
   `font-family`, `overflow-wrap`, `box-shadow`), so adding them to a rule needs no tester file: the pins
   that name them are per-selector (`Reflow.test.ts` R1.5 on `.model-profiles th`/`td:nth-child(2)`/
