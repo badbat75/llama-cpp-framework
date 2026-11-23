@@ -81,6 +81,8 @@ exist yet. Change this file first when a shape changes.
 | `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244); `restart` 15 | `{"enabled", "running", "restart"}` |
 | `GET /api/profiles/model/{id}` | administrator | 2d, served (36a892d) | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
 | `PUT /api/profiles/model/{id}` | administrator (`configure`) | 2h, served (3eb24b2); `restart` 15 | `{"revision", "running", "restart"}` |
+| `POST /api/profiles/model` | administrator (`configure`) | MP2, served (76163d1) | 201 `{"id"}` |
+| `DELETE /api/profiles/model/{id}` | administrator (`configure`) | MP2, served (76163d1) | 204 |
 | `GET /api/profiles/model/{id}/model-info` | administrator | L2, served (e1de6be); `tensors` J1 (6570557) | `{"model", "info", "reason"}`: [crates/bff/README.md](../../crates/bff/README.md#the-model-info) |
 | `PUT /api/instances/{id}/profiles/server` | administrator (`configure`) | 15, served (2d9a4c8) | `{"running"}` |
 | `GET /api/instances/{id}/profiles/model` | administrator | 15, served (2d9a4c8) | `{"all", "profiles": [rows]}` |
@@ -622,6 +624,26 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   out of its 5 s, or the 15 s ran out before the write); 504 `client-timeout` (the write was sent
   and its outcome is unknown; a write that landed is the 200, `running` true, whatever follows);
   502 `client-other`.
+
+### `POST /api/profiles/model` and `DELETE /api/profiles/model/{id}` (MP2, served 76163d1)
+
+Served with no page of their own yet; the design is "(3) The bff routes" in `ARCHITECTURE.md`, the
+detail in [crates/bff/README.md](../../crates/bff/README.md#the-create-and-the-delete).
+
+- **Create**: `{"id": string, "from": string}` (a copy of a pool profile) or `{"id": string,
+  "values": {"model": string} | {"hf-repo": string, "hf-file"?: string}}`. 201 `{"id"}`; the new
+  profile is a list row with `enabled: false` and no assignments. Texts are trimmed of spaces and tabs.
+- **Delete**: no body. 204.
+- Errors, each `{"key", "args"}` (422 adds `field`): 400 `model-profiles-malformed` for a body the bff
+  cannot read (not JSON, an unknown field, both or neither of `from` and `values`, a `values` key
+  outside the three, a non-string, an empty text, a control character), the manager not asked; 413
+  `payload-too-large`; create: 422 `invalid-model-profile-id` (`field` `id`), `no-model-profile-named`
+  (`field` `from`), `model-profile-no-model` or `model-profile-bad-source` (`field` `values`),
+  `comment-markers` (`field` the key), 409 `model-profile-name-taken` `[id]`; delete: 404
+  `no-model-profile-named` `[id]`, 409 `model-profile-enabled` `[id]`, 409 `model-profile-assigned`
+  `[id, instances]`; both: 401 `session-required` (the manager not asked), 403
+  `session-not-administrator` (the session ended), 503 `client-unavailable` (no manager, or the 15 s
+  write limit ran out: a retried create is then 409, a retried delete 404), 502 `client-other`.
 
 ## Open on the bff side
 

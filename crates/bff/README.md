@@ -140,6 +140,8 @@ runtime (axum).
 | `PUT /api/instances/{id}/profiles/model/{profile}` | `{"value": "on"|"off"|"none"|"inherit"}` in, `{"effective", "running"}` out, for a signed-in user: the one key of the instance's section of `assignments.ini`, `effective` read back after the write ([below](#the-association-routes)) |
 | `PUT /api/instances/{id}/profiles/model` | `{"all": "inherit"|"none"}` in, `{"running"}` out, for a signed-in user: the `*` of that section, the whole pool ([below](#the-association-routes)) |
 | `GET /api/profiles/model` | The model profile rows for a signed-in user, llama-server's global `[*]` never among them: `[{"id": "<model profile id>", "engine": "llama.cpp", "engineAvailable": true, "enabled": <bool>, "model": "<model file>", "assignments": [{"instance", "value", "viaAll", "effective"}, ...]}]` ([below](#the-model-profile-routes)) |
+| `POST /api/profiles/model` | `{"id", "from"}` or `{"id", "values"}` in: a new model profile, switched off, 201 `{"id"}`, for a signed-in user, under the write's 15 s ([below](#the-create-and-the-delete)) |
+| `DELETE /api/profiles/model/{id}` | 204 with no body once the manager removed a model profile that is switched off and assigned nothing, for a signed-in user, under the write's 15 s ([below](#the-create-and-the-delete)) |
 | `GET /api/profiles/model/{id}` | One model profile for a signed-in user: `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` ([below](#the-model-profile-page)) |
 | `PUT /api/profiles/model/{id}` | The model profile page's save of the keys that changed: `{"revision", "values"}` in, `{"revision", "running", "restart"}` out, for a signed-in user, the section rewritten in place in the file that holds it ([below](#the-save)) |
 | `PUT /api/profiles/model/{id}/enabled` | `{"enabled": <bool>}` in, `{"enabled", "running", "restart"}` out, for a signed-in user: the model profile switched on or off ([below](#the-model-profile-routes)) |
@@ -604,7 +606,7 @@ never removed on a record read failure. A retried delete after a 503 is 404.
 `GET /api/profiles/model`, `GET /api/profiles/model/{id}`, `PUT /api/profiles/model/{id}` and
 `PUT /api/profiles/model/{id}/enabled`
 (`crates/bff/src/model_profiles.rs`, built 2026-11-17; the fifth, the model's facts
-`GET /api/profiles/model/{id}/model-info`, [below](#the-model-info); `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
+`GET /api/profiles/model/{id}/model-info`, [below](#the-model-info); the create and the delete, 76163d1, [below](#the-create-and-the-delete); `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
 designs "The switch on and off (item 11b)" and "Saving a preset from the web" in `ARCHITECTURE.md`):
 the Model profiles page's list and switch, and the read and the save of one model profile. All four are behind
 sign-in and all four ask `private-ai-manager` on **one connect as the signed-in user**, so it is
@@ -728,6 +730,36 @@ written first, so a refusal leaves both files as they were.
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): the handler and its task settle the one atomic state together, so a limit that runs out before any write is 503 and the files are what they were, and one that runs out after both writes landed is the 200 above |
 | 502 | `client-other` | anything else, never the manager's detail |
+
+### The create and the delete
+
+`POST /api/profiles/model` and `DELETE /api/profiles/model/{id}` (`model_profiles.rs` `create` and
+`remove`, 76163d1, slice MP2; the design "(3) The bff routes" in `ARCHITECTURE.md`) call the manager's
+`CreateModelProfileAs` and `DeleteModelProfileAs` (823a7c3: [crates/config/README.md](../config/README.md))
+on one connect as the signed-in user, under the write's 15 s (`WRITE_TIMEOUT`). Both are served as an
+API with no page of their own yet. The session rules are the pool's: 401 `session-required` with no
+session and the manager not connected to; 403 `session-not-administrator` ending the session; 503
+`client-unavailable` with no manager or past the 15 s, the outcome unknown; 502 `client-other` for
+anything else.
+
+The create takes `{"id", "from"}` (a copy of the pool's model profile `from`) or `{"id", "values"}`,
+`values` being `{"model"}` or `{"hf-repo"}` with an optional `"hf-file"`, and answers 201 `{"id"}`. The
+new section lands at the end of `models.ini.disabled`, so the list shows it `enabled: false` with no
+assignments. Each text is trimmed of spaces and tabs at the ends. The bff checks only the shape: a body
+that is not JSON of the right type, a field beside the three, both or neither of `from` and `values`,
+a `values` key outside its three or in another combination, a non-string, an empty text or a control
+character other than a tab is 400 `model-profiles-malformed`, the manager not asked; a body too large
+is 413 `payload-too-large`. Every other rule is the manager's: 409 `model-profile-name-taken` `[id]`
+with no `field`; 422 `{"key", "args", "field"}` for the rest, `field` being `id` for
+`invalid-model-profile-id`, `from` for `no-model-profile-named`, `values` for
+`model-profile-no-model` and `model-profile-bad-source`, and the key itself for `comment-markers`.
+
+The delete answers 204 with no body. The manager judges it on the state under its lock: 404
+`no-model-profile-named` `[id]` for a name neither file holds; 409 `model-profile-enabled` `[id]` for
+one switched on; 409 `model-profile-assigned` `[id, instances]` for one an instance's section of
+`assignments.ini` names; any other refusal 422 with its key and args. A retried create after a 503 is
+the 409 and a retried delete the 404, which is how the ambiguity shows. Tests:
+`crates/bff/tests/model_profile_create.rs`.
 
 ### The model profile page
 
@@ -1143,7 +1175,7 @@ nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark i
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
 | `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and `PUT /api/instances/<id>/boot`, both behind the session), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`) | signed in; otherwise the sign-in form in its place |
-| `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) | signed in; otherwise the sign-in form in its place |
+| `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d). After GPU distribution, the Tensor placement card shows `override-tensor` as rule rows (tensor kind, layers, a custom pattern, Goes on, Remove) with Add rule; the key is sent only when the rules differ from the loaded ones (1b98fee, TP1, `fe/src/TensorPlacement.tsx`, `fe/briefs/21-tensor-placement.md` 21 T.1 to T.9) | signed in; otherwise the sign-in form in its place |
 | `#/node` | Node info (`fe/src/NodePage.tsx`, fe slice AN5, `fe/briefs/18-about-node-info.md`), read again at every arrival from `GET /api/node` (an engine upgrade does not restart the web service): the host name, the operating system and kernel, the framework's version, one section per installed engine with its version and a row per GPU runtime package (the three known suffixes by their own word, any other as sent; a `null` version as Unknown, an engine with no runtime as None, CPU only, `engines: []` as a paragraph that there is no engine), then one block per GPU (vendor, PCI address, driver, Vulkan driver). When the reply carries `nodeInfo` (the manager did not answer), the OS and kernel show as Unknown and the GPU section is a paragraph saying the manager did not answer or could not read them. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
 | `#/about` | The framework's version and the operating system with its version (`fe/src/About.tsx`, fe slice AN5), read again at every arrival from `GET /api/version`. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
