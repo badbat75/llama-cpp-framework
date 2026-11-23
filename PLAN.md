@@ -1089,7 +1089,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     Then M3b (`ARCHITECTURE.md` ~3038): the bff's model profile save takes `model`, `hf-repo` and
     `hf-file`, only from the lists (user, 2026-11-23: no free text; `hf-file` checked against the repo's
     listing at save). The web side is brief 22 (`fe/briefs/22-model-sources.md`, MP3 and M4 together):
-    22D delete (can run now), 22P the shared picker (after M2, M3), 22C the New form with Copy as a third
+    22D delete (in progress since 2026-11-23), 22P the shared picker (after M2, M3), 22C the New form with Copy as a third
     "Start from" (after 22P), 22E the picker on the Assets card (after M3b). Decided (user, 2026-11-23):
     Copy inside New; Delete shown on any switched-off profile, the 409 naming the instances; only
     listed items.
