@@ -249,6 +249,11 @@ Points of design, and what is still open:
   error is written into the instance log.
 - The D-Bus name and polkit action ids, agreed with the user on 2026-11-13: `org.privateai.Manager1`,
   `org.privateai.manager.*`.
+- **A stop that hangs** (seen 2026-11-23, a deploy's `prerm upgrade`): `systemctl stop llama.cpp@default`
+  ran out `TimeoutStopSec=300` and systemd sent SIGKILL. The router's child (`Qwen3-Embedding-0.6B-Q8_0`)
+  was force-killed and exited within 11 s, but the router process itself never exited (journal of
+  `llama.cpp@default`, 17:45:45 to 17:50:45). Find out whether llama-server's router mode, the
+  manager's `run-instance` or `save-slots` holds the stop, and make a stop end without the kill.
 
 - Done when: on Linux, after installing the packages, the instance in `server@default.ini` starts at
   boot, `systemctl start/stop llama.cpp@default` and the GUI agree on its state, and a user without
