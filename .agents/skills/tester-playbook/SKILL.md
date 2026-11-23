@@ -93,6 +93,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (the `Running` lines) post-dates the newest `*.rs` of the crate, and report that beside the totals.
   Compare each binary to the newest of its OWN inputs (its own test file + the crate's non-test `*.rs` +
   `Cargo.toml`): the check answers 0 only per target.
+  Here the test binaries sit under `debug/build/<crate>/<hash>/out/` (`debug/deps/` is absent):
+  take the paths from the `Running` lines, never glob `deps`.
 - Use `--no-fail-fast` for the slice's map (a target that fails to compile, or a test that fails, stops
   the run): every `test result:` line, and
   `awk '/^---- /{name=$2} /panicked at/{print name" | "$0}'` for one line per red; then run the untouched

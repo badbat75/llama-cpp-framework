@@ -1085,7 +1085,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     M3 the manager's `ModelFilesAs` and `GET /api/node/model-files`, M4 the pickers (designer first).
     Moved ahead (user, 2026-11-23, asked again): M1 then M2, M3 in parallel listing today's
     `paths::instance_models_dir()`, then M4 with MP3's create form sharing the picker; F1 to F3 later as
-    one unit in one deploy. M1 in progress.
+    one unit in one deploy. M1 built 2026-11-23; M2 in progress.
     Then M3b (`ARCHITECTURE.md` ~3038): the bff's model profile save takes `model`, `hf-repo` and
     `hf-file`, only from the lists (user, 2026-11-23: no free text; `hf-file` checked against the repo's
     listing at save). The web side is brief 22 (`fe/briefs/22-model-sources.md`, MP3 and M4 together):

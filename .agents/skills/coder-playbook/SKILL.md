@@ -16,9 +16,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `git stash`, `git checkout` and `git restore` are off limits: a stash measures the tree without your
   slice.
 - Anchor a scripted edit on exact text (`s.index(anchor)`, `assert count == 1`), never on a line number
-  read a moment ago.
+  read a moment ago. When a scripted pass both deletes line ranges and rewrites the header above them,
+  delete FIRST: a header rewrite moves every later line number.
+- Moving a module's half into another crate while its inline `mod tests` must stay byte-identical:
+  re-export every name the tests and the callers use (`pub use` in the old module), and a tuple field a
+  test constructs (`Token("x".into())`) has to become public, its doc saying so. Prove the tests
+  unchanged: `git show HEAD:<file> | sed -n '/^#\[cfg(test)\]$/,$p'` diffed against the working file.
 - For a baseline red list without a stash: `git worktree add --detach /tmp/<x> HEAD`, copy in the
   tester's untracked files, symlink `fe/node_modules`, run there, `git worktree remove --force`.
+  With no git side effect at all: `git archive HEAD | tar -x -C /tmp/<x>` (copy the untracked tests in
+  by hand; the copy has no generated `.cargo/config.toml`, so it builds into its own `target/`).
 - To prove a hypothesis, copy the tree (`rsync -a --exclude build --exclude .git --exclude dist
   --exclude node_modules <repo> /tmp/<x>`), use a fresh or shared `CARGO_TARGET_DIR` (registry crates are
   reused; only workspace crates rebuild), patch there, rerun. Never patch the repo's tests.

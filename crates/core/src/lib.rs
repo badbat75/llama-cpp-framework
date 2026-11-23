@@ -11,6 +11,9 @@ pub mod client;
 pub mod devices;
 // The GGUF header reader, a model's shape and the KV formula (the estimate's inputs).
 pub mod gguf_shape;
+// The Hugging Face repository spec, listing and curl transport (the bff lists
+// through the same code).
+pub mod hf;
 // The node's own host: its total RAM and the CPUs the manager may use.
 pub mod host;
 pub mod http;
