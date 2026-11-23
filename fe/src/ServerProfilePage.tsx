@@ -1,0 +1,328 @@
+// One server profile's page (#/profiles/server/<id>, signed in): the back link,
+// the id, the instance that runs the profile, and the Server form, moved here
+// from the instance page (fe/briefs/16-server-profiles-and-instances.md,
+// 16 17a.5 to 17a.9). The file is GET /api/profiles/server/{id}: today's server
+// document plus `instance`, the instance that runs it, and the save goes to the
+// same route.
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+import { Icon } from './Icon.tsx'
+import PageHeading from './PageHeading.tsx'
+import { instanceHref, modelProfileIdUnreadable } from './route.ts'
+import ServerForm, {
+  type Runs,
+  type ServerDoc,
+  withholdsKey,
+} from './ServerForm.tsx'
+import { CardBox, Line, Loading, LoadingText } from './Skeleton.tsx'
+import type { Session, SignedOut } from './session.ts'
+import { t } from './strings.ts'
+
+/** What the read gave: the document and who runs it, or the key of the message
+ * saying why not. */
+type Answer =
+  | { doc: ServerDoc; instance: string | null }
+  | {
+      error:
+        | 'client-not-authorized'
+        | 'client-unavailable'
+        | 'client-no-server-profile'
+        | 'failed'
+    }
+  | 'signed-out'
+  | 'revoked'
+
+/** The server document of the instance that runs the profile, as the form reads
+ * it (fe/briefs/01-server.md, section 2.5). */
+function isServerDoc(value: unknown): value is ServerDoc {
+  if (!isRecord(value)) return false
+  const { values, defaults, interfaces } = value
+  return (
+    isRecord(values) &&
+    isRecord(defaults) &&
+    Array.isArray(interfaces) &&
+    interfaces.every(
+      (i) =>
+        isRecord(i) &&
+        typeof i.value === 'string' &&
+        typeof i.label === 'string',
+    )
+  )
+}
+
+/** The document's `instance`: the instance that runs the profile, null when the
+ * document names none, which is a profile no instance runs (16 17a.5). */
+function usedBy(body: Record<string, unknown>): string | null {
+  const instance = body.instance
+  return typeof instance === 'string' && instance !== '' ? instance : null
+}
+
+async function readProfile(id: string): Promise<Answer> {
+  try {
+    const reply = await call(`/api/profiles/server/${encodeURIComponent(id)}`)
+    if (reply.status === 401) return 'signed-out'
+    if (sessionRevoked(reply)) return 'revoked'
+    if (!reply.ok) {
+      const key = apiError(reply.body)?.key
+      switch (key) {
+        case 'client-not-authorized':
+        case 'client-unavailable':
+        case 'client-no-server-profile':
+          return { error: key }
+        default:
+          return { error: 'failed' }
+      }
+    }
+    return isServerDoc(reply.body)
+      ? { doc: reply.body, instance: usedBy(reply.body) }
+      : { error: 'failed' }
+  } catch {
+    return { error: 'failed' }
+  }
+}
+
+/** The page's Server form is never restarted from the page: no run control
+ * stands here (16 17a.5), so the save's "restart" message stays until the next
+ * edit (16 17a.7). */
+const NO_RUNS: Runs = { started: 0, settled: 0 }
+
+export default function ServerProfilePage({
+  id,
+  onSignedOut,
+  onRenewed,
+  onDirty,
+}: {
+  /** The id from the address. */
+  id: string
+  onSignedOut: (reason: SignedOut) => void
+  /** A sign-in in the bar's dialog: true when the edits belong to it and stay. */
+  onRenewed: (session: Session) => boolean
+  /** Told whether the form holds unsaved changes; false when it goes. */
+  onDirty: (dirty: boolean) => void
+}) {
+  // undefined while the reply is awaited.
+  const [answer, setAnswer] = useState<Answer | undefined>(undefined)
+  // Raised by the bar's Reload: `reads` starts the read again, `asked` holds the
+  // profile the read was asked for.
+  const [reads, setReads] = useState(0)
+  const asked = useRef<string | null>(null)
+  // The sign-ins in the bar's dialog (16 17a.7): `rereads` remounts the form and
+  // reads the file again for the new session, `dropped` says the edits went with
+  // it, `kept` counts the sign-ins that kept the page (ends the alert).
+  const [signIns, setSignIns] = useState({
+    rereads: 0,
+    dropped: false,
+    kept: 0,
+  })
+  // Whether the form on screen has edits to lose.
+  const dirty = useRef(false)
+
+  // The arrival focus (fe/DESIGN.md 2.3, 16 17a.5): the shell raises its focus
+  // request on a navigation, and the session read that brings this page is an
+  // arrival too, so the page gives its h1 the focus when it opens.
+  useEffect(() => {
+    document.getElementById('page-heading')?.focus()
+  }, [])
+
+  useEffect(() => {
+    // `.` and `..` are sent to no read at all (16 17a.1): the page says there is
+    // no such server profile, as a 404 would.
+    if (modelProfileIdUnreadable(id)) return
+    // The read a Reload asked for is the one asked for THIS profile: the mark is
+    // spent here, so it cannot outlive the profile that asked for it.
+    const reload = asked.current === id
+    asked.current = null
+    let live = true
+    readProfile(id).then((a) => {
+      if (!live) return
+      if (a === 'signed-out' || a === 'revoked') {
+        onSignedOut(a === 'revoked' ? 'revoked' : 'ended')
+        return
+      }
+      setAnswer(a)
+      // The read answers the page like a first visit, so the focus goes to the
+      // page's h1.
+      if (reload) document.getElementById('page-heading')?.focus()
+    })
+    return () => {
+      live = false
+    }
+  }, [id, onSignedOut, reads])
+
+  const trackDirty = useCallback(
+    (d: boolean) => {
+      dirty.current = d
+      onDirty(d)
+    },
+    [onDirty],
+  )
+
+  /** Reads the file again, the edits discarded: the form gives place to the
+   * page's loading status until the read lands. */
+  function reload() {
+    asked.current = id
+    setAnswer(undefined)
+    setReads((n) => n + 1)
+  }
+
+  /** A sign-in in the bar's dialog: the form stays for the same user; for
+   * another one its edits are dropped and the file is read again. */
+  function renewed(session: Session) {
+    const dropped = dirty.current
+    const kept = onRenewed(session)
+    setSignIns((s) =>
+      kept
+        ? { ...s, kept: s.kept + 1 }
+        : { ...s, rereads: s.rereads + 1, dropped: s.dropped || dropped },
+    )
+    if (!kept) {
+      setAnswer(undefined)
+      setReads((n) => n + 1)
+    }
+    return kept
+  }
+
+  if (modelProfileIdUnreadable(id)) {
+    return (
+      <>
+        <Back />
+        <PageHeading text={id} />
+        <p>{t('server-profile-not-found', id)}</p>
+      </>
+    )
+  }
+  const read =
+    answer !== undefined && typeof answer === 'object' && 'doc' in answer
+      ? answer
+      : null
+  const missing =
+    answer !== undefined &&
+    typeof answer === 'object' &&
+    !('doc' in answer) &&
+    answer.error === 'client-no-server-profile'
+  return (
+    <>
+      <Back />
+      <PageHeading text={id} />
+      {missing ? (
+        // No profile by that name: the message, and nothing else (16 17a.6).
+        <p>{t('server-profile-not-found', id)}</p>
+      ) : (
+        <>
+          {read !== null && (
+            <dl className="assets">
+              <dt>{t('server-profile-used-by')}</dt>
+              {read.instance === null ? (
+                <dd className="muted">{t('server-profiles-unused')}</dd>
+              ) : (
+                <dd>
+                  <a href={instanceHref(read.instance)}>{read.instance}</a>
+                </dd>
+              )}
+            </dl>
+          )}
+          <section>
+            <h2>{t('server-title')}</h2>
+            <p className="intro">
+              {t('server-profile-intro', `server@${id}.ini`)}
+            </p>
+            {signIns.dropped && (
+              <p role="alert" className="alert">
+                {t('server-edits-dropped')}
+              </p>
+            )}
+            <Body
+              key={signIns.rereads}
+              id={id}
+              answer={answer}
+              renewals={signIns.kept}
+              onDirty={trackDirty}
+              onReload={reload}
+              onRenewed={renewed}
+            />
+          </section>
+        </>
+      )}
+    </>
+  )
+}
+
+/** The link back to the list, before the h1 (16 17a.5, as `model-profile-back`). */
+function Back() {
+  return (
+    <p className="model-profile-back">
+      <a href="#/profiles/server">
+        <Icon name="chevron-left" />
+        {t('server-profile-back')}
+      </a>
+    </p>
+  )
+}
+
+/** The Server section's content: the form, the loading shape, or the message. */
+function Body({
+  id,
+  answer,
+  renewals,
+  onDirty,
+  onReload,
+  onRenewed,
+}: {
+  id: string
+  answer: Answer | undefined
+  /** Raised by every sign-in that kept the page: a session-ended alert goes. */
+  renewals: number
+  onDirty: (dirty: boolean) => void
+  onReload: () => void
+  onRenewed: (session: Session) => boolean
+}) {
+  if (answer === undefined) {
+    // The shape of the page to come (16 17a.6): the Used by row, and the card
+    // the form fills.
+    return (
+      <Loading
+        text={t('server-loading')}
+        shape={
+          <>
+            <Line />
+            <CardBox />
+          </>
+        }
+      />
+    )
+  }
+  if (answer === 'signed-out' || answer === 'revoked') {
+    return <LoadingText text={t('server-loading')} />
+  }
+  if ('doc' in answer) {
+    // A withheld key (27d): the form would show No key, and a save would
+    // erase the key, so the whole read counts as failed.
+    if (withholdsKey(answer.doc)) {
+      return <p>{t('server-load-failed')}</p>
+    }
+    return (
+      <ServerForm
+        id={id}
+        doc={answer.doc}
+        renewals={renewals}
+        runs={NO_RUNS}
+        onDirty={onDirty}
+        onReload={onReload}
+        onRenewed={onRenewed}
+      />
+    )
+  }
+  return <p>{errorText(answer.error)}</p>
+}
+
+/** The message of a read error, by its key. */
+function errorText(key: string): string {
+  switch (key) {
+    case 'client-not-authorized':
+      return t('api-client-not-authorized')
+    case 'client-unavailable':
+      return t('api-client-unavailable')
+    default:
+      return t('server-load-failed')
+  }
+}

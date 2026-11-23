@@ -150,8 +150,9 @@ const TAG_ITEM = {
 /** The tags route (section 0). */
 const TAGS = '/api/instances/default/tags'
 
-/** The Server form's own save route: the chips never use it. */
-const SERVER = '/api/instances/default/server'
+/** The server profile's save route (brief 16 slice 17a): the chips never
+ *  read or write it, and the instance page has no form to save. */
+const SERVER = '/api/profiles/server/default'
 
 /** The list route the page polls, and re-reads after every 204. */
 const LIST = '/api/instances'
@@ -267,10 +268,13 @@ async function openPage(
     // Under the fake clock a findBy never resolves: the flush runs the reads
     // due now, then the look is synchronous.
     await flush()
-    within(main).getByRole('button', { name: en('save-button') })
+    serverTitle(main)
   } else {
     await screen.findByRole('heading', { level: 1, name: 'default' })
-    await within(main).findByRole('button', { name: en('save-button') })
+    await within(main).findByRole('heading', {
+      level: 2,
+      name: en('instance-server-title'),
+    })
   }
   return { bff, main, field: group(main) }
 }
@@ -316,11 +320,12 @@ function group(main: HTMLElement): HTMLElement {
   return within(main).getByRole('group', { name: en('instance-tags-own') })
 }
 
-/** The Server section's heading: the field's feedback sits before it. */
+/** The heading of the section brief 16 slice 17a left where the Server form
+ *  was: the field's feedback sits before it. */
 function serverTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('server-title'),
+    name: en('instance-server-title'),
   })
 }
 
@@ -507,16 +512,6 @@ function described(el: HTMLElement): string[] {
     .map((id) => document.getElementById(id)?.textContent ?? `(no #${id})`)
 }
 
-/** The Server section's status line (its save bar's). */
-function serverStatus(main: HTMLElement): HTMLElement {
-  const h2 = serverTitle(main)
-  const all = within(main)
-    .getAllByRole('status')
-    .filter((s) => before(h2, s))
-  expect(all, 'one status line in the Server section').toHaveLength(1)
-  return all[0]!
-}
-
 /** Every tab stop of the page, in DOM order. */
 function tabbable(main: HTMLElement): HTMLElement[] {
   return [
@@ -634,7 +629,10 @@ async function openPageFromOverview(): Promise<Page> {
   })
   await typeHash('#/instances/default')
   await within(main).findByRole('heading', { level: 1, name: 'default' })
-  await within(main).findByRole('button', { name: en('save-button') })
+  await within(main).findByRole('heading', {
+    level: 2,
+    name: en('instance-server-title'),
+  })
   return { bff, main, field: group(main) }
 }
 
@@ -714,11 +712,17 @@ test('15 C1.2: after the group chips, the text From the server profile names a l
   expect(within(list).queryAllByRole('button'), 'no button in it').toEqual([])
 })
 
-test('15 C1.2 (as 15 section 10 R5 amends it): the tab order is Start at boot, About Instance tags, Remove tag v2, Remove tag gpu, Add tag, the profile chip edge, then the Server section', async () => {
+test('15 C1.2 (as 15 section 10 R5 amends it): the tab order is Start at boot, About Instance tags, Remove tag v2, Remove tag gpu, Add tag, the profile chip edge, last (17a.10: the form left the page)', async () => {
   const p = await openPage()
+  // Start at boot is read on its own after the page opens: the tab stop list
+  // is taken once its checkbox is there, so the snapshot is never of a page
+  // still loading the field.
+  const boot = await within(p.main).findByRole('checkbox', {
+    name: en('boot-toggle'),
+  })
   const stops = tabbable(p.main)
   const order = [
-    within(p.main).getByRole('checkbox', { name: en('boot-toggle') }),
+    boot,
     within(p.main).getByRole('button', {
       name: `${en('field-about')} ${en('instance-tags-own')}`,
     }),
@@ -728,9 +732,6 @@ test('15 C1.2 (as 15 section 10 R5 amends it): the tab order is Start at boot, A
     // R5: a profile chip has no button, so the keyboard reaches its text
     // through the chip itself, after the +.
     profileChips(p)[0]!,
-    within(p.main).getByRole('button', {
-      name: `${en('field-about')} ${en('server-port')}`,
-    }),
   ]
   const at = order.map((el) => stops.indexOf(el))
   expect(at, 'every one is a tab stop').not.toContain(-1)
@@ -805,7 +806,9 @@ test('15 C1.3: Add tag opens a box named New tag, empty and focused, replacing t
 
 test('15 C1.3: Escape, Cancel, and blurring an empty box close the pill with Add tag back and focused; blurring a box holding fast keeps it open holding fast; nothing is sent', async () => {
   const p = await openPage()
-  const boot = within(p.main).getByRole('checkbox', { name: en('boot-toggle') })
+  const boot = await within(p.main).findByRole('checkbox', {
+    name: en('boot-toggle'),
+  })
   for (const close of ['Escape', 'Cancel', 'blur'] as const) {
     const box = await openPill(p)
     if (close === 'Escape') pressEscape(box)
@@ -1430,13 +1433,12 @@ test('15 C1.12: a pill holding new-tag guards the page: a nav link and the brows
   expect(asksBrowser(), 'left: nothing left to ask').toBe(false)
 })
 
-test('15 C1.12: a closed pill, an empty pill, and any add or removal 204 leave nothing to ask about; the Server save bar keeps its status and its buttons', async () => {
+test('15 C1.12: a closed pill, an empty pill, and any add or removal 204 leave nothing to ask about; the page has no save bar (17a.10)', async () => {
   const p = await openPage()
-  const cleanStatus = serverStatus(p.main).textContent
-  const cleanDiscard = within(p.main)
-    .getByRole('button', { name: en('save-discard') })
-    .hasAttribute('disabled')
-
+  expect(
+    p.main.querySelector('.save-bar'),
+    '17a.10: this page has no save bar (the form is on the profile page)',
+  ).toBeNull()
   const box = await openPill(p)
   typeIn(box, 'new-tag')
   typeIn(box, '')
@@ -1465,15 +1467,9 @@ test('15 C1.12: a closed pill, an empty pill, and any add or removal 204 leave n
     false,
   )
   expect(
-    serverStatus(p.main).textContent,
-    'the Server save bar status is unchanged',
-  ).toBe(cleanStatus)
-  expect(
-    within(p.main)
-      .getByRole('button', { name: en('save-discard') })
-      .hasAttribute('disabled'),
-    'the Server Discard button is as it was',
-  ).toBe(cleanDiscard)
+    p.main.querySelector('.save-bar'),
+    'a tag write marks nothing: there is still no save bar',
+  ).toBeNull()
   await goLink(en('nav-overview'))
   expect(screen.queryByRole('dialog'), 'no Unsaved changes dialog').toBeNull()
   await within(p.main).findByRole('heading', {
@@ -1481,9 +1477,10 @@ test('15 C1.12: a closed pill, an empty pill, and any add or removal 204 leave n
     name: en('overview-title'),
   })
   expect(tagWrites(p.bff).length, 'two writes: the add and the removal').toBe(2)
-  expect(p.bff.to('PUT', SERVER).length, 'the Server form is never sent').toBe(
-    0,
-  )
+  expect(
+    p.bff.to('PUT', SERVER).length,
+    'the server profile is never written from here',
+  ).toBe(0)
 })
 
 // ── 15 C1.13 to C1.15: the expanded pill of a cut chip (15 section 10 R5) ─
@@ -1520,7 +1517,9 @@ test('15 C1.14: focus on the x of a cut chip opens the pill, and so does focus o
   expect(fullPill(v2), 'focus on the x opens the pill').not.toBeNull()
 
   // Focus leaving the chip hides it.
-  const boot = within(p.main).getByRole('checkbox', { name: en('boot-toggle') })
+  const boot = await within(p.main).findByRole('checkbox', {
+    name: en('boot-toggle'),
+  })
   boot.focus()
   expect(fullPill(v2), 'focus left the chip: the pill is gone').toBeNull()
 

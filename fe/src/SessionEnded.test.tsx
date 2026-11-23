@@ -60,6 +60,9 @@ const LIST = 'GET /api/instances'
 const BOOT = 'GET /api/instances/default/boot'
 
 const INSTANCE = '#/instances/default'
+/** The page of brief 16 slice 17a: the Server form and the server read live
+ *  here, not on the instance page. */
+const SERVER_PAGE = '#/profiles/server/default'
 
 let dialogs: ReturnType<typeof stubDialog>
 
@@ -138,10 +141,10 @@ function endedBff(answers: BffOptions = {}, oneRead = false) {
     instances: INSTANCES,
     modelProfiles: MODEL_PROFILES,
     modelProfile: () => reply(200, modelProfileDoc()),
-    server: () => reply(200, serverDoc()),
+    serverProfile: () => reply(200, serverDoc()),
     boot: { read: () => reply(200, { enabled: false }) },
     run: () => reply(204),
-    save: () => reply(200, { revision: 'r-2', running: false }),
+    serverProfileSave: () => reply(200, { revision: 'r-2', running: false }),
   }
   const merged = oneRead ? answers : { ...asUsual, ...answers }
   const gate =
@@ -460,18 +463,6 @@ function bootGroup(main: HTMLElement): HTMLElement {
   return within(main).getByRole('group', { name: en('boot-label') })
 }
 
-/** The Server form's Port box. */
-function portBox(main: HTMLElement): HTMLInputElement {
-  return within(
-    within(main).getByRole('group', { name: en('server-port') }),
-  ).getByRole('textbox', { name: en('server-port') }) as HTMLInputElement
-}
-
-/** Types `value` in `input`, as a visitor does. */
-function typeIn(input: HTMLElement, value: string) {
-  fireEvent.change(input, { target: { value } })
-}
-
 test('09 S1b.1 (C1): signed in on the instance page, a session gone at opening signs the app out at that address: the sign-in page with the notice, the focus on its h1, nothing read on', async () => {
   // The page's first read is GET /api/instances (the polls of S1b.2 are the
   // later ones), so with the whole bff answering 401 this is the read that
@@ -569,7 +560,7 @@ test.each(NOT_AN_END)(
   },
 )
 
-test('09 S1b.2: on the instance page, the polled GET /api/instances answering 401 changes nothing: the form and the run controls stay, the session stays, no notice', async () => {
+test('09 S1b.2: on the instance page, the polled GET /api/instances answering 401 changes nothing: the page, its Start at boot field and its run controls stay, the session stays, no notice', async () => {
   let times = 0
   const { bff, main } = await at(
     fakeBff({
@@ -577,10 +568,7 @@ test('09 S1b.2: on the instance page, the polled GET /api/instances answering 40
     }),
     INSTANCE,
   )
-  expect(
-    within(main).getByRole('heading', { level: 3, name: en('server-network') }),
-    'the Server form is shown',
-  ).toBeTruthy()
+  const boot = within(main).getByRole('group', { name: en('boot-label') })
   const before = bff.calls.length
   await advance(5_000)
   expect(reads(bff, LIST), 'the poll read the list again').toBe(2)
@@ -593,9 +581,9 @@ test('09 S1b.2: on the instance page, the polled GET /api/instances answering 40
   ).toBeNull()
   expect(noticeTexts(main), 'no notice').toEqual([])
   expect(
-    within(main).getByRole('heading', { level: 3, name: en('server-network') }),
-    'the form is where it was',
-  ).toBeTruthy()
+    within(main).getByRole('group', { name: en('boot-label') }),
+    'the Start at boot field is where it was (17a.10: the form is on the profile page now)',
+  ).toBe(boot)
   expect(
     within(main).getByRole('button', { name: en('run-stop') }),
     'the run controls are where they were',
@@ -633,25 +621,26 @@ test('09 S1b.6: a boot read of the instance page that fails for another reason k
   expectSignedInBanner()
 })
 
-test('09 S1b.6 (C2): on the instance page, a 401 on its boot read keeps the page and the session: the field shows its own failed-read paragraph, and the Port typed while it was awaited stays', async () => {
+test('09 S1b.6 (C2): on the instance page, a 401 on its boot read keeps the page and the session: the field shows its own failed-read paragraph, nothing signs out', async () => {
   // The designer's review, 8 C2: the boot read is not the page's first read
   // and not a form, so it keeps today's handling of a failed read (S1b.6,
-  // `bootReadText`). Signing out there threw away a Port typed while the read
-  // was on its way, with no question (fe/DESIGN.md 2.2, WCAG 3.3.7).
+  // `bootReadText`). Signing out there threw away what the user had typed,
+  // with no question (fe/DESIGN.md 2.2, WCAG 3.3.7). Brief 16 slice 17a moved
+  // the form to the server profile page; the edited form of this page is its
+  // own case below.
   const pending = deferred()
   const { bff, main } = await at(
     fakeBff({ boot: { read: () => pending.promise } }),
     INSTANCE,
   )
   expect(
-    within(main).getByRole('heading', { level: 3, name: en('server-network') }),
-    'the Server form is shown',
+    within(main).getByRole('heading', { level: 1, name: 'default' }),
+    'the page is there',
   ).toBeTruthy()
   expect(
     within(main).queryByRole('group', { name: en('boot-label') }),
     'the field waits for its read',
   ).toBeNull()
-  typeIn(portBox(main), '8581')
   await advance(3_000)
   await act(async () => {
     pending.resolve(ENDED())
@@ -674,18 +663,49 @@ test('09 S1b.6 (C2): on the instance page, a 401 on its boot read keeps the page
     'the page is not replaced by the sign-in page',
   ).toBeNull()
   expect(
-    within(main).getByRole('heading', { level: 3, name: en('server-network') }),
-    'the form is where it was',
-  ).toBeTruthy()
-  expect(portBox(main).value, 'the typed Port stays').toBe('8581')
-  expect(
-    within(main).getByText(en('save-unsaved')),
-    'the page is still asking about its unsaved changes',
+    within(main).getByRole('group', { name: en('boot-label') }),
+    'the field is where it was',
   ).toBeTruthy()
   expect(noticeTexts(main), 'none of the three notices').toEqual([])
   expectSignedInBanner()
   expect(bff.to('DELETE', '/api/session'), 'nothing signed out').toHaveLength(0)
   expect(reads(bff, BOOT), 'the failed boot read is not retried').toBe(1)
+})
+
+test('09 S1b.6 (C2, 17a.6): on the server profile page, a 401 on its read signs the app out at the same hash with the signin-session-ended notice, and reads it once', async () => {
+  // 17a.6 sends the profile read 401 and 403 where 17a.4 sends the list read:
+  // the sign-in page at the same hash, session ended. The rule of the case
+  // above is a field read's (the page keeps its session); the page read is
+  // the page's own document, and its 401 is the session's end.
+  const pending = deferred()
+  const { bff, main } = await at(
+    fakeBff({ serverProfile: () => pending.promise }),
+    SERVER_PAGE,
+  )
+  expect(
+    within(main).queryByRole('heading', {
+      level: 3,
+      name: en('server-network'),
+    }),
+    '17a.6: no form while the read runs',
+  ).toBeNull()
+  await advance(3_000)
+  await act(async () => {
+    pending.resolve(ENDED())
+  })
+  await flush()
+  expect(
+    signInHeading(main),
+    '09 S1b.1: the sign-in page, at the same hash',
+  ).toBeTruthy()
+  expect(window.location.hash, 'the hash stays').toBe(SERVER_PAGE)
+  expect(noticeTexts(main), 'the ended notice, and it alone').toEqual([
+    en('signin-session-ended'),
+  ])
+  expect(
+    bff.to('GET', '/api/profiles/server/default'),
+    'the read is not retried',
+  ).toHaveLength(1)
 })
 
 // ── S1b.3: the notice ─────────────────────────────────────────────────────
@@ -791,9 +811,12 @@ test('09 S1b.3: the notice never shows after Sign out, and never on a first load
   ])
 })
 
-test('09 S1b.3: the reads of the server page, the model profiles list and one model profile, answering 401, show the notice at the address of that page, and it goes at the next address change', async () => {
-  const { main: server } = await at(endedBff({ server: ENDED }, true), INSTANCE)
-  expect(window.location.hash, 'the address it was at').toBe(INSTANCE)
+test('09 S1b.3: the reads of the server profile page, the model profiles list and one model profile, answering 401, show the notice at the address of that page, and it goes at the next address change', async () => {
+  const { main: server } = await at(
+    endedBff({ serverProfile: ENDED }, true),
+    SERVER_PAGE,
+  )
+  expect(window.location.hash, 'the address it was at').toBe(SERVER_PAGE)
   expect(within(server).getByText(en('signin-session-ended'))).toBeTruthy()
   expect(
     within(server).queryByRole('heading', {
@@ -854,7 +877,10 @@ const ONE_OF_THE_THREE: [
   [
     'the manager ended the session (a read 403 session-not-administrator)',
     en('session-revoked'),
-    () => at(fakeBff({ server: REVOKED, boot: { read: REVOKED } }), INSTANCE),
+    // S1.9's reads are the page's own document: 17a moved the server document
+    // to GET /api/profiles/server/<id> (17a.4, 17a.6), so the revoked read
+    // lives on the profile page now.
+    () => at(fakeBff({ serverProfile: REVOKED }), SERVER_PAGE),
   ],
   [
     'a first load with no session at a protected address',
@@ -874,9 +900,11 @@ test.each(ONE_OF_THE_THREE)(
 )
 
 test('09 S1b.5: where one read answers 403 session-not-administrator and another 401, the revoked notice wins: only it shows', async () => {
+  // The revoked read is the page's document (17a.6), the 401 the shell's list
+  // read (09 S1b.1).
   const { main } = await at(
-    fakeBff({ server: REVOKED, boot: { read: ENDED } }),
-    INSTANCE,
+    fakeBff({ serverProfile: REVOKED, instances: ENDED }),
+    SERVER_PAGE,
   )
   expect(noticeTexts(main), 'the revoked notice alone').toEqual([
     en('session-revoked'),
@@ -926,7 +954,7 @@ test('09 S1b.6: a run verb that answers 401 keeps its alert and its Sign in, ope
     'and no notice: the visitor is not signed out (43a)',
   ).toBeNull()
   expect(
-    within(main).getByRole('heading', { level: 3, name: en('server-network') }),
+    within(main).getByRole('group', { name: en('boot-label') }),
     'the page stays under the dialog',
   ).toBeTruthy()
   expectSignedInBanner()

@@ -8,6 +8,8 @@ export type Route =
   | { page: 'node' }
   | { page: 'model-profiles' }
   | { page: 'model-profile'; id: string }
+  | { page: 'server-profiles' }
+  | { page: 'server-profile'; id: string }
   | { page: 'instance'; id: string }
   | { page: 'not-found' }
 
@@ -17,6 +19,19 @@ export function parseRoute(hash: string): Route {
   if (hash === '#/about') return { page: 'about' }
   if (hash === '#/node') return { page: 'node' }
   if (hash === '#/profiles/model') return { page: 'model-profiles' }
+  if (hash === '#/profiles/server') return { page: 'server-profiles' }
+  const serverProfile = /^#\/profiles\/server\/([^/]+)$/.exec(hash)
+  if (serverProfile) {
+    try {
+      return {
+        page: 'server-profile',
+        id: decodeURIComponent(serverProfile[1]!),
+      }
+    } catch {
+      // A bad escape (`%zz`) is no profile: the not-found page, and nothing read.
+      return { page: 'not-found' }
+    }
+  }
   const modelProfile = /^#\/profiles\/model\/([^/]+)$/.exec(hash)
   if (modelProfile) {
     try {
@@ -58,6 +73,11 @@ export function instanceHref(id: string): string {
 /** The link to a model profile's page. */
 export function modelProfileHref(id: string): string {
   return `#/profiles/model/${encodeURIComponent(id)}`
+}
+
+/** The link to a server profile's page (fe/briefs/16-server-profiles-and-instances.md, 17a.1). */
+export function serverProfileHref(id: string): string {
+  return `#/profiles/server/${encodeURIComponent(id)}`
 }
 
 /**

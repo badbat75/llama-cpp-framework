@@ -48,7 +48,7 @@ const GUARD_KEYS: [string, number][] = [
   ['boot-malformed', 400],
 ]
 
-const SERVER = '/api/instances/default/server'
+const SERVER = '/api/profiles/server/default'
 const BOOT = '/api/instances/default/boot'
 const PUT = ['PUT', SERVER] as const
 
@@ -107,7 +107,8 @@ function reset() {
   vi.unstubAllGlobals()
 }
 
-/** The instance page at `hash`, on fake timers, with the Server form shown. */
+/** The instance page at `hash`, on fake timers, with its Server profile
+ *  section shown (17a.10: the form moved to the profile's page). */
 async function loaded(options: BffOptions = {}, hash = '#/instances/default') {
   fakeClock()
   startAt(hash)
@@ -117,10 +118,10 @@ async function loaded(options: BffOptions = {}, hash = '#/instances/default') {
   const main = screen.getByRole('main')
   expect(
     within(main).queryByRole('heading', {
-      level: 3,
-      name: en('server-network'),
+      level: 2,
+      name: en('instance-server-title'),
     }),
-    'the Server form is loaded',
+    'the Server profile section is shown',
   ).not.toBeNull()
   return { bff, main }
 }
@@ -189,9 +190,11 @@ function press(el: HTMLElement) {
 // The instance page's header (the run controls) and the Start at boot field.
 
 function serverTitle(main: HTMLElement): HTMLElement {
+  // 17a.10: the form left the instance page; the h2 that marks the end of the
+  // header's area is the Server profile section's.
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('server-title'),
+    name: en('instance-server-title'),
   })
 }
 
@@ -254,13 +257,6 @@ function runSignIns(main: HTMLElement): HTMLButtonElement[] {
   return within(main)
     .queryAllByRole('button', { name: en('session-sign-in') })
     .filter((b) => before(b, h2) && !inBoot(main, b)) as HTMLButtonElement[]
-}
-
-function portBox(main: HTMLElement): HTMLInputElement {
-  return within(within(main).getByRole('group', { name: 'Port' })).getByRole(
-    'textbox',
-    { name: 'Port' },
-  ) as HTMLInputElement
 }
 
 function bootGroup(main: HTMLElement): HTMLElement {
@@ -400,13 +396,13 @@ function discardButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-discard') })
 }
 
-/** The save bar's status line: the one status after the Server section's h2. */
+/** The save bar's status line. 17a.10: the bar sits on the server profile
+ *  page, so the bar itself anchors it (no instance-page h2 to sit after). */
 function saveStatus(main: HTMLElement): HTMLElement {
-  const h2 = serverTitle(main)
-  const all = within(main)
-    .queryAllByRole('status')
-    .filter((s) => before(h2, s) && !inBoot(main, s))
-  expect(all, 'one status line in the Server section').toHaveLength(1)
+  const bar = main.querySelector('.save-bar')
+  expect(bar, 'the save bar').not.toBeNull()
+  const all = within(bar as HTMLElement).queryAllByRole('status')
+  expect(all, 'one status line in the bar').toHaveLength(1)
   return all[0]!
 }
 
@@ -427,7 +423,8 @@ function editPort(main: HTMLElement) {
 
 /** The page with the server form loaded, on the real clock. */
 async function loadedSave(options: BffOptions = {}) {
-  startAt('#/instances/default')
+  // The form lives on the server profile page since brief 16 slice 17a.
+  startAt('#/profiles/server/default')
   const bff = fakeBff(options)
   render(<App />)
   const main = screen.getByRole('main')
@@ -480,7 +477,9 @@ test.each(GUARD_KEYS)(
 test('S1.1: the guard keys and boot-malformed on the Server save show save-failed and keep the edits', async () => {
   for (const [key, status] of GUARD_KEYS) {
     const what = `${status} ${key}`
-    const { bff, main } = await loadedSave({ save: guard(key, status) })
+    const { bff, main } = await loadedSave({
+      serverProfileSave: guard(key, status),
+    })
     editPort(main)
     await clickSave(main, bff)
     const alert = await within(main).findByText(en('save-failed'))
@@ -543,8 +542,11 @@ test('S1.1: the guard keys and boot-malformed on a model profile switch show req
 test('S1.1: the guard keys on a read show that reads generic failure, in place of the page, with no sign-in form (server, model profiles list, model profile page)', async () => {
   const rows: [string, BffOptions, string][] = [
     [
-      'GET /api/instances/{id}/server',
-      { server: () => reply(403, { key: 'request-cross-origin', args: [] }) },
+      'GET /api/profiles/server/{id}',
+      {
+        serverProfile: () =>
+          reply(403, { key: 'request-cross-origin', args: [] }),
+      },
       en('server-load-failed'),
     ],
     [
@@ -566,7 +568,7 @@ test('S1.1: the guard keys on a read show that reads generic failure, in place o
         ? '#/profiles/model'
         : route === 'GET /api/profiles/model/{id}'
           ? '#/profiles/model/Qwen3-27B'
-          : '#/instances/default'
+          : '#/profiles/server/default'
     openAt(hash, options)
     const main = screen.getByRole('main')
     expect(
@@ -649,7 +651,6 @@ test('S1.3: a 403 session-not-administrator on a session-free read is that reads
 
 test('S1.4: a 403 session-not-administrator on a run action is 43a row with session-revoked: status emptied, focus kept, Sign in after the alert, the page stays signed in', async () => {
   const { bff, main } = await loaded({ run: REVOKED })
-  type(portBox(main), '8581')
   const stop = button(main, 'run-stop')
   press(stop)
   await flush()
@@ -670,11 +671,11 @@ test('S1.4: a 403 session-not-administrator on a run action is 43a row with sess
     before(signIns[0]!, serverTitle(main)),
     'before the Server section',
   ).toBe(true)
-  // 36a: the page is not signed out, its edits stay.
+  // 36a: the page is not signed out. (17a.10: the form, its edits and its save
+  // bar are on the profile page, so this page has none to keep.)
   expectSignedIn('the page stays signed in')
   expect(within(nav()).getByRole('link', { name: 'coder' })).toBeTruthy()
-  expect(portBox(main).value, 'the edit is untouched').toBe('8581')
-  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
+  expect(main.querySelector('.save-bar'), 'no save bar on this page').toBeNull()
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
   expect(posts(bff)).toHaveLength(1)
 })
@@ -693,7 +694,6 @@ test('S1.4: after a run 403 session-not-administrator the idle poll goes on (it 
 
 test('S1.5: a 403 session-not-administrator on the boot write is 45e row with session-revoked: the box shows the state read again, focus on the checkbox, Sign in after the alert', async () => {
   const { bff, main } = await loaded({ boot: boot(false, REVOKED) })
-  type(portBox(main), '8581')
   const boxEl = bootBox(main)
   press(boxEl)
   await flush()
@@ -710,13 +710,16 @@ test('S1.5: a 403 session-not-administrator on the boot write is 45e row with se
   expect(bootReads(bff), 'read again after the refusal').toBe(2)
   expect(bootBox(main).checked).toBe(false)
   expectSignedIn('the page stays signed in')
-  expect(portBox(main).value, 'the edit is untouched').toBe('8581')
+  expect(
+    main.querySelector('.save-bar'),
+    '17a.10: no save bar on this page',
+  ).toBeNull()
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
   expect(bootWrites(bff)).toHaveLength(1)
 })
 
 test('S1.6: a 403 session-not-administrator on the save is 36 row with session-revoked in the bar: edits kept and dirty, focus on Save, the bar Sign in after the alert, banner and nav stay', async () => {
-  const { bff, main } = await loadedSave({ save: REVOKED })
+  const { bff, main } = await loadedSave({ serverProfileSave: REVOKED })
   editPort(main)
   // press, not a bare click: a real click focuses Save, and the code must not
   // move focus away from it.
@@ -826,15 +829,17 @@ test('S1.8: signing in again as the same account in the dialog is 14b inside it:
 test('S1.9: a 403 session-not-administrator on the server read signs the app out, with session-revoked as an alert above the fields in place of signin-required, kept until a sign-in succeeds', async () => {
   let reads = 0
   let tries = 0
-  const { bff, main } = openAt('#/instances/default', {
-    server: () => (++reads === 1 ? REVOKED() : reply(200, serverDoc())),
+  const { bff, main } = openAt('#/profiles/server/default', {
+    serverProfile: () => (++reads === 1 ? REVOKED() : reply(200, serverDoc())),
     signIn: () =>
       ++tries === 1
         ? reply(401, { key: 'session-bad-credentials', args: [] })
         : reply(200, { user: 'bob' }),
   })
   const { username, password, submit } = await signInForm(main)
-  expect(window.location.hash, 'the route stays').toBe('#/instances/default')
+  expect(window.location.hash, 'the route stays').toBe(
+    '#/profiles/server/default',
+  )
   const note = within(main).getByText(en('session-revoked'))
   expect(note.getAttribute('role'), 'the paragraph is an alert').toBe('alert')
   expect(before(note, username), 'above the sign-in fields').toBe(true)
@@ -961,8 +966,9 @@ test('S1.10: session-revoked shows the briefs English, in the run alert and in t
   expect(runAlerts(main)).toEqual([REVOKED_TEXT])
   reset()
 
-  openAt('#/instances/default', {
-    server: () => reply(403, { key: 'session-not-administrator', args: [] }),
+  openAt('#/profiles/server/default', {
+    serverProfile: () =>
+      reply(403, { key: 'session-not-administrator', args: [] }),
   })
   const main2 = screen.getByRole('main')
   expect(await within(main2).findByText(REVOKED_TEXT)).toBeTruthy()

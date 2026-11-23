@@ -38,7 +38,7 @@ import {
 
 const ID = 'Qwen3-27B'
 const HASH = `#/profiles/model/${ID}`
-const SERVER = '#/instances/default'
+const SERVER = '#/profiles/server/default'
 const MODEL = '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf'
 
 /** The two sides of criterion 119's number limit: the input is 10ch wide, so
@@ -696,7 +696,7 @@ const INT_10 = 2147483647
 async function serverForm(): Promise<HTMLElement> {
   startAt(SERVER)
   fakeBff({
-    server: () =>
+    serverProfile: () =>
       reply(
         200,
         serverDoc({

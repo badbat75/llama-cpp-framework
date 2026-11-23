@@ -95,6 +95,10 @@ Lessons only: the rules are in `AGENTS.md`.
   that name them are per-selector (`Reflow.test.ts` R1.5 on `.model-profiles th`/`td:nth-child(2)`/
   `td:last-child`, `HearthH9a.test.ts` on `.jump ul button`, `HearthAssets.test.tsx` on the toggle and the
   h3 button), and a rule's declaration count is pinned only for the selectors the brief counts.
+  A comma-group selector is written by Prettier ONE part per line (the sheet's own
+  `.model-profiles th,\\n.model-profiles td` shape), and `Reflow.test.ts`'s `flat`/`compact` collapse the
+  newline, so the tester's `topBy('.a td:nth-child(2), .a td:nth-child(4)')` still matches: write the
+  broken form, the joined one is a `format:check` red.
 - A brief AMENDED to add a declaration to a rule reddens that rule's per-selector "declares nothing
   else" list, which the amendment never names: brief 20 N.11 gained `flex: 1 1 4rem` on
   `.nav-instance` and its own count test (`NodesMenu2.test.tsx` 20 N.11, `declared(instance.body)
@@ -2136,3 +2140,71 @@ before you report.
   object: `tsconfig.app.json` sets `noUnusedParameters` and `noUnusedLocals`, so leaving `dirty` in the
   destructure is a typecheck red, and the doc comment that justified it ("the card keeps the answer")
   goes with it, per the rule that a comment states no fact the code no longer shows.
+
+## Slice 16 17a (2026-11-23): a form moved to a new page, and the four reds the move leaves
+
+- **A form cannot be on screen before its document.** `09 S1b.6 (C2, 17a)` moves the instance page's
+  case to the new profile page and makes the FORM's own read the pending promise, then asks for
+  `getByRole('heading', {name: en('server-network')})` at frame 0. At HEAD that case's pending promise
+  was the BOOT field's read, and the form's read answered normally, so the form was there. A page whose
+  read is pending has no `doc` to hand `ServerForm`, and the brief's loading rule (17a.6: the kept text
+  in a `role="status"` at once, one `.skeleton` line then `CardBox` after 300 ms, pinned green by
+  `16 17a.6 server profile page` in `U17aSkeletons.test.tsx`) forbids a form in that frame. Report it.
+- **A Save press on a form with no edits sends nothing, and a test that asks for one PUT after a
+  client-check refusal is a test-side red.** `save()` starts `if (!dirty || saving.current) return`
+  (HEAD), and the green pins are `ServerSave.test.tsx` `1b.31: failing checks send nothing` (0 PUTs)
+  and `ModelProfileSave10.test.tsx` `2h.166 ... nothing sent`. `1c.44 (17a.7)` types `abc` in Port,
+  checks `save-invalid` and `aria-invalid` (both pass), then asserts `bff.to('PUT', ...)` is 1 with the
+  message "one save, and no second one", while its own name says "sends nothing by itself".
+- **A test that migrates a case to a page with a new id often pins the OLD id's path.** In
+  `ServerProfilePage1.test.tsx` `GET = '/api/profiles/server/default'` while the case opens
+  `#/profiles/server/edge%20box` (so the page correctly requests `.../edge%20box`), and
+  `bff.calls[0]` is the app's `GET /api/session`, not the page's read.
+- **A migrated case that keeps a `beforeEach` open of another hash never reaches the page it names.**
+  Four of `InstancePage.test.tsx`'s reds are that: `16 17a.10`'s row-follows and `6 (17a.10)`'s Tab path
+  open `#/profiles/server/default` in `beforeEach`, so the instance page never reads the pool, and
+  `bff.to('GET', GET)` is 0. Inlining the `startAt(...)` of the hash the case is about fixes the copy.
+- **The focus a page owes on arrival is the page's own, never the app's.** Raising the app's focus when
+  the session read resolves in `App.tsx` reddened 84 previously green tests (`GD1.12`, `5b.1`,
+  `15 C1.*`, `S1.*`, `1c.46a`, `H8b.3`: they arrive on a page and expect a specific element focused).
+  The shipped pattern is the page's own `useEffect(() => { document.getElementById('page-heading')?.focus() }, [])`
+  (`ModelProfilePage.tsx`, copied to the 17a pages and `NotFound.tsx`).
+- `console.log` from a test is invisible in the default reporter: run with
+  `npx vitest run src/<file> -t "<name>" --disable-console-intercept` and grep `-A` the marker.
+- Vitest's failure lines start with a SPACE (` FAIL  src/X.test.tsx > name`), so `grep "^FAIL"` finds
+  nothing: `grep "FAIL  src/"`. A whole-file failure hides that file's per-test names, so compare the
+  failing-FILE sets, not only the names. A full `cp -a fe` (226 MB, `node_modules` in) outside the repo
+  is the copy that proves a test-side red, and `fe` needs no `vitest.config.ts`.
+- **`main` is the shell's boot skeleton at the first synchronous query after mount.** The session read
+  resolves in a microtask, so a test that opens the app and reads a page's own text, `role="table"` or
+  `[role="status"]` synchronously sees only `<p role="status">Loading…</p>` (the boot line, not the
+  page's). Four of 17a's reds are that shape; the suite's own convention is to `await` a `findBy*` first
+  (`ModelProfiles.test.tsx` 2a.4 awaits the sign-in box, `ProfilesNav.test.tsx` 5b.5 the nav link), and
+  the boot line's words are the tell: a red quoting `Loading…` where a page's loading key is wanted is a
+  frame-0 query, not a missing loading line. A page that mounts as soon as the session lands (a page
+  with no read of its own, like the pool list) exposes this where the page it replaced, whose own read
+  was still open, hid it: `InstanceTagChips.test.tsx` C1.2's tab order snapshots `tabbable(p.main)`
+  before awaiting the boot checkbox, whose read lands later, so `indexOf` gives -1 about half the runs.
+  The test-side fix is to capture the stops after the `findByRole`.
+- **A strings key a test names must exist.** `en()` in `fe/src/test/bff.ts` throws
+  `no English for <key> in the test`, so `en('signin-user')` (the key is `signin-username`) reddens the
+  test at its first text assertion, whatever the page does. Grep the key in `fe/src/strings/en_US.json`
+  before believing a text red.
+- **A fixture's `startAt(n)` gates EVERY route, not the one it means.** The generic branch reads
+  `start ?? -1 >= startAt`, so with the global at 0 an unstubbed `GET /api/session` is deferred and the
+  boot gate stays open, which is what a "the page's loading line is there at once" test wants. A
+  `deferred()` pool answer alone does not hold it: the session read answers at once, the page mounts, and
+  the page's own `Loading…` line is the only status.
+- A list criterion that says an item is kept and its unreadable fields defaulted (17a.4: a non-number
+  port is 0, non-array tags none, a non-string instance none) and an expected-rows array that OMITS that
+  same item are one fixture, opposite rows. The page that follows the criterion renders the row
+  (`['bad', '', '', 'No instance']`), and only the expected array moves.
+- The cheap scratch copy for a `fe` proof: `rsync -a --exclude build --exclude .git --exclude dist
+  --exclude node_modules <repo> /tmp/opencode/<x>` (32 MB) plus
+  `ln -s <repo>/fe/node_modules /tmp/opencode/<x>/fe/node_modules`: no install, `npm --prefix fe test`
+  runs there, and the same tree with test-only edits going 32/32 green is the proof the production code
+  is complete. A `git worktree add --detach` of HEAD, same symlink, separates an inherited red.
+- Full-suite flakes to state, not chase (measured 2026-11-23, all green as a file and on reruns):
+  `InstanceTagChips.test.tsx` 15 C1.2 tab order (~1 in 2 alone once the Server form left the instance
+  page), `ServerSave.test.tsx` 1b.36b "the edits-dropped alert stays until the page is left" (green 3/3
+  as a file, red under the parallel run with the pool list still loading), `App.test.tsx` 1a.4 nav order.

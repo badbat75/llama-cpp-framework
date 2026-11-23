@@ -238,10 +238,10 @@ test('17a.4 boot: the session read pending shows the kept loading text hidden, t
   session.resolve(reply(200, { user: 'alice' }))
 })
 
-test('17a.4 instance page: the list read pending shows the header loading text hidden, then three lines and a card box', async () => {
+test('17a.4 instance page: the list read pending shows the header loading text hidden, then three lines', async () => {
   const gate = deferred()
   const { main } = await open(
-    { instances: () => gate.promise, server: () => deferred().promise },
+    { instances: () => gate.promise },
     '#/instances/default',
   )
   expectStatus(main, en('loading'))
@@ -250,32 +250,55 @@ test('17a.4 instance page: the list read pending shows the header loading text h
   expect(blocks(main).length, 'no skeleton at 299 ms').toBe(0)
   await advance(1)
   expect(lines(main).length, 'the header is three lines').toBe(3)
-  const cards = main.querySelectorAll('.card')
-  expect(cards.length, 'one card, the form to come').toBe(1)
+  // Brief 16 17a.10: the Server form left this page, so its card is gone from
+  // the shape; three lines are all the page has to come.
   expect(
-    cards[0]!.querySelectorAll('.skeleton-box').length,
-    'the card holds a box',
-  ).toBe(1)
+    main.querySelectorAll('.card').length,
+    'no card: no form is coming',
+  ).toBe(0)
+  expect(boxes(main).length, 'no box').toBe(0)
   gate.resolve(reply(200, INSTANCES))
 })
 
-test('17a.4 instance page: the server read pending shows its kept text hidden, then the box in its card', async () => {
+test('16 17a.6 server profile page: the read pending shows its kept text hidden, then one line and the box in its card', async () => {
   const server = deferred()
   const { main } = await open(
-    { server: () => server.promise },
-    '#/instances/default',
+    { serverProfile: () => server.promise },
+    '#/profiles/server/default',
   )
   expectStatus(main, en('server-loading'))
 
   await advance(299)
   expect(blocks(main).length, 'no skeleton at 299 ms').toBe(0)
   await advance(1)
+  expect(
+    lines(main).length,
+    'one line, the Used by row the document brings',
+  ).toBe(1)
   expect(boxes(main).length, 'the form is held by one box').toBe(1)
   expect(
     boxes(main)[0]!.closest('.card'),
     'the box stands in the card it is holding',
   ).not.toBeNull()
   server.resolve(reply(200, {}))
+})
+
+test('16 17a.3 server profiles: the list read pending shows its kept text hidden, then three lines in the table place', async () => {
+  const gate = deferred()
+  const { main } = await open(
+    { serverProfiles: () => gate.promise },
+    '#/profiles/server',
+  )
+  expectStatus(main, en('server-profiles-loading'))
+
+  await advance(299)
+  expect(blocks(main).length, 'no skeleton at 299 ms').toBe(0)
+  await advance(1)
+  expect(lines(main).length, 'three lines where the rows will be').toBe(3)
+  expect(main.querySelectorAll('table').length, 'no table yet').toBe(0)
+  for (const el of blocks(main))
+    expect(el.closest('[aria-hidden="true"]'), 'aria-hidden').not.toBeNull()
+  gate.resolve(reply(200, []))
 })
 
 test('17a.4 Model profiles: the list read pending shows its kept text hidden, then three lines in the table place', async () => {

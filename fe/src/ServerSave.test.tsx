@@ -3,7 +3,8 @@
 // may change, their dependencies, the save bar, the client checks, the PUT
 // and every answer to it, and leaving with unsaved changes. The focus a
 // confirmed Reload leaves on the page h1 is 2h.4b's 198c. The whole app
-// renders at #/instances/default against a fake bff (mocked fetch); "1b.31"
+// renders at #/profiles/server/default against a fake bff (mocked fetch),
+// where brief 16 slice 17a moved the form; "1b.31"
 // is the brief's criterion 31. A user's read-only form is 1a's
 // (InstancePage.test.tsx).
 import {
@@ -33,7 +34,7 @@ import {
 let dialogs: ReturnType<typeof stubDialog>
 
 beforeEach(() => {
-  startAt('#/instances/default')
+  startAt('#/profiles/server/default')
   dialogs = stubDialog()
 })
 
@@ -73,7 +74,7 @@ const UNCHANGED = {
 }
 
 const REVISION = 'r-1731628800-42'
-const PUT = ['PUT', '/api/instances/default/server'] as const
+const PUT = ['PUT', '/api/profiles/server/default'] as const
 
 /** The page with the server form loaded for `options`; admin by default. */
 async function loaded(options: BffOptions = {}) {
@@ -386,7 +387,7 @@ test('1b.31 (5.4): a field on default, auto, No key or disabled by its switch is
 
 test('1b.34: a 422 naming a field shows its text under that field, focuses it, and alerts in the bar', async () => {
   const { bff, main } = await loaded({
-    save: () =>
+    serverProfileSave: () =>
       reply(422, {
         key: 'client-address-in-use',
         args: ['coder'],
@@ -407,7 +408,7 @@ test('1b.34: a 422 naming a field shows its text under that field, focuses it, a
 
 test('1b.34: a 422 on ModelsDir lands under Models folder, its args filling the text', async () => {
   const { bff, main } = await loaded({
-    save: () =>
+    serverProfileSave: () =>
       reply(422, {
         key: 'comment-markers',
         args: ['ModelsDir'],
@@ -478,8 +479,8 @@ test.each(FALLBACK_CASES)(
   async (what, body, field, text) => {
     const { bff, main } = await loaded({
       // Max models set, so its textbox is enabled and can take the focus.
-      server: () => reply(200, serverDoc({ ModelsMax: 2 })),
-      save: () => reply(422, body),
+      serverProfile: () => reply(200, serverDoc({ ModelsMax: 2 })),
+      serverProfileSave: () => reply(422, body),
     })
     fireEvent.click(check(main, 'KV rotation', en('server-kv-rotation-toggle')))
     await save(main, bff)
@@ -492,7 +493,7 @@ test.each(FALLBACK_CASES)(
 
 test('1b.34 (5.6): a 422 client-unresolvable-host without field shows its text in Bind to', async () => {
   const { bff, main } = await loaded({
-    save: () =>
+    serverProfileSave: () =>
       reply(422, { key: 'client-unresolvable-host', args: ['gpu-box.lan'] }),
   })
   editPort(main)
@@ -521,7 +522,9 @@ test('1b.34: a 422 on a field the form lacks, or with none and no fallback, show
     ],
   ]
   for (const [what, body, text] of cases) {
-    const { bff, main } = await loaded({ save: () => reply(422, body) })
+    const { bff, main } = await loaded({
+      serverProfileSave: () => reply(422, body),
+    })
     editPort(main)
     await save(main, bff)
     await within(main).findByText(text)
@@ -540,11 +543,11 @@ test('1b.34: a 422 on a field the form lacks, or with none and no fallback, show
 test('1b.35: 409 shows server-changed-elsewhere with Reload; the edits stay until Reload is confirmed', async () => {
   let reads = 0
   const { bff, main } = await loaded({
-    server: () =>
+    serverProfile: () =>
       ++reads === 1
         ? reply(200, serverDoc())
         : reply(200, { ...serverDoc({ Port: 9000 }), revision: 'r-9' }),
-    save: (_body, n) =>
+    serverProfileSave: (_body, n) =>
       n === 1
         ? reply(409, { key: 'server-changed-elsewhere', args: [] })
         : reply(200, { revision: 'r-10', running: false }),
@@ -561,7 +564,7 @@ test('1b.35: 409 shows server-changed-elsewhere with Reload; the edits stay unti
   let ask = dialog(en('discard-title'))
   fireEvent.click(within(ask).getByRole('button', { name: en('discard-keep') }))
   expect(screen.queryByRole('dialog')).toBeNull()
-  expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(1)
+  expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(1)
   expect(box(main, 'Port').value).toBe('8581')
 
   // Discard changes reads the file again and shows it, clean.
@@ -571,7 +574,7 @@ test('1b.35: 409 shows server-changed-elsewhere with Reload; the edits stay unti
     within(ask).getByRole('button', { name: en('discard-confirm') }),
   )
   await waitFor(() =>
-    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+    expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(2),
   )
   await waitFor(() => expect(box(main, 'Port').value).toBe('9000'))
   expect(saveButton(main).getAttribute('aria-disabled')).toBe('true')
@@ -586,7 +589,7 @@ test('1b.35: 409 shows server-changed-elsewhere with Reload; the edits stay unti
 
 test('1b.36: a 401 on save offers Sign in in a dialog; after it the edits are intact and nothing is resent', async () => {
   const { bff, main } = await loaded({
-    save: (_body, n) =>
+    serverProfileSave: (_body, n) =>
       n === 1
         ? reply(401, { key: 'session-required', args: [] })
         : reply(200, { revision: 'r-2', running: false }),
@@ -628,7 +631,7 @@ test('1b.36: a 401 on save offers Sign in in a dialog; after it the edits are in
   expect(box(main, 'Port').value).toBe('8581')
   expect(check(main, 'Web UI', en('server-web-ui-toggle')).checked).toBe(false)
   expect(bff.to(...PUT)).toHaveLength(1)
-  expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(1)
+  expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(1)
   // The sign-in ends the alert; the edits are still unsaved (30a).
   expectNoAlert(main, 'after the sign-in')
   expect(status(main).textContent).toBe(en('save-unsaved'))
@@ -643,7 +646,7 @@ test('1b.36: a 401 on save offers Sign in in a dialog; after it the edits are in
 
 test('1b.36: a failed sign-in in the dialog keeps it open with its alert and the edits', async () => {
   const { bff, main } = await loaded({
-    save: () => reply(401, { key: 'session-required', args: [] }),
+    serverProfileSave: () => reply(401, { key: 'session-required', args: [] }),
     signIn: () => reply(401, { key: 'session-bad-credentials', args: [] }),
   })
   editPort(main)
@@ -728,7 +731,7 @@ const ANSWERS_37: [string, () => Response | Promise<Response>, string][] = [
 it.each(ANSWERS_37)(
   '1b.37: %s: the key picks the message, not the status; every failure keeps the edits, never the body',
   async (what, answer, text) => {
-    const { bff, main } = await loaded({ save: answer })
+    const { bff, main } = await loaded({ serverProfileSave: answer })
     editPort(main)
     await save(main, bff)
     await within(main).findByText(text)
@@ -802,7 +805,7 @@ test('1b reading order of a reply: 401 first, then server-changed-elsewhere, the
     ],
   ]
   for (const [what, answer, text, { reload, field }] of cases) {
-    const { bff, main } = await loaded({ save: answer })
+    const { bff, main } = await loaded({ serverProfileSave: answer })
     type(box(main, 'Models folder'), '/srv/models')
     await save(main, bff)
     await within(main).findByText(text)
@@ -818,13 +821,14 @@ test('1b reading order of a reply: 401 first, then server-changed-elsewhere, the
   }
 })
 
-test('1b.37a: client-no-instance on the PUT says so in the bar; the form and its edits stay, dirty', async () => {
+test('16 17a.7: client-no-server-profile on the PUT says server-profile-not-found with the id in the bar; the form and its edits stay, dirty', async () => {
   const { bff, main } = await loaded({
-    save: () => reply(404, { key: 'client-no-instance', args: [] }),
+    serverProfileSave: () =>
+      reply(404, { key: 'client-no-server-profile', args: ['default'] }),
   })
   editPort(main)
   await save(main, bff)
-  const text = en('instance-not-found', 'default')
+  const text = en('server-profile-not-found', 'default')
   await within(main).findByText(text)
   expectAlert(main, text)
   // The page is not replaced: header, section and form stay.
@@ -848,7 +852,7 @@ test('1b.37a: client-no-instance on the PUT says so in the bar; the form and its
 
 test('1b.34a: a refusal on Hostname sits after the last Bind to row, marks every checked row and focuses the first', async () => {
   const { bff, main } = await loaded({
-    save: () =>
+    serverProfileSave: () =>
       reply(422, {
         key: 'client-unresolvable-host',
         args: ['gpu-box.lan'],
@@ -884,8 +888,8 @@ test('1b.34a: a refusal on Hostname sits after the last Bind to row, marks every
 
 test('1b.34a (5.6): the fallback of client-unresolvable-host on 0.0.0.0 focuses that row; unchecking clears it', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc({ Hostname: '0.0.0.0' })),
-    save: () =>
+    serverProfile: () => reply(200, serverDoc({ Hostname: '0.0.0.0' })),
+    serverProfileSave: () =>
       reply(422, { key: 'client-unresolvable-host', args: ['gpu-box.lan'] }),
   })
   editPort(main)
@@ -910,7 +914,7 @@ test('1b.34a (5.6): the fallback of client-unresolvable-host on 0.0.0.0 focuses 
 
 test('1b.34b: a refusal on Max models with default ticked marks the disabled box and focuses its default box', async () => {
   const { bff, main } = await loaded({
-    save: () =>
+    serverProfileSave: () =>
       reply(422, { key: 'load-on-startup-over-max', args: ['5', '4'] }),
   })
   editPort(main)
@@ -946,8 +950,8 @@ test('1b.34b: a refusal on a field disabled by its switch marks it and focuses t
   ]
   for (const [field, values, key, switchField, switchName] of cases) {
     const { bff, main } = await loaded({
-      server: () => reply(200, serverDoc(values)),
-      save: () =>
+      serverProfile: () => reply(200, serverDoc(values)),
+      serverProfileSave: () =>
         reply(422, { key: 'comment-markers', args: [key], field: key }),
     })
     editPort(main)
@@ -971,7 +975,7 @@ test('1b.34b: a refusal on a field disabled by its switch marks it and focuses t
 
 test('1b.36a: after a 401 the banner and the nav stay; Sign out still asks first', async () => {
   const { bff, main } = await loaded({
-    save: () => reply(401, { key: 'session-required', args: [] }),
+    serverProfileSave: () => reply(401, { key: 'session-required', args: [] }),
   })
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'coder' })
@@ -1000,7 +1004,7 @@ test('1b.36a: after a 401 the banner and the nav stay; Sign out still asks first
 
 test('1b.36a: Escape in the sign-in dialog closes it, focus on the bar Sign in, alert and edits kept, nothing sent', async () => {
   const { bff, main } = await loaded({
-    save: () => reply(401, { key: 'session-required', args: [] }),
+    serverProfileSave: () => reply(401, { key: 'session-required', args: [] }),
   })
   editPort(main)
   await save(main, bff)
@@ -1023,19 +1027,24 @@ test('1b.36a: Escape in the sign-in dialog closes it, focus on the bar Sign in, 
   expect(bff.to(...PUT)).toHaveLength(1)
 })
 
-test('1b.36a, 1c.43b: a save 401 that answers after a sign-in from the run Sign in still shows session-ended and the bar Sign in, edits intact', async () => {
-  const gate = deferred()
+test('1b.36a, 1c.43b: a save 401 shows session-ended and the bar Sign in; a sign-in as the same administrator ends them, edits intact, nothing resent', async () => {
+  // 17a.10: the run controls stay on the instance page, so the pairing of a
+  // run 401 and a save is tested there (1c.43b in Boot.test.tsx); on this
+  // page the bar's own Sign in is the only one.
   const { bff, main } = await loaded({
-    run: () => reply(401, { key: 'session-required', args: [] }),
-    save: () => gate.promise,
+    serverProfileSave: () => reply(401, { key: 'session-required', args: [] }),
+    signIn: () => reply(200, { user: 'alice' }),
   })
   editPort(main)
   await save(main, bff)
-  // A run action gets a 401; the same administrator signs in again there.
-  fireEvent.click(within(main).getByRole('button', { name: en('run-stop') }))
-  fireEvent.click(
-    await within(main).findByRole('button', { name: en('session-sign-in') }),
-  )
+  expectAlert(main, en('session-ended'))
+  const signIns = within(main).getAllByRole('button', {
+    name: en('session-sign-in'),
+  })
+  expect(signIns, "one Sign in: the bar's").toHaveLength(1)
+  expect(before(status(main), signIns[0]!), 'in the save bar').toBe(true)
+  // The same administrator signs in again from the bar's Sign in.
+  fireEvent.click(signIns[0]!)
   const d = dialog(en('signin-title'))
   type(within(d).getByRole('textbox', { name: en('signin-username') }), 'alice')
   type(
@@ -1044,26 +1053,19 @@ test('1b.36a, 1c.43b: a save 401 that answers after a sign-in from the run Sign 
   )
   fireEvent.click(within(d).getByRole('button', { name: en('signin-submit') }))
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  await waitFor(() =>
-    expect(
-      within(main).queryAllByRole('button', { name: en('session-sign-in') }),
-      'the run Sign in went with the sign-in',
-    ).toEqual([]),
-  )
   expect(screen.getByRole('banner').textContent, 'the same user').toContain(
     en('session-signed-in-as', 'alice'),
   )
-  // Now the PUT answers 401: its alert is stamped when it arrives.
-  await act(async () => {
-    gate.resolve(reply(401, { key: 'session-required', args: [] }))
-  })
-  await waitFor(() => expect(status(main).textContent).toBe(en('save-unsaved')))
-  expectAlert(main, en('session-ended'))
-  const signIns = within(main).getAllByRole('button', {
-    name: en('session-sign-in'),
-  })
-  expect(signIns, "one Sign in: the bar's").toHaveLength(1)
-  expect(before(status(main), signIns[0]!), 'in the save bar').toBe(true)
+  await waitFor(() =>
+    expect(
+      within(main).queryAllByRole('button', { name: en('session-sign-in') }),
+      'the Sign in went with the sign-in',
+    ).toEqual([]),
+  )
+  expect(
+    within(main).queryByText(en('session-ended')),
+    'the alert went too',
+  ).toBeNull()
   expect(box(main, 'Port').value, 'the edits are intact').toBe('8581')
   expect(bff.to(...PUT), 'nothing resent').toHaveLength(1)
 })
@@ -1071,12 +1073,14 @@ test('1b.36a, 1c.43b: a save 401 that answers after a sign-in from the run Sign 
 /** Saves into a 401 and signs in, in the dialog, with the reply `session`. */
 async function signInAs(
   session: { user: string },
-  server: () => Response | Promise<Response> = () => reply(200, serverDoc()),
+  serverAnswer: () => Response | Promise<Response> = () =>
+    reply(200, serverDoc()),
 ) {
   let reads = 0
   const { bff, main } = await loaded({
-    server: () => (++reads === 1 ? reply(200, serverDoc()) : server()),
-    save: () => reply(401, { key: 'session-required', args: [] }),
+    serverProfile: () =>
+      ++reads === 1 ? reply(200, serverDoc()) : serverAnswer(),
+    serverProfileSave: () => reply(401, { key: 'session-required', args: [] }),
     signIn: () => reply(200, session),
   })
   editPort(main)
@@ -1119,7 +1123,7 @@ test('1b.36b: a sign-in as another administrator drops the edits, reads the file
     expect(banner.textContent).toContain(en('session-signed-in-as', 'carol')),
   )
   await waitFor(() =>
-    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+    expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(2),
   )
   await waitFor(() => expect(box(main, 'Port').value).toBe('9000'))
   // Clean, editable, the edits gone.
@@ -1134,7 +1138,7 @@ test('1b.36b: a sign-in as another administrator drops the edits, reads the file
   )
   // Nothing is sent but the read.
   expect(bff.to(...PUT)).toHaveLength(1)
-  expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2)
+  expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(2)
   // The next save carries the new revision.
   editPort(main)
   await save(main, bff, 2)
@@ -1148,7 +1152,7 @@ test('1b.36b: a sign-in as another administrator drops the edits, reads the file
 test('1b.36b: a sign-in as another user drops the edits and shows the editable form, the alert above the first card', async () => {
   const { bff, main } = await signInAs({ user: 'bob' })
   await waitFor(() =>
-    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+    expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(2),
   )
   await waitFor(() => expect(box(main, 'Port').value).toBe('8580'))
   const controls = [
@@ -1195,7 +1199,14 @@ test('1b.36b: the edits-dropped alert stays until the page is left', async () =>
   )
   await within(main).findByRole('heading', { level: 1, name: 'coder' })
   expect(within(main).queryByText(en('server-edits-dropped'))).toBeNull()
-  fireEvent.click(navLink('default'))
+  // Back to the profile's page through its list (the nav links go to the
+  // instance pages, not to profiles).
+  fireEvent.click(navLink(en('nav-server-profiles')))
+  await within(main).findByRole('heading', {
+    level: 1,
+    name: en('server-profiles-title'),
+  })
+  fireEvent.click(within(main).getByRole('link', { name: 'default' }))
   await within(main).findByRole('heading', {
     level: 3,
     name: en('server-network'),
@@ -1223,7 +1234,7 @@ test('1b.36b (3.1): the edits-dropped alert shows while the file is read again',
 
 test('1b.36a: the sign-in dialog has a Cancel button after Sign in that closes it and changes nothing', async () => {
   const { bff, main } = await loaded({
-    save: () => reply(401, { key: 'session-required', args: [] }),
+    serverProfileSave: () => reply(401, { key: 'session-required', args: [] }),
   })
   editPort(main)
   await save(main, bff)
@@ -1498,7 +1509,7 @@ test('1b.28a (5.2): unticking a threads box whose text comes back non-empty focu
 
 test('1b.28a: a field loaded on No key comes back empty', async () => {
   const { main } = await loaded({
-    server: () => reply(200, serverDoc({ OpencodeApiKey: null })),
+    serverProfile: () => reply(200, serverDoc({ OpencodeApiKey: null })),
   })
   toggle(main, 'API key', en('field-no-key'))
   expect(apiKey(main).disabled).toBe(false)
@@ -1527,7 +1538,8 @@ test('1b.28a: Discard and a successful save reset the memory to the loaded value
 
 test('1b.30a: no alert while there is nothing to say; Discard ends one', async () => {
   const { bff, main } = await loaded({
-    save: () => reply(503, { key: 'client-unavailable', args: [] }),
+    serverProfileSave: () =>
+      reply(503, { key: 'client-unavailable', args: [] }),
   })
   expectNoAlert(main, 'on load')
   editPort(main)
@@ -1544,7 +1556,7 @@ test('1b.30a: no alert while there is nothing to say; Discard ends one', async (
 
 test('1b.30a: the next save replaces the alert with its own answer; a successful one ends it', async () => {
   const { bff, main } = await loaded({
-    save: (_body, n) =>
+    serverProfileSave: (_body, n) =>
       n === 1
         ? reply(503, { key: 'client-unavailable', args: [] })
         : n === 2
@@ -1566,7 +1578,7 @@ test('1b.30a: the next save replaces the alert with its own answer; a successful
 test('1b.30a: a Save click that passes the checks clears the alert at once, before the answer', async () => {
   const gate = deferred()
   const { bff, main } = await loaded({
-    save: (_body, n) =>
+    serverProfileSave: (_body, n) =>
       n === 1
         ? reply(503, { key: 'client-unavailable', args: [] })
         : gate.promise,
@@ -1586,7 +1598,8 @@ test('1b.30a: a Save click that passes the checks clears the alert at once, befo
 test('1b.30a: a Save click that fails the client checks replaces the older alert with save-invalid', async () => {
   // Ruling given to the coder: every Save click replaces the previous alert.
   const { bff, main } = await loaded({
-    save: () => reply(409, { key: 'server-changed-elsewhere', args: [] }),
+    serverProfileSave: () =>
+      reply(409, { key: 'server-changed-elsewhere', args: [] }),
   })
   editPort(main)
   await save(main, bff)
@@ -1624,7 +1637,7 @@ test('1b.32: Save sends PUT with the loaded revision and every value, unset ones
 
 test('1b.32: while the PUT runs Save reads save-saving, is aria-disabled and a second click sends nothing', async () => {
   const gate = deferred()
-  const { bff, main } = await loaded({ save: () => gate.promise })
+  const { bff, main } = await loaded({ serverProfileSave: () => gate.promise })
   editPort(main)
   const button = saveButton(main)
   fireEvent.click(button)
@@ -1645,7 +1658,7 @@ test('1b.32: while the PUT runs Save reads save-saving, is aria-disabled and a s
 
 test('1b.32: Discard is aria-disabled while the PUT runs and a click does nothing', async () => {
   const gate = deferred()
-  const { bff, main } = await loaded({ save: () => gate.promise })
+  const { bff, main } = await loaded({ serverProfileSave: () => gate.promise })
   editPort(main)
   await save(main, bff)
   const discard = discardButton(main)
@@ -1664,7 +1677,7 @@ test('1b.32: Discard is aria-disabled while the PUT runs and a click does nothin
 test('1b.33b: edits made while the PUT runs are kept, and the form is dirty against the saved values', async () => {
   const gate = deferred()
   const { bff, main } = await loaded({
-    save: (_body, n) =>
+    serverProfileSave: (_body, n) =>
       n === 1 ? gate.promise : reply(200, { revision: 'r-3', running: false }),
   })
   editPort(main)
@@ -1746,7 +1759,7 @@ test('1b.32 (5.4): each field is sent in its typed form', async () => {
 
 test('1b.32 (5.4): a blank Models folder or Snapshot folder is sent as null (unset)', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc({ ModelsDir: '/srv/models' })),
+    serverProfile: () => reply(200, serverDoc({ ModelsDir: '/srv/models' })),
   })
   type(box(main, 'Models folder'), '')
   type(box(main, 'Snapshot folder'), '  ')
@@ -1759,7 +1772,7 @@ test('1b.32 (5.4): a blank Models folder or Snapshot folder is sent as null (uns
 
 test('1b.32 (5.4): No key ticked sends null; Bind to sends the checked rows in row order', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc({ Hostname: '192.168.1.20' })),
+    serverProfile: () => reply(200, serverDoc({ Hostname: '192.168.1.20' })),
   })
   fireEvent.click(check(main, 'API key', en('field-no-key')))
   // Rows: localhost, 0.0.0.0, enp5s0 (192.168.1.20); check localhost.
@@ -1781,7 +1794,7 @@ test('1b.32 (5.4): No key ticked sends null; Bind to sends the checked rows in r
 
 test('1b.33: 200 makes the sent values and the new revision the loaded ones; running picks the message', async () => {
   const { bff, main } = await loaded({
-    save: (_body, n) =>
+    serverProfileSave: (_body, n) =>
       n === 1
         ? reply(200, { revision: 'r-2', running: false })
         : reply(200, { revision: 'r-3', running: true }),
@@ -1803,7 +1816,7 @@ test('1b.33: 200 makes the sent values and the new revision the loaded ones; run
   await waitFor(() => expect(line.textContent).toBe(en('save-saved-restart')))
   // A save never restarts the server, and the file is not read again.
   expect(bff.calls.filter((c) => c.method === 'POST')).toEqual([])
-  expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(1)
+  expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(1)
 })
 
 test('1b.33: Discard after a save goes back to the saved values', async () => {
@@ -1862,12 +1875,13 @@ test('1b.33a: after a 200 the controls show the values sent, focus stays on Save
   expect(box(main, 'Max models').value).toBe('4')
   toggle(main, 'Port', en('field-default'))
   expect(box(main, 'Port').value).toBe('9931')
-  expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(1)
+  expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(1)
 })
 
 test('1b.32 (5.4, 3.1): Base URL loses every trailing / around /v1; a blank one is null and shows the default after the 200', async () => {
   const { bff, main } = await loaded({
-    save: (_body, n) => reply(200, { revision: `r-${n + 1}`, running: false }),
+    serverProfileSave: (_body, n) =>
+      reply(200, { revision: `r-${n + 1}`, running: false }),
   })
   toggle(main, 'Base URL', en('field-default'))
   type(box(main, 'Base URL'), 'https://gw.example.net/v1//')
@@ -1889,7 +1903,8 @@ test('1b.32 (5.4, 3.1): Base URL loses every trailing / around /v1; a blank one 
 
 test('1b.32 (5.4, 3.1): the API key is sent as typed; a blank one (only spaces) is null', async () => {
   const { bff, main } = await loaded({
-    save: (_body, n) => reply(200, { revision: `r-${n + 1}`, running: false }),
+    serverProfileSave: (_body, n) =>
+      reply(200, { revision: `r-${n + 1}`, running: false }),
   })
   type(apiKey(main), '  sk-spaced  ')
   await save(main, bff)
@@ -1909,7 +1924,7 @@ test('1b.31 (5.4, 3.1): a number with no limits pair for its key skips the clien
   const limits: Record<string, unknown> = { ...doc.limits }
   delete limits.Port
   const { bff, main } = await loaded({
-    server: () => reply(200, { ...doc, limits }),
+    serverProfile: () => reply(200, { ...doc, limits }),
   })
   type(box(main, 'Port'), '70000')
   await save(main, bff)
@@ -1952,7 +1967,7 @@ test('1b 5.3: No key disables the API key and Show while ticked', async () => {
 
 test('1b 5.3: a file with no key loads with the API key and Show disabled for an administrator', async () => {
   const { main } = await loaded({
-    server: () =>
+    serverProfile: () =>
       reply(
         200,
         serverDoc({
@@ -2043,7 +2058,7 @@ const SWITCHES_UNSET = {
 
 test('1b 5.2: a file with every switch unset loads clean for an administrator', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc(SWITCHES_UNSET)),
+    serverProfile: () => reply(200, serverDoc(SWITCHES_UNSET)),
   })
   expect(check(main, 'Web UI', en('server-web-ui-toggle')).checked).toBe(true)
   expect(status(main).textContent).toBe('')
@@ -2056,7 +2071,7 @@ test('1b 5.2: a file with every switch unset loads clean for an administrator', 
 
 test('1b 5.2: a save after an unrelated edit sends Webui true for an unset Web UI, the other unset switches false', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc(SWITCHES_UNSET)),
+    serverProfile: () => reply(200, serverDoc(SWITCHES_UNSET)),
   })
   editPort(main)
   await save(main, bff)
@@ -2077,7 +2092,7 @@ test('1b 5.2: a save after an unrelated edit sends Webui true for an unset Web U
 
 test('1b 5.3: with Web UI unset (ticked) the MCP proxy is enabled for an administrator, and follows Web UI', async () => {
   const { main } = await loaded({
-    server: () => reply(200, serverDoc(SWITCHES_UNSET)),
+    serverProfile: () => reply(200, serverDoc(SWITCHES_UNSET)),
   })
   const proxy = check(main, 'Web UI MCP proxy', en('server-mcp-proxy-toggle'))
   expect(proxy.disabled).toBe(false)
@@ -2122,14 +2137,14 @@ test('1b.38: following a nav link while dirty asks first; Keep editing stays, fo
   })
   expect(before(keep, confirm)).toBe(true)
   expect(document.activeElement).toBe(keep)
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   fireEvent.click(keep)
   expect(screen.queryByRole('dialog')).toBeNull()
   // A link click navigates in a task of its own: let it land if it was not held.
   await act(async () => {
     await new Promise((r) => setTimeout(r, 0))
   })
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   expect(
     within(main).getByRole('heading', { level: 1, name: 'default' }),
   ).toBeTruthy()
@@ -2152,10 +2167,11 @@ test('1b.38: Discard changes goes on to the link', async () => {
     await within(main).findByRole('heading', { level: 1, name: 'coder' }),
   ).toBeTruthy()
   expect(screen.queryByRole('dialog')).toBeNull()
-  // The dropped edits leave nothing behind: the next page is clean.
+  // The dropped edits leave nothing behind: the next page is clean. (17a.10:
+  // the instance page shows the Server profile section, not the form.)
   await within(main).findByRole('heading', {
-    level: 3,
-    name: en('server-network'),
+    level: 2,
+    name: en('instance-server-title'),
   })
   fireEvent.click(navLink(en('nav-overview')))
   expect(screen.queryByRole('dialog'), 'the next link asks nothing').toBeNull()
@@ -2171,7 +2187,7 @@ test('1b.38: the product link asks too, and Discard changes lands on the Overvie
   const { main } = await loaded()
   leaveBy(main, productLink())
   const d = dialog(en('discard-title'))
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   fireEvent.click(
     within(d).getByRole('button', { name: en('discard-confirm') }),
   )
@@ -2220,7 +2236,7 @@ test('1b.38a: Escape in the dialog opened by a link is Keep editing, focus back 
     { key: 'Escape', code: 'Escape' },
   )
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   expect(box(main, 'Port').value).toBe('8581')
   expect(document.activeElement).toBe(link)
   // The dialog opens again on the next try.
@@ -2230,7 +2246,8 @@ test('1b.38a: Escape in the dialog opened by a link is Keep editing, focus back 
 
 test('1b.38a: Escape in the dialog opened by Sign out or Reload changes nothing, focus back on that control', async () => {
   const { bff, main } = await loaded({
-    save: () => reply(409, { key: 'server-changed-elsewhere', args: [] }),
+    serverProfileSave: () =>
+      reply(409, { key: 'server-changed-elsewhere', args: [] }),
   })
   const escape = (d: HTMLElement) =>
     fireEvent.keyDown(
@@ -2257,25 +2274,10 @@ test('1b.38a: Escape in the dialog opened by Sign out or Reload changes nothing,
   expect(document.activeElement, 'back on Reload').toBe(
     within(main).getByRole('button', { name: en('save-reload') }),
   )
-  expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(1)
+  expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(1)
   expect(box(main, 'Port').value).toBe('8581')
   expectAlert(main, en('api-server-changed-elsewhere'))
-  expect(window.location.hash).toBe('#/instances/default')
-})
-
-test('1b.38: a click on the link of the page already shown asks nothing and keeps the edits', async () => {
-  const { main } = await loaded()
-  const link = await within(
-    screen.getByRole('navigation', { name: en('nav-label') }),
-  ).findByRole('link', { name: 'default' })
-  leaveBy(main, link)
-  expect(screen.queryByRole('dialog')).toBeNull()
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 0))
-  })
-  expect(window.location.hash).toBe('#/instances/default')
-  expect(box(main, 'Port').value).toBe('8581')
-  expect(status(main).textContent).toBe(en('save-unsaved'))
+  expect(window.location.hash).toBe('#/profiles/server/default')
 })
 
 test('1b.38: the beforeunload handler also sets returnValue to true', async () => {
@@ -2359,27 +2361,21 @@ test('1b 6: the save bar status is one live region, present before its text chan
   expect(status(main)).toBe(line)
 })
 
-test('1b 6: Tab reaches the run buttons, Start at boot, the enabled controls field by field, then Discard and Save changes', async () => {
+test('1b 6: Tab reaches the back link, the Used by link, the enabled controls field by field, then Discard and Save changes', async () => {
   const { main } = await loaded()
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'coder' })
   const about = (label: string) =>
     within(main).getByRole('button', { name: `${en('field-about')} ${label}` })
   const bind = group(main, 'Bind to').getAllByRole('checkbox')
-  const run = (key: string) =>
-    within(main).getByRole('button', { name: en(key) })
   const expected: [string, HTMLElement][] = [
-    // The header's run buttons come first, then Start at boot (1c.46a).
-    ['Start', run('run-start')],
-    ['Stop', run('run-stop')],
-    ['Restart', run('run-restart')],
-    ['About Start at boot', about(en('boot-label'))],
-    ['Start at boot', check(main, en('boot-label'), en('boot-toggle'))],
-    // fe/briefs/12-instance-tags.md, section 5, as fe/briefs/15-tag-chips.md
-    // section 3 leaves it: the field's About toggle, then the + button (the
-    // instances of this fixture have no tags, so the field shows no chip).
-    ['About Instance tags', about(en('instance-tags-own'))],
-    ['Add tag', run('instance-tag-add')],
+    // 17a.5: on this page the stops open with the back link and the Used by
+    // row; the run buttons and Start at boot stayed on the instance page.
+    [
+      'All server profiles',
+      within(main).getByRole('link', { name: en('server-profile-back') }),
+    ],
+    ['Used by link', within(main).getByRole('link', { name: 'default' })],
     ['About Port', about('Port')],
     ['Port default', check(main, 'Port', en('field-default'))],
     ['Port', box(main, 'Port')],
@@ -2464,7 +2460,7 @@ test('1b 6: Tab reaches the run buttons, Start at boot, the enabled controls fie
 
 test('1b.33b, 33: Discard right after a 200 with kept edits goes back to the values just saved', async () => {
   const gate = deferred()
-  const { bff, main } = await loaded({ save: () => gate.promise })
+  const { bff, main } = await loaded({ serverProfileSave: () => gate.promise })
   editPort(main)
   await save(main, bff)
   type(box(main, 'Memory margin'), '2048')
@@ -2481,7 +2477,7 @@ test('1b.33b, 33: Discard right after a 200 with kept edits goes back to the val
 
 test('1b.33b, 34: a 422 landing after an edit made during the PUT keeps the edit and marks the field', async () => {
   const gate = deferred()
-  const { bff, main } = await loaded({ save: () => gate.promise })
+  const { bff, main } = await loaded({ serverProfileSave: () => gate.promise })
   editPort(main)
   await save(main, bff)
   type(box(main, 'Memory margin'), '2048')
@@ -2507,7 +2503,7 @@ test('1b.33b, 34: a 422 landing after an edit made during the PUT keeps the edit
 
 test('1b.33b, 35: a 409 landing after an edit made during the PUT keeps the edit', async () => {
   const gate = deferred()
-  const { bff, main } = await loaded({ save: () => gate.promise })
+  const { bff, main } = await loaded({ serverProfileSave: () => gate.promise })
   editPort(main)
   await save(main, bff)
   type(box(main, 'Memory margin'), '2048')
@@ -2522,7 +2518,7 @@ test('1b.33b, 35: a 409 landing after an edit made during the PUT keeps the edit
 
 test('1b.33b, 34a: a refusal on Hostname after Bind to changed during the PUT focuses the first row checked now', async () => {
   const gate = deferred()
-  const { bff, main } = await loaded({ save: () => gate.promise })
+  const { bff, main } = await loaded({ serverProfileSave: () => gate.promise })
   editPort(main)
   await save(main, bff)
   const bind = within(main).getByRole('group', { name: 'Bind to' })
@@ -2594,7 +2590,7 @@ test('1b 3.1: after failing client checks the error is rendered when focus reach
 
 test('1b 3.1: after a 422 the error is rendered when focus reaches the field', async () => {
   const { bff, main } = await loaded({
-    save: () =>
+    serverProfileSave: () =>
       reply(422, {
         key: 'client-address-in-use',
         args: ['coder'],
@@ -2622,7 +2618,7 @@ test('1b 3.1: after a 422 the error is rendered when focus reaches the field', a
 
 test('1b.30, 30a: Discard clears the field errors of a refusal as well as the alert', async () => {
   const { bff, main } = await loaded({
-    save: () =>
+    serverProfileSave: () =>
       reply(422, {
         key: 'client-address-in-use',
         args: ['coder'],
@@ -2682,8 +2678,8 @@ function bindRows(main: HTMLElement) {
 
 test('S3.1: a 422 bind-all-with-others fills save-refused with api-bind-all-with-others', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc(BIND_ALL)),
-    save: () => reply(422, BIND_REFUSAL),
+    serverProfile: () => reply(200, serverDoc(BIND_ALL)),
+    serverProfileSave: () => reply(422, BIND_REFUSAL),
   })
   editPort(main)
   await save(main, bff)
@@ -2703,8 +2699,8 @@ test('S3.2: a 422 bind-all-with-others marks every checked Bind to row and focus
   ]
   for (const [what, body] of cases) {
     const { bff, main } = await loaded({
-      server: () => reply(200, serverDoc(BIND_ALL)),
-      save: () => reply(422, body),
+      serverProfile: () => reply(200, serverDoc(BIND_ALL)),
+      serverProfileSave: () => reply(422, body),
     })
     editPort(main)
     await save(main, bff)
@@ -2736,8 +2732,8 @@ test('S3.2: a 422 bind-all-with-others marks every checked Bind to row and focus
 
 test('S3.3: a Bind to edit clears the bind-all-with-others error and leaves the bar alert', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc(BIND_ALL)),
-    save: () => reply(422, BIND_REFUSAL),
+    serverProfile: () => reply(200, serverDoc(BIND_ALL)),
+    serverProfileSave: () => reply(422, BIND_REFUSAL),
   })
   editPort(main)
   await save(main, bff)
@@ -2767,11 +2763,12 @@ test('S3.3: a Bind to edit clears the bind-all-with-others error and leaves the 
 test('S3.4: a 409 server-changed-elsewhere shows the new text with Reload; the edits and the reload flow are unchanged', async () => {
   let reads = 0
   const { bff, main } = await loaded({
-    server: () =>
+    serverProfile: () =>
       ++reads === 1
         ? reply(200, serverDoc())
         : reply(200, { ...serverDoc({ Port: 9000 }), revision: 'r-9' }),
-    save: () => reply(409, { key: 'server-changed-elsewhere', args: [] }),
+    serverProfileSave: () =>
+      reply(409, { key: 'server-changed-elsewhere', args: [] }),
   })
   editPort(main)
   await save(main, bff)
@@ -2799,7 +2796,7 @@ test('S3.4: a 409 server-changed-elsewhere shows the new text with Reload; the e
     within(ask).getByRole('button', { name: en('discard-confirm') }),
   )
   await waitFor(() =>
-    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+    expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(2),
   )
   await waitFor(() => expect(box(main, 'Port').value).toBe('9000'))
   expectNoAlert(main, 'after Reload')
@@ -2807,8 +2804,8 @@ test('S3.4: a 409 server-changed-elsewhere shows the new text with Reload; the e
 
 test('S3.5: the bind-all-with-others answer is a role="alert" and every marked row names its error', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc(BIND_ALL)),
-    save: () => reply(422, BIND_REFUSAL),
+    serverProfile: () => reply(200, serverDoc(BIND_ALL)),
+    serverProfileSave: () => reply(422, BIND_REFUSAL),
   })
   editPort(main)
   await save(main, bff)
@@ -2825,7 +2822,7 @@ test('S3.6: a 504 client-timeout reads as the fe save time-out: save-timeout, no
   const { bff, main } = await loaded({
     // The 502 that follows pins that the reading is keyed on the key:
     // client-other keeps save-failed (4e, out of S3).
-    save: (_body, n) =>
+    serverProfileSave: (_body, n) =>
       n === 1
         ? reply(504, { key: 'client-timeout', args: [] })
         : reply(502, { key: 'client-other', args: [] }),
@@ -2894,7 +2891,7 @@ test('S3.6: the time-out reading is keyed on client-timeout, not on the 504: ano
     ],
   ]
   for (const [what, answer, text] of answers) {
-    const { bff, main } = await loaded({ save: answer })
+    const { bff, main } = await loaded({ serverProfileSave: answer })
     editPort(main)
     await save(main, bff)
     await within(main).findByText(text)
@@ -2929,11 +2926,12 @@ function pageH1(main: HTMLElement): HTMLElement {
 function conflictPage() {
   let reads = 0
   return loaded({
-    server: () =>
+    serverProfile: () =>
       ++reads === 1
         ? reply(200, serverDoc())
         : reply(200, { ...serverDoc({ Port: 9000 }), revision: 'r-9' }),
-    save: () => reply(409, { key: 'server-changed-elsewhere', args: [] }),
+    serverProfileSave: () =>
+      reply(409, { key: 'server-changed-elsewhere', args: [] }),
   })
 }
 
@@ -2959,7 +2957,7 @@ test('198c: a 409 on a form the user made clean again, Reload reading at once wi
   expect(screen.queryByRole('dialog'), 'no dialog on a clean form').toBeNull()
   expect(dialogs.opened, 'no dialog opened').toEqual([])
   await waitFor(() =>
-    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+    expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(2),
   )
   await waitFor(() => expect(box(main, 'Port').value).toBe('9000'))
   expectNoAlert(main, 'the read ends the 409 alert')
@@ -2984,7 +2982,7 @@ test('198c: a 409, Reload on a dirty form confirmed: the read lands clean, then 
     within(ask).getByRole('button', { name: en('discard-confirm') }),
   )
   await waitFor(() =>
-    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2),
+    expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(2),
   )
   await waitFor(() => expect(box(main, 'Port').value).toBe('9000'))
   expectNoAlert(main, 'the read ends the 409 alert')
@@ -3009,7 +3007,7 @@ test('198c: a 409, Reload on a dirty form, Keep editing: the dialog rule is unch
   fireEvent.click(keep)
   expect(screen.queryByRole('dialog'), 'the dialog is closed').toBeNull()
   expect(
-    bff.to('GET', '/api/instances/default/server'),
+    bff.to('GET', '/api/profiles/server/default'),
     'nothing read while the answer stands',
   ).toHaveLength(1)
   expect(document.activeElement, 'focus back on Reload').toBe(

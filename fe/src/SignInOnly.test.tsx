@@ -677,7 +677,7 @@ test('09 S1a.10: signed in, a typed #/sign-in is an alias of #/: the address bec
 
 test('09 S1a.10: signed in with unsaved edits, a typed #/sign-in is asked about first, and Discard lands on #/', async () => {
   const bff = fakeBff()
-  const main = open(bff, '#/instances/default')
+  const main = open(bff, '#/profiles/server/default')
   await within(main).findByRole('heading', {
     level: 3,
     name: en('server-network'),
@@ -693,7 +693,7 @@ test('09 S1a.10: signed in with unsaved edits, a typed #/sign-in is asked about 
     '38 asks before the address moves',
   ).toBeTruthy()
   expect(window.location.hash, 'the address is held back').toBe(
-    '#/instances/default',
+    '#/profiles/server/default',
   )
   fireEvent.click(
     within(dialog).getByRole('button', { name: en('discard-confirm') }),
@@ -704,8 +704,8 @@ test('09 S1a.10: signed in with unsaved edits, a typed #/sign-in is asked about 
     name: en('overview-title'),
   })
   expect(
-    bff.to('PUT', '/api/instances/default/server'),
-    'Discard saves nothing',
+    bff.to('PUT', '/api/profiles/server/default'),
+    '17a.7: Discard saves nothing',
   ).toHaveLength(0)
 })
 
@@ -741,10 +741,9 @@ test('09 S1a.10: at #/sign-in signed in, the nav reads the alias as the Overview
 test('09 S1a.10: signed in on a clean instance page, a typed #/sign-in moves the app to the Overview and the bar with it, with no entry', async () => {
   const bff = fakeBff()
   const main = open(bff, '#/instances/default')
-  await within(main).findByRole('heading', {
-    level: 3,
-    name: en('server-network'),
-  })
+  // 17a.10: the instance page has no form, so its loaded marker is the run
+  // controls.
+  await within(main).findByRole('button', { name: en('run-stop') })
   const push = vi.spyOn(window.history, 'pushState')
   const replace = vi.spyOn(window.history, 'replaceState')
   // The arrival that MOVES the address (the app is at the instance page): the

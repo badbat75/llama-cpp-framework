@@ -1,7 +1,7 @@
 // Leaving the Server form with the browser's Back, Forward or a hash typed in
 // the address bar while it holds unsaved edits (fe/briefs/01-server.md, slice
 // G1, criteria 38b to 38h): the app puts the address back and asks with the
-// discard dialog of 38. The whole app renders at #/instances/default against a
+// discard dialog of 38. The whole app renders at #/profiles/server/default against a
 // fake bff (mocked fetch), except the Sign out tests, which start on the
 // Overview; "1b.38b" is the brief's criterion 38b. The link case is 1b.38
 // (ServerSave.test.tsx), the dialog's own behaviour 1b.38a.
@@ -31,7 +31,7 @@ import {
 let dialogs: ReturnType<typeof stubDialog>
 
 beforeEach(() => {
-  startAt('#/instances/default')
+  startAt('#/profiles/server/default')
   dialogs = stubDialog()
 })
 
@@ -45,7 +45,7 @@ afterEach(async () => {
   startAt('')
 })
 
-const PUT = '/api/instances/default/server'
+const PUT = '/api/profiles/server/default'
 
 /** Lets jsdom's queued tasks (a hashchange, a history traversal) run. */
 async function flushTasks(n = 2) {
@@ -105,7 +105,7 @@ async function loadedAfterNavigation(options: BffOptions = {}) {
     level: 1,
     name: en('overview-title'),
   })
-  await typeHash('#/instances/default')
+  await typeHash('#/profiles/server/default')
   await within(main).findByRole('heading', {
     level: 3,
     name: en('server-network'),
@@ -119,7 +119,8 @@ async function loadedAfterNavigation(options: BffOptions = {}) {
  * so no hashchange consumes it). 09 S1a.11: Sign out lands on the sign-in page
  * at '#/', so the sign-in is that page's form: it fires no hashchange, the
  * token state the Sign out left is untouched. The Overview shows, and the
- * instance page is reached by the Overview's link.
+ * profile page is reached by a typed hash (one entry, so Back goes to the
+ * Overview; 17a.10: the form is on the profile page, not the instance page).
  */
 async function loadedAfterSignOutOnOverview() {
   startAt('#/')
@@ -151,11 +152,7 @@ async function loadedAfterSignOutOnOverview() {
     level: 1,
     name: en('overview-title'),
   })
-  fireEvent.click(
-    await within(main).findByRole('link', {
-      name: 'default',
-    }),
-  )
+  await typeHash('#/profiles/server/default')
   await flushTasks()
   await within(main).findByRole('heading', {
     level: 3,
@@ -299,8 +296,8 @@ test('1b.38b: a hash typed while dirty is put back, the page and its edits stay,
   await typeHash('#/profiles/model')
 
   const d = await discardDialog()
-  expect(window.location.hash, 'the address is the instance page again').toBe(
-    '#/instances/default',
+  expect(window.location.hash, 'the address is the profile page again').toBe(
+    '#/profiles/server/default',
   )
   expect(box(main, 'Port'), 'the same form, not a remount').toBe(port)
   expect(port.value, 'the edit stays').toBe('abc')
@@ -313,7 +310,10 @@ test('1b.38b: a hash typed while dirty is put back, the page and its edits stay,
     en('page-title', 'default'),
   )
   expect(navLink(en('nav-overview')).getAttribute('aria-current')).toBeNull()
-  expect(navLink('default').getAttribute('aria-current')).toBe('page')
+  expect(
+    navLink(en('nav-server-profiles')).getAttribute('aria-current'),
+    'the group entry is the current one on a profile page (17a.2)',
+  ).toBe('true')
   expect(document.activeElement, 'focus does not move to the h1').not.toBe(h1)
   expect(document.activeElement, 'Keep editing is focused first').toBe(
     keepButton(d),
@@ -322,7 +322,8 @@ test('1b.38b: a hash typed while dirty is put back, the page and its edits stay,
 
 test('1b.38b: Back while dirty is put back, the form and the bar alert stay, and the discard dialog opens', async () => {
   const { bff, main } = await loadedAfterNavigation({
-    save: () => reply(409, { key: 'server-changed-elsewhere', args: [] }),
+    serverProfileSave: () =>
+      reply(409, { key: 'server-changed-elsewhere', args: [] }),
   })
   editPort(main)
   await save(main, bff)
@@ -333,8 +334,8 @@ test('1b.38b: Back while dirty is put back, the form and the bar alert stay, and
   await pressBack()
 
   const d = await discardDialog()
-  expect(window.location.hash, 'the address is the instance page again').toBe(
-    '#/instances/default',
+  expect(window.location.hash, 'the address is the profile page again').toBe(
+    '#/profiles/server/default',
   )
   expect(box(main, 'Port'), 'the same form, not a remount').toBe(port)
   expect(port.value, 'the edit stays').toBe('8581')
@@ -342,7 +343,10 @@ test('1b.38b: Back while dirty is put back, the form and the bar alert stay, and
   expect(status(main).textContent).toBe(en('save-unsaved'))
   expect(document.title).toBe(en('page-title', 'default'))
   expect(navLink('coder').getAttribute('aria-current')).toBeNull()
-  expect(navLink('default').getAttribute('aria-current')).toBe('page')
+  expect(
+    navLink(en('nav-server-profiles')).getAttribute('aria-current'),
+    'the group entry is the current one on a profile page (17a.2)',
+  ).toBe('true')
   expect(document.activeElement, 'focus does not move to the h1').not.toBe(h1)
   expect(document.activeElement).toBe(keepButton(d))
   expect(bff.to('GET', PUT), 'nothing is read again').toHaveLength(1)
@@ -360,8 +364,8 @@ test('1b.38b: after a Sign out on the Overview, a typed hash to that hash on the
   await typeHash('#/')
 
   const d = await discardDialog()
-  expect(window.location.hash, 'the address is the instance page again').toBe(
-    '#/instances/default',
+  expect(window.location.hash, 'the address is the profile page again').toBe(
+    '#/profiles/server/default',
   )
   expect(port.value, 'the edit is still there').toBe('8581')
   expect(document.activeElement, 'Keep editing is focused first').toBe(
@@ -376,8 +380,8 @@ test('1b.38b: after a Sign out on the Overview, Back to the Overview asks: the s
   await pressBack()
 
   await discardDialog()
-  expect(window.location.hash, 'the address is the instance page again').toBe(
-    '#/instances/default',
+  expect(window.location.hash, 'the address is the profile page again').toBe(
+    '#/profiles/server/default',
   )
   expect(port.value, 'the edit is still there').toBe('8581')
 })
@@ -396,7 +400,7 @@ test('1b.38c: Keep editing keeps the address and the edits, puts the focus back 
   expect(screen.queryByRole('dialog'), 'the dialog closed').toBeNull()
   await flushTasks()
   expect(window.location.hash, 'the address stays the instance page').toBe(
-    '#/instances/default',
+    '#/profiles/server/default',
   )
   expect(port.value, 'the edit stays').toBe('8581')
   expect(document.activeElement, 'focus back on the field that had it').toBe(
@@ -417,7 +421,7 @@ test('1b.38c (38a): Escape in the guard dialog is Keep editing, focus back on th
   fireEvent.keyDown(keepButton(d), { key: 'Escape', code: 'Escape' })
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   await flushTasks()
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   expect(port.value).toBe('8581')
   expect(document.activeElement, 'focus back on the field').toBe(port)
   expect(bff.to('PUT', PUT), 'nothing is sent').toHaveLength(0)
@@ -437,7 +441,7 @@ test('1b.38c: Keep editing when the hashchange found nothing focused gives the f
   expect(document.activeElement, 'focus on the page h1').toBe(
     pageH1(main, 'default'),
   )
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
 })
 
 test('1b.38c: a hashchange that arrives with document.activeElement null opens the dialog, and Keep editing gives the focus to the page h1', async () => {
@@ -468,7 +472,7 @@ test('1b.38c: a hashchange that arrives with document.activeElement null opens t
   expect(document.activeElement, 'focus on the page h1').toBe(
     pageH1(main, 'default'),
   )
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
 })
 
 // ── 38d: Discard changes ────────────────────────────────────────────────
@@ -477,13 +481,13 @@ test('1b.38d: Discard changes goes to the hash asked for, shows that page as a r
   const { main } = await loaded()
   editPort(main)
   await navReady()
-  await typeHash('#/instances/coder')
+  await typeHash('#/profiles/server/coder')
 
   const d = await discardDialog()
   fireEvent.click(confirmButton(d))
   await waitFor(() =>
     expect(window.location.hash, 'the page asked for').toBe(
-      '#/instances/coder',
+      '#/profiles/server/coder',
     ),
   )
   const h1 = await within(main).findByRole('heading', {
@@ -491,8 +495,11 @@ test('1b.38d: Discard changes goes to the hash asked for, shows that page as a r
     name: 'coder',
   })
   expect(document.title).toBe(en('page-title', 'coder'))
-  expect(navLink('coder').getAttribute('aria-current')).toBe('page')
-  expect(navLink('default').getAttribute('aria-current')).toBeNull()
+  expect(
+    navLink(en('nav-server-profiles')).getAttribute('aria-current'),
+    'still the group entry, on the coder profile page',
+  ).toBe('true')
+  expect(navLink('coder').getAttribute('aria-current')).toBeNull()
   expect(document.activeElement, 'focus on the new page h1').toBe(h1)
   await flushTasks()
   expect(
@@ -573,7 +580,7 @@ test('1b.38e (30): the bar Discard leaves the form clean, so Back leaves without
 
 test('1b.38e (33b): an edit made while the PUT runs leaves the form dirty, and a typed hash asks', async () => {
   const { promise, resolve } = deferred()
-  const { bff, main } = await loaded({ save: () => promise })
+  const { bff, main } = await loaded({ serverProfileSave: () => promise })
   editPort(main)
   fireEvent.click(saveButton(main))
   await waitFor(() => expect(bff.to('PUT', PUT)).toHaveLength(1))
@@ -583,7 +590,7 @@ test('1b.38e (33b): an edit made while the PUT runs leaves the form dirty, and a
 
   await typeHash('#/profiles/model')
   const d = await discardDialog()
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   expect(box(main, 'Port').value).toBe('8582')
   await keep(d)
   expect(box(main, 'Port').value).toBe('8582')
@@ -593,7 +600,7 @@ test('1b.38e (33b): an edit made while the PUT runs leaves the form dirty, and a
 
 test('1b.38f (36a): a typed hash while the session has ended asks the same, and Keep keeps the edits and the alert', async () => {
   const { bff, main } = await loaded({
-    save: () => reply(401, { key: 'session-required', args: [] }),
+    serverProfileSave: () => reply(401, { key: 'session-required', args: [] }),
   })
   const port = box(main, 'Port')
   editPort(main)
@@ -603,11 +610,11 @@ test('1b.38f (36a): a typed hash while the session has ended asks the same, and 
 
   await typeHash('#/profiles/model')
   const d = await discardDialog()
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   expect(port.value).toBe('8581')
   await keep(d)
   expect(screen.queryByRole('dialog')).toBeNull()
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   expect(port.value, 'the edits stay').toBe('8581')
   expectAlert(main, en('session-ended'), 'the session-ended alert stays')
   expect(document.activeElement, 'focus back on the field').toBe(port)
@@ -623,19 +630,19 @@ test('1b.38g: a second hash typed while the guard dialog is open keeps one dialo
   const keepBtn = keepButton(d)
   expect(document.activeElement).toBe(keepBtn)
 
-  await typeHash('#/instances/coder')
+  await typeHash('#/profiles/server/coder')
   expect(
     screen.getAllByRole('dialog'),
     'the one dialog stays open, not a second one',
   ).toHaveLength(1)
   expect(window.location.hash, 'the address is put back again').toBe(
-    '#/instances/default',
+    '#/profiles/server/default',
   )
   expect(document.activeElement, 'focus stays in the dialog').toBe(keepBtn)
   fireEvent.click(confirmButton(d))
   await waitFor(() =>
     expect(window.location.hash, 'Discard goes to the latest hash').toBe(
-      '#/instances/coder',
+      '#/profiles/server/coder',
     ),
   )
   expect(
@@ -652,16 +659,16 @@ test('1b.38g: the dialog opened by a link takes the latest hash asked for', asyn
   const d = screen.getByRole('dialog', { name: en('discard-title') })
   expect(dialogs.opened).toContain(d)
 
-  await typeHash('#/instances/coder')
+  await typeHash('#/profiles/server/coder')
   expect(screen.getAllByRole('dialog'), 'the one dialog').toHaveLength(1)
   expect(window.location.hash, 'the address is put back').toBe(
-    '#/instances/default',
+    '#/profiles/server/default',
   )
   expect(pageH1(main, 'default'), 'the page stays').toBeTruthy()
   fireEvent.click(confirmButton(d))
   await waitFor(() =>
     expect(window.location.hash, 'Discard goes to the latest hash').toBe(
-      '#/instances/coder',
+      '#/profiles/server/coder',
     ),
   )
   expect(
@@ -676,7 +683,7 @@ test('1b.38g: Keep editing after a second typed hash returns the focus to the fi
   port.focus()
   await typeHash('#/profiles/model')
   const d = await discardDialog()
-  await typeHash('#/instances/coder')
+  await typeHash('#/profiles/server/coder')
   await keep(d)
   expect(
     document.activeElement,
@@ -689,9 +696,9 @@ test('1b.38g: Keep editing after a second typed hash returns the focus to the fi
 test('1b.38h: a hash equal to the one shown fires no hashchange, asks nothing and keeps the edits', async () => {
   const { main } = await loaded()
   editPort(main)
-  await typeHash('#/instances/default')
+  await typeHash('#/profiles/server/default')
   expect(screen.queryByRole('dialog')).toBeNull()
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   expect(box(main, 'Port').value).toBe('8581')
   expect(status(main).textContent).toBe(en('save-unsaved'))
 })

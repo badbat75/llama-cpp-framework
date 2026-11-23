@@ -986,6 +986,8 @@ test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops):
     'coder',
     // Brief 20 (20 N.7): Node info is in the host list, after its instances.
     en('nav-node'),
+    // Brief 16 (17a.2): Server profiles, before Model profiles.
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     // 13 N.6: About, last in the nav.
     en('nav-about'),

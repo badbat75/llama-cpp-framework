@@ -30,7 +30,7 @@ const HEIGHT = 900
 // follows the OS scheme, and a stored choice opposite to it. A choice is only
 // read where a session shows the theme button.
 const CHOICES = [null, 'opposite']
-const CHOICE_STATES = ['overview', 'instance-server', 'model-profile']
+const CHOICE_STATES = ['overview', 'server-profile', 'model-profile']
 
 // The text pass of 10-reflow.md section 4: every state loaded once more per
 // mode, at 320 px in the light scheme only (the modes change no colour, so
@@ -64,6 +64,10 @@ const SETTLE_MS = 400
 const USER = 'abcdefghijklmnopqrstuvwxyz012345'
 const MODEL_PROFILE_ID = 'Qwen3-27B'
 const MISSING_ID = 'No-Such-Model-Profile'
+// Brief 16, 17a.11: the widest server profile of the pool list (stub.py
+// `pool=long`), a 32-character id with the 8 tags of 32 characters, run by no
+// instance: the row the list page has to fit at 320 px and at 200 % text.
+const LONG_POOL_ID = 'abcdefghijklmnopqrstuvwxyz01234x'
 // The host's name (stub.py `VERSION`), which the nav's host label reads (20 N.4).
 const HOST = 'gpu-box'
 // The instances of stub.py `list=many`, as the stub spells them (brief 20
@@ -250,16 +254,27 @@ const STATES = [
     ],
   },
   {
-    name: 'instance-server',
-    // key=shown: with the API key withheld from the session the bff fails the
-    // whole read, and the Server form never shows.
+    // Brief 16, slice 17a: the Server form moved to the server profile's own
+    // page, so the form's state is that page (the markers are the same: the h1
+    // and the first field's label). key=shown: with the API key withheld from
+    // the session the bff fails the whole read, and the form never shows.
+    name: 'server-profile',
     set: 'session=admin&key=shown',
-    hash: '#/instances/default',
-    // The Server form's first field: the Port one, whose label id is React's
-    // own prefix plus the key.
+    hash: '#/profiles/server/default',
     expect: [
       { selector: '#page-heading', text: 'default' },
       { selector: '[id$="-Port-label"]', text: S['server-port'] },
+    ],
+  },
+  {
+    // Brief 16, 17a.10: the instance page as it is now, with no Server form:
+    // its header, its tags field and the section naming its server profile.
+    name: 'instance-page',
+    set: 'session=admin',
+    hash: '#/instances/default',
+    expect: [
+      { selector: '#page-heading', text: 'default' },
+      { selector: 'h2', text: S['instance-server-title'] },
     ],
   },
   {
@@ -294,6 +309,21 @@ const STATES = [
       { selector: '.tag-add' },
     ],
     open: { click: '.tag-add', then: '.tag-new input' },
+  },
+  {
+    // Brief 16, slice 17a (17a.11): the pool list at its widest row, so the
+    // check reads the table box and the tags cell with a 32-character id and
+    // 8 tags of 32 characters in it.
+    name: 'server-profiles',
+    set: 'session=admin&pool=long',
+    hash: '#/profiles/server',
+    expect: [
+      { selector: '#page-heading', text: S['server-profiles-title'] },
+      {
+        selector: `a[href="#/profiles/server/${LONG_POOL_ID}"]`,
+        text: LONG_POOL_ID,
+      },
+    ],
   },
   {
     name: 'model-profiles',

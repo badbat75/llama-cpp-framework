@@ -256,9 +256,10 @@ test('1a.14b: a non-administrator gets its own alert, the password cleared, the 
 test('1a.14b, 36: in the session-ended sign-in dialog the refusal shows inside it; the dialog stays open and its Cancel works', async () => {
   const dialogs = stubDialog()
   try {
-    startAt('#/instances/default')
+    startAt('#/profiles/server/default')
     const bff = fakeBff({
-      save: () => reply(401, { key: 'session-required', args: [] }),
+      serverProfileSave: () =>
+        reply(401, { key: 'session-required', args: [] }),
       signIn: () => reply(403, { key: 'session-not-administrator', args: [] }),
     })
     render(<App />)
@@ -275,7 +276,7 @@ test('1a.14b, 36: in the session-ended sign-in dialog the refusal shows inside i
       within(main).getByRole('button', { name: en('save-button') }),
     )
     await waitFor(() =>
-      expect(bff.to('PUT', '/api/instances/default/server')).toHaveLength(1),
+      expect(bff.to('PUT', '/api/profiles/server/default')).toHaveLength(1),
     )
     fireEvent.click(
       await within(main).findByRole('button', { name: en('session-sign-in') }),

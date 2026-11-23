@@ -672,6 +672,7 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
     'coder',
     // Brief 20 (20 N.7): Node info is in the host list, after its instances.
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     // 13 N.6: About, last in the nav, before the page.
     en('nav-about'),

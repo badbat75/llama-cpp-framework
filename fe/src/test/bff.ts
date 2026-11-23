@@ -61,10 +61,33 @@ export const EN: Record<string, string> = {
   'instance-state': 'State: {0}',
   'instance-not-found': 'There is no instance named {0}.',
   'server-title': 'Server',
-  'server-intro':
-    'llama-server settings of this instance, shared by every model it serves ({0}). Per-model settings belong to the model profiles.',
+  // Brief 16 slice 17a: the Server form moves from the instance page to a
+  // server profile's page, and its intro names the profile's file; the key is
+  // new and `server-intro` is gone with the same slice (17a.12).
+  'server-profile-intro':
+    'llama-server settings of the instance that runs this server profile, shared by every model it serves ({0}). Per-model settings belong to the model profiles.',
   'server-loading': 'Loading the server settings…',
   'server-load-failed': 'The server settings could not be read.',
+  // Brief 16 slice 17a: the server profiles list and a profile's page.
+  'nav-server-profiles': 'Server profiles',
+  'server-profiles-title': 'Server profiles',
+  'server-profiles-intro':
+    'Each server profile holds the llama-server settings of one instance: its port, its addresses, its tags and the rest. An instance runs one server profile, and a server profile serves one instance at a time.',
+  'server-profiles-loading': 'Loading the server profiles…',
+  'server-profiles-failed': 'The server profiles could not be read.',
+  'server-profiles-empty': 'There are no server profiles yet.',
+  'server-profiles-column-name': 'Server profile',
+  'server-profiles-column-port': 'Port',
+  'server-profiles-column-tags': 'Tags',
+  'server-profiles-column-used-by': 'Used by',
+  'server-profiles-unused': 'No instance',
+  'server-profile-back': 'All server profiles',
+  'server-profile-used-by': 'Used by',
+  'server-profile-not-found': 'There is no server profile named {0}.',
+  'server-folder-unused-default':
+    'unset: the instance that runs this profile uses its own folder',
+  'instance-server-title': 'Server profile',
+  'instance-server-none': 'None',
   'api-client-not-authorized':
     'Not authorized: the system refused this request.',
   'api-client-unavailable':
@@ -1310,6 +1333,18 @@ export function serverDoc(
   }
 }
 
+/**
+ * One server profile's document as GET /api/profiles/server/{id} reads it
+ * (brief 16, 17a.5): the server document of the instance that runs the profile,
+ * plus `instance`, the instance that runs it, and `null` when none does.
+ */
+export function serverProfileDoc(
+  values: Record<string, unknown> = {},
+  extra: Record<string, unknown> = {},
+) {
+  return serverDoc(values, { instance: 'default', ...extra })
+}
+
 type Answer = Response | ((init?: RequestInit) => Response | Promise<Response>)
 
 export type BffOptions = {
@@ -1399,6 +1434,26 @@ export type BffOptions = {
    * the parsed body. Default 200 {"revision": "r-2", "running": false}.
    */
   save?: (
+    body: unknown,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * GET /api/profiles/server/{id} (brief 16, 17a.6): the reply per decoded id.
+   * Default 200 `serverProfileDoc()`, the server document with
+   * `"instance": "default"`.
+   */
+  serverProfile?: (
+    id: string,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * PUT /api/profiles/server/{id} (brief 16, 17a.7): the reply to the n-th save
+   * of the profile the page shows (from 1), given the parsed body. The shape of
+   * `save`, whose replies these tests reuse: the id is the one the test opened.
+   * Default 200 {"revision": "r-2", "running": false}.
+   */
+  serverProfileSave?: (
     body: unknown,
     n: number,
     init?: RequestInit,
@@ -1587,6 +1642,30 @@ export function fakeBff(options: BffOptions = {}) {
         options.modelProfile
           ? options.modelProfile(id, init)
           : reply(200, modelProfileDoc({}, { id })),
+      )
+    }
+    const serverProfileRead = /^GET \/api\/profiles\/server\/([^/]+)$/.exec(
+      route,
+    )
+    if (serverProfileRead) {
+      const id = decodeURIComponent(serverProfileRead[1]!)
+      return Promise.resolve(
+        options.serverProfile
+          ? options.serverProfile(id, init)
+          : reply(200, serverProfileDoc()),
+      )
+    }
+    const serverProfileSave = /^PUT \/api\/profiles\/server\/([^/]+)$/.exec(
+      route,
+    )
+    if (serverProfileSave) {
+      const n = calls.filter(
+        (c) => c.method === 'PUT' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.serverProfileSave
+          ? options.serverProfileSave(body, n, init)
+          : reply(200, { revision: 'r-2', running: false }),
       )
     }
     const server = /^GET \/api\/instances\/([^/]+)\/server$/.exec(route)

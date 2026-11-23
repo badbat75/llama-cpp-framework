@@ -36,6 +36,8 @@ import {
 } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { Box, Line, Loading } from './Skeleton.tsx'
+import ServerProfilePage from './ServerProfilePage.tsx'
+import ServerProfiles from './ServerProfiles.tsx'
 import { ThemeSwitch } from './ThemeSwitch.tsx'
 import { t } from './strings.ts'
 import { readVersionInfo } from './version.ts'
@@ -487,6 +489,24 @@ export default function App() {
             </p>
             <ul aria-labelledby="nav-profiles">
               <li>
+                {/* The server profile page belongs to the list without being it,
+                    so the list is its current item, not its current page, as
+                    Model profiles does (16 17a.2, 02-models.md 2d.64). */}
+                <a
+                  href="#/profiles/server"
+                  aria-current={
+                    route.page === 'server-profiles'
+                      ? 'page'
+                      : route.page === 'server-profile'
+                        ? 'true'
+                        : undefined
+                  }
+                >
+                  <Icon name="server" />
+                  {t('nav-server-profiles')}
+                </a>
+              </li>
+              <li>
                 {/* The model profile page belongs to the list without being it,
                     so the list is its current item, not its current page
                     (02-models.md, 2d.64). */}
@@ -729,6 +749,21 @@ function Page({
   if (route.page === 'model-profile') {
     return (
       <ModelProfilePage
+        id={route.id}
+        onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
+        onDirty={onDirty}
+      />
+    )
+  }
+  if (route.page === 'server-profiles') {
+    // The pool, read again at every arrival (16 17a.3).
+    return <ServerProfiles onSignedOut={onSignedOut} />
+  }
+  if (route.page === 'server-profile') {
+    // One profile: its "Used by" fact and the Server form (16 17a.5).
+    return (
+      <ServerProfilePage
         id={route.id}
         onSignedOut={onSignedOut}
         onRenewed={onRenewed}

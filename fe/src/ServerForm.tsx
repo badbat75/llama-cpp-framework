@@ -1,8 +1,9 @@
-// The Server form of an instance (fe/briefs/01-server.md, sections 3 and 5):
-// the cards and fields of pai-config's Server tab, in its order, each control
-// showing the file's value. Every signed-in session edits it: the controls
-// follow their dependencies (5.3) and the save bar checks the values, sends
-// them typed (5.4) and shows the answer by its key. The answer is read in
+// The Server form of a server profile (fe/briefs/01-server.md, sections 3 and
+// 5, on the profile's own page since fe/briefs/16-server-profiles-and-instances.md
+// 16 17a.5): the cards and fields of pai-config's Server tab, in its order,
+// each control showing the file's value. Every signed-in session edits it: the
+// controls follow their dependencies (5.3) and the save bar checks the values,
+// sends them typed (5.4) and shows the answer by its key. The answer is read in
 // save.ts, shared with the model profile page; this file keeps the keys of its own
 // (section 3) and the tables of its check keys.
 import { useId, useRef, useState } from 'react'
@@ -36,7 +37,7 @@ import { t } from './strings.ts'
 /** Values by INI key name, typed JSON. */
 type Keys = Record<string, unknown>
 
-/** The server document of GET /api/instances/{id}/server, as far as the form reads it. */
+/** The server document of GET /api/profiles/server/{id}, as far as the form reads it. */
 export type ServerDoc = {
   revision?: unknown
   values: Keys
@@ -216,6 +217,14 @@ function folder(text: string): string | null {
   return s === '' ? null : s
 }
 
+/** The folder field's placeholder: the folder of the instance that runs the
+ * profile, and a profile no instance runs has none (16 17a.8). */
+function folderPlaceholder(fallback: unknown): string {
+  return typeof fallback === 'string' && fallback !== ''
+    ? t('server-folder-instance-default', fallback)
+    : t('server-folder-unused-default')
+}
+
 /** What a save sends (5.4); dirty compares these too. */
 function toValues(d: Draft, rows: Row[]): Keys {
   return {
@@ -351,6 +360,8 @@ function serverKey(id: string, key: string): SaveAnswer | undefined {
       return { kind: 'changed-elsewhere' }
     case 'client-no-instance':
       return { kind: 'failed', text: t('instance-not-found', id) }
+    case 'client-no-server-profile':
+      return { kind: 'failed', text: t('server-profile-not-found', id) }
     default:
       return undefined
   }
@@ -363,7 +374,7 @@ async function sendSave(
 ): Promise<SaveAnswer> {
   let reply
   try {
-    reply = await call(`/api/instances/${encodeURIComponent(id)}/server`, {
+    reply = await call(`/api/profiles/server/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ revision, values }),
@@ -372,7 +383,22 @@ async function sendSave(
     // A timeout may have written the file (4.8, 47d).
     return { kind: 'failed', text: sendFailure(e) }
   }
-  return saveAnswer(reply, (key) => serverKey(id, key), REFUSALS)
+  return saveAnswer(
+    reply,
+    (key, args) => {
+      if (key === 'model-profile-over-memory') {
+        // R3's refusal of a model profile that no longer fits the GPU memory:
+        // the name it carries is a model profile, so no control of this form
+        // is marked (16 17a.7).
+        return {
+          kind: 'refused',
+          text: t('api-model-profile-over-memory', ...args),
+        }
+      }
+      return serverKey(id, key)
+    },
+    REFUSALS,
+  )
 }
 
 /**
@@ -706,7 +732,7 @@ export default function ServerForm({
           hint={t('server-models-folder-hint')}
           error={errors.ModelsDir}
           value={v.ModelsDir}
-          placeholder={t('server-folder-instance-default', shown(d.ModelsDir))}
+          placeholder={folderPlaceholder(d.ModelsDir)}
           onChange={(s) => edit('ModelsDir', s)}
         />
       </Card>
@@ -756,7 +782,7 @@ export default function ServerForm({
           hint={t('server-snapshot-folder-hint')}
           error={errors.StateDir}
           value={v.StateDir}
-          placeholder={t('server-folder-instance-default', shown(d.StateDir))}
+          placeholder={folderPlaceholder(d.StateDir)}
           disabled={!v.SaveStateOnShutdown}
           onChange={(s) => edit('StateDir', s)}
         />

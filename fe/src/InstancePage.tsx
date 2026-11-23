@@ -1,7 +1,9 @@
 // An instance's page (#/instances/<id>, signed in): the header with the id,
 // the engine, the state and the run controls, kept live from the app's one
-// read of /api/instances, and Start at boot, then the Server section
-// (fe/briefs/01-server.md, sections 2.4 and 4).
+// read of /api/instances, and Start at boot, then the tags field and the
+// server profile the instance runs. The Server form is on the profile's own
+// page (fe/briefs/16-server-profiles-and-instances.md, 16 17a.10; the header:
+// fe/briefs/01-server.md, sections 2.4 and 4).
 import {
   useCallback,
   useEffect,
@@ -34,10 +36,10 @@ import {
   type TagsRefusal,
 } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
+import { serverProfileHref } from './route.ts'
 import { useDirtyReport, useWarnOnLeave } from './SaveBar.tsx'
-import { CardBox, Lines, Loading } from './Skeleton.tsx'
+import { Lines, Loading } from './Skeleton.tsx'
 import type { Runs } from './ServerForm.tsx'
-import ServerSection, { InstanceNotFound } from './ServerSection.tsx'
 import type { Session, SignedOut } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { StateShape, stateLabel } from './StateBadge.tsx'
@@ -239,21 +241,14 @@ export default function InstancePage({
   // The Sign in whose dialog is open (43a, 45e).
   const [asking, setAsking] = useState<'run' | 'boot' | 'tags' | null>(null)
   const [runs, setRuns] = useState<Runs>({ started: 0, settled: 0 })
-  // Sign-ins in the page's dialogs (43b): after each one as another session,
-  // the Server section and the tags field are remounted (each keyed by
-  // `rereads`), so both show what the page reads for the new session.
-  const [signIns, setSignIns] = useState({
-    rereads: 0,
-    dropped: false,
-    kept: 0,
-  })
+  // Sign-ins in the page's dialogs (43b): after each one as another session, the
+  // tags field is remounted (keyed by `rereads`), so it shows what the page reads
+  // for the new session.
+  const [signIns, setSignIns] = useState({ rereads: 0, kept: 0 })
   const clicked = useRef<Action>('start')
-  // The page's unsaved changes: the Server form's and the tags field's (12
-  // T1.13): leaving asks for either, and a sign-in that drops them is what
-  // `renewed` reports (43b).
+  // The page's unsaved changes, which are the tags field's (12 T1.13): leaving
+  // asks for them.
   const dirty = useRef(false)
-  const serverDirty = useRef(false)
-  const tagsDirty = useRef(false)
 
   useEffect(() => {
     let live = true
@@ -330,23 +325,17 @@ export default function InstancePage({
     }
   }, [next, store, id])
 
-  /** One section's unsaved changes: the page is dirty while either the Server
-   * form or the tags field has any (12 T1.13), and the app hears about it only
-   * when the page's own state changes. Each section arms the browser's own ask
-   * for itself. */
-  const report = useCallback(
-    (section: 'server' | 'tags', d: boolean) => {
-      if (section === 'server') serverDirty.current = d
-      else tagsDirty.current = d
-      const any = serverDirty.current || tagsDirty.current
-      if (dirty.current === any) return
-      dirty.current = any
-      onDirty(any)
+  /** The tags field's unsaved changes (12 T1.13): the page is dirty while it has
+   * any, and the app hears about it only when the field's own state changes. The
+   * field arms the browser's own ask for itself. */
+  const trackTags = useCallback(
+    (d: boolean) => {
+      if (dirty.current === d) return
+      dirty.current = d
+      onDirty(d)
     },
     [onDirty],
   )
-  const trackServer = useCallback((d: boolean) => report('server', d), [report])
-  const trackTags = useCallback((d: boolean) => report('tags', d), [report])
 
   /** A save wrote the tags: the page reads the list again, so the profile
    * line, the nav and the Overview follow the file (12 T1.8). */
@@ -390,13 +379,10 @@ export default function InstancePage({
 
   /** A sign-in in any of the page's dialogs (43b): true when the page stays. */
   const renewed = (session: Session) => {
-    const dropped = dirty.current
     const kept = onRenewed(session)
     setAlert((a) => (a?.signIn ? null : a))
     setSignIns((s) =>
-      kept
-        ? { ...s, kept: s.kept + 1 }
-        : { ...s, rereads: s.rereads + 1, dropped: s.dropped || dropped },
+      kept ? { ...s, kept: s.kept + 1 } : { ...s, rereads: s.rereads + 1 },
     )
     return kept
   }
@@ -500,16 +486,24 @@ export default function InstancePage({
               onSaved={reread}
               onDirty={trackTags}
             />
-            <ServerSection
-              key={signIns.rereads}
-              id={id}
-              dropped={signIns.dropped}
-              renewals={signIns.kept}
-              runs={runs}
-              onSignedOut={onSignedOut}
-              onRenewed={renewed}
-              onDirty={trackServer}
-            />
+            <section>
+              <h2>{t('instance-server-title')}</h2>
+              {/* The server profile the instance runs, from the list's item
+                  (16 17a.10): the form is on the profile's page, so this row
+                  only names it and leads there. */}
+              <dl className="assets">
+                <dt>{t('instance-server-title')}</dt>
+                {instance.serverProfile ? (
+                  <dd>
+                    <a href={serverProfileHref(instance.serverProfile)}>
+                      {instance.serverProfile}
+                    </a>
+                  </dd>
+                ) : (
+                  <dd className="muted">{t('instance-server-none')}</dd>
+                )}
+              </dl>
+            </section>
           </>
         )}
       </Body>
@@ -538,25 +532,23 @@ function Body({
   children: ReactNode
 }) {
   if (answer === undefined) {
-    // The header's skeleton (17a.4): three lines where the instance's name and
-    // its facts will be, and the card the Server form will fill.
-    return (
-      <Loading
-        text={t('loading')}
-        shape={
-          <>
-            <Lines n={3} />
-            <CardBox />
-          </>
-        }
-      />
-    )
+    // The header's skeleton (17a.4, and 16 17a.10): three lines where the
+    // instance's name and its facts will be. The Server form left the page, so
+    // no card is coming.
+    return <Loading text={t('loading')} shape={<Lines n={3} />} />
   }
   if (!Array.isArray(answer)) {
     return <p>{errorText(answer.error)}</p>
   }
   if (find(answer, id) === undefined) {
-    return <InstanceNotFound id={id} />
+    return (
+      <>
+        <p>{t('instance-not-found', id)}</p>
+        <p>
+          <a href="#/">{t('not-found-home')}</a>
+        </p>
+      </>
+    )
   }
   return children
 }

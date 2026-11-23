@@ -1,9 +1,11 @@
-// The instance page (fe/briefs/01-server.md, slice 1a, sections 2.4 and
-// 2.5, with the form of section 5): its header, and the Server section: the
-// form, which every signed-in session edits (the web UI is run by
-// administrators only, "Administrators only"). The whole app renders at
-// #/instances/<id> against a fake bff (mocked fetch); "1a.25" is the brief's
-// criterion 25.
+// The instance page (fe/briefs/01-server.md, slice 1a, sections 2.4 and 2.5,
+// with the form of section 5): its header, and the Server section: the form,
+// which every signed-in session edits (the web UI is run by administrators
+// only, "Administrators only"). The whole app renders against a fake bff
+// (mocked fetch); "1a.25" is the brief's criterion 25. Brief 16 slice 17a
+// moved that form to a server profile's page, so the tests of the form
+// (#/profiles/server/default) live here too, and the instance page's own
+// (17a.10) start at '#/instances/default'.
 import {
   act,
   cleanup,
@@ -23,10 +25,12 @@ import {
   reply,
   serverDoc,
   startAt,
+  stubDialog,
   type BffOptions,
 } from './test/bff.ts'
+import { serverProfileHref } from './route.ts'
 
-beforeEach(() => startAt('#/instances/default'))
+beforeEach(() => startAt('#/profiles/server/default'))
 
 afterEach(() => {
   cleanup()
@@ -72,6 +76,19 @@ async function loaded(options: BffOptions = {}): Promise<HTMLElement> {
     level: 3,
     name: en('server-network'),
   })
+  return main
+}
+
+/** The instance page (17a.10: no Server form), with its run controls shown. */
+async function loadedInstance(
+  options: BffOptions = {},
+  hash = '#/instances/default',
+): Promise<HTMLElement> {
+  startAt(hash)
+  fakeBff(options)
+  render(<App />)
+  const main = screen.getByRole('main')
+  await within(main).findByRole('button', { name: en('run-stop') })
   return main
 }
 
@@ -147,36 +164,6 @@ test('1a.21: an id the instances list lacks shows instance-not-found and the ove
   ).toBeNull()
 })
 
-test('1a.21: a server read answering 404 client-no-instance shows instance-not-found', async () => {
-  fakeBff({
-    server: () => reply(404, { key: 'client-no-instance', args: ['default'] }),
-  })
-  render(<App />)
-  const main = screen.getByRole('main')
-  expect(
-    await within(main).findByText(en('instance-not-found', 'default')),
-  ).toBeTruthy()
-  const home = within(main).getByRole('link', { name: en('not-found-home') })
-  expect(
-    within(main).queryByRole('heading', {
-      level: 3,
-      name: en('server-network'),
-    }),
-  ).toBeNull()
-  // Only the form is replaced (2.6): the h2 stays, the message follows it.
-  const h2 = within(main).getByRole('heading', {
-    level: 2,
-    name: en('server-title'),
-  })
-  expect(
-    within(main).getByRole('heading', { level: 1, name: 'default' }),
-  ).toBeTruthy()
-  expect(
-    before(h2, within(main).getByText(en('instance-not-found', 'default'))),
-  ).toBe(true)
-  expect(before(h2, home)).toBe(true)
-})
-
 test('1a.20 (2.6): while /api/instances fails, the page shows the id, the Overview message and no Server section', async () => {
   for (const [what, answer, key] of [
     [
@@ -195,6 +182,7 @@ test('1a.20 (2.6): while /api/instances fails, the page shows the id, the Overvi
       'instances-failed',
     ],
   ] as const) {
+    startAt('#/instances/default')
     const bff = fakeBff({ instances: answer })
     render(<App />)
     const main = screen.getByRole('main')
@@ -203,20 +191,19 @@ test('1a.20 (2.6): while /api/instances fails, the page shows the id, the Overvi
       within(main).getByRole('heading', { level: 1, name: 'default' }),
       what,
     ).toBeTruthy()
-    expect(
-      within(main).queryByRole('heading', {
-        level: 2,
-        name: en('server-title'),
-      }),
-      what,
-    ).toBeNull()
+    for (const key of ['server-title', 'instance-server-title'])
+      expect(
+        within(main).queryByRole('heading', { level: 2, name: en(key) }),
+        `${what}: ${key}`,
+      ).toBeNull()
     expect(bff.to('GET', '/api/instances/default/server'), what).toHaveLength(0)
     cleanup()
     vi.unstubAllGlobals()
   }
 })
 
-test('1a.20 (2.6): while the instances list loads, the h1 shows at once with a loading status', async () => {
+test('1a.20 (2.6, 17a.10): while the instances list loads, the h1 shows at once with a loading status, and the answer brings no Server form', async () => {
+  startAt('#/instances/default')
   // The nav reads the list too: each read gets its own Response, since a
   // body can be read only once.
   const gate = deferred()
@@ -243,16 +230,20 @@ test('1a.20 (2.6): while the instances list loads, the h1 shows at once with a l
   await act(async () => {
     gate.resolve(reply(204))
   })
-  await within(main).findByRole('heading', {
-    level: 3,
-    name: en('server-network'),
-  })
+  await within(main).findByRole('button', { name: en('run-stop') })
   expect(within(main).queryByText(en('loading'))).toBeNull()
+  expect(
+    within(main).queryByRole('heading', {
+      level: 3,
+      name: en('server-network'),
+    }),
+    '17a.10: the form is on the profile page',
+  ).toBeNull()
 })
 
 test('1a.24: while the server read runs, a status paragraph says server-loading', async () => {
   const pending = deferred()
-  fakeBff({ server: () => pending.promise })
+  fakeBff({ serverProfile: () => pending.promise })
   render(<App />)
   const main = screen.getByRole('main')
   const status = await within(main).findByText(en('server-loading'))
@@ -271,7 +262,7 @@ test('1a.24: while the server read runs, a status paragraph says server-loading'
 test('1a.24: a 401 on the server read shows the sign-in form in place of the form', async () => {
   let reads = 0
   const bff = fakeBff({
-    server: () =>
+    serverProfile: () =>
       ++reads === 1
         ? reply(401, { key: 'session-required', args: [] })
         : reply(200, serverDoc()),
@@ -291,7 +282,7 @@ test('1a.24: a 401 on the server read shows the sign-in form in place of the for
     }),
   ).toBeNull()
   // As on any protected page (2.2): the route stays, the form says why.
-  expect(window.location.hash).toBe('#/instances/default')
+  expect(window.location.hash).toBe('#/profiles/server/default')
   // 09 S1b.3: the read answered 401 while the app was signed in, so the notice
   // says the session ended (it is `signin-required` on a first load signed out).
   expect(within(main).getByText(en('signin-session-ended'))).toBeTruthy()
@@ -320,8 +311,8 @@ test('1a.24: a 401 on the server read shows the sign-in form in place of the for
     level: 3,
     name: en('server-network'),
   })
-  expect(window.location.hash).toBe('#/instances/default')
-  expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(2)
+  expect(window.location.hash).toBe('#/profiles/server/default')
+  expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(2)
 })
 
 test('1a.24: 403 and 503 show their api- message in place of the form', async () => {
@@ -329,7 +320,7 @@ test('1a.24: 403 and 503 show their api- message in place of the form', async ()
     [403, 'client-not-authorized', en('api-client-not-authorized')],
     [503, 'client-unavailable', en('api-client-unavailable')],
   ] as const) {
-    fakeBff({ server: () => reply(status, { key, args: [] }) })
+    fakeBff({ serverProfile: () => reply(status, { key, args: [] }) })
     render(<App />)
     const main = screen.getByRole('main')
     expect(await within(main).findByText(english), key).toBeTruthy()
@@ -360,9 +351,10 @@ const SERVER_LOAD_FAILURES: [string, () => Response | Promise<Response>][] = [
 ]
 
 test.each(SERVER_LOAD_FAILURES)(
-  '1a.24: anything else, malformed included, shows server-load-failed, never the body: %s',
-  async (what, server) => {
-    fakeBff({ server })
+  '1a.24 (17a.6): anything else, malformed included, shows server-load-failed, never the body: %s',
+  async (what, serverProfile) => {
+    // 17a moved the server document: the read that fails is the profile page's.
+    fakeBff({ serverProfile })
     render(<App />)
     const main = screen.getByRole('main')
     expect(
@@ -381,6 +373,8 @@ test.each(SERVER_LOAD_FAILURES)(
 // ── The header ──────────────────────────────────────────────────────────
 
 test('1a.20: the header shows the id as h1, the engine, then the state with its shape', async () => {
+  // The header line is the instance page's (17a.10).
+  startAt('#/instances/default')
   fakeBff()
   render(<App />)
   const main = screen.getByRole('main')
@@ -404,24 +398,25 @@ test('1a.20: the header shows the id as h1, the engine, then the state with its 
   expect(shape!.textContent ?? '').toBe('')
 })
 
-test('1a.20, 1c.41b: the server file and the session are read once on open; only the instances are polled', async () => {
+test('1a.20, 1c.41b (17a.10): the session is read once on open, no server file at all, and only the instances are polled', async () => {
   // Fake timers from the start, so an interval set at mount is caught too;
   // shouldAdvanceTime keeps the findBy* waits running.
   vi.useFakeTimers({ shouldAdvanceTime: true })
+  startAt('#/instances/default')
   try {
     const bff = fakeBff()
     render(<App />)
     const main = screen.getByRole('main')
-    await within(main).findByRole('heading', {
-      level: 3,
-      name: en('server-network'),
-    })
+    await within(main).findByRole('button', { name: en('run-stop') })
     expect(bff.to('GET', '/api/instances').length).toBeGreaterThan(0)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(65_000)
     })
     // The instances are polled from 1c (RunControls.test.tsx); nothing else is.
-    expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(1)
+    expect(
+      bff.to('GET', '/api/instances/default/server'),
+      '17a.10: the page reads no server file',
+    ).toHaveLength(0)
     expect(bff.to('GET', '/api/session')).toHaveLength(1)
   } finally {
     vi.useRealTimers()
@@ -442,15 +437,15 @@ test('1a.20: an unknown state is shown by its name in the header', async () => {
   ).toBeTruthy()
 })
 
-test('1a.22: no tab list; the Server section follows the header', async () => {
-  const main = await loaded()
+test('1a.22 (17a.10): no tab list; the Server profile section follows the header', async () => {
+  const main = await loadedInstance()
   expect(within(main).queryByRole('tablist')).toBeNull()
   const headings = within(main)
     .getAllByRole('heading')
     .map((h) => `${h.tagName}:${h.textContent}`)
   expect(headings.slice(0, 2)).toEqual([
     'H1:default',
-    `H2:${en('server-title')}`,
+    `H2:${en('instance-server-title')}`,
   ])
 })
 
@@ -462,7 +457,7 @@ test('1a.23: the section has its h2 and the intro naming server@<id>.ini', async
     within(main).getByRole('heading', { level: 2, name: en('server-title') }),
   ).toBeTruthy()
   expect(
-    within(main).getByText(en('server-intro', 'server@default.ini')),
+    within(main).getByText(en('server-profile-intro', 'server@default.ini')),
   ).toBeTruthy()
 })
 
@@ -648,7 +643,7 @@ test('1a.25: each control shows the value of the file (Advanced, snapshots, SDK 
 
 test('1a.25: unset values show their defaults, other values their own branch', async () => {
   const main = await loaded({
-    server: () =>
+    serverProfile: () =>
       reply(
         200,
         serverDoc({
@@ -788,7 +783,7 @@ function switches(main: HTMLElement): Record<string, boolean> {
 
 test('5.2: an unset Web UI shows ticked (the default), every other unset switch unticked', async () => {
   const main = await loaded({
-    server: () => reply(200, serverDoc(SWITCHES_UNSET)),
+    serverProfile: () => reply(200, serverDoc(SWITCHES_UNSET)),
   })
   expect(switches(main)).toEqual({
     'Web UI': true,
@@ -802,14 +797,15 @@ test('5.2: an unset Web UI shows ticked (the default), every other unset switch 
 
 test('5.2: a Web UI set to false shows unticked', async () => {
   const main = await loaded({
-    server: () => reply(200, serverDoc({ ...SWITCHES_UNSET, Webui: false })),
+    serverProfile: () =>
+      reply(200, serverDoc({ ...SWITCHES_UNSET, Webui: false })),
   })
   expect(switches(main)['Web UI']).toBe(false)
 })
 
 test('1a.25: a set Base URL and Max models show their value, an unset API key No key', async () => {
   const main = await loaded({
-    server: () =>
+    serverProfile: () =>
       reply(
         200,
         serverDoc({
@@ -866,7 +862,7 @@ test('1a.25: the log level is clamped to 0..5 and Bind to matches without case',
     [-2, 'OUTPUT:0'],
   ] as const) {
     const main = await loaded({
-      server: () =>
+      serverProfile: () =>
         reply(200, serverDoc({ LogVerbosity: level, Hostname: 'LocalHost' })),
     })
     expect(
@@ -982,7 +978,7 @@ test('1a.27d (2.8): a session whose document withholds the key gets server-load-
       withheldDoc(null, ['Other', 'OpencodeApiKey']),
     ],
   ] as const) {
-    fakeBff({ server: () => reply(200, doc) })
+    fakeBff({ serverProfile: () => reply(200, doc) })
     render(<App />)
     const main = screen.getByRole('main')
     expect(
@@ -1010,7 +1006,7 @@ test('1a.27d (2.8): a session whose document withholds the key gets server-load-
 test('1a.27a (2.8): a withheld that does not name the key picks the form of 5.2, for every session', async () => {
   for (const withheld of [[], ['Other'], null]) {
     const main = await loaded({
-      server: () => reply(200, serverDoc({}, { withheld })),
+      serverProfile: () => reply(200, serverDoc({}, { withheld })),
     })
     const what = JSON.stringify(withheld)
     expect(noKey(main).checked, what).toBe(false)
@@ -1027,7 +1023,7 @@ test('1a.27a (2.8): a withheld that does not name the key picks the form of 5.2,
 // is not rendered at all, for every session.
 test('1a.27e (2.8): a withheld key is rendered nowhere, even when the bff sends it anyway', async () => {
   fakeBff({
-    server: () => reply(200, withheldDoc('sk-test')),
+    serverProfile: () => reply(200, withheldDoc('sk-test')),
   })
   render(<App />)
   const main = screen.getByRole('main')
@@ -1054,17 +1050,14 @@ test('1a.27e (2.8): a withheld key is rendered nowhere, even when the bff sends 
     [...serverSection!.querySelectorAll('input')].map((i) => i.type),
     'no key box',
   ).toEqual([])
-  // Page-wide (brief 12 section 3 put the Instance tags field in the header,
-  // brief 15 section 3 made it chips): the page has exactly one input while no
-  // new-tag pill is open, and the scan names it.
+  // Page-wide, on the profile page this test loads (17a.6): 17a.10 moved the
+  // Start at boot checkbox and the Instance tags chips to the instance page,
+  // so when the form is not rendered the page holds no input at all.
   const inputs = [...main.querySelectorAll<HTMLInputElement>('input')]
   expect(
     inputs.map((i) => i.type),
-    "the page-wide input is exactly the Start at boot checkbox: no box anywhere on the page can hold a key (brief 15: the tags field's box exists only inside an open pill)",
-  ).toEqual(['checkbox'])
-  expect(inputs[0], "the checkbox is the header's Start at boot").toBe(
-    within(main).getByRole('checkbox', { name: en('boot-toggle') }),
-  )
+    'no box anywhere on the page can hold a key',
+  ).toEqual([])
 })
 
 // 27c rewritten by "Administrators only" (R2): the read-only shape of the field is
@@ -1073,7 +1066,7 @@ test('1a.27e (2.8): a withheld key is rendered nowhere, even when the bff sends 
 test('1a.27c (2.8): with no key every session gets No key ticked and editable, the box empty and enabled, Show disabled', async () => {
   for (const key of [null, '']) {
     const main = await loaded({
-      server: () => reply(200, serverDoc({ OpencodeApiKey: key })),
+      serverProfile: () => reply(200, serverDoc({ OpencodeApiKey: key })),
     })
     const what = JSON.stringify(key)
     // 5.2: No key ticked; 5.3: with No key ticked the box and Show are disabled.
@@ -1133,12 +1126,13 @@ function nameOf(el: HTMLElement): string {
     .trim()
 }
 
-// "Administrators only" (section 6): the tab path is the editable form's, for every
-// signed-in session. The shell, then per field its About toggle and the controls the
-// form leaves enabled: a textbox on default or auto is disabled (Port, Base URL, CPU
-// threads, Max models and Memory margin show only their box), the Bind to boxes all
-// ticked are disabled (5.2), so only the absent interface and the wildcard are.
-const TAB_PATH = [
+// "Administrators only" (section 6): the tab path is the editable form's, for
+// every signed-in session. The shell, then per field its About toggle and the
+// controls the form leaves enabled: a textbox on default or auto is disabled
+// (Port, Base URL, CPU threads, Max models and Memory margin show only their
+// box), the Bind to boxes all ticked are disabled (5.2), so only the absent
+// interface and the wildcard are.
+const SHELL = [
   en('skip-to-content'),
   en('app-name'),
   en('nav-menu'),
@@ -1150,11 +1144,19 @@ const TAB_PATH = [
   'default',
   'coder',
   // Brief 20 (20 N.7): Node info sits in the host list, after its instances,
-  // and fe/briefs/02-models.md 2a criterion 1 keeps Model profiles after it.
+  // and fe/briefs/02-models.md 2a criterion 1 keeps Model profiles after it,
+  // where brief 16 (17a.2) puts the new Server profiles before them.
   en('nav-node'),
+  en('nav-server-profiles'),
   en('nav-model-profiles'),
   // Slice 13: About is the nav's last entry, so it precedes the page.
   en('nav-about'),
+]
+
+/** The instance page's path (17a.10: the form is gone, the tags field is the
+ *  page's last one, and the Server profile section shows a link, not a box). */
+const TAB_PATH_INSTANCE = [
+  ...SHELL,
   // The header's run buttons, inactive ones included, then Start at boot's
   // About toggle and its box (1c.45b, 46a: the box is enabled for every session).
   en('run-start'),
@@ -1164,9 +1166,20 @@ const TAB_PATH = [
   en('boot-toggle'),
   // fe/briefs/12-instance-tags.md, section 5, as fe/briefs/15-tag-chips.md
   // section 3 leaves it: the field's About toggle, then the + button (the
-  // instances of this fixture have no tags, so the field shows no chip).
+  // instances of this fixture have no tags, so the field shows no chip). The
+  // Server profile row of 17a.10 names no control: its instance has no server
+  // profile, so the row is the muted text, with no link.
   about(en('instance-tags-own')),
   en('instance-tag-add'),
+]
+
+/** The server profile page's path (17a.5): the shell, Back, the Used by link,
+ *  then the form, then its save bar. */
+const TAB_PATH_FORM = [
+  ...SHELL,
+  en('server-profile-back'),
+  // 17a.5: the one Value row, the instance that runs this profile.
+  'default',
   ...[
     [about('Port'), en('option-default'), 'Port'],
     [
@@ -1203,9 +1216,27 @@ const TAB_PATH = [
   en('save-button'),
 ]
 
-test('6: Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the run buttons, Start at boot, then every control of the editable form in table order', async () => {
+test('6 (17a.10): Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the run buttons, Start at boot and Instance tags, and no control of a Server form', async () => {
+  const main = await loadedInstance()
+  // Start at boot is read on its own after the page opens (1c.45): the field
+  // renders nothing until that answer lands (`value === undefined`), so the
+  // tab path is taken once its checkbox is there, as InstanceTagChips C1.2
+  // does. A snapshot taken at the run buttons is of a page still loading the
+  // field, and reads 2 stops short.
+  await within(main).findByRole('checkbox', { name: en('boot-toggle') })
+  expect(tabbable().map(nameOf)).toEqual(TAB_PATH_INSTANCE)
+  expect(
+    screen
+      .getByRole('heading', { level: 1, name: 'default' })
+      .getAttribute('tabindex'),
+    'the h1 takes focus only from the page (tabindex -1)',
+  ).toBe('-1')
+  expect(main.querySelector('.save-bar'), 'no save bar').toBeNull()
+})
+
+test('6: Tab goes the shell, Back, the Used by link, then every control of the editable form in table order, then the save bar', async () => {
   await loaded()
-  expect(tabbable().map(nameOf)).toEqual(TAB_PATH)
+  expect(tabbable().map(nameOf)).toEqual(TAB_PATH_FORM)
   // The h1 takes focus only from the page (tabindex -1).
   expect(
     screen
@@ -1244,3 +1275,187 @@ test('6: in a field the default box comes before its textbox, the About toggle a
     before(apiKey(main), key.getByRole('button', { name: en('field-show') })),
   ).toBe(true)
 })
+
+// ── Brief 16, 17a.10: the page loses the Server form ────────────────────
+
+/** The instance page's Server profile section, once the list answered. */
+async function profileSection(main: HTMLElement): Promise<HTMLElement> {
+  const h2 = await within(main).findByRole('heading', {
+    level: 2,
+    name: en('instance-server-title'),
+  })
+  return h2.parentElement!
+}
+
+/** The Value list of a section. */
+function assetRows(section: HTMLElement): [string, string][] {
+  const dl = section.querySelector('dl.assets')
+  expect(dl, 'a Value list').not.toBeNull()
+  return [...dl!.querySelectorAll('dt')].map((dt, i) => [
+    (dt.textContent ?? '').trim(),
+    (dl!.querySelectorAll('dd')[i]?.textContent ?? '').trim(),
+  ])
+}
+
+/** The tags field: the page's one field, whose writes brief 15 guards. */
+function tagsField(main: HTMLElement): HTMLElement {
+  return within(main).getByRole('group', { name: en('instance-tags-own') })
+}
+
+test('16 17a.10: the instance page reads and writes no server file, and shows no Server form, no h2 server-title and no save bar', async () => {
+  const bff = fakeBff()
+  const main = await loadedInstance()
+  expect(
+    within(main).queryByRole('heading', {
+      level: 2,
+      name: en('server-title'),
+    }),
+    'the Server section is on the profile page',
+  ).toBeNull()
+  expect(
+    within(main).queryByRole('heading', {
+      level: 3,
+      name: en('server-network'),
+    }),
+    'no form',
+  ).toBeNull()
+  expect(main.querySelector('.save-bar'), 'no save bar').toBeNull()
+  expect(
+    within(main).queryByRole('button', { name: en('save-button') }),
+    'no Save',
+  ).toBeNull()
+  expect(
+    bff.to('GET', '/api/instances/default/server'),
+    'no read of the server file',
+  ).toHaveLength(0)
+  expect(
+    bff.to('GET', '/api/profiles/server/default'),
+    'nor of the profile file',
+  ).toHaveLength(0)
+  expect(
+    bff.calls.filter((c) => c.method === 'PUT'),
+    'nothing written',
+  ).toEqual([])
+})
+
+test('16 17a.10: after the tags field, a section with h2 instance-server-title holds a Value row naming the list item’s serverProfile as a link to its page', async () => {
+  const main = await loadedInstance({
+    instances: [
+      {
+        id: 'default',
+        engine: 'llama.cpp',
+        state: 'active',
+        serverProfile: 'edge box',
+      },
+    ],
+  })
+  const section = await profileSection(main)
+  expect(assetRows(section)).toEqual([
+    [en('instance-server-title'), 'edge box'],
+  ])
+  const link = within(section).getByRole('link', { name: 'edge box' })
+  expect(link.getAttribute('href')).toBe(serverProfileHref('edge box'))
+  expect(
+    before(tagsField(main), section),
+    'the section follows the tags field',
+  ).toBe(true)
+})
+
+test('16 17a.10: an instance naming no server profile shows instance-server-none, muted, with no link', async () => {
+  const main = await loadedInstance({
+    instances: [
+      {
+        id: 'default',
+        engine: 'llama.cpp',
+        state: 'active',
+        serverProfile: null,
+      },
+    ],
+  })
+  const section = await profileSection(main)
+  expect(assetRows(section)).toEqual([
+    [en('instance-server-title'), en('instance-server-none')],
+  ])
+  expect(within(section).queryByRole('link'), 'no link').toBeNull()
+  const dd = section.querySelector('dl.assets dd')
+  expect(dd!.className, 'muted').toContain('muted')
+})
+
+test('16 17a.10: the row follows every list answer: a polled answer that gives the instance a profile turns the text into a link', async () => {
+  // The row follows the polls, and the polls run on fake seconds (IDLE_MS):
+  // the clock is faked, so the test steps onto the next read.
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    // The test owns the fake bff (loadedInstance() stubs one of its own), so
+    // the page is opened here.
+    const bff = fakeBff()
+    startAt('#/instances/default')
+    render(<App />)
+    const main = screen.getByRole('main')
+    await within(main).findByRole('button', { name: en('run-stop') })
+    const section = await profileSection(main)
+    expect(assetRows(section)[0][1], 'the fixture names no profile').toBe(
+      en('instance-server-none'),
+    )
+    bff.setInstances([
+      {
+        id: 'default',
+        engine: 'llama.cpp',
+        state: 'active',
+        serverProfile: 'edge-01',
+      },
+    ])
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000)
+    })
+    await within(main).findByRole('link', { name: 'edge-01' })
+    expect(assetRows(await profileSection(main))).toEqual([
+      [en('instance-server-title'), 'edge-01'],
+    ])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('16 17a.10: leaving asks only for the tags: an open tag pill asks with the discard dialog, and Confirm leaves at once', async () => {
+  const dialogs = stubDialog()
+  try {
+    const main = await loadedInstance()
+    expect(asksBrowser(), 'nothing open: the browser is not asked').toBe(false)
+    const add = within(tagsField(main)).getByRole('button', {
+      name: en('instance-tag-add'),
+    })
+    fireEvent.click(add)
+    const pill = within(tagsField(main)).getByRole('combobox', {
+      name: en('instance-tag-new'),
+    }) as HTMLInputElement
+    fireEvent.change(pill, { target: { value: 'fast' } })
+    fireEvent.click(
+      within(
+        screen.getByRole('navigation', { name: en('nav-label') }),
+      ).getByRole('link', { name: en('nav-overview') }),
+    )
+    const d = await screen.findByRole('dialog', { name: en('discard-title') })
+    expect(dialogs.opened, 'opened with showModal()').toContain(d)
+    expect(
+      window.location.hash,
+      'the page is still there while the question is open',
+    ).toBe('#/instances/default')
+    fireEvent.click(
+      within(d).getByRole('button', { name: en('discard-confirm') }),
+    )
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(window.location.hash, 'left').toBe('#/')
+  } finally {
+    dialogs.restore()
+  }
+})
+
+/** Asks the browser whether leaving the page would be held. */
+function asksBrowser(): boolean {
+  const e = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(e)
+  return e.defaultPrevented
+}

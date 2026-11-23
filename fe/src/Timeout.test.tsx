@@ -101,7 +101,10 @@ function list(state: string): Instance[] {
 }
 
 /** The app at `hash` (signed in as an administrator by default), loaded. */
-async function open(options: BffOptions = {}, hash = '#/instances/default') {
+async function open(
+  options: BffOptions = {},
+  hash = '#/profiles/server/default',
+) {
   fakeClock()
   startAt(hash)
   const bff = fakeBff(options)
@@ -110,7 +113,7 @@ async function open(options: BffOptions = {}, hash = '#/instances/default') {
   return { bff, main: screen.getByRole('main') }
 }
 
-/** The instance page with its header and Server form shown. */
+/** The server profile page with its header and Server form shown. */
 async function loaded(options: BffOptions = {}) {
   const { bff, main } = await open(options)
   expect(
@@ -120,6 +123,16 @@ async function loaded(options: BffOptions = {}) {
     }),
     'the Server form is loaded',
   ).not.toBeNull()
+  return { bff, main }
+}
+
+/** The instance page with its run controls shown (17a.10: no form, no bar). */
+async function loadedInstance(options: BffOptions = {}) {
+  const { bff, main } = await open(options, '#/instances/default')
+  expect(
+    within(main).getByRole('button', { name: en('run-stop') }),
+    'the run controls are shown',
+  ).toBeTruthy()
   return { bff, main }
 }
 
@@ -159,11 +172,23 @@ function inactiveSet(main: HTMLElement): boolean[] {
   )
 }
 
+/**
+ * The section the page's content splits at: the Server section's `h2` on the
+ * profile page (17a.5), the Server profile section's on the instance page
+ * (17a.10), where there is no form.
+ */
 function serverTitle(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('heading', {
+  const form = within(main).queryByRole('heading', {
     level: 2,
     name: en('server-title'),
   })
+  return (
+    form ??
+    within(main).getByRole('heading', {
+      level: 2,
+      name: en('instance-server-title'),
+    })
+  )
 }
 
 function inBoot(main: HTMLElement, el: HTMLElement): boolean {
@@ -217,14 +242,14 @@ function stateText(stateKey: string): string {
   return en('instance-state', en(stateKey))
 }
 
-const PUT = ['PUT', '/api/instances/default/server'] as const
+const PUT = ['PUT', '/api/profiles/server/default'] as const
 
 // ── Failure paths first: what a timed-out call shows (47b to 47d) ───────
 
 test('1c.47d, 47e: a save held to 120 000 ms shows save-timeout in the bar alert; edits kept, dirty, the next Save sends the same revision', async () => {
   const h = held()
   const { bff, main } = await loaded({
-    save: (_body, n, init) =>
+    serverProfileSave: (_body, n, init) =>
       n === 1
         ? h.answer(init)
         : reply(200, { revision: 'r-2', running: false }),
@@ -269,7 +294,7 @@ test('1c.47d, 47e: a save held to 120 000 ms shows save-timeout in the bar alert
 
 test('1c.47b, 47e: a run POST held to 120 000 ms shows request-failed, empties the status, and the idle poll reads 5 000 ms later', async () => {
   const h = held()
-  const { bff, main } = await loaded({
+  const { bff, main } = await loadedInstance({
     instances: list('active'),
     run: (_action, _id, _n, init) => h.answer(init),
   })
@@ -333,7 +358,7 @@ test('1c.47b, 47e: a sign-in held to 120 000 ms shows signin-failed and the butt
 })
 
 test('1c.47c, 47e: a held idle read is aborted 15 000 ms after it was sent; the state stays, nothing shown; one new GET 5 000 ms later', async () => {
-  const { bff, main } = await loaded({ instances: list('active') })
+  const { bff, main } = await loadedInstance({ instances: list('active') })
   const h = held()
   bff.setInstances(h.answer)
   await advance(5000)
@@ -408,7 +433,7 @@ test('1c.47, 47e: a PUT held is not aborted at 119 999 ms; at 120 000 ms it is, 
   fakeClock()
   const h = heldFetch()
   const seen = outcome(
-    call('/api/instances/default/server', { method: 'PUT', body: '{}' }),
+    call('/api/profiles/server/default', { method: 'PUT', body: '{}' }),
   )
   await advance(0)
   const signal = h.signals[0]

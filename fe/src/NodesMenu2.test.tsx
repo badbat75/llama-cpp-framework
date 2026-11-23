@@ -265,7 +265,9 @@ test('20 N.7: the Node info link carries aria-current="page" on #/node and none 
 
 // ── 20 N.8: Profiles ────────────────────────────────────────────────────────
 
-test('20 N.8: the Profiles group is p#nav-profiles reading nav-profiles, text only, and its list holds the Model profiles link only, with no Server profiles entry anywhere in the nav', async () => {
+// Brief 16, 17a.2, added the Server profiles entry to this group: the group is
+// the same, the list holds the two entries, Server profiles first.
+test('20 N.8 (17a.2): the Profiles group is p#nav-profiles reading nav-profiles, text only, and its list holds the Server profiles and the Model profiles link, in that order', async () => {
   const { nav } = await open({ version: VERSION_HOST, instances: TWO })
   const label = byId('nav-profiles')
   expect(label?.tagName, 'a paragraph, like every nav label').toBe('P')
@@ -281,25 +283,25 @@ test('20 N.8: the Profiles group is p#nav-profiles reading nav-profiles, text on
   expect(list, 'the list is named by the label').not.toBeNull()
   expect(
     Array.from(list!.querySelectorAll('a')).map((a) => a.getAttribute('href')),
-    'Model profiles only (decision 6)',
-  ).toEqual(['#/profiles/model'])
-  expect(
-    navLinks(nav).filter((a) =>
-      (a.getAttribute('href') ?? '').startsWith('#/profiles/server'),
-    ).length,
-    'no Server profiles entry: its page is slice 17a',
-  ).toBe(0)
+    'Server profiles, then Model profiles',
+  ).toEqual(['#/profiles/server', '#/profiles/model'])
 })
 
-test('20 N.8: the Model profiles entry keeps 2d.64 (page on the list, true on a profile page), and #/profiles/server is not a route: the not-found page, with no nav entry current', async () => {
-  // The route rule of 20 N.8, on the function the shell routes with.
-  expect(
-    parseRoute('#/profiles/server'),
-    'no Server profiles page in this slice',
-  ).toEqual({ page: 'not-found' })
+test('20 N.8 (17a.1, 17a.2): the Model profiles entry keeps 2d.64 (page on the list, true on a profile page), and #/profiles/server is the list page, with the group entry current', async () => {
+  // The route rule of 20 N.8, on the function the shell routes with. Brief 16
+  // 17a.1 gave the address a page.
+  expect(parseRoute('#/profiles/server'), 'the list').toEqual({
+    page: 'server-profiles',
+  })
+  expect(parseRoute('#/profiles/server/edge-01'), 'one profile').toEqual({
+    page: 'server-profile',
+    id: 'edge-01',
+  })
   const { nav } = await open({ version: VERSION_HOST, instances: TWO })
   const model = () =>
     within(nav).getByRole('link', { name: en('nav-model-profiles') })
+  const server = () =>
+    within(nav).getByRole('link', { name: en('nav-server-profiles') })
   expect(model().hasAttribute('aria-current'), 'not on the Overview').toBe(
     false,
   )
@@ -315,14 +317,21 @@ test('20 N.8: the Model profiles entry keeps 2d.64 (page on the list, true on a 
     'true',
   )
   navigate('#/profiles/server')
-  expect(
-    await screen.findByText(en('not-found')),
-    'the address of the missing page is the not-found page',
-  ).toBeTruthy()
-  expect(
-    model().hasAttribute('aria-current'),
-    'and no nav entry is current there',
-  ).toBe(false)
+  await screen.findByRole('heading', {
+    level: 1,
+    name: en('server-profiles-title'),
+  })
+  expect(server().getAttribute('aria-current'), 'page on the pool list').toBe(
+    'page',
+  )
+  expect(model().hasAttribute('aria-current'), 'not the other entry').toBe(
+    false,
+  )
+  navigate('#/profiles/server/edge-01')
+  await screen.findByRole('heading', { level: 1, name: 'edge-01' })
+  expect(server().getAttribute('aria-current'), 'true on a profile page').toBe(
+    'true',
+  )
 })
 
 // ── 20 N.9: About, alone in the last list ───────────────────────────────────
@@ -391,6 +400,7 @@ test('20 N.10: at #/about the Tab path is the shell, Overview, the two instance 
     'default · qwen-27b',
     'coder',
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
   ])
@@ -420,6 +430,7 @@ test('20 N.10: the Menu button opens the nav holding the same links in the same 
     'default · qwen-27b',
     'coder',
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
   ])

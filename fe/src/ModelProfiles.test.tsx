@@ -564,6 +564,7 @@ test('2a.1: signed in, the nav holds Overview, the instance links, then Model pr
     'coder',
     // 20 N.7: Node info is in the host list, after its instances.
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     // 13 N.6: About, last.
     en('nav-about'),
@@ -585,6 +586,7 @@ test('2a.1: a failed instances read leaves out the instance links, not Model pro
   expect(navLinks()).toEqual([
     en('nav-overview'),
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
   ])
@@ -898,6 +900,7 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
     'coder',
     // 20 N.7: Node info is in the host list, after its instances.
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     // 13 N.6: About, last, both before the page.
     en('nav-about'),

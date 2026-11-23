@@ -170,6 +170,14 @@ const SHAPES: Record<string, Shape[]> = {
     ['line', { x1: '12', x2: '12', y1: '8', y2: '12' }],
     ['line', { x1: '12', x2: '12.01', y1: '16', y2: '16' }],
   ],
+  // Brief 16 (17a.2, decision 1): the Server profiles entry. lucide-static
+  // 1.74.0 icons/server.svg.
+  server: [
+    ['rect', { width: '20', height: '8', x: '2', y: '2', rx: '2', ry: '2' }],
+    ['rect', { width: '20', height: '8', x: '2', y: '14', rx: '2', ry: '2' }],
+    ['line', { x1: '6', x2: '6.01', y1: '6', y2: '6' }],
+    ['line', { x1: '6', x2: '6.01', y1: '18', y2: '18' }],
+  ],
 }
 
 const NAMES = Object.keys(SHAPES)
@@ -326,7 +334,7 @@ test.each(NAMES)(
 
 // ── H8a.2: the nav ────────────────────────────────────────────────────────
 
-test('H8a.2: the Overview link holds Icon house then its text, the Model profiles link Icon layers, the Node info link Icon cpu, the About link Icon info, each instance link Icon box, the host label Icon computer, and the names by role are unchanged', async () => {
+test('H8a.2: the Overview link holds Icon house then its text, the Server profiles link Icon server (17a.2), the Model profiles link Icon layers, the Node info link Icon cpu, the About link Icon info, each instance link Icon box, the host label Icon computer, and the names by role are unchanged', async () => {
   openApp()
   const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'default' })
@@ -341,6 +349,17 @@ test('H8a.2: the Overview link holds Icon house then its text, the Model profile
   })
   expectIcon(profiles, 'layers', 'the Model profiles link')
   expect(text(profiles), 'and its name').toBe(en('nav-model-profiles'))
+  // Brief 16, 17a.2 (decision 1): the Server profiles entry joins the group,
+  // before it, with the `server` icon.
+  const serverProfiles = within(nav).getByRole('link', {
+    name: en('nav-server-profiles'),
+  })
+  expectIcon(serverProfiles, 'server', 'the Server profiles link (17a.2)')
+  expect(text(serverProfiles), 'and its name').toBe(en('nav-server-profiles'))
+  expect(
+    before(serverProfiles, profiles),
+    '17a.2: Server profiles sits before Model profiles',
+  ).toBe(true)
   const node = within(nav).getByRole('link', { name: en('nav-node') })
   expectIcon(node, 'cpu', 'the Node info link (18 AN.6)')
   expect(text(node), 'and its name').toBe(en('nav-node'))
@@ -364,8 +383,8 @@ test('H8a.2: the Overview link holds Icon house then its text, the Model profile
   }
   expect(
     nav.querySelectorAll('svg.icon').length,
-    'seven icons in the nav: Overview, the host label, the two instance links, Node info, Model profiles, About (20 N.4, N.5, N.7, N.8, N.9)',
-  ).toBe(7)
+    'eight icons in the nav: Overview, the host label, the two instance links, Node info, Server profiles, Model profiles, About (20 N.4, N.5, N.7, N.8, N.9, 17a.2)',
+  ).toBe(8)
 })
 
 // ── H8a.3: the banner ─────────────────────────────────────────────────────
@@ -491,9 +510,10 @@ test('H8a.3: ThemeSwitch.tsx renders Icon and holds no drawing of its own (comme
 
 test.each([
   // Brief 20 (20 N.4, N.5): the nav gains the host label's computer and one
-  // box per instance link, so the signed-in nav draws seven: Overview, the
-  // host, its two instances, Node info, Model profiles, About (as H8a.2).
-  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 7 },
+  // box per instance link; brief 16 (17a.2) the Server profiles entry's
+  // server. The signed-in nav draws eight: Overview, the host, its two
+  // instances, Node info, Server profiles, Model profiles, About (as H8a.2).
+  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 8 },
   // 09 S1a.4: signed out there is no nav, so the nav has no icon to sweep and
   // the banner has the theme icon only.
   {

@@ -28,6 +28,9 @@ export type IconName =
   // citation follows its name, where 20 N.11 reads the text after it.
   | 'box'
   // 20 N.5 (fe/briefs/20-nodes-menu.md): every instance link of the host list.
+  // 16 17a.2 (fe/briefs/16-server-profiles-and-instances.md, decision 1): the
+  // Server profiles entry of the Profiles group.
+  | 'server'
   | 'triangle-alert'
   | 'lock-open'
   | 'circle-alert'
@@ -134,6 +137,17 @@ const SHAPES: Record<IconName, ReactNode> = {
       <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
       <path d="m3.3 7 8.7 5 8.7-5" />
       <path d="M12 22V12" />
+    </>
+  ),
+  // 16 17a.2 (fe/briefs/16-server-profiles-and-instances.md, decision 1): the
+  // Server profiles entry. The path data is lucide-static 1.74.0
+  // icons/server.svg.
+  server: (
+    <>
+      <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+      <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+      <line x1="6" x2="6.01" y1="6" y2="6" />
+      <line x1="6" x2="6.01" y1="18" y2="18" />
     </>
   ),
   'triangle-alert': (

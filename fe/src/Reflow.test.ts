@@ -165,7 +165,7 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
   // these that sets it is a break no brief asked for.
   expect(
     sets('overflow-wrap'),
-    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, the rest are unchanged',
+    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, 16 17a review D1 adds the three cells of the Server profiles table, the rest are unchanged',
   ).toEqual(
     [
       'body = break-word',
@@ -177,6 +177,11 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
       'th, td = anywhere',
       '.model-profiles th = normal',
       '.model-profiles td:nth-child(2) = normal',
+      // Brief 16 slice 17a, its 17a review (D1, 2026-11-23): the same break the
+      // Model profiles columns keep, for the Server profiles table.
+      '.server-profiles th = normal',
+      '.server-profiles td:nth-child(2), .server-profiles td:nth-child(4) = normal',
+      '.server-profiles td:nth-child(3) = normal',
       '.tile-id = anywhere',
       '.tile-facts dd = anywhere',
       '.model-profile-summary = anywhere',
@@ -400,19 +405,22 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // malformed line, so the 720 px grid can place them beside the GPU list. Brief
 // 20 slice N1 (the nodes menu, 20 N.11) adds the twelfth: nav-instance, the
 // text run of an instance link, the span that lets the pill shrink and the long
-// id wrap. Brief 21's TP1 review (2026-11-23, D1) adds the row items of the
-// Tensor placement card; the review names their declarations and not their
-// names ("named by the class the coder gives them", 21 section 6), so the card's
-// classes are allowed by the card's own namespace, the `ot` of its strings keys
-// (model-profile-ot-*), and the `tensor`/`placement` of its card title: the
-// test names what that namespace is, and every class outside these and the
-// frozen list is a look no brief asked for.
+// id wrap. Brief 16 slice 17a's 17a review (the designer, 2026-11-23, D1) adds
+// the thirteenth: server-profiles, the class the review amends 17a.11 to give
+// the Server profiles table, so its headers, port and Used by cells stay one
+// line and its box scrolls at 320 px. Brief 21's TP1 review (2026-11-23, D1)
+// adds the row items of the Tensor placement card; the review names their
+// declarations and not their names ("named by the class the coder gives them",
+// 21 section 6), so the card's classes are allowed by the card's own namespace,
+// the `ot` of its strings keys (model-profile-ot-*), and the `tensor`/`placement`
+// of its card title: the test names what that namespace is, and every class
+// outside these and the frozen list is a look no brief asked for.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary server-profiles session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11 and brief 21 TP1 review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1 and brief 21 TP1 review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -427,7 +435,7 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
   const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
     [...used].filter((c) => !ofCard(c)).sort(),
-    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, tags-save gone, and nothing else outside the Tensor placement namespace (R1.8: a class the designer did not brief is a look nothing asked for)',
+    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, tags-save gone, and nothing else outside the Tensor placement namespace (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(
     [...used].filter(ofCard).sort(),
@@ -724,4 +732,52 @@ test('21 TP1 review D1 (as its D4 re-check of 2026-11-23 amends it): the Tensor 
     norm(prop(pattern.body, 'min-width')),
     'D1: its 120-character pattern has no break point, so the item is as wide as the pattern without this: min-width',
   ).toBe('0')
+})
+
+// ── 16 17a review (the designer, 2026-11-23): D1, the Server profiles table ──
+
+test('16 17a.11 as its 17a review D1 amends it: the sheet styles .server-profiles so its headers and its Port and Used by cells stay one line, its Tags cell breaks at the ", " spaces and its id keeps the base break, so the box scrolls at 320 px instead of squeezing', () => {
+  // The base rule `th, td { overflow-wrap: anywhere }` (index.css 728) lets every
+  // column shrink to one character, so at 320 px the headers "Server profile" and
+  // "Used by", the port 8080 and a 32-character id stood one letter per line and
+  // the box never scrolled (the review, sp17a/webkit-320-dark-list.png). The fix
+  // is the one the Model profiles table beside it already carries (index.css
+  // 759, 785): the table takes the class `server-profiles` (the markup half,
+  // ServerProfiles1) and these rules unbreak what is one short word, leaving the
+  // id to the inherited break and the tags to their ", " spaces. Measured by
+  // injection in the three engines at 320 px (the review: 590 of 286 px at
+  // 100 %, 1097 at 200 %, the id column 112 px), so this pins the declarations.
+  declares(
+    topBy('.server-profiles th', 'the Server profiles headers'),
+    'the Server profiles headers (16 17a review D1)',
+    [
+      ['white-space', 'nowrap'],
+      ['overflow-wrap', 'normal'],
+    ],
+    'the two of .model-profiles th (H2b.3): "Server profile", "Port", "Tags" and "Used by" stay one line each',
+  )
+  declares(
+    topBy(
+      '.server-profiles td:nth-child(2), .server-profiles td:nth-child(4)',
+      'the Port and Used by cells',
+    ),
+    'the Port and Used by cells (16 17a review D1)',
+    [
+      ['white-space', 'nowrap'],
+      ['overflow-wrap', 'normal'],
+    ],
+    "a port and an instance id are one word: broken they stand one letter per line, which is what squeezed the table. The review writes the two cells as one comma group, the sheet's style for a shared declaration; the id cell (nth-child(1)) and the tags cell (nth-child(3)) are not in it",
+  )
+  declares(
+    topBy('.server-profiles td:nth-child(3)', 'the Tags cell'),
+    'the Tags cell (16 17a review D1)',
+    [['overflow-wrap', 'normal']],
+    'the break at the ", " spaces is what wraps the tags between tags (17a.3: "text wraps and hides nothing"); no white-space, so the cell keeps wrapping and is never one long line, and no `anywhere`, so a 32-character tag is not split letter by letter',
+  )
+  for (const r of RULES)
+    for (const part of r.flat.split(','))
+      expect(
+        part.trim(),
+        '16 17a review D1: "the id keeps `anywhere`": no rule takes the base break away from the Server profiles id cell',
+      ).not.toBe('.server-profiles td:nth-child(1)')
 })

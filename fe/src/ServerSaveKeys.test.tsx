@@ -1,9 +1,9 @@
 // The server-document keys the Server form has no control for (PLAN.md "Fix
 // first (found at R2's docs)"): the save writes a key absent from `values` as
-// cleared (fe/briefs/api-contract.md, `PUT /api/instances/{id}/server` "A key
+// cleared (fe/briefs/api-contract.md, `PUT /api/profiles/server/{id}` "A key
 // absent from `values` is read as `null`"), so a save of this page must send
 // back every key it read and did not edit. The whole app renders at
-// #/instances/default against the fake bff of fe/src/test/bff.ts, as in
+// #/profiles/server/default against the fake bff of fe/src/test/bff.ts, as in
 // ServerSave.test.tsx. `Tags` must go back as a list: the bff answers 400
 // `server-malformed` for a null one, and for an absent one it writes the key
 // cleared.
@@ -31,7 +31,7 @@ import {
 let dialogs: ReturnType<typeof stubDialog>
 
 beforeEach(() => {
-  startAt('#/instances/default')
+  startAt('#/profiles/server/default')
   dialogs = stubDialog()
 })
 
@@ -50,7 +50,7 @@ afterEach(async () => {
 /** The keys of the read this form has no control for. */
 const KEPT = { Tags: ['a', 'b'], Devices: 'ROCm0,ROCm1' }
 
-const PUT = ['PUT', '/api/instances/default/server'] as const
+const PUT = ['PUT', '/api/profiles/server/default'] as const
 
 /** The page with the server form loaded for `options`. */
 async function loaded(options: BffOptions = {}) {
@@ -102,7 +102,7 @@ function sentValues(bff: ReturnType<typeof fakeBff>, n = 1) {
 
 test('R2 fix: a save sends Tags and Devices back exactly as they were read, beside the edited Port', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc(KEPT)),
+    serverProfile: () => reply(200, serverDoc(KEPT)),
   })
   editPort(main)
   await save(main, bff)
@@ -116,7 +116,7 @@ test('R2 fix: a save sends Tags and Devices back exactly as they were read, besi
 
 test('R2 fix: an empty Tags goes back as an empty list (a null one is 400 server-malformed) and an unset Devices as null', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc({ Tags: [], Devices: null })),
+    serverProfile: () => reply(200, serverDoc({ Tags: [], Devices: null })),
   })
   editPort(main)
   await save(main, bff)
@@ -137,7 +137,7 @@ test('R2 fix: every key of the read goes back as it was read, only the edited Po
     RocprofAttach: false,
     AttnRotDisable: false,
   })
-  const { bff, main } = await loaded({ server: () => reply(200, doc) })
+  const { bff, main } = await loaded({ serverProfile: () => reply(200, doc) })
   editPort(main)
   await save(main, bff)
   const sent = sentValues(bff)
@@ -149,7 +149,7 @@ test('R2 fix: every key of the read goes back as it was read, only the edited Po
 
 test('R2 fix: the keys survive the save they just went in: a second save sends them as they were read', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc(KEPT)),
+    serverProfile: () => reply(200, serverDoc(KEPT)),
   })
   editPort(main)
   await save(main, bff)
@@ -165,7 +165,7 @@ test('R2 fix: the keys survive the save they just went in: a second save sends t
 // coder must keep it so while making the saves above carry them.
 test('R2 fix: a document with Tags and Devices loads clean: the keys the form does not edit arm no save', async () => {
   const { bff, main } = await loaded({
-    server: () => reply(200, serverDoc(KEPT)),
+    serverProfile: () => reply(200, serverDoc(KEPT)),
   })
   expect(saveButton(main).getAttribute('aria-disabled')).toBe('true')
   fireEvent.click(saveButton(main))

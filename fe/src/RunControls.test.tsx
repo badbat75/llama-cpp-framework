@@ -110,9 +110,25 @@ async function open(options: BffOptions = {}, hash = '#/instances/default') {
   return { bff, main: screen.getByRole('main') }
 }
 
-/** The instance page with its header and Server form shown. */
+/** The instance page with its header and run controls shown. Brief 16 slice
+ * 17a took the Server form off this page: `loadedForm` is the page with it. */
 async function loaded(options: BffOptions = {}) {
   const { bff, main } = await open(options)
+  expect(
+    within(main).getByRole('button', { name: en('run-stop') }),
+    'the run controls are shown',
+  ).toBeTruthy()
+  return { bff, main }
+}
+
+/** The server profile page (17a.5), with its Server form shown. */
+async function loadedForm(options: BffOptions = {}) {
+  fakeClock()
+  startAt('#/profiles/server/default')
+  const bff = fakeBff(options)
+  render(<App />)
+  await flush()
+  const main = screen.getByRole('main')
   expect(
     within(main).queryByRole('heading', {
       level: 3,
@@ -166,10 +182,12 @@ function inactiveSet(main: HTMLElement): boolean[] {
   return runButtons(main).map(inactive)
 }
 
+/** The h2 of the section brief 16 slice 17a left where the Server form was:
+ * the anchor for "inside the part of the page under the header". */
 function serverTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('server-title'),
+    name: en('instance-server-title'),
   })
 }
 
@@ -205,9 +223,13 @@ function runStatus(main: HTMLElement): HTMLElement {
   return all[0]!
 }
 
-/** The save bar's status line: the one status of the Server section. */
+/** The save bar's status line: the one status after the Server form's h2, on
+ * the profile page (17a.5). */
 function saveStatus(main: HTMLElement): HTMLElement {
-  const h2 = serverTitle(main)
+  const h2 = within(main).getByRole('heading', {
+    level: 2,
+    name: en('server-title'),
+  })
   const all = within(main)
     .getAllByRole('status')
     .filter((s) => before(h2, s))
@@ -390,7 +412,6 @@ test('1c.43, 41c: after a failed POST the idle poll resumes, 5 s after the last 
 
 test('1c.43a: a 401 shows session-ended-retry and a Sign in button after the alert; banner, nav and edits stay', async () => {
   const { bff, main } = await loaded({ run: SESSION_ENDED })
-  type(portBox(main), '8581')
   const stop = button(main, 'run-stop')
   press(stop)
   await flush()
@@ -414,8 +435,10 @@ test('1c.43a: a 401 shows session-ended-retry and a Sign in button after the ale
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   expect(within(nav).getByRole('link', { name: 'coder' })).toBeTruthy()
   expect(h1(main)).toBeTruthy()
-  expect(portBox(main).value, 'the edit is untouched').toBe('8581')
-  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
+  expect(
+    within(main).getByRole('button', { name: en('run-stop') }),
+    'the page is where it was',
+  ).toBe(stop)
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
   expect(posts(bff)).toHaveLength(1)
 })
@@ -475,7 +498,6 @@ test('1c.43a: the run Sign in opens the sign-in dialog; Escape and Cancel close 
 
 test('1c.43b: the same administrator signs in again: alert and Sign in go, focus on the clicked button, edits intact, nothing resent', async () => {
   const { bff, main } = await loaded({ run: SESSION_ENDED })
-  type(portBox(main), '8581')
   const restart = button(main, 'run-restart')
   press(restart)
   await flush()
@@ -485,29 +507,43 @@ test('1c.43b: the same administrator signs in again: alert and Sign in go, focus
   expect(runAlerts(main)).toEqual([])
   expect(runSignIns(main)).toEqual([])
   expect(document.activeElement).toBe(button(main, 'run-restart'))
-  expect(portBox(main).value).toBe('8581')
-  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
   expect(within(main).queryByText(en('server-edits-dropped'))).toBeNull()
-  expect(bff.to('GET', '/api/instances/default/server')).toHaveLength(1)
+  expect(
+    bff.to('GET', '/api/instances/default/server'),
+    '17a.10: this page reads no server file, so there is nothing to re-read',
+  ).toHaveLength(0)
   expect(posts(bff), 'nothing resent').toHaveLength(1)
 })
 
 // "Administrators only" (R3): 43b compares by `user` only, so every case here
 // changes user, and the form it brings is the editable one (28).
-test('1c.43b: a sign-in as another user after a run 401 re-reads the file; edits-dropped only when the form was dirty; focus on the h1', async () => {
+test('1c.43b (17a.6): a sign-in as another user after a 401 on the profile read re-reads it; edits-dropped only when the form was dirty; focus on the h1', async () => {
+  // The rule is the page's own document: brief 16 slice 17a moved the form and
+  // the server read to the profile page, so the file that is read again there
+  // is the profile's.
   const cases: { what: string; user: string; dirty: boolean }[] = [
     { what: 'dirty form', user: 'carol', dirty: true },
     { what: 'clean form', user: 'carol', dirty: false },
   ]
   for (const c of cases) {
-    const { bff, main } = await loaded({
-      run: SESSION_ENDED,
+    const { bff, main } = await loadedForm({
+      serverProfileSave: () =>
+        reply(401, { key: 'session-required', args: [] }),
       signIn: () => reply(200, { user: c.user }),
     })
-    if (c.dirty) type(portBox(main), '8581')
-    press(button(main, 'run-stop'))
+    // The 401 can only come from a save, so both cases edit one. The clean
+    // case throws the edit away with Discard before signing in, so the
+    // sign-in finds a form with nothing left to drop.
+    type(portBox(main), '8581')
+    press(button(main, 'save-button'))
     await flush()
-    press(runSignIns(main)[0]!)
+    if (!c.dirty) {
+      press(button(main, 'save-discard'))
+      await flush()
+    }
+    press(
+      within(main).getAllByRole('button', { name: en('session-sign-in') })[0]!,
+    )
     await flush()
     await signInInDialog(c.user)
     expect(
@@ -515,11 +551,9 @@ test('1c.43b: a sign-in as another user after a run 401 re-reads the file; edits
       `${c.what}: the banner shows the new user`,
     ).toContain(en('session-signed-in-as', c.user))
     expect(
-      bff.to('GET', '/api/instances/default/server'),
-      `${c.what}: the file is read again`,
+      bff.to('GET', '/api/profiles/server/default'),
+      `${c.what}: the profile is read again`,
     ).toHaveLength(2)
-    expect(runAlerts(main), c.what).toEqual([])
-    expect(runSignIns(main), c.what).toEqual([])
     expect(
       within(main).queryByText(en('server-edits-dropped')) !== null,
       `${c.what}: edits-dropped only when dirty`,
@@ -529,55 +563,54 @@ test('1c.43b: a sign-in as another user after a run 401 re-reads the file; edits
       false,
     )
     expect(document.activeElement, `${c.what}: focus on the h1`).toBe(h1(main))
-    expect(posts(bff), c.what).toHaveLength(1)
+    expect(
+      bff.to('POST', '/api/session'),
+      `${c.what}: one sign-in`,
+    ).toHaveLength(1)
     cleanup()
     vi.useRealTimers()
     vi.unstubAllGlobals()
   }
 })
 
-test('1c.43b: a sign-in from the run alert also ends the save bar session-ended alert, and the other way round', async () => {
-  for (const from of ['run', 'save']) {
-    const { bff, main } = await loaded({
-      run: SESSION_ENDED,
-      save: () => reply(401, { key: 'session-required', args: [] }),
-    })
-    type(portBox(main), '8581')
-    const save = button(main, 'save-button')
-    press(save)
-    await flush()
-    expect(within(main).getByText(en('session-ended')), from).toBeTruthy()
-    const stop = button(main, 'run-stop')
-    press(stop)
-    await flush()
-    expect(runAlerts(main), from).toEqual([en('session-ended-retry')])
-    const signIns = within(main).getAllByRole('button', {
-      name: en('session-sign-in'),
-    })
-    expect(signIns, `${from}: two Sign in buttons`).toHaveLength(2)
-    press(from === 'run' ? runSignIns(main)[0]! : signIns[1]!)
-    await flush()
-    await signInInDialog('alice')
-    expect(
-      within(main)
-        .queryAllByRole('alert')
-        .map((a) => a.textContent),
-      `${from}: every session-ended alert goes`,
-    ).toEqual([])
-    expect(
-      within(main).queryAllByRole('button', { name: en('session-sign-in') }),
-      from,
-    ).toEqual([])
-    expect(document.activeElement, from).toBe(
-      from === 'run' ? button(main, 'run-stop') : button(main, 'save-button'),
-    )
-    expect(portBox(main).value, from).toBe('8581')
-    expect(posts(bff), from).toHaveLength(1)
-    expect(bff.to('PUT', '/api/instances/default/server'), from).toHaveLength(1)
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
+test('1c.43b (17a.7): on the profile page, a sign-in from the save bar ends its session-ended alert, keeps the edits, and sends nothing new', async () => {
+  // 43b paired the run alert with the save bar's; 17a.10 left the run controls
+  // on the instance page, so what is left is the bar's own alert.
+  const { bff, main } = await loadedForm({
+    serverProfileSave: () => reply(401, { key: 'session-required', args: [] }),
+  })
+  type(portBox(main), '8581')
+  const save = button(main, 'save-button')
+  press(save)
+  await flush()
+  expect(within(main).getByText(en('session-ended'))).toBeTruthy()
+  const signIns = within(main).getAllByRole('button', {
+    name: en('session-sign-in'),
+  })
+  expect(signIns, 'one Sign in, the save bar one').toHaveLength(1)
+  press(signIns[0]!)
+  await flush()
+  await signInInDialog('alice')
+  expect(
+    within(main)
+      .queryAllByRole('alert')
+      .map((a) => a.textContent),
+    'the session-ended alert goes',
+  ).toEqual([])
+  expect(
+    within(main).queryAllByRole('button', { name: en('session-sign-in') }),
+    'and its Sign in',
+  ).toEqual([])
+  expect(document.activeElement).toBe(button(main, 'save-button'))
+  expect(portBox(main).value, 'the edit is kept').toBe('8581')
+  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
+  expect(
+    bff.to('PUT', '/api/profiles/server/default'),
+    'nothing resent',
+  ).toHaveLength(1)
+  cleanup()
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 // ── Inactive buttons (40a, 40b) ─────────────────────────────────────────
@@ -718,7 +751,11 @@ test('1c.41a: a failed poll, or a list without the id, changes nothing on the pa
     within(main).queryByText(en('instance-not-found', 'default')),
   ).toBeNull()
   expect(
-    within(main).getByRole('heading', { level: 3, name: en('server-network') }),
+    within(main).getByRole('heading', {
+      level: 2,
+      name: en('instance-server-title'),
+    }),
+    'the Server profile section is still shown',
   ).toBeTruthy()
   expect(
     within(nav).queryByRole('link', { name: 'default' }),
@@ -828,11 +865,15 @@ test('1c.41b: the idle poll stops at sign-out (the Overview reads once on openin
   expect(reads(bff)).toBe(after)
 })
 
-test('1c.41b: the idle poll stops when a server read signs the app out', async () => {
-  const { bff, main } = await open({ server: () => SESSION_ENDED() })
-  // 09 S1b.3: the server read answered 401 while signed in: the notice says the
-  // session ended.
-  expect(within(main).getByText(en('signin-session-ended'))).toBeTruthy()
+test('1c.41b: the idle poll stops when a read signs the app out', async () => {
+  // 17a.10: the instance page reads no server file, so the read that signs
+  // the app out is the list read the poll itself makes: a 401 answers that
+  // the session ended (09 S1b.3), and the app moves to the sign-in page.
+  const { bff } = await open({ instances: SESSION_ENDED })
+  expect(
+    screen.getByRole('heading', { level: 1, name: en('signin-title') }),
+    '09 S1a.11: the app is signed out',
+  ).toBeTruthy()
   const now = reads(bff)
   await advance(10_000)
   expect(reads(bff)).toBe(now)
@@ -1517,27 +1558,45 @@ test('1c.40: the run alert is a paragraph after the run status', async () => {
   expect(before(el, serverTitle(main))).toBe(true)
 })
 
-// ── With the Server form (44, 44a) ──────────────────────────────────────
+// ── With the Server form (44, 44a), on the two pages 17a made of this one ──
 
-test('1c.44: a run action leaves the draft, its errors, the save alert and the dirty state alone, and asks nothing', async () => {
+test('1c.44 (17a.10): a run action on the instance page asks nothing, sends one POST, and the page carries no form and no save bar of its own', async () => {
   const { bff, main } = await loaded()
-  type(portBox(main), 'abc')
-  press(button(main, 'save-button'))
-  await flush()
-  expect(within(main).getByText(en('save-invalid'))).toBeTruthy()
-  expect(portBox(main).getAttribute('aria-invalid')).toBe('true')
   press(button(main, 'run-stop'))
   await flush()
   expect(screen.queryByRole('dialog'), 'no discard dialog').toBeNull()
   bff.setInstances(list('inactive'))
   await advance(1000)
   expect(runStatus(main).textContent).toBe(en('run-stopped'))
-  expect(portBox(main).value).toBe('abc')
-  expect(portBox(main).getAttribute('aria-invalid')).toBe('true')
-  expect(within(main).getByText(en('save-invalid'))).toBeTruthy()
-  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
-  expect(bff.to('PUT', '/api/instances/default/server')).toHaveLength(0)
+  expect(
+    main.querySelector('.save-bar'),
+    'the save bar belongs to the form, which is on the profile page',
+  ).toBeNull()
+  expect(
+    bff.to('PUT', '/api/instances/default/server'),
+    '17a.10: no server file is read or written from here',
+  ).toHaveLength(0)
   expect(posts(bff)).toEqual(['/api/instances/default/stop'])
+})
+
+test('1c.44 (17a.7): a refused save on the profile page keeps the draft, the field error, the alert and the dirty state, and sends nothing by itself', async () => {
+  const { bff, main } = await loadedForm()
+  type(portBox(main), 'abc')
+  press(button(main, 'save-button'))
+  await flush()
+  expect(within(main).getByText(en('save-invalid'))).toBeTruthy()
+  expect(portBox(main).getAttribute('aria-invalid')).toBe('true')
+  await advance(5000)
+  expect(portBox(main).value, 'the draft stays').toBe('abc')
+  expect(
+    within(main).getByText(en('save-invalid')),
+    'the alert stays',
+  ).toBeTruthy()
+  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
+  expect(
+    bff.to('PUT', '/api/profiles/server/default'),
+    'the check refuses the value so nothing is sent, and the poll adds nothing',
+  ).toHaveLength(0)
 })
 
 /** Saves a changed Port with `running: true`: the bar says restart to apply. */
@@ -1550,77 +1609,19 @@ async function savedRestart(main: HTMLElement) {
 
 const RUNNING_SAVE = () => reply(200, { revision: 'r-2', running: true })
 
-test('1c.44a: an action started after a save-saved-restart ends it when it settles; an undo does not bring it back', async () => {
-  for (const [end, key] of [
-    ['active', 'run-restart'],
-    ['failed', 'run-restart'],
-    ['inactive', 'run-stop'],
-  ] as const) {
-    const { bff, main } = await loaded({ save: RUNNING_SAVE })
-    await savedRestart(main)
-    press(button(main, key))
-    await flush()
-    expect(saveStatus(main).textContent, `${end}: kept while it runs`).toBe(
-      en('save-saved-restart'),
-    )
-    bff.setInstances(list('activating'))
-    await advance(1000)
-    bff.setInstances(list(end))
-    await advance(1000)
-    expect(saveStatus(main).textContent, `${end}: ended, empty`).toBe('')
-    type(portBox(main), '8582')
-    expect(saveStatus(main).textContent, end).toBe(en('save-unsaved'))
-    type(portBox(main), '8581')
-    expect(saveStatus(main).textContent, `${end}: not back after an undo`).toBe(
-      '',
-    )
-    cleanup()
-    vi.useRealTimers()
-    vi.unstubAllGlobals()
-  }
+test('1c.44a (17a.7): on the profile page, an edit after save-saved-restart ends it and an undo does not bring it back', async () => {
+  const { main } = await loadedForm({ serverProfileSave: RUNNING_SAVE })
+  await savedRestart(main)
+  type(portBox(main), '8582')
+  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
+  type(portBox(main), '8581')
+  expect(saveStatus(main).textContent, 'not back after an undo').toBe('')
 })
 
-// heavyTest: it steps the clock one second at a time, 360 times.
-heavyTest(
-  '1c.44a: on a timeout or an error, save-saved-restart stays',
-  async () => {
-    // A timeout. A Restart that saves snapshots runs to its 360 s deadline
-    // (slice S2), not to the 60 s of a Start.
-    {
-      const { bff, main } = await loaded({ save: RUNNING_SAVE })
-      await savedRestart(main)
-      press(button(main, 'run-restart'))
-      await flush()
-      bff.setInstances(list('activating'))
-      for (let s = 0; s < 60; s++) await advance(1000)
-      expect(runStatus(main).textContent, 'no timeout at 60 000 ms').toBe(
-        en('run-restarting'),
-      )
-      for (let s = 0; s < 300; s++) await advance(1000)
-      expect(runStatus(main).textContent).toBe(en('run-timeout-stop'))
-      expect(saveStatus(main).textContent, 'timeout').toBe(
-        en('save-saved-restart'),
-      )
-      cleanup()
-      vi.useRealTimers()
-      vi.unstubAllGlobals()
-    }
-    // An error.
-    {
-      const { main } = await loaded({
-        save: RUNNING_SAVE,
-        run: () => reply(503, { key: 'client-unavailable', args: [] }),
-      })
-      await savedRestart(main)
-      press(button(main, 'run-restart'))
-      await flush()
-      expect(runAlerts(main)).toEqual([en('api-client-unavailable')])
-      expect(saveStatus(main).textContent, 'error').toBe(
-        en('save-saved-restart'),
-      )
-    }
-  },
-)
+// The half of 44 and 44a that paired a run action with the form (an action
+// ending save-saved-restart, and a run action leaving the draft alone) has no
+// page to be seen on since 17a.10 put the run controls and the form on
+// different pages. The coordinator decides the rule; the tests follow.
 
 // ── Keyboard (46a, 6) ───────────────────────────────────────────────────
 
@@ -1651,8 +1652,22 @@ test('1c.46a: Tab reaches Start, Stop, Restart (inactive ones included), then th
     en('run-stop'),
     en('run-restart'),
   ])
-  // The Server section comes after (Start at boot will sit between).
-  expect(names.indexOf(`${en('field-about')} Port`)).toBeGreaterThan(2)
+  // 17a.10: the form is on the profile page, so no field of it is a stop
+  // here; what follows the run controls is the Server profile section.
+  const section = within(main).getByRole('heading', {
+    level: 2,
+    name: en('instance-server-title'),
+  })
+  expect(names, 'no Server form field on this page').not.toContain(
+    `${en('field-about')} Port`,
+  )
+  expect(
+    before(
+      within(main).getByRole('button', { name: en('run-restart') }),
+      section,
+    ),
+    'the section comes after the run controls',
+  ).toBe(true)
 
   press(button(main, 'run-stop'))
   await flush()
@@ -1666,7 +1681,9 @@ test('1c.46a: Tab reaches Start, Stop, Restart (inactive ones included), then th
     en('run-restart'),
     en('session-sign-in'),
   ])
-  expect(names.indexOf(`${en('field-about')} Port`)).toBeGreaterThan(3)
+  expect(names, 'no Server form field on this page').not.toContain(
+    `${en('field-about')} Port`,
+  )
 })
 
 // ── Slice S2: a Stop or Restart that saves snapshots for minutes (4d) ────

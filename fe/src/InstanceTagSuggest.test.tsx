@@ -182,10 +182,13 @@ async function openPage(
     // due now, then the look is synchronous.
     await flush()
     within(main).getByRole('heading', { level: 1, name: 'default' })
-    within(main).getByRole('button', { name: en('save-button') })
+    serverTitle(main)
   } else {
     await screen.findByRole('heading', { level: 1, name: 'default' })
-    await within(main).findByRole('button', { name: en('save-button') })
+    await within(main).findByRole('heading', {
+      level: 2,
+      name: en('instance-server-title'),
+    })
   }
   return { bff, main, field: group(main) }
 }
@@ -204,7 +207,7 @@ function group(main: HTMLElement): HTMLElement {
 function serverTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('server-title'),
+    name: en('instance-server-title'),
   })
 }
 

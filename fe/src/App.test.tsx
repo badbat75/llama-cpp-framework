@@ -97,6 +97,7 @@ test('09 S1a.3 (1a.2): until the session answers, main shows loading and there i
     'coder',
     // Brief 20 (20 N.7): Node info moved into the host's list, after them.
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
   ])
@@ -123,6 +124,7 @@ test('1a.4: a failed instances read leaves the instance links out of the nav, th
   expect(navLinks()).toEqual([
     en('nav-overview'),
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
   ])
@@ -324,6 +326,7 @@ test('1a.4: signed in, the nav holds Overview then the host list with one link p
     // Brief 20 (20 N.7): Node info sits under the instances, in the host list,
     // before the Profiles group (2a criterion 1 keeps Model profiles there).
     en('nav-node'),
+    en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
   ])

@@ -409,9 +409,11 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
 - The `- Expected` / `+ Received` lines of a long-array diff are in the DEFAULT reporter's output (strip
   the colour with `sed -e 's/\x1b\[[0-9;]*m//g'`); the json reporter's `failureMessages` truncate the
   arrays to `…(N)`, which is enough to map reds to files, not to read a swap.
-- Those allowlist arrays are in a fixed order: the H1a.12 list is the order the rules appear in
-  `index.css`, R1.1's is sorted by selector. Run the test and read the diff's insertion point, do not
-  guess: a well-aimed entry in the wrong slot reds as a whole-list mismatch that names nothing.
+- Some allowlist arrays are in a fixed order, some are sorted: read the array's own tail. R1.1's
+  `sets('overflow-wrap')` expectation ends in `].sort()`, so a new entry goes anywhere in it (16 17a
+  review D1); the H1a.12 list is the order the rules appear in `index.css`. Where nothing sorts, run the
+  test and read the diff's insertion point, do not guess: a well-aimed entry in the wrong slot reds as a
+  whole-list mismatch that names nothing.
   `HearthH2a.test.ts`'s sizes are a `test.each`, so a new entry reports as
   `section 1 sizes: <selector>`, one line naming the selector.
 - A brief note "H1a.12 is unchanged (no size)" is the brief's arithmetic gap when its own criterion
@@ -492,6 +494,17 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
 - After changing the shared fe fake (`src/test/bff.ts`), run the whole suite ONCE as the regression check:
   every `FAIL` line must sit in a file the slice touched, and the per-file counts must sum to the run's
   total. Untouched files failing is the fake, not the criterion.
+- A page-open helper that calls `fakeBff()` itself (`loadedInstance()` et al.) STUBS THE FETCH with its
+  own object: a test that first made its own `const bff = fakeBff()` keeps a handle answering NOTHING,
+  so `bff.setInstances(..)` never lands and `bff.to(..)` reads 0. When the test must set answers, count
+  calls or assert on calls, open the page inline (`startAt` + `fakeBff` + `render` + the page's marker
+  `findBy*`); the helper is only for tests that read nothing from the bff.
+- Poll-driven rows (`IDLE_MS` 5 s on the instance page) never advance under real timers inside
+  `findBy*`'s 1 s default: fake the clock (`shouldAdvanceTime: true`), `setInstances`, then
+  `advanceTimersByTimeAsync(6_000)` inside `act` before `findByRole`.
+- When a brief ADDS a nav entry (17a.2: Server profiles), the suites that pin the nav literally all
+  red at once: ProfilesNav 5b.1 entry lists, NodesMenu1 20 N.3 href list, HearthIcons nav-icon count
+  and the SHAPES table. Update all four in one pass, each with the brief id.
 - `Icon.tsx` answers an unknown name with an EMPTY svg (`SHAPES[name]` is undefined), so the red of a
   new icon is `expected [] to deeply equal [ <path d>, .. ]` with all eight svg attributes passing.
   A literal name is a COMPILE red (the prop is the `IconName` union), which is why the shape tests
@@ -641,6 +654,20 @@ src/XScratch.test.tsx`, cut half 1 with a script that asserts its snippet `count
 - Prettier ignores `fe/ux/` (`.prettierignore`: its own npm package, "checked by its own hand"), so
   `npx prettier --write fe/ux/check.js` writes nothing and says nothing about it: match the fe style by
   hand there, and judge a ux edit by reading its diff.
+- A `fe/ux/stub.py` edit is smoke-tested in 20 s, no build and no 12 min check:
+  `python3 -c "py_compile.compile('<path>', doraise=True)"`, then `python3 fe/ux/stub.py <empty-dir>
+  <port> &` and curl the route (GET and PUT) against that port with `-w '%{http_code}'` (the stub prints
+  the port it got as its first stdout line when the port is 0). The route's own shape is the bug to look
+  for: `/api/profiles/server/default` has FOUR slashes, so a guard of `p.count("/") == 5` never matched
+  and the request fell through to `super().do_GET()`, which answers the site dir's 404 page. In the check
+  that reads `not rendered: <page marker>` for the whole state, which looks like a missing page and is a
+  stub bug. The refusal keys the stub answers are the bff's keys (`fe/briefs/api-contract.md`,
+  `client-no-server-profile`): a key the page does not map shows its generic failure text and pins nothing.
+- A reviewer's note about a failure mapping is not a criterion: read the brief's own mapping list for
+  that route. Where the brief rules "anything else shows the generic sentence" (16 17a.4), the note's key
+  joins the table AS THE GENERIC text, and the report says the note is not brief-backed; the key's
+  dedicated text belongs to the route the brief does map it on (17e.2's `client-not-authorized`), and
+  pinning it here is a contract no brief made.
 - For a per-file map of failures and the counts of a full run, use
   `npx vitest run --reporter=json --outputFile=<f>` and read `testResults[].name`,
   `assertionResults[].fullName` and `failureMessages` with node (`--reporter=basic` does not exist in
@@ -1683,6 +1710,28 @@ fe/ /tmp/<x>/` plus a symlink to the real `node_modules`, driven by a script tha
   session answered, and settle signed-out states by the sign-in `h1`, never by a nav finder (that burns
   its 1 s timeout and hides the real red). A helper that waits for the banner's signed-out Sign in link
   needs retargeting the same way once Sign out lands on the sign-in page.
+- The same rule kills TAB-ORDER snapshots: `const stops = tabbable(main)` written BEFORE the
+  `await findByRole('checkbox')` inside the order array captures the page before that async read lands, so
+  the awaited element prints `indexOf = -1` while its solo probe says it is a tab stop. Take every async
+  element first, THEN snapshot, and settle the nav's instance links (`await within(nav()).findByRole('link',
+  { name })`) before reading the Tab path. A page's own `[role="status"]` row query has the same race with
+  the boot skeleton's status: settle by the page's `h1` before asserting the loading text.
+- A whole-page tab path of the instance page (`InstancePage.test.tsx` 6) reds deterministically SOLO, 2
+  stops short, naming `About Start at boot` and the checkbox: `Boot` returns `null` while its read is
+  pending, and the page-open marker (the run-stop button) lands with the LIST read, not the boot read.
+  Fix = `await within(main).findByRole('checkbox', { name: en('boot-toggle') })` before `tabbable()`
+  (the InstanceTagChips C1.2 shape), never by dropping the boot entries: brief 16 decision 2 keeps run
+  controls, boot and tags on the instance page. Judge a "flaky" fe red this way: solo x3 (the reported
+  shape) before touching anything, and a copy of the tree that passes is read with `diff -rq fe` (the
+  copy carries its own test edits).
+- Every `npm --prefix fe test` (solo and full) exits 1 in this environment with
+  `Error: EISDIR ... getPackageScopeConfig` + `MISSING DEPENDENCY Cannot find dependency 'jsdom'`, while
+  the reporter says every file passed. Judge from the `Test Files` / `Tests` lines and the `FAIL` count,
+  not the exit code; the message predates any test edit, so prove it by running a pristine file.
+- When the coder rewires the shared fake so its answers resolve a tick later, every synchronous first query
+  of every file reds at once. The fix is never to speed the fake back: retarget the test to the waiting
+  query (`findByText` / `findByRole`, `await tableOf` before a sync `cellsOf`), which is the pattern the
+  green files already use, and re-run the full suite (111 files) after.
 - On the fake clock a testing-library `findBy` / `findAllBy` DEADLOCKS: its polling interval is a faked
   timer and nothing advances it, so the case dies at the real 5 s timeout, which reads as a broken test.
   Write one `appear(find)` helper that loops the sync getter plus `flush()` and use it everywhere on the

@@ -336,7 +336,9 @@ header lines only (U17a's card box went with the Server section).
 **17a.11 Wrapping.** At 320 px and at 200 % text, a 32-character id and 8 tags of 32 characters cause
 no sideways scroll on the list page: the table scrolls in its box (`fe/DESIGN.md` Table) and the tags
 cell wraps between tags; on the profile page the `h1` and the `dd` wrap (Value
-list, `overflow-wrap: anywhere` on the `dd` as `.assets dd` has it). No new CSS class, no token.
+list, `overflow-wrap: anywhere` on the `dd` as `.assets dd` has it). No token. (Amended in the 17a
+review, D1: the table takes the class `server-profiles` so its headers, port and Used by do not
+break and its tags break at spaces; the box then scrolls.)
 
 **17a.12 Strings.** The strings file gains exactly 17a's keys of section 2 and loses `server-intro`.
 
@@ -687,3 +689,58 @@ Tests that change: `InstancePage` (a section after Server profile), `test/bff.ts
   first". 17a moves the form but changes no control, and its 12 criteria are full, so this brief leaves
   the fix to U17e, which edits the form's fields. If the fix should come with slice 17 instead, it fits
   17b (10 criteria) as one more criterion, and the designer writes it after measuring the rows.
+
+## 17a review (designer, 2026-11-23)
+
+I read the 17a diff (`ServerProfiles.tsx`, `ServerProfilePage.tsx`, `App.tsx` 491 to 508 and 759 to 773,
+`InstancePage.tsx`, `ServerForm.tsx`, `route.ts`, `Icon.tsx`, `en_US.json`, `fe/ux/`) and drove it in
+Chromium, Firefox and WebKit at 1280 and 320 px, light and dark, 100 % and 200 % text, with a Playwright
+route serving the profile document (`build/ux-review/sp17a.js`, shots in `build/ux-review/sp17a/`).
+**Verdict: two defects, D1 and D2; the rest is met.**
+
+- 17a.1 met: both routes, titles `Server profiles | ...` and `<id> | ...`, the `h1` focused on arrival,
+  `..` shows `server-profile-not-found` with no request, a bad escape is not found.
+- 17a.2 met: Profiles holds Server profiles (`server` icon, path data as lucide-static 1.74.0) then
+  Model profiles; `aria-current` `page` on the list and `true` on a profile's page. Tab order (WebKit,
+  from the top): Skip, home, theme, Sign out, Overview, the instance, Node info, Server profiles, Model
+  profiles, About. At 320 px a click on Server profiles closes the menu, focus on the `h1`.
+- 17a.3, 17a.4 met in the code and the tests (`ServerProfiles.tsx` 52 to 70, 112 to 172): one read, the
+  hidden status and three skeleton lines, the four columns, tags joined by ", ", `muted` No instance.
+- 17a.5 to 17a.10 met: back link, `h1`, Used by row (a link or `muted` No instance), `h2` Server,
+  `server@<id>.ini` in the intro, the form unchanged; the read and the save go to
+  `/api/profiles/server/<id>`; 404 shows the not-found text; `client-no-server-profile` and R3's
+  over-memory keys in the save (`ServerForm.tsx` 363, 386 to 401); `null` folders show
+  `server-folder-unused-default`; the leave question (tests 378, 406); the instance page has no form,
+  its Server profile section links to `#/profiles/server/qwen-27b` and its skeleton is three lines.
+  Minor, accepted: the skeleton's Used by line renders under the `h2` Server rather than above it
+  (`ServerProfilePage.tsx` 297 to 306).
+- 17a.12 met: 18 keys added, `server-intro` gone.
+- 17a.11 **not met, D1**: at 320 px the list does not scroll in its box; it squeezes. The base rule
+  `th, td { overflow-wrap: anywhere }` (`index.css` 728 to 733) lets every column shrink to one
+  character: the headers "Server profile" and "Used by", the port `8080` and the 32-character id stand
+  one letter per line (`sp17a/webkit-320-dark-list.png`). No sideways page scroll anywhere (144 of 144
+  pages), but the table is unreadable. The brief's "no new CSS class" caused it; amended: the table
+  takes a class (`server-profiles`, beside `.model-profiles`) with `th { white-space: nowrap;
+  overflow-wrap: normal }`, `td:nth-child(2), td:nth-child(4) { white-space: nowrap; overflow-wrap:
+  normal }` and `td:nth-child(3) { overflow-wrap: normal }` (tags break at the ", " spaces; the id keeps
+  `anywhere`). Measured by injection in the three engines at 320 px: the box scrolls (590 of 286 px at
+  100 %, 1097 at 200 %), the id column 112 px, no sideways page scroll (`build/ux-review/sp17a-fix.js`,
+  `sp17a/fix-firefox-false.png`). R1.8's class list gains `server-profiles`; a CSS test pins the rules.
+- **D2 (fe/ux)**: `fe/ux/stub.py` 408 matches `p.count("/") == 5`, but `/api/profiles/server/default`
+  has 4 slashes, so the stub never serves the profile document and the `server-profile` state cannot
+  show the form; 416 answers 404 `no-server-profile-named` where the bff answers
+  `client-no-server-profile`; no `PUT` is served there. Fix: `== 4`, the bff's key, and a `PUT` answering
+  `{"revision", "running": false}`.
+- `npm --prefix fe/ux run check` (156 states per browser, 2026-11-23): 30 failures, all D2. In each
+  engine, width, theme and text mode the `server-profile` state shows no Port label because the stub
+  serves no document. `server-profiles` and `instance-page` are clean in every engine, and the other
+  states are unchanged. The 8 known Hostname target-size findings did not show only because the form
+  never rendered; they come back once D2 is fixed (note N2). Re-run after D1 and D2.
+
+**Re-check (2026-11-23): D1 and D2 fixed, 17a accepted.** `table.server-profiles` gets the nowrap rules
+(`index.css` 798-819, `ServerProfiles.tsx` 139). At 320 px, measured in Chromium, Firefox and WebKit
+with the long pool, the box scrolls: 590 of 286 px at 100 % text and 1092 to 1097 at 200 %. The
+32-character id wraps in a 112 px column (202 px at 200 %), and nothing scrolls the page sideways
+(`build/ux-review/sp17a/fix2-*.png`). `npm --prefix fe/ux run check`: 156 states per browser, 0
+failing, `server-profile` among them. The 8 Hostname target-size findings of note N2 did not show in
+this run. I have not checked why, so N2 stays open until U17e.

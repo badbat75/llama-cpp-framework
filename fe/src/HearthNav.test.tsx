@@ -98,6 +98,7 @@ test('H5b.7: one nav landmark named Main, each group named by a .nav-label above
     'default',
     'coder',
     EN['nav-node'],
+    EN['nav-server-profiles'],
     EN['nav-model-profiles'],
     EN['nav-about'],
   ])

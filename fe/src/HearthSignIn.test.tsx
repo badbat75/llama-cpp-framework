@@ -128,9 +128,10 @@ test('H7.1: in place of a protected page, the same art and the same panel (#/pro
 test('H7.1 guard: the sign-in dialog a save bar opens is exactly what it is today: no page, no art, no panel', async () => {
   const dialogs = stubDialog()
   try {
-    startAt('#/instances/default')
+    startAt('#/profiles/server/default')
     const bff = fakeBff({
-      save: () => reply(401, { key: 'session-required', args: [] }),
+      serverProfileSave: () =>
+        reply(401, { key: 'session-required', args: [] }),
     })
     render(<App />)
     const main = screen.getByRole('main')
@@ -146,7 +147,7 @@ test('H7.1 guard: the sign-in dialog a save bar opens is exactly what it is toda
       within(main).getByRole('button', { name: en('save-button') }),
     )
     await waitFor(() =>
-      expect(bff.to('PUT', '/api/instances/default/server')).toHaveLength(1),
+      expect(bff.to('PUT', '/api/profiles/server/default')).toHaveLength(1),
     )
     fireEvent.click(
       await within(main).findByRole('button', { name: en('session-sign-in') }),

@@ -334,7 +334,11 @@ test('H8b.3 sign-in: the signin-required Notice holds Icon info, the session-rev
   cleanup()
 
   // session-revoked: a read answered 403 session-not-administrator (S1.9).
-  const revokedMain = openAt('#/instances/default', { server: REVOKED })
+  // 17a.6: the server document's read is GET /api/profiles/server/<id>, on the
+  // profile page.
+  const revokedMain = openAt('#/profiles/server/default', {
+    serverProfile: REVOKED,
+  })
   const revoked = await within(revokedMain).findByText(en('session-revoked'))
   expect(revoked.getAttribute('role'), 'the alert of S1.9 stays').toBe('alert')
   expect(revoked.firstChild, 'the icon is the paragraph FIRST child').toBe(

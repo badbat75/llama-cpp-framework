@@ -21,6 +21,7 @@ import {
   deferred,
   en,
   fakeBff,
+  INSTANCES,
   isHidden,
   navigate,
   reply,
@@ -82,21 +83,22 @@ async function open(options: BffOptions = {}, hash = '#/instances/default') {
   return { bff, main: screen.getByRole('main') }
 }
 
-/** The instance page with its header and Server form shown. */
+/** The instance page with its header and Server profile section shown
+ *  (17a.10: the form moved to the profile's page, the section took its place). */
 async function loaded(options: BffOptions = {}) {
   const { bff, main } = await open(options)
   expect(
     within(main).queryByRole('heading', {
-      level: 3,
-      name: en('server-network'),
+      level: 2,
+      name: en('instance-server-title'),
     }),
-    'the Server form is loaded',
+    'the Server profile section is shown',
   ).not.toBeNull()
   return { bff, main }
 }
 
 const BOOT = '/api/instances/default/boot'
-const SERVER = '/api/instances/default/server'
+const SERVER = '/api/profiles/server/default'
 
 function bootReads(bff: ReturnType<typeof fakeBff>): number {
   return bff.to('GET', BOOT).length
@@ -147,10 +149,11 @@ function aboutBoot(main: HTMLElement): HTMLButtonElement {
   }) as HTMLButtonElement
 }
 
+/** The h2 of the section brief 16 slice 17a left in the form's place. */
 function serverTitle(main: HTMLElement): HTMLElement {
   return within(main).getByRole('heading', {
     level: 2,
-    name: en('server-title'),
+    name: en('instance-server-title'),
   })
 }
 
@@ -186,16 +189,6 @@ function runSignIn(main: HTMLElement): HTMLButtonElement {
     .filter((b) => before(b, serverTitle(main)) && !boot.contains(b))
   expect(all, 'one run Sign in').toHaveLength(1)
   return all[0] as HTMLButtonElement
-}
-
-/** The save bar's status line: the one status of the Server section. */
-function saveStatus(main: HTMLElement): HTMLElement {
-  const h2 = serverTitle(main)
-  const all = within(main)
-    .getAllByRole('status')
-    .filter((s) => before(h2, s))
-  expect(all, 'one status line in the Server section').toHaveLength(1)
-  return all[0]!
 }
 
 function h1(main: HTMLElement): HTMLElement {
@@ -523,7 +516,6 @@ test('1c.45e: while the read after a failure runs the box stays aria-disabled; w
 
 test('1c.45e, 43a: a 401 shows session-ended-retry and a Sign in after the alert, inside the group; the page stays signed in', async () => {
   const { bff, main } = await loaded({ boot: boot(false, SESSION_ENDED) })
-  type(portBox(main), '8581')
   press(bootBox(main))
   await flush()
   expect(bootAlerts(main)).toEqual([en('session-ended-retry')])
@@ -535,12 +527,14 @@ test('1c.45e, 43a: a 401 shows session-ended-retry and a Sign in after the alert
   // The box shows the state read again, off.
   expect(bootReads(bff)).toBe(2)
   expect(bootBox(main).checked).toBe(false)
-  // 36a's state: the banner, the nav and the edits stay.
+  // 36a's state: the banner, the nav and the page stay.
   const banner = screen.getByRole('banner')
   expect(banner.textContent).toContain(en('session-signed-in-as', 'alice'))
   expect(h1(main)).toBeTruthy()
-  expect(portBox(main).value).toBe('8581')
-  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
+  expect(
+    within(main).getByRole('group', { name: en('boot-label') }),
+    'the field is where it was',
+  ).toBeTruthy()
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
 })
 
@@ -582,7 +576,6 @@ test('1c.45e, 43a: the boot Sign in opens the sign-in dialog; Escape and Cancel 
 
 test('1c.43b, 45e: the same administrator signs in again: the alert and Sign in go, focus on the checkbox, edits intact, nothing resent or read', async () => {
   const { bff, main } = await loaded({ boot: boot(false, SESSION_ENDED) })
-  type(portBox(main), '8581')
   press(bootBox(main))
   await flush()
   press(bootSignIns(main)[0]!)
@@ -591,9 +584,10 @@ test('1c.43b, 45e: the same administrator signs in again: the alert and Sign in 
   expect(bootAlerts(main)).toEqual([])
   expect(bootSignIns(main)).toEqual([])
   expect(document.activeElement).toBe(bootBox(main))
-  expect(portBox(main).value).toBe('8581')
-  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
-  expect(bff.to('GET', SERVER)).toHaveLength(1)
+  expect(
+    bff.to('GET', SERVER),
+    '17a.10: this page reads no server file',
+  ).toHaveLength(0)
   expect(bootReads(bff), 'no new boot read').toBe(2)
   expect(bootWrites(bff), 'nothing resent').toHaveLength(1)
 })
@@ -843,7 +837,10 @@ test('1c.45f, 40: the field comes after the run messages, before the Server sect
   })
   const group = bootGroup(main)
   expect(before(runStatus(main), group), 'after the run status').toBe(true)
-  expect(before(group, serverTitle(main)), 'before the Server h2').toBe(true)
+  expect(
+    before(group, serverTitle(main)),
+    'before the section 17a.10 left in the form place',
+  ).toBe(true)
   expect(group.contains(runStatus(main)), 'not the run status').toBe(false)
   // The status is in the DOM before any change, empty.
   const status = bootStatus(main)
@@ -926,14 +923,19 @@ test('1c.45e, 45f: a boot write that fails after the page was left sends nothing
 
 // ── Not part of the Server form (45) ────────────────────────────────────
 
-test('1c.45: a boot change on a clean form leaves it clean: no unsaved status, Save and Discard inactive, no beforeunload, leaving asks nothing', async () => {
+test('1c.45 (17a.10): a boot change on the instance page marks nothing: the page has no save bar of its own, no beforeunload, leaving asks nothing', async () => {
   const { bff, main } = await loaded()
   press(bootBox(main))
   await flush()
   expect(bootWrites(bff)).toHaveLength(1)
-  expect(saveStatus(main).textContent).toBe('')
-  expect(inactive(button(main, 'save-button'))).toBe(true)
-  expect(inactive(button(main, 'save-discard'))).toBe(true)
+  expect(
+    main.querySelector('.save-bar'),
+    'the form, and with it the save bar, is on the profile page',
+  ).toBeNull()
+  expect(
+    within(main).queryByRole('button', { name: en('save-button') }),
+    'no Save',
+  ).toBeNull()
   const e = new Event('beforeunload', { cancelable: true })
   window.dispatchEvent(e)
   expect(e.defaultPrevented, 'beforeunload not armed').toBe(false)
@@ -948,27 +950,15 @@ test('1c.45: a boot change on a clean form leaves it clean: no unsaved status, S
   ).not.toBeNull()
 })
 
-test('1c.45: with a dirty form a boot change keeps the form as it was; Discard and Save ignore the box', async () => {
-  const { bff, main } = await loaded()
-  type(portBox(main), '8581')
-  expect(saveStatus(main).textContent).toBe(en('save-unsaved'))
-  press(bootBox(main))
-  await flush()
-  expect(bootBox(main).checked).toBe(true)
-  expect(saveStatus(main).textContent, 'still unsaved').toBe(en('save-unsaved'))
-  expect(portBox(main).value).toBe('8581')
-  // Discard reverts the form, not the box.
-  fireEvent.click(button(main, 'save-discard'))
-  await flush()
-  expect(portBox(main).value).toBe('8580')
-  expect(bootBox(main).checked, 'Discard leaves the box').toBe(true)
-  expect(saveStatus(main).textContent, 'clean after Discard').toBe('')
-  // Save sends the form only.
+test('1c.45 (17a.7): a Save on the server profile page sends the form only: revision and values, no boot key, and no boot write of the instance', async () => {
+  // The boot field stayed on the instance page (17a.10) and the form moved
+  // here, so what is left of 45 is that the two never travel together.
+  const { bff, main } = await loadedProfile()
   type(portBox(main), '8582')
   fireEvent.click(button(main, 'save-button'))
   await flush()
   const saves = bff.to('PUT', SERVER)
-  expect(saves).toHaveLength(1)
+  expect(saves, 'the save of the profile page').toHaveLength(1)
   const values = (saves[0]!.body as { values: Record<string, unknown> }).values
   expect(values.Port).toBe(8582)
   expect(
@@ -979,9 +969,28 @@ test('1c.45: with a dirty form a boot change keeps the form as it was; Discard a
     Object.keys(saves[0]!.body as object).sort(),
     'only revision and values',
   ).toEqual(['revision', 'values'])
-  expect(bootWrites(bff), 'Save sends no boot write').toHaveLength(1)
-  expect(bootBox(main).checked).toBe(true)
+  expect(
+    bff.to('PUT', BOOT),
+    'the boot state is never written from here',
+  ).toHaveLength(0)
 })
+
+/** The server profile page, with its form shown, on fake timers. */
+async function loadedProfile() {
+  fakeClock()
+  startAt('#/profiles/server/default')
+  const bff = fakeBff()
+  render(<App />)
+  // Under the fake clock a findBy never resolves: the flush lands the reads
+  // due now, then the look is synchronous.
+  await flush()
+  const main = screen.getByRole('main')
+  within(main).getByRole('heading', {
+    level: 3,
+    name: en('server-network'),
+  })
+  return { bff, main }
+}
 
 // ── Names and keyboard (45, 46a, section 6) ─────────────────────────────
 
@@ -1018,14 +1027,17 @@ function tabbable(main: HTMLElement): HTMLElement[] {
   )
 }
 
-test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, Add tag, then the Server section', async () => {
+test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, Add tag, then the Server profile link', async () => {
   const { main } = await loaded({
     run: SESSION_ENDED,
     boot: boot(false, SESSION_ENDED),
+    // 17a.10: the section names the profile the instance runs, so the fixture
+    // has to name one for the link to exist.
+    instances: [{ ...INSTANCES[0]!, serverProfile: 'default' }, INSTANCES[1]!],
   })
-  const aboutPort = within(main).getByRole('button', {
-    name: `${en('field-about')} Port`,
-  })
+  // 17a.10: the form is gone from this page, so the last stop is the link of
+  // the section that took its place.
+  const profileLink = within(main).getByRole('link', { name: 'default' })
   // Brief 12, section 5, as brief 15 section 3 leaves it: the tags field
   // follows Start at boot, so its stops come before the Server form's first
   // field. This fixture's instance has no tags, so the field has its About
@@ -1050,7 +1062,7 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['Start at boot', bootBox(main)],
     ['About Instance tags', tagsAbout],
     ['Add tag', tagAdd],
-    ['About Port', aboutPort],
+    ['Server profile link', profileLink],
   ]
   expect(names(expected)).toEqual(expected.map(([n]) => n))
 
@@ -1068,7 +1080,7 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['boot Sign in', bootSignIns(main)[0]!],
     ['About Instance tags', tagsAbout],
     ['Add tag', tagAdd],
-    ['About Port', aboutPort],
+    ['Server profile link', profileLink],
   ]
   expect(names(expected)).toEqual(expected.map(([n]) => n))
 })

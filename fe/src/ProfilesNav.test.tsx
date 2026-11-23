@@ -42,6 +42,9 @@ const LIST_GET = '/api/profiles/model'
 const MODE = en('model-profile-embedding-mode')
 const PROFILES = en('nav-profiles')
 const ENTRY = en('nav-model-profiles')
+/** Brief 16 (17a.2): the entry the Profiles group gains, before this one. */
+const SERVER_ENTRY = en('nav-server-profiles')
+const SERVER_LIST_HASH = '#/profiles/server'
 /** Slice 13 (13 N.3): the last entry of the nav. */
 const ABOUT = en('nav-about')
 /** Slice 18 (18 AN.6): Node info, the entry before About. */
@@ -237,7 +240,7 @@ function keepButton(d: HTMLElement): HTMLElement {
 
 // ── 5b.1, 5b.2: the nav's Profiles group ────────────────────────────────
 
-test('5b.1: signed in, the nav holds a Profiles group: a p#nav-profiles.nav-label and a ul labelled by it, with one Model profiles link to #/profiles/model, after Overview and the host list', async () => {
+test('5b.1 (17a.2): signed in, the nav holds a Profiles group: a p#nav-profiles.nav-label and a ul labelled by it, with the Server profiles link to #/profiles/server then the Model profiles link to #/profiles/model, after Overview and the host list', async () => {
   const { main } = open()
   await table(main)
   const n = await navReady()
@@ -253,9 +256,11 @@ test('5b.1: signed in, the nav holds a Profiles group: a p#nav-profiles.nav-labe
   expect(list.tagName).toBe('UL')
   expect(list.getAttribute('aria-labelledby')).toBe('nav-profiles')
   const links = within(list).getAllByRole('link')
-  expect(links, 'one entry').toHaveLength(1)
-  expect(links[0]!.textContent).toBe(ENTRY)
-  expect(links[0]!.getAttribute('href')).toBe(LIST_HASH)
+  expect(links, '17a.2: two entries, in this order').toHaveLength(2)
+  expect(links[0]!.textContent).toBe(SERVER_ENTRY)
+  expect(links[0]!.getAttribute('href')).toBe(SERVER_LIST_HASH)
+  expect(links[1]!.textContent).toBe(ENTRY)
+  expect(links[1]!.getAttribute('href')).toBe(LIST_HASH)
   // DOM order: the Overview list, the Nodes list with the host inside it, the
   // Profiles label, the list.
   const lists = within(n).getAllByRole('list')
@@ -274,6 +279,7 @@ test('5b.1: signed in, the nav holds a Profiles group: a p#nav-profiles.nav-labe
     'default',
     'coder',
     NODE_INFO,
+    SERVER_ENTRY,
     ENTRY,
     ABOUT,
   ])
@@ -304,7 +310,13 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
   expect(before(within(nav()).getAllByRole('list')[0]!, profilesLabel()!)).toBe(
     true,
   )
-  expect(navLinks()).toEqual([en('nav-overview'), NODE_INFO, ENTRY, ABOUT])
+  expect(navLinks()).toEqual([
+    en('nav-overview'),
+    NODE_INFO,
+    SERVER_ENTRY,
+    ENTRY,
+    ABOUT,
+  ])
   cleanup()
   vi.unstubAllGlobals()
   // Failed: the same, read on the Overview: the failure text belongs to the
@@ -321,9 +333,11 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
     'nav-profiles',
   )
   const failedLinks = within(failed).getAllByRole('link')
-  expect(failedLinks, 'one entry').toHaveLength(1)
-  expect(failedLinks[0]!.textContent).toBe(ENTRY)
-  expect(failedLinks[0]!.getAttribute('href')).toBe(LIST_HASH)
+  expect(failedLinks, '17a.2: the two entries').toHaveLength(2)
+  expect(failedLinks[0]!.textContent).toBe(SERVER_ENTRY)
+  expect(failedLinks[0]!.getAttribute('href')).toBe(SERVER_LIST_HASH)
+  expect(failedLinks[1]!.textContent).toBe(ENTRY)
+  expect(failedLinks[1]!.getAttribute('href')).toBe(LIST_HASH)
   expect(
     within(nav()).getByRole('list', { name: en('nav-this-node') }),
     'the host list is there after a failed read too (20 N.6)',
@@ -332,7 +346,13 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
     before(within(nav()).getAllByRole('list')[0]!, profilesLabel()!),
     'the group comes after the Overview list',
   ).toBe(true)
-  expect(navLinks()).toEqual([en('nav-overview'), NODE_INFO, ENTRY, ABOUT])
+  expect(navLinks()).toEqual([
+    en('nav-overview'),
+    NODE_INFO,
+    SERVER_ENTRY,
+    ENTRY,
+    ABOUT,
+  ])
 })
 
 test('5b.1: signed out there is no nav at all: no Profiles label, no Profiles list, no Model profiles link (09 S1a.4)', async () => {
@@ -357,23 +377,10 @@ test('5b.1: signed out there is no nav at all: no Profiles label, no Profiles li
   ).toHaveLength(0)
 })
 
-test('5b.2: nothing says Server profiles, nothing links under #/profiles/server, and no nav-server-profiles key is added (05c adds it)', async () => {
-  const { main } = open()
-  await table(main)
-  const hrefs = [
-    ...document.querySelectorAll<HTMLAnchorElement>('a[href]'),
-  ].map((a) => a.getAttribute('href') ?? '')
-  expect(hrefs.length, 'the app has links').toBeGreaterThan(0)
-  for (const href of hrefs) {
-    expect(href, `link to ${href}`).not.toMatch(/^#\/profiles\/server/)
-  }
-  expect(document.body.textContent).not.toContain('Server profiles')
-  expect(
-    S['nav-server-profiles'],
-    'the strings file gains no such key',
-  ).toBeUndefined()
-  expect(EN['nav-server-profiles'], 'the test mirror neither').toBeUndefined()
-})
+// 5b.2 asked for no Server profiles entry and no nav-server-profiles key, and
+// said 05c would add them: brief 16 slice 17a did, so the case is retired. The
+// entry, its place and its aria-current are brief 16's 17a.2
+// (ServerProfiles1.test.tsx, NodesMenu2.test.tsx).
 
 // ── 5b.3: the current page ──────────────────────────────────────────────
 
@@ -553,8 +560,7 @@ test('5b.6: each row links to #/profiles/model/<encoded id>, the page links back
 const DEAD: [string, string][] = [
   ['#/profiles', 'the group alone'],
   ['#/profiles/', 'the group with an empty segment'],
-  ['#/profiles/server', 'the server profiles of 05c'],
-  ['#/profiles/server/default', 'one of them'],
+  // Brief 16 17a.1 gave both addresses a page, so they are not dead any more.
   ['#/profiles/other', 'any other group'],
   ['#/profiles/model/', 'an empty id'],
   ['#/profiles/model/a/b', 'two segments'],
@@ -900,7 +906,7 @@ test('5b.10: from a model profile page to the list through the nav, and back thr
 
 // ── 5b.11: the strings ──────────────────────────────────────────────────
 
-test('5b.11: en_US.json has the 05b keys and texts exactly, the two old keys are gone, and the nav gains no Server profiles key', () => {
+test('5b.11: en_US.json has the 05b keys and texts exactly, the two old keys are gone, and nav-server-profiles is the key brief 16 (17a.2) adds', () => {
   expect(S['nav-profiles']).toBe('Profiles')
   expect(S['nav-model-profiles']).toBe('Model profiles')
   expect('nav-models' in S, 'the old nav key is gone').toBe(false)
@@ -915,7 +921,9 @@ test('5b.11: en_US.json has the 05b keys and texts exactly, the two old keys are
   expect(S['model-profile-off']).toBe(
     'This model profile is switched off: it is kept, but its engine does not serve it. To serve it, switch it on in the list of all model profiles.',
   )
-  expect('nav-server-profiles' in S, '5b.2').toBe(false)
+  expect(S['nav-server-profiles'], '17a.2 added the key').toBe(
+    'Server profiles',
+  )
   // The test mirror follows the file (App.test.tsx pins that they match).
   expect(EN['nav-profiles']).toBe(S['nav-profiles'])
   expect(EN['nav-model-profiles']).toBe(S['nav-model-profiles'])

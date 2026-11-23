@@ -20,18 +20,18 @@ import {
   isHidden,
   modelProfileDoc,
   reply,
-  serverDoc,
+  serverProfileDoc,
   startAt,
   type BffOptions,
 } from './bff.ts'
 
 export const ID = 'Qwen3-27B'
 export const PROFILE_HASH = `#/profiles/model/${ID}`
-export const SERVER_HASH = '#/instances/default'
+export const SERVER_HASH = '#/profiles/server/default'
 export const PROFILE_GET = `/api/profiles/model/${ID}`
 export const PROFILE_PUT = `/api/profiles/model/${ID}`
-export const SERVER_GET = '/api/instances/default/server'
-export const SERVER_PUT = '/api/instances/default/server'
+export const SERVER_GET = '/api/profiles/server/default'
+export const SERVER_PUT = '/api/profiles/server/default'
 
 /** The fake bff of a page (test/bff.ts). */
 export type Bff = ReturnType<typeof fakeBff>
@@ -105,21 +105,21 @@ export async function profileLoaded(
 /** The Server page, read with the Models folder set (so its input is
  * editable) and Port at `PORT_LOADED`, answering the save with `save`. */
 export async function serverLoaded(
-  save?: BffOptions['save'],
+  save?: BffOptions['serverProfileSave'],
   over: Record<string, unknown> = {},
 ): Promise<Page> {
   startAt(SERVER_HASH)
   const bff = fakeBff({
-    server: () =>
+    serverProfile: () =>
       reply(
         200,
-        serverDoc({
+        serverProfileDoc({
           ModelsDir: '/var/lib/models',
           Port: Number(PORT_LOADED),
           ...over,
         }),
       ),
-    save,
+    serverProfileSave: save,
   })
   render(<App />)
   const main = screen.getByRole('main')

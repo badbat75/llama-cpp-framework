@@ -74,7 +74,7 @@ async function openPage(options: BffOptions = {}) {
   render(<App />)
   const main = screen.getByRole('main')
   await screen.findByRole('heading', { level: 1, name: 'default' })
-  await within(main).findByRole('button', { name: en('save-button') })
+  await within(main).findByRole('group', { name: en('instance-tags-own') })
   return { bff, main }
 }
 

@@ -39,6 +39,9 @@ STATE = {
     "key": "withheld",
     "list": "one",
     "tags": "few",
+    # Brief 16 17a: `pool=long` adds the widest row to the server profile pool,
+    # for the pool list's state.
+    "pool": "short",
     "load": "fast",
     "node": "ok",
     # The GPU distribution card's split mode (brief 14 GD1.2, brief 19 section 7):
@@ -120,6 +123,19 @@ SERVER_PROFILES = [
         "instance": "default",
     },
 ]
+
+# Brief 16, slice 17a: the pool list's page (`pool=long`, the state
+# `server-profiles` of fe/ux/check.js). The widest row the rule allows: a
+# 32-character id (ID_MAX) with the 8 tags of 32 characters the tags states
+# use, run by no instance. The other states keep the pool above, so the
+# new-tag pill's suggestions do not change.
+LONG_POOL_ROW = {
+    "id": LONG_TAG + "x",  # 32 characters, the cap of an id
+    "engine": "llama.cpp",
+    "port": 9931,
+    "tags": LONG_OWN,
+    "instance": None,
+}
 
 # GET /api/profiles/model: rows with every engine shape the list shows.
 MODEL_PROFILES = [
@@ -381,7 +397,27 @@ class Handler(SimpleHTTPRequestHandler):
                 doc["withheld"] = ["OpencodeApiKey"]
             return self.json(200, doc)
         if p == "/api/profiles/server":
+            # Brief 16 17a: the pool list's page (`pool=long`) gains the widest
+            # row the rule allows; every other state sees today's pool, so the
+            # new-tag pill's suggestions are unchanged.
+            if STATE["pool"] == "long":
+                return self.json(200, SERVER_PROFILES + [LONG_POOL_ROW])
             return self.json(200, SERVER_PROFILES)
+        # Brief 16 slice 17a: a server profile's own page. The document is
+        # today's server document plus `instance`, the instance that runs it.
+        # `/api/profiles/server/<id>` has four slashes (the model profile route
+        # above is the same shape), and the refusal key is the bff's
+        # `client-no-server-profile` (fe/briefs/api-contract.md), the one the
+        # page maps to server-profile-not-found.
+        if p.startswith("/api/profiles/server/") and p.count("/") == 4:
+            pid = unquote(p.split("/")[4])
+            if pid == "default":
+                doc = dict(SERVER_DOC)
+                doc["instance"] = "default"
+                if STATE["key"] == "withheld":
+                    doc["withheld"] = ["OpencodeApiKey"]
+                return self.json(200, doc)
+            return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
         if p == "/api/profiles/model":
             return self.json(200, MODEL_PROFILES)
         # The facts of a model file (brief 19, section 0): the block counts and the
@@ -412,6 +448,26 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json(200, doc)
             return self.json(404, {"key": "no-model-profile-named", "args": [pid]})
         return super().do_GET()
+
+    def do_PUT(self):
+        p = urlparse(self.path).path
+        # The body is drained even where the route is not served, so a write
+        # never sits in a socket nobody reads.
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+        # Brief 16 slice 17a (17a.7): the Server form of a profile's page saves
+        # to this address, and the bff's reply is the file's revision and whether
+        # the instance that runs it is up. The check has no manager and starts
+        # nothing, so `running` is false; the save bar then reads save-saved.
+        if p.startswith("/api/profiles/server/") and p.count("/") == 4:
+            pid = unquote(p.split("/")[4])
+            if pid == "default":
+                return self.json(
+                    200, {"revision": SERVER_DOC["revision"], "running": False}
+                )
+            return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
+        return self.send_error(404, "no PUT of " + p)
 
 
 # The constructor binds and listens, so the port printed is one a request on it
