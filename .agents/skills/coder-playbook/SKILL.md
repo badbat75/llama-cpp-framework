@@ -63,8 +63,8 @@ Lessons only: the rules are in `AGENTS.md`.
   `fe/ux` (`NODE_PATH=<repo>/fe/ux/node_modules node /tmp/<x>.js`): a wrapping flex row that did NOT wrap has
   a width equal to its children's widths plus the gaps, and `align-items: baseline` puts the children's
   `top` at different pixels on ONE line, so top equality says nothing about wrapping.
-- The full `npm --prefix fe/ux run check` runs all three browsers here and finishes in about 3 min
-  (13 states, 90 pages per browser); `check.js` prints its finding lines ONLY at the end, and a browser
+- The full `npm --prefix fe/ux run check` runs all three browsers here and finishes in about 12 min
+  (the states of `STATES` in `fe/ux/check.js`); `check.js` prints its finding lines ONLY at the end, and a browser
   that throws mid-check records one line and the next runs, so the summary is complete. (It used to die
   at WebKit's context, "is-controlled-by-automation set but automation is not allowed in the context".)
 - A CSS test pins the SELECTOR as a string, not just its declarations: `block('.chip > .chip-full')` and a

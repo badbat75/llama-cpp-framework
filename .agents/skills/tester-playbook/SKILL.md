@@ -321,7 +321,7 @@ reds `ReferenceError: window is not defined` in `startAt`, which reads as a brok
 - `read` can render a repeated-character literal one character longer than the file's bytes (stub.py's
   `LONG_TAG` reads as 32 characters, it is 31), so a literal whose LENGTH the fixture depends on is
   verified with `python3` `len`, and an `edit` that will not match is re-aimed at a block that excludes it.
-- The UX check (`npm --prefix fe run build` then `npm --prefix fe/ux run check`, ~2 min) prints one line per
+- The UX check (`npm --prefix fe run build` then `npm --prefix fe/ux run check`, about 12 min) prints one line per
   browser x width x theme (x text mode), so ONE unmet `expect` of one state is 18 lines: report the unique
   lines (`sed 's/^chromium //..' | sort | uniq -c`), not the summary's count. A missing selector reads
   `not rendered: <selector> x<count>`; an axe tag reads `axe: <tag> x<n>`. Failures of states the slice did
