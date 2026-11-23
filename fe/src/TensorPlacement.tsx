@@ -306,7 +306,7 @@ export function TensorPlacement({
         id="model-profile-ot-rules"
         aria-describedby={FORMAT_ID}
       >
-        <legend>{t('model-profile-ot-rules')}</legend>
+        <legend className="field-label">{t('model-profile-ot-rules')}</legend>
         <div>
           <p className="muted" id={FORMAT_ID}>
             {t('model-profile-ot-format')}
@@ -332,14 +332,9 @@ export function TensorPlacement({
               ))}
             </ul>
           )}
-          <button
-            type="button"
-            className="secondary"
-            id={ADD_ID}
-            onClick={onAdd}
-          >
+          <button type="button" className="ot-add" id={ADD_ID} onClick={onAdd}>
             <Icon name="plus" />
-            {t('model-profile-ot-add')}
+            <span className="visually-hidden">{t('model-profile-ot-add')}</span>
           </button>
         </div>
       </fieldset>
@@ -454,12 +449,13 @@ function TensorRuleRow({
           </span>
           <button
             type="button"
-            className="secondary"
-            aria-label={`${t('model-profile-ot-remove')} ${rule}`}
+            className="ot-remove"
             onClick={() => onRemove(row.id)}
           >
             <Icon name="x" />
-            {t('model-profile-ot-remove')}
+            <span className="visually-hidden">
+              {t('model-profile-ot-remove', rule)}
+            </span>
           </button>
           {custom && (
             <span className="ot-pattern">

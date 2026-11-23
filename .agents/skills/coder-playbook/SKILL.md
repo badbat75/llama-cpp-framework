@@ -155,7 +155,17 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (`font-family`) are exhaustive per property; a CSS test pins the SELECTOR as a string and a rule's
   "declares nothing else" list. Append (sorted) and say the title or comment is stale rather than
   rewriting it. A test-side CSS helper must start counting braces after the opening `{` at depth 1.
-  `white-space` and `text-align` have no sheet-wide list.
+  `white-space` and `text-align` have no sheet-wide list. R1.8's id list is a
+  `Set` and its class list allows a card's own namespace: a new rule naming an id
+  the sheet already selects, or a class of that namespace, is free; a new id
+  outside it is red.
+- `topStyling(sel)` (exactly one top-level rule per selector) and `Reflow.test.ts`'s
+  `declaring([...])` ("declares exactly these properties and nothing else") read the SAME rule: a
+  selector pinned by both cannot gain a declaration, and the pair is a test-side conflict to report.
+- A forced-colours rule joins an EXISTING `@media (forced-colors: active)` block (the count is pinned
+  exactly, five) and its colour must be in `HearthTokens.test.ts` H1a.12's `SYSTEM` list: a system
+  keyword the list does not carry (`ButtonText`) is red there, and the rule must sit after the
+  top-level one it answers, a media query adding no specificity.
 - State by CLASS, never the `hidden` attribute, when a wider window must override it; scope a shorthand
   rule by renaming its selector.
 

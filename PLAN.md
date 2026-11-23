@@ -1210,7 +1210,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     already names the GPU), and Server profiles entering the menu with its page (slice 17a).
     In progress: 2j, brief 21 (`fe/briefs/21-tensor-placement.md`, 2026-11-22: a Tensor placement card
     of rule rows, tensor kind, layers, device, the raw rules editable as text; TP1 T.1 to T.9 built
-    2026-11-23; TP2 T.10 to T.13 built 2026-11-23; TP1b T.18 to T.23 (the rule row aligned, an x to remove and a + to add: the user's feedback on the deployed page, 2026-11-23) in progress; left TP3 T.14 to T.17; the brief's two questions, a
+    2026-11-23; TP2 T.10 to T.13 built 2026-11-23; TP1b T.18 to T.23 (the rule row aligned, an x to remove and a + to add: the user's feedback on the deployed page, 2026-11-23) built 2026-11-23; left TP3 T.14 to T.17, and the designer's D4 (WebKit draws every select 42 px: `height: var(--control-h)` in the global `select` rule); the brief's two questions, a
     tensor picker and Move up/down for rules, taken as recommended: not now). Slice 17 started 2026-11-22 at the user's request, beside 2j: the designer refreshes brief 16 against main first, brief 16 refreshed (60eb2bd); 17a (the Server profiles list and page, the form moved off the instance
     page) built 2026-11-23; 17b (create and delete a server profile) built 2026-11-23; next 17f (instance labels and the
     504 texts, after IL2) and TP2, one `fe/` user at a time; 17c to 17e wait for 17f.

@@ -44,7 +44,10 @@ const RULES = en('model-profile-ot-rules')
 const TENSOR = en('model-profile-ot-tensor')
 const LAYERS = en('model-profile-ot-layers')
 const GOES = en('model-profile-ot-goes-on')
-const REMOVE = en('model-profile-ot-remove')
+/** 21 T.20 (TP1b): the key carries the rule's legend, so the Remove name is
+ *  built from it ("Remove Rule 2"). */
+const removeName = (n: number) =>
+  en('model-profile-ot-remove', en('model-profile-ot-rule', `${n}`))
 const PATTERN = en('model-profile-ot-pattern')
 const ADD = en('model-profile-ot-add')
 const TEXT = en('model-profile-ot-text')
@@ -934,10 +937,10 @@ test('21 T.13: after the last rule, Tab goes Add rule, the Rules as text About t
     TENSOR,
     LAYERS,
     GOES,
-    `${REMOVE} ${en('model-profile-ot-rule', '1')}`,
+    removeName(1),
     TENSOR,
     GOES,
-    `${REMOVE} ${en('model-profile-ot-rule', '2')}`,
+    removeName(2),
     PATTERN,
     ADD,
     ABOUT,

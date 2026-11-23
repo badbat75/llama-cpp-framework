@@ -628,6 +628,9 @@ test('H1a.12 guard: the four forced-colours blocks stay, with system colours onl
     // H9a.5 (brief 08-hearth-h9-jump): the borderless jump entry reads as the
     // link it looks like, so the forced palette gives it the link colour.
     'LinkText',
+    // 21 T.23 (brief 21, TP1b): the x and the + of the Tensor placement list
+    // keep their glyph under forced colours, drawn in the system button text.
+    'ButtonText',
   ]
   const blocks: string[] = []
   let from = 0
@@ -709,7 +712,28 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
   // style for a shared declaration, index.css 1399), and the names are
   // the same either way. Every size in the card stays min-width 0.
   const otSizes = sizes.filter((s) => /ot-|tensor|placement/.test(s))
-  for (const s of otSizes)
+  // Brief 21 TP1b (21 T.20, 21 T.21, 21 T.22, fe/briefs/21-tensor-placement.md):
+  // the row's Remove and the Add rule under the list become icon buttons, each
+  // a 40 px square under a class of the card's namespace (the coder names
+  // them: `.ot-remove`, `.ot-add`). They are the only sizes in the card that
+  // are not min-width: 0, and each names its own 40 px floor: a 24 px button
+  // beside 40 px selects, or a size on a third class, is red here.
+  const ICON = ['.ot-add', '.ot-remove']
+  const iconSize = (s: string): string[] => {
+    const cut = s.indexOf(': ')
+    const parts = s
+      .slice(0, cut)
+      .split(',')
+      .map((p) => p.trim())
+    return parts.every((p) => ICON.includes(p))
+      ? parts.map((p) => `${p}${s.slice(cut)}`)
+      : []
+  }
+  expect(
+    otSizes.flatMap(iconSize).sort(),
+    '21 T.20 and 21 T.21: the two icon buttons of the Tensor placement list carry min-height 40px and nothing else, each under its own class (a comma group counts for both)',
+  ).toEqual(['.ot-add: min-height: 40px', '.ot-remove: min-height: 40px'])
+  for (const s of otSizes.filter((s) => iconSize(s).length === 0))
     expect(
       s,
       '21 TP1 review D1, D4 and D5: every size in the Tensor placement card is min-width: 0: no min-height and no other value',
@@ -718,6 +742,7 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     [
       ...new Set(
         otSizes
+          .filter((s) => iconSize(s).length === 0)
           .flatMap((s) => s.slice(0, s.indexOf(': ')).split(','))
           .map((p) => p.trim()),
       ),

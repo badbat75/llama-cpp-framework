@@ -1816,76 +1816,96 @@ ul.check-list {
   accent-color: var(--accent);
 }
 
-/* The Tensor placement card (brief 21, 21 T.4, and its TP1 review D1,
-   2026-11-23): a rule is a plain fieldset with its legend above and its
-   controls a wrapping flex row, and every item of that row is ONE visible label
-   with the control it labels: label and control as two items, the "Pattern"
-   label ended beside Remove and its input on the next line at 320 px. The items
-   that ask a size are the Tensor select, the widest of the row, the Goes on
-   select, and the Pattern, which takes a line of its own. `min-width: 0` is
-   what lets an item go below its min-content (CSS Flexbox 1): a long device
-   name and a pattern of the whole module name have no break point, the same
-   pair the 15 section 11 C2 review D2 pins for the suggestions list. The class
-   names are the coder's (21 section 6), in the card's own namespace. */
+/* The Tensor placement card (brief 21, 21 T.4, its TP1 review D1 of 2026-11-23
+   and its TP1b slice, 21 T.19 and 21 T.22): a rule is a plain fieldset with its
+   legend above and its controls a wrapping flex row, and every item of that row
+   is ONE visible label with the control it labels: label and control as two
+   items, the "Pattern" label ended beside Remove and its input on the next line
+   at 320 px. TP1b turns every item into a column, so the label is always ABOVE
+   its control: as a wrapping row, a label that fits beside its control stayed
+   there and one that did not wrapped above it, and the Tensor select and the
+   Goes on select stood at different heights. The row is aligned at the bottom,
+   so every control of one line shares its top edge. `min-width: 0` is what lets
+   an item go below its min-content (CSS Flexbox 1): a long device name and a
+   pattern of the whole module name have no break point, the same pair the 15
+   section 11 C2 review D2 pins for the suggestions list. The class names are
+   the coder's (21 section 6), in the card's own namespace. */
 .ot-rule-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--space-2);
 }
 
-/* Its D4 re-check of the same day: the item holds a label AND a select, and the
-   shared `select` rule sets no width, so the select keeps the width of its
-   longest option and spills the page (a 64-character device: 430 of 320 px,
-   build/ux-review/tp1/run2.txt). The item is therefore a flex row of its own,
-   the four of the rule row, and its select is an item of the item: the basis
-   gives it the room beside the label, its own `min-width: 0` lets it go below
-   its content. One comma group for both selects, the sheet's style for a shared
-   declaration. */
+/* Its TP1b review's D1 (the designer, 2026-11-23): the shared
+   `input[type='text'] { flex: 1 1 16rem }` above reaches the inputs of a rule
+   row too, and inside a column item (21 T.19) a flex basis is the control's
+   HEIGHT: the Layers input stood 110 px tall and the Pattern input 256 px (512
+   at 200 % text), and the row aligned at the bottom lifted the Tensor select
+   70 px under the Layers label, the misalignment the user reported on another
+   field (build/ux-review/tp1/tp1b-chromium-1600-light.png). No control of a
+   rule row keeps a basis: its width comes from the `width: 100%` the items'
+   controls carry (21 T.22). One comma group for the two, the sheet's style for
+   a shared declaration. */
+.ot-rule-row input,
+.ot-rule-row select {
+  flex: none;
+}
+
+/* The shares of the line (21 T.22): the two selects ask the wider share, so
+   their text is cut less, and the Layers field an 8rem basis, about ten
+   characters. The D4 re-check of the TP1 review gave the two selects their own
+   `min-width: 0`, the item's floor alone is measured against the item: a flex
+   item is floored at its min-content, which for a select is the width of its
+   longest option (a 64-character device: 430 of 320 px,
+   build/ux-review/tp1/run2.txt). In a column a flex basis is the control's
+   HEIGHT, so the control takes its width from `width: 100%` below. One comma
+   group for the two selects, the sheet's style for a shared declaration. */
 .ot-tensor {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
-  flex: 1 1 16rem;
+  flex: 2 1 18rem;
   min-width: 0;
 }
 
 .ot-goes-on {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
-  flex: 1 1 12rem;
+  flex: 2 1 16rem;
+  min-width: 0;
+}
+
+/* Its TP1b review's D2 (the designer, 2026-11-23): the fixed `0 0 8rem` of the
+   slice cannot shrink, so at 200 % text the item is 256 px wide in a 190 px
+   column (1280 px window) and spills its rule by 18 to 66 px in the three
+   engines (build/ux-review/tp1/run5.txt). The item keeps the 8rem basis and
+   shrinks, with the floor that lets it. */
+.ot-layers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 0 1 8rem;
   min-width: 0;
 }
 
 .ot-tensor select,
 .ot-goes-on select {
-  flex: 1 1 12rem;
+  width: 100%;
   min-width: 0;
 }
 
-/* The Layers item of a rule row (21 T.4, and its TP1 review D5 of the same
-   day): the span is a flex item of the rule row with no floor of its own, so
-   its min-content is its input's `10ch` and the input's `max-width: 100%` is
-   measured against that same span. It is therefore a flex row of its own, the
-   four of `.ot-rule-row`, with the `min-width: 0` that lets an item go below
-   its min-content (CSS Flexbox 1), as the two select items above are. The
-   Layers item asks no size of its own: the input is about 10 characters wide. */
-.ot-layers {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+.ot-layers input {
+  width: 100%;
 }
 
-/* Its D4 re-check of the same day: the Layers input is about 10 characters
-   wide (input.number), so at 200 % text, where the card's control column
-   narrows, it spills the item. The cap keeps it inside, as
+/* The Layers input's cap and floor (the TP1 review's D4 and D5 of the same
+   day): the input is about 10 characters wide (input.number), so at 200 % text,
+   where the card's control column narrows, it spills the item, 30 px past the
+   column at 1280 px (build/ux-review/tp1/run3.txt). The cap keeps it inside, as
    `.ot-pattern input { width: 100% }` keeps the Pattern input, and its floor
-   (D5) lets it shrink in the row the span above is. */
+   lets it shrink in the column the span above is. */
 .ot-layers input.number {
   max-width: 100%;
   min-width: 0;
@@ -1894,12 +1914,57 @@ ul.check-list {
 /* The Pattern line: the input is as wide as the line, so the text a kind does
    not own is whole under its label (21 T.4). */
 .ot-pattern {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   flex-basis: 100%;
   min-width: 0;
 }
 
 .ot-pattern input {
   width: 100%;
+}
+
+/* The x that takes a rule away, the last control of its row (brief 21, 21 T.20,
+   fe/DESIGN.md 5.2 "Icon buttons of a list"): an icon-only control with no box
+   of its own, the way the chips' x is. It is 40 px wide, so it lines up with
+   the selects of the row, and as high as the row, well above the 24 px floor of
+   2.5.8; the words are in a span the eye does not read. No border and no fill:
+   the row is not a list of boxes. `align-self` is the row's bottom edge, where
+   it stands. */
+.ot-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  align-self: flex-end;
+}
+
+/* The + that adds a rule, under the list (21 T.21): the same 40 px square, with
+   the --control outline of a secondary button, so after the line that says
+   there is no rule it still reads as a control. */
+.ot-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: var(--border-w) solid var(--control);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* The room between two rules (the TP1b review's D3, the designer, 2026-11-23):
+   with none, "Rule 2" read as a line of rule 1, just under its x. One token
+   falls between the rules of the list, never above the first (`li + li`). */
+#model-profile-ot-rules li + li {
+  margin-top: var(--space-4);
 }
 
 /* The Field Error of a rule (brief 21, 21 T.11): the row is a wrapping flex row,
@@ -2239,6 +2304,19 @@ html:has(.save-bar) {
      colour of a control. */
   .jump ul button {
     color: LinkText;
+  }
+
+  /* The two icon buttons of the Tensor placement list (brief 21, 21 T.23): the
+     glyph is a `currentColor` stroke, so the button's colour is what draws it,
+     and the author colour of a control is forced to a system one the sheet
+     cannot read. One system colour hands the glyph back: the icon stays visible
+     on the forced field. It joins this block, the buttons' own, because the
+     token guards pin the count of the sheet's forced-colours blocks, and it
+     sits after the top-level `.ot-remove` and `.ot-add` rules, a media query
+     adding no specificity. */
+  .ot-remove,
+  .ot-add {
+    color: ButtonText;
   }
 }
 

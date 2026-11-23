@@ -704,7 +704,7 @@ export const EN: Record<string, string> = {
   'model-profile-ot-cpu': 'CPU: system memory',
   'model-profile-ot-no-device': '(no device)',
   'model-profile-ot-add': 'Add rule',
-  'model-profile-ot-remove': 'Remove',
+  'model-profile-ot-remove': 'Remove {0}',
   'model-profile-ot-kind-embd': 'Embedding table (token_embd)',
   'model-profile-ot-kind-ple': 'Per-layer embeddings (per_layer_token_embd)',
   'model-profile-ot-kind-output': 'Output head (output)',

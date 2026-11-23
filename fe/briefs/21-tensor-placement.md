@@ -644,3 +644,25 @@ rule 1 just under its x. Give `#model-profile-ot-rules li + li` a `margin-top: v
 
 Screenshot for the user: `build/ux-review/tp1/tp1b-chromium-1600-light.png` shows the state now,
 D1 included. `tp1b-chromium-1280-dark.png` is the user's case (one embedding rule, dark).
+
+**Re-check (2026-11-23): D1 to D3 fixed.** Measured in Chromium, Firefox and WebKit with
+`build/ux-review/tp1e.js` and `tp1f.js`, on one rule, three rules (a block kind with Layers, a table,
+a Custom pattern) and the five-rule set with the 128-character pattern and the 64-character device,
+at 1280 and 320 px, in light and dark, at 100 % and 200 % text:
+- In Chromium and Firefox every control of a rule is 40 px tall. At 1280 px the card's column fits
+  Tensor and Layers on one line and Goes on and the x on the next (Pattern on a third for Custom),
+  and the controls of each line share one top.
+- 20 px between rules; nothing reaches past its rule; no sideways scroll anywhere.
+- At 200 % text each control has a line of its own, so their heights (54 to 64 px) align with
+  nothing beside them.
+- **D4 (small, every page, WebKit only).** WebKit draws a native `select` 42 px tall (`line-height:
+  normal` with 4 px padding beats `min-height: var(--control-h)`), so on a rule line the selects
+  stand 2 px above the 40 px Layers input and x (bottoms aligned). Fix in the global `select` rule
+  (`index.css` ~1561): `height: var(--control-h)` beside the min-height, or `line-height` set as the
+  inputs'. It is not TP1b's change and does not block it.
+
+`npm --prefix fe/ux run check`: 168 states per browser, 0 failing (`build/ux-review/tp1/check-tp1b2.txt`).
+
+TP1b accepted. Screenshots for the user: `build/ux-review/tp1/tp1b2-chromium-1280-dark-one.png`
+(one embedding rule) and `tp1b2-chromium-1280-dark-several.png` (a MoE experts rule with layers
+20-23, the embedding table, a Custom pattern).

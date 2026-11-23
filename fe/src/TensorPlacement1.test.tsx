@@ -52,7 +52,12 @@ const FORMAT_TEXT = en(FORMAT_KEY)
 const TENSOR = en('model-profile-ot-tensor')
 const LAYERS = en('model-profile-ot-layers')
 const GOES = en('model-profile-ot-goes-on')
-const REMOVE = en('model-profile-ot-remove')
+/** 21 T.20 (TP1b, 21 T.18 to T.23): `model-profile-ot-remove` carries the
+ *  rule's legend, so the Remove name is built from it ("Remove Rule 2"). The
+ *  button's visible text is gone (its name is a visually hidden span): the
+ *  shape of the two icon buttons is pinned in `TensorPlacement3.test.tsx`. */
+const removeName = (n: number) =>
+  en('model-profile-ot-remove', en('model-profile-ot-rule', `${n}`))
 const PATTERN = en('model-profile-ot-pattern')
 const ADD = en('model-profile-ot-add')
 /** 21 T.13 (TP2): the Rules as text Field follows Add rule, so its About toggle
@@ -404,7 +409,7 @@ function patternOf(group: HTMLElement): HTMLInputElement | null {
 
 function removeOf(group: HTMLElement, n: number): HTMLElement {
   return within(group).getByRole('button', {
-    name: `${REMOVE} ${en('model-profile-ot-rule', `${n}`)}`,
+    name: removeName(n),
   })
 }
 
@@ -744,26 +749,18 @@ test('21 T.4: Layers is shown only for a kind with a block, labelled Layers, ari
   ).toBe('')
 })
 
-test('21 T.4: Remove is a secondary button named "Remove Rule 2" whose name starts with its visible text, its icon aria-hidden', async () => {
+test('21 T.4 (as 21 T.20 amends it): Remove is named "Remove Rule 2", its icon aria-hidden', async () => {
+  // TP1b (21 T.20) retires the visible text: the button is an x icon and a
+  // visually hidden span, so the half of this test that read the visible text
+  // "Remove" is gone, and "no visible text" is pinned by 21 T.20 in
+  // `TensorPlacement3.test.tsx`. What stays is the name and the hidden icon.
   const { main } = await form(file(`${EMBD}=CUDA0`, `${EXPS}=CPU`))
   const card = cardOf(main, CARD)
   const button = removeOf(ruleGroup(card, 2), 2)
   expect(
     nameOf(button),
-    '21 T.4: the name is the visible text plus the legend (WCAG 2.5.3)',
-  ).toBe(`${REMOVE} ${en('model-profile-ot-rule', '2')}`)
-  const visible = [...button.childNodes]
-    .filter(
-      (n) =>
-        !(n instanceof Element && n.getAttribute('aria-hidden') === 'true'),
-    )
-    .map((n) => n.textContent ?? '')
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim()
-  expect(visible, '21 T.4: the visible text is model-profile-ot-remove').toBe(
-    REMOVE,
-  )
+    '21 T.4: the name is the words of model-profile-ot-remove with the legend (WCAG 4.1.2)',
+  ).toBe(removeName(2))
   expect(
     button.querySelector('[aria-hidden="true"]'),
     '21 T.4: the x icon is hidden from the screen reader',
@@ -929,7 +926,7 @@ const topStyling = (sel: string, what: string): Rule =>
     `the top-level rule styling "${sel}" (${what})`,
   )
 
-test('21 TP1 review D4 and D5 (the sheet): .ot-tensor, .ot-goes-on and .ot-layers are flex rows themselves (display: flex, flex-wrap: wrap, align-items: center, gap: var(--space-2)) and carry min-width: 0, so the label and the control wrap inside the item', () => {
+test('21 TP1 review D4 and D5 (the sheet, as 21 T.19 amends it): .ot-tensor, .ot-goes-on and .ot-layers are flex columns (display: flex, flex-direction: column, gap: var(--space-2)) and carry min-width: 0, so the label sits above its control', () => {
   // D4 (the re-check of 2026-11-23, `npm --prefix fe/ux run check`): the
   // select sits inside the item span the D1 fix made (TensorPlacement.tsx
   // 310, 337), not directly in the rule row, and the shared `select` rule
@@ -948,6 +945,10 @@ test('21 TP1 review D4 and D5 (the sheet): .ot-tensor, .ot-goes-on and .ot-layer
   // (build/ux-review/tp1/run3.txt). The pin is per name (topStyling): the
   // coder's own rule for the span, or the sheet's comma group beside the
   // two items, both pass.
+  // TP1b (21 T.19) turns the row into a column: the label is always above its
+  // control, so the two selects no longer stand at different heights. The
+  // item is still a flex container with the same gap and the same floor, and
+  // the column is what the control's `width: 100%` (21 T.22) fills.
   for (const sel of ['.ot-tensor', '.ot-goes-on', '.ot-layers']) {
     const item = topStyling(
       sel,
@@ -955,32 +956,32 @@ test('21 TP1 review D4 and D5 (the sheet): .ot-tensor, .ot-goes-on and .ot-layer
     )
     for (const [name, value] of [
       ['display', 'flex'],
-      ['flex-wrap', 'wrap'],
-      ['align-items', 'center'],
+      ['flex-direction', 'column'],
       ['gap', 'var(--space-2)'],
       ['min-width', '0'],
     ] as Array<[string, string]>)
       expect(
         norm(prop(item.body, name)),
-        `D4/D5: ${sel}: the item is a flex row of its own (the four of .ot-rule-row) with min-width: 0, so its control is an item of it and can shrink: ${name}`,
+        `D4/D5 as 21 T.19 amends it: ${sel}: the item is a column of its own with min-width: 0, so its control is an item of it, below its label, and can shrink: ${name}`,
       ).toBe(value)
   }
 })
 
-test('21 TP1 review D4 (the sheet): the Tensor and Goes on selects declare flex: 1 1 12rem and min-width: 0, so a select never keeps the width of its longest option', () => {
+test('21 TP1 review D4 (the sheet, as 21 T.22 amends it): the Tensor and Goes on selects declare min-width: 0, so a select never keeps the width of its longest option', () => {
   // The item is a flex row (the test above) and the select is one of its
   // items; a flex item is floored at its min-content, which for a select is
-  // the width of its longest option. The basis gives it the room beside the
-  // label and `min-width: 0` lets it go below its content (CSS Flexbox 1),
-  // the same pair the 15 section 11 C2 review D2 pins for the suggestions
-  // list. One comma group for both selects is as good as two rules: the pin
-  // is per selector.
+  // the width of its longest option, and `min-width: 0` lets it go below its
+  // content (CSS Flexbox 1), the same pair the 15 section 11 C2 review D2
+  // pins for the suggestions list. One comma group for both selects is as
+  // good as two rules: the pin is per selector.
+  // Brief 21 TP1b (21 T.19, 21 T.22) retires the other half of this pin,
+  // `flex: 1 1 12rem`: the item is a column now (the label above its
+  // control), so a flex basis there is the select's HEIGHT, and the width the
+  // brief gives the control is `width: 100%`, pinned by 21 T.22 in
+  // `TensorPlacement3.test.tsx`.
   for (const sel of ['.ot-tensor select', '.ot-goes-on select']) {
     const rule = topStyling(sel, 'the select the item holds')
-    for (const [name, value] of [
-      ['flex', '1 1 12rem'],
-      ['min-width', '0'],
-    ] as Array<[string, string]>)
+    for (const [name, value] of [['min-width', '0']] as Array<[string, string]>)
       expect(
         norm(prop(rule.body, name)),
         `D4: ${sel}: the select is an item of the item, floored at its longest option without this: ${name}`,
@@ -1510,14 +1511,7 @@ test('21 T.9: Tab in a rule goes Tensor, Layers, Goes on, Remove, and after the 
   expect(
     tabbable(cardOf(main, CARD)).map(nameOf),
     '21 T.9: one rule of a kind with a block',
-  ).toEqual([
-    TENSOR,
-    LAYERS,
-    GOES,
-    `${REMOVE} ${en('model-profile-ot-rule', '1')}`,
-    ADD,
-    ...TEXT_STOPS,
-  ])
+  ).toEqual([TENSOR, LAYERS, GOES, removeName(1), ADD, ...TEXT_STOPS])
 })
 
 test('21 T.9: Tab in a Custom rule goes Tensor, Goes on, Remove, Pattern, and then Add rule, then Rules as text (21 T.13)', async () => {
@@ -1531,11 +1525,11 @@ test('21 T.9: Tab in a Custom rule goes Tensor, Goes on, Remove, Pattern, and th
   ).toEqual([
     TENSOR,
     GOES,
-    `${REMOVE} ${en('model-profile-ot-rule', '1')}`,
+    removeName(1),
     PATTERN,
     TENSOR,
     GOES,
-    `${REMOVE} ${en('model-profile-ot-rule', '2')}`,
+    removeName(2),
     ADD,
     ...TEXT_STOPS,
   ])

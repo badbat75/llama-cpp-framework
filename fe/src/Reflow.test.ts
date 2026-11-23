@@ -665,11 +665,12 @@ test("21 TP1 review D1 (the sheet): in the 720 px block that styles .field, one 
   ).toMatch(/#model-profile-[\w-]*(card-tensor|ot)\b.*\bdiv\b/)
 })
 
-test('21 TP1 review D1 (as its D4 re-check of 2026-11-23 amends it): the Tensor item .ot-tensor declares flex: 1 1 16rem, the Goes on item .ot-goes-on flex: 1 1 12rem and the Pattern item .ot-pattern flex-basis: 100%, each with min-width: 0, so at 320 px the items wrap inside the li and never between a label and its control', () => {
+test('21 TP1 review D1 (as its D4 re-check of 2026-11-23 and 21 T.22 of TP1b amend it): the Tensor item .ot-tensor declares flex: 2 1 18rem, the Goes on item .ot-goes-on flex: 2 1 16rem and the Pattern item .ot-pattern flex-basis: 100%, each with min-width: 0, so at 320 px the items wrap inside the li and never between a label and its control (the TP1b review adds the flex guard)', () => {
   // 21 T.4: the rule's controls are a wrapping flex row and each visible label
-  // and its control is ONE item, Tensor asking 16rem, Goes on 12rem, Pattern a
-  // line of its own. With no rule in the sheet the items take their content
-  // width and the pairs break apart: at 320 px the "Pattern" label ends beside
+  // and its control is ONE item, Tensor asking the widest share, Goes on the
+  // next, Pattern a line of its own. With no rule in the sheet the items take
+  // their content width and the pairs break apart: at 320 px the "Pattern"
+  // label ends beside
   // Remove and its input lands on the next line
   // (build/ux-review/tp1/card-320.png). min-width: 0 on each item is what lets
   // it go below its min-content (CSS Flexbox 1), the same pair the 15 section
@@ -680,6 +681,16 @@ test('21 TP1 review D1 (as its D4 re-check of 2026-11-23 amends it): the Tensor 
   // on "the size properties and nothing else". The pair alone is pinned to
   // the card namespace, the new `.ot-… select` rules of D4 included: an item
   // asking a size outside the card is a look no brief asked for (R1.8).
+  // TP1b (21 T.22, the user: "the selects cut their text") retargets the two
+  // shares: Tensor 1 1 16rem becomes 2 1 18rem, Goes on 1 1 12rem becomes
+  // 2 1 16rem; the Layers item's fixed 8rem and the controls' width: 100% are
+  // pinned by 21 T.22 in TensorPlacement3. The items are columns now
+  // (21 T.19, pinned by TensorPlacement3), so the Pattern rule's set gains the
+  // column declarations, and the selects ask their width (100%), not a basis.
+  // The TP1b review (the reviewer, 2026-11-23) keeps this guard and widens
+  // it: a rule declaring only flex and min-width (the D2 shrink of the Layers
+  // item, `flex: 0 1 8rem; min-width: 0`, written as a rule of its own) is a
+  // size, so it names the card too.
   const sameSet = (got: string[], want: string[]) =>
     got.length === want.length &&
     got.sort().every((n, i) => n === want.sort()[i])
@@ -689,14 +700,14 @@ test('21 TP1 review D1 (as its D4 re-check of 2026-11-23 amends it): the Tensor 
     [
       '.ot-tensor',
       'flex',
-      '1 1 16rem',
-      'the Tensor item of 21 T.4 (a select of 17 options)',
+      '2 1 18rem',
+      'the Tensor item of 21 T.4 as 21 T.22 widens it (a select of 17 options)',
     ],
     [
       '.ot-goes-on',
       'flex',
-      '1 1 12rem',
-      'the Goes on item of 21 T.4 (a select of devices)',
+      '2 1 16rem',
+      'the Goes on item of 21 T.4 as 21 T.22 widens it (a select of devices)',
     ],
     [
       '.ot-pattern',
@@ -712,16 +723,26 @@ test('21 TP1 review D1 (as its D4 re-check of 2026-11-23 amends it): the Tensor 
       `D1: ${what} is a flex item floored at its min-content by the auto minimum size, so a long device name pushes the page sideways at 320 px and 200 % text: min-width`,
     ).toBe('0')
   }
-  for (const r of declaring(['flex', 'min-width']))
-    for (const p of r.flat.split(','))
-      expect(
-        p.trim(),
-        'a rule declaring flex and min-width and nothing else asks a size: the two select items of 21 T.4, and after D4 the two selects it puts inside them, all of the Tensor placement card: every selector of such a rule names the card (R1.8)',
-      ).toMatch(/^\.ot-/)
-  const basisItems = declaring(['flex-basis', 'min-width'])
+  for (const names of [
+    ['width', 'min-width'],
+    ['flex', 'min-width'],
+  ] as Array<string[]>)
+    for (const r of declaring(names))
+      for (const p of r.flat.split(','))
+        expect(
+          p.trim(),
+          `a rule declaring ${names.join(' and ')} and nothing else sizes a control: the two selects of 21 T.22 (width: 100%, min-width: 0) and the Layers shrink of the TP1b review D2 (flex: 0 1 8rem, min-width: 0), all of the Tensor placement card: every selector of such a rule names the card (R1.8)`,
+        ).toMatch(/^\.ot-/)
+  const basisItems = declaring([
+    'display',
+    'flex-direction',
+    'gap',
+    'flex-basis',
+    'min-width',
+  ])
   expect(
     basisItems.length,
-    'exactly one top-level rule declares flex-basis and min-width and nothing else: the Pattern item, on a line of its own (21 T.4, the review D1)',
+    'exactly one top-level rule declares flex-basis and min-width with the 21 T.19 column declarations and nothing else: the Pattern item, on a line of its own (21 T.4, the review D1, 21 T.19)',
   ).toBe(1)
   const pattern = single(basisItems, 'the Pattern item')
   expect(
