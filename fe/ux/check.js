@@ -93,6 +93,13 @@ const BUDGET = S['model-profile-gpu-blocks-budget']?.split('{0}')[0]
 // string `model-profile-ot-rule` with the rule's position. Absent from the
 // strings file until TP1 lands, where the state's marker is a legend alone.
 const RULE3 = S['model-profile-ot-rule']?.replace('{0}', '3')
+// The start of the delete's question (brief 22, 22 D.2): the string
+// `model-profile-delete-question` up to its `{0}`, which the page fills with the
+// profile's name. It names the Confirm group, whose selector alone is not the
+// page's only group (every Field is a `fieldset`). Absent from the strings file
+// until 22D lands, where the marker names a text of "undefined" and the state
+// fails, as it asks.
+const DELETE_QUESTION = S['model-profile-delete-question']?.split('{0}')[0]
 
 // The states to look at: the stub's /__set query, the route, the expect: the
 // selectors (with the text they carry) only that state shows, the optional
@@ -440,6 +447,31 @@ const STATES = [
     click: ['#model-profile-jump-toggle', '#model-profile-assets-toggle'],
   },
   {
+    // Brief 22, slice 22D (22 D.1 and 22 D.2, 22 C.10's state): the Confirm in
+    // place of the delete, on the page of a switched-off model profile (stub.py
+    // `off=1` reads `enabled` false, and answers the DELETE with 204). The
+    // marker text is the key 22 D.8 adds: absent from the strings file it names
+    // a button of the text "undefined", so the state fails until the slice
+    // lands, as it asks.
+    name: 'model-profile-delete',
+    set: 'session=admin&off=1',
+    hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
+    expect: [
+      { selector: '#page-heading', text: MODEL_PROFILE_ID },
+      {
+        selector: `main button:has-text("${S['model-profile-delete']}")`,
+        message: 'the delete, offered while the profile is switched off',
+      },
+    ],
+    open: {
+      click: `main button:has-text("${S['model-profile-delete']}")`,
+      // The Confirm group, named by its question: `main [role="group"]` alone
+      // is not the page's only group (every Field is a `fieldset`), so the
+      // marker asks for the group holding the question's text.
+      then: `main [role="group"]:has(p:has-text("${DELETE_QUESTION}"))`,
+    },
+  },
+  {
     name: 'model-profile-missing',
     set: 'session=admin',
     hash: `#/profiles/model/${MISSING_ID}`,
@@ -683,13 +715,13 @@ async function hovered(page, state) {
  *  answering node: the two tile states ask for list=many themselves, the tags
  *  state for tags=long, the loading ones for load=session or load=slow and the
  *  node states for node=down or node=long, the blocks state for split=layer,
- *  the placement state for ot=1, and a state that ran before them leaves none
- *  of them behind for the pages after it. A hash change does not reload the
- *  app, so every state starts from a blank page. */
+ *  the placement state for ot=1, the delete state for off=1, and a state that
+ *  ran before them leaves none of them behind for the pages after it. A hash
+ *  change does not reload the app, so every state starts from a blank page. */
 async function load(page, state) {
   const found = []
   for (const q of [
-    'list=one&tags=few&load=fast&node=ok&split=tensor&ot=none',
+    'list=one&tags=few&load=fast&node=ok&split=tensor&ot=none&off=0',
     state.set,
   ]) {
     const res = await fetch(`${BASE}/__set?${q}`)

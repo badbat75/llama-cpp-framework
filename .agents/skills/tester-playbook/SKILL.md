@@ -183,6 +183,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - Write a source lint knowing it reads production code with whole-line comments dropped and that a name it
   matches is the lint's data; over the files of a package split, pin only the OWNERSHIP rule it names.
+- A source lint that walks `read_dir(<crate>/src)` is non-recursive, so it skips that crate's `src/tests/`
+  (the lib's own unit tests): for a rule about the production code that is exactly the scope, and the
+  test's comment says so.
 - Pin a decision as a pure function over its inputs and test the function, not a run that happens to
   reach it. Pin a reader over a fixture root with the fixture's exact names (the case rules compare
   exactly, and `write_file` refuses a `[*]` section).
@@ -229,6 +232,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Pin a 422 whose `field` names a control the form checks itself (a port) with a value the check accepts,
   and the args exactly as the bff sends them: with a value that check refuses the reply is UNREACHABLE,
   because the check sends nothing.
+- Pin an id encoding with an id whose encoded form DIFFERS from the raw one (a space and a `#`): the fake
+  records the string `api.ts call` handed to fetch verbatim (no URL parse), so assert `calls[i].path`
+  equals the encoded route, and take the calls off `bff.calls` by method so the red names the path, not a
+  count. An id like `Qwen3-27B` pins nothing: `encodeURIComponent` is the identity on it. Open the page at
+  the encoded hash (`startAt` keeps `%23` in the fragment, `parseRoute` decodes it) and settle on the
+  cards' `h3` before pressing the page's own control: the h1 alone renders while the read is open.
 
 ### The web UI (fe/): async settling
 
@@ -289,6 +298,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   declarations, and assert the effective value. The pin then follows the class names the coder chose, so
   it needs no assumption; accept the shorthand or its longhand parts (`border: none` or
   `border-style: none`) where the brief states the effect.
+- When a review names two sanctioned fixes (a sheet declaration, or a markup shape like a wrapper div),
+  pin the DISJUNCTION: the cascade value for the sheet option, the parent chain read off the page for the
+  markup option, `a || b` in one assertion. Forcing one shape writes the coder's fix into the contract.
 - Prove the teeth of a CSS pin in a scratch css + scratch test pair (`cp` both, one string swap, `-t`).
 - Send a test that cannot fail in jsdom (real layout, focus movement, `fireEvent.click` moving no focus,
   clipping) to the UX check, or state it as unproven.
@@ -383,11 +395,19 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `Unavailable` is 503 only where nothing was handed over (failed connect, a read) and 504 on a write
   that crossed; reads keep 503. Before renaming a test ending `is_unavailable`, read which of the two it
   drives.
+- A test that signs in to reach a route: the sign-in opens a manager connect, so a "nothing was asked"
+  pin takes the connect count AFTER signing in and asserts the delta (a bare `== 0` stays red on a
+  correct route). The fake's `authenticate` records nothing, so the manager log stays a clean pin.
+- A refusal travels as `{"key","args":[<strings>]}` built by each route module's own
+  `keyed(status, key, &[&str])`; `session::error` takes `&[u64]`, so a string arg (a repo, a path) needs
+  the route's helper, not the session's.
 
 ### The web UI (fe/)
 
 - `npx vitest` from the repo root resolves another config and the node environment: every test reds with
   `window is not defined`.
+- `--reporter=basic` (vitest 5 dropped it) prints NOTHING, so a grep for the test names answers empty and
+  reads as "the tests do not exist": run with the default reporter and read `Test Files` / `Tests`.
 - In this environment `npm --prefix fe test` exits 1 with an `EISDIR ... getPackageScopeConfig` and a
   `jsdom` message while every file passed: judge from the `Test Files` / `Tests` lines.
 - `npx --prefix fe prettier --check src/x.test.tsx` matches NO file and still ends "All matched files use
@@ -396,6 +416,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - vitest swallows `console.log`.
 - A `TypeError: unexpected <route>` is a fixture gap (the fake bff was asked a route its defaults do not
   cover), not the slice's red.
+- A straight apostrophe inside a single-quoted assertion message (`'no icon, as 17b's'`) is a syntax error:
+  the file fails to load, printing no test names. This suite writes the typographic `’` in those strings.
 - A page-open helper that calls `fakeBff()` itself stubs the fetch with its own fake: a second fake means
   a second set of answers.
 - A fixture's `startAt(n)` gates every route, not the one it means; `startAt` is `history.replaceState`,
@@ -427,3 +449,6 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Playwright `waitFor()` counts a `.visually-hidden` element as visible, and `hasText` is a normalised
   substring of `textContent`: one marker cannot pin a `count` together with a `text` only one element
   carries, so split them. A `hover: { on, then }` acts on the FIRST match of `on`.
+- A test file whose line count moves between two reads is being written by ANOTHER agent right now (the
+  same slice briefed twice): stop, never rewrite it, report the collision. The shared edits (`src/test/bff.ts`,
+  `fe/ux/`) survive the overwrite, the test file does not.

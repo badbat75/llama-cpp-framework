@@ -5,6 +5,8 @@
 // `1a strings` in App.test.tsx, which compares the strings file against the test's
 // EN map, where 17b's keys are listed. Test names cite the brief first, `16 17b.6`,
 // because brief 17's UX pass owns the bare `17b.n` names.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   act,
   cleanup,
@@ -623,4 +625,76 @@ test('16 17b.9: a 401 shows session-ended-retry with a Sign in after it in the g
   expect(document.activeElement, 'the focus is back on the verb').toBe(del)
   expect(queryConfirm(main), 'the group is still open').not.toBeNull()
   expect(bff.to('DELETE', ROUTE), 'nothing is sent again').toHaveLength(1)
+})
+
+// ── 22D review (the designer, 2026-11-23): D2, the sheet, this page ────────
+
+// The stylesheet reader (the way `Reflow.test.ts` reads `index.css`, a small
+// local copy: a test file imports no other test file). The review’s fix is a
+// declaration, and jsdom lays nothing out, so the sheet is what pins it; the
+// measured gap is the designer’s re-check.
+
+const CSS = readFileSync(
+  join(import.meta.dirname, 'index.css'),
+  'utf8',
+).replace(/\/\*[\s\S]*?\*\//g, '')
+
+// Rules opened before this offset: the nesting level of the rule that starts
+// there, 0 at the top level.
+const opened = (upto: number): number =>
+  (CSS.slice(0, upto).match(/\{/g) ?? []).length -
+  (CSS.slice(0, upto).match(/\}/g) ?? []).length
+
+// Top-level rules only: the gap applies at every width, not in a media block.
+const TOP = [...CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  .filter((m) => opened(m.index ?? 0) === 0)
+  .map((m) => ({ compact: m[1].replace(/\s+/g, ''), body: m[2] }))
+
+const norm = (v: string): string => v.replace(/\s+/g, ' ').trim()
+
+/** The declarations that reach `el` from the top-level rules: the rules whose
+ *  selector is the element's tag, one of its classes, a compound of them, or
+ *  its id, ordered by class count then sheet order, merged. A selector with a
+ *  descendant, a pseudo-class, an attribute or a combinator is skipped: it
+ *  needs a tree jsdom does not lay out. The tag, classes and id are read off
+ *  the page, so the pin follows the names the coder chose. */
+function cascade(el: HTMLElement): Record<string, string> {
+  const own = new Set([el.tagName.toLowerCase()])
+  for (const c of el.classList) own.add(`.${c}`)
+  if (el.id) own.add(`#${el.id}`)
+  const hits: { body: string; spec: number; at: number }[] = []
+  TOP.forEach((rule, at) => {
+    let spec = -1
+    for (const part of rule.compact.split(',')) {
+      const tokens = part.match(/[#.]?[-a-z0-9_]+/g) ?? []
+      if (tokens.length > 0 && tokens.every((t) => own.has(t)))
+        spec = Math.max(spec, tokens.filter((t) => t.startsWith('.')).length)
+    }
+    if (spec >= 0) hits.push({ body: rule.body, spec, at })
+  })
+  hits.sort((a, b) => a.spec - b.spec || a.at - b.at)
+  const out: Record<string, string> = {}
+  for (const h of hits)
+    for (const d of h.body.split(';')) {
+      const i = d.indexOf(':')
+      if (i >= 0) out[d.slice(0, i).trim()] = d.slice(i + 1).trim()
+    }
+  return out
+}
+
+test('16 17b.7 (22D review D2): the confirm group keeps margin-top: var(--space-3) from its opener (the sheet)', async () => {
+  // The review’s D2 asks for the same space on both pages, "so the two pages
+  // stay alike": the group of this page’s ConfirmDelete (ServerProfilePage.tsx
+  // ~507) starts at the opener’s bottom edge (gap 0, the question p has no
+  // margin). The class is the coder’s (the confirm namespace, allowed by
+  // Reflow R1.8) and is read off the page, so the pin follows the name; a rule
+  // scoped by a combinator (an adjacent sibling from the opener) reaches the
+  // group in a browser but not through this cascade, so the rule must hang off
+  // the group’s own class.
+  const { main } = await loaded()
+  const group = await confirmGroup(main)
+  expect(
+    norm(cascade(group)['margin-top'] ?? ''),
+    'D2: the confirm group is separated from its opener by this: margin-top',
+  ).toBe('var(--space-3)')
 })

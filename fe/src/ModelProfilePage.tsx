@@ -19,6 +19,9 @@
 // Assets opening that card (H11a.6), and a save refusal
 // naming a field that takes no focus says what it is and which card it sits on
 // (fe/briefs/02h-model-profile-save.md, sub-slice 2h.10, criteria 194 to 198a).
+// A switched-off model profile is deleted from its own page, the delete asked
+// in a confirm in place (fe/briefs/22-model-sources.md, slice 22D, criteria
+// 22 D.1 to 22 D.7), the way 16 17b has it on a server profile.
 import {
   Fragment,
   useCallback,
@@ -33,8 +36,10 @@ import {
   call,
   isRecord,
   readModelInfo,
+  sessionEnded,
   sessionRevoked,
   type ModelInfoRead,
+  type Reply,
 } from './api.ts'
 import { boxText, tickBox, type Boxed } from './boxed.ts'
 import { DiscardDialog } from './Dialog.tsx'
@@ -290,6 +295,11 @@ export default function ModelProfilePage({
     id: string
     read: ModelInfoRead
   } | null>(null)
+  // Brief 22, slice 22D: the model profile this page deleted (22 D.3), and the
+  // read again of a delete that found it gone, which lands on the paragraph
+  // saying there is no such model profile (22 D.6, 17b review D2).
+  const [deleted, setDeleted] = useState(false)
+  const [focusMissing, setFocusMissing] = useState(false)
 
   useEffect(() => {
     // `.` and `..` are sent to no read at all (59a): the page says there is no
@@ -323,6 +333,19 @@ export default function ModelProfilePage({
     }
   }, [id, onSignedOut, reads])
 
+  // The paragraph of a delete that went through takes the focus (22 D.3).
+  useEffect(() => {
+    if (deleted) document.getElementById('model-profile-deleted')?.focus()
+  }, [deleted])
+
+  // The paragraph the delete's read again lands on takes the focus, so the
+  // focus does not end on the body once the form and its confirm are gone
+  // (22 D.6, 17b review D2).
+  useEffect(() => {
+    if (focusMissing)
+      document.getElementById('model-profile-not-found')?.focus()
+  }, [focusMissing, answer])
+
   const trackDirty = useCallback(
     (d: boolean) => {
       dirty.current = d
@@ -336,6 +359,13 @@ export default function ModelProfilePage({
   function reload() {
     asked.current = id
     setAnswer(undefined)
+    setReads((n) => n + 1)
+  }
+
+  /** Reads the model profile again beside what is on screen, the form and the
+   * delete's confirm staying as they are: the read answers the refusal the
+   * delete got (22 D.4, 22 D.6, 22 D.7, as 16 17b.9). */
+  function reread() {
     setReads((n) => n + 1)
   }
 
@@ -363,6 +393,22 @@ export default function ModelProfilePage({
     answer !== undefined && typeof answer === 'object' && 'doc' in answer
       ? answer.doc.id
       : id
+  if (deleted) {
+    // The model profile is gone: the page is the one paragraph that says so,
+    // focused, and the link back to the list (22 D.3, as 16 17b.8). The form
+    // went with it, so the page asks nothing about unsaved changes any more.
+    return (
+      <>
+        <PageHeading text={shown} />
+        <p id="model-profile-deleted" tabIndex={-1}>
+          {t('model-profile-deleted', shown)}
+        </p>
+        <p>
+          <a href="#/profiles/model">{t('model-profile-back')}</a>
+        </p>
+      </>
+    )
+  }
   return (
     <>
       <p className="model-profile-back">
@@ -382,6 +428,9 @@ export default function ModelProfilePage({
         onDirty={trackDirty}
         onReload={reload}
         onRenewed={renewed}
+        onDeleted={() => setDeleted(true)}
+        onMissing={() => setFocusMissing(true)}
+        onReread={reread}
       />
     </>
   )
@@ -397,6 +446,9 @@ function Body({
   onDirty,
   onReload,
   onRenewed,
+  onDeleted,
+  onMissing,
+  onReread,
 }: {
   id: string
   answer: Answer | undefined
@@ -409,6 +461,13 @@ function Body({
   onDirty: (dirty: boolean) => void
   onReload: () => void
   onRenewed: (session: Session) => boolean
+  /** The delete went through (22 D.3): the page becomes the paragraph saying so. */
+  onDeleted: () => void
+  /** The delete found the model profile gone (22 D.6): the read again lands on
+   * its paragraph, which takes the focus. */
+  onMissing: () => void
+  /** The model profile is read again beside the form (22 D.4, 22 D.6, 22 D.7). */
+  onReread: () => void
 }) {
   if (modelProfileIdUnreadable(id)) {
     return <p>{t('model-profile-not-found', id)}</p>
@@ -440,6 +499,9 @@ function Body({
         onDirty={onDirty}
         onReload={onReload}
         onRenewed={onRenewed}
+        onDeleted={onDeleted}
+        onMissing={onMissing}
+        onReread={onReread}
       />
     )
   if (answer.error === 'client-not-authorized') {
@@ -449,7 +511,14 @@ function Body({
     return <p>{t('api-client-unavailable')}</p>
   }
   if (answer.error === 'not-found') {
-    return <p>{t('model-profile-not-found', id)}</p>
+    // The paragraph is a place the focus can take: the read again after a
+    // delete lands here, and the form and its confirm are gone with the
+    // profile (22 D.6, 17b review D2).
+    return (
+      <p id="model-profile-not-found" tabIndex={-1}>
+        {t('model-profile-not-found', id)}
+      </p>
+    )
   }
   return <p>{t('model-profile-load-failed')}</p>
 }
@@ -753,6 +822,9 @@ function Content({
   onDirty,
   onReload,
   onRenewed,
+  onDeleted,
+  onMissing,
+  onReread,
 }: {
   doc: ModelProfileDoc
   /** The model file's layer facts of this arrival, read by the page (19 G.1). */
@@ -766,6 +838,13 @@ function Content({
   onReload: () => void
   /** A sign-in in the bar's dialog: true when the edits belong to it and stay. */
   onRenewed: (session: Session) => boolean
+  /** The delete went through (22 D.3): the page becomes the paragraph saying so. */
+  onDeleted: () => void
+  /** The delete found the model profile gone (22 D.6): the read again lands on
+   * its paragraph, which takes the focus. */
+  onMissing: () => void
+  /** The model profile is read again beside the form (22 D.4, 22 D.6, 22 D.7). */
+  onReread: () => void
 }) {
   const fid = useId()
   // H11a.1: the model file the summary line names, as the read gave it.
@@ -856,6 +935,32 @@ function Content({
   const askReload = useAsk(dirty, onReload, () =>
     document.getElementById(reloadId)?.focus(),
   )
+
+  // Brief 22, slice 22D: the delete, asked in the page (fe/DESIGN.md 5.2), the
+  // way 16 17b has it on a server profile.
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteStatus, setDeleteStatus] = useState('')
+  const [deleteAlert, setDeleteAlert] = useState<{
+    text: string
+    signIn: boolean
+  } | null>(null)
+  // The refusal of a delete whose read again takes the delete and its group
+  // with it: its words go on living in a paragraph of their own, in the place
+  // the delete had (22 D.4, 17b review D2).
+  const [refusal, setRefusal] = useState<string | null>(null)
+  // The sign-in the delete's alert offers, in a dialog of its own: the page and
+  // its group stay behind it (22 D.7).
+  const [askingDeleteSignIn, setAskingDeleteSignIn] = useState(false)
+  const deleteOpener = useRef<HTMLButtonElement>(null)
+  const sendingDelete = useRef(false)
+
+  // The paragraph that outlives the group takes the focus, so the focus does
+  // not end on the body (22 D.4, 17b review D2).
+  useEffect(() => {
+    if (refusal !== null)
+      document.getElementById('model-profile-delete-refused')?.focus()
+  }, [refusal])
 
   const status = phase === 'saving' ? 'saving' : dirty ? 'unsaved' : phase
 
@@ -1527,6 +1632,127 @@ function Content({
     askSignIn.close(saveId)
   }
 
+  /** Cancel, or Escape: the group goes and the focus returns to the opener.
+   * While the delete runs nothing closes: the group, its question and its
+   * status line stay as they are and the focus does not move (22 D.3, 17b
+   * review R1). */
+  function closeConfirm() {
+    if (sendingDelete.current) return
+    setConfirming(false)
+    setDeleteAlert(null)
+    setDeleteStatus('')
+    setRefusal(null)
+    deleteOpener.current?.focus()
+  }
+
+  /** The delete (22 D.3): `DELETE` of the model profile, its answers 22 D.4 to
+   * 22 D.7. */
+  async function doDelete() {
+    if (sendingDelete.current) return
+    sendingDelete.current = true
+    setDeleting(true)
+    setDeleteAlert(null)
+    setRefusal(null)
+    setDeleteStatus(t('confirm-deleting'))
+    let answer: Reply | undefined
+    try {
+      answer = await call(`/api/profiles/model/${encodeURIComponent(doc.id)}`, {
+        method: 'DELETE',
+      })
+    } catch {
+      answer = undefined
+    }
+    sendingDelete.current = false
+    setDeleting(false)
+    setDeleteStatus('')
+    if (answer === undefined) {
+      setDeleteAlert({ text: t('request-failed'), signIn: false })
+      return
+    }
+    if (answer.ok) {
+      // The model profile is gone: the page is the paragraph saying so (22 D.3).
+      onDeleted()
+      return
+    }
+    if (sessionEnded(answer)) {
+      setDeleteAlert({ text: t('session-ended-retry'), signIn: true })
+      return
+    }
+    if (sessionRevoked(answer)) {
+      setDeleteAlert({ text: t('session-revoked'), signIn: false })
+      return
+    }
+    const error = apiError(answer.body)
+    const key = error?.key
+    const args = error?.args ?? []
+    if (key === 'model-profile-enabled') {
+      // Switched on while the page was open: the read again shows the switch,
+      // and takes the delete and its group with it, so the words go on living
+      // in a paragraph of their own, where the delete was (22 D.4, D2).
+      const text = t('api-model-profile-enabled', ...args)
+      setDeleteAlert({ text, signIn: false })
+      setRefusal(text)
+      onReread()
+      return
+    }
+    if (key === 'model-profile-assigned') {
+      // Given to instances: the group stays open with the verb active, naming
+      // them, and nothing is read again (22 D.5).
+      setDeleteAlert({
+        text: t('api-model-profile-assigned', ...args),
+        signIn: false,
+      })
+      return
+    }
+    if (key === 'no-model-profile-named') {
+      // The model profile is gone: the read again shows the page that says so,
+      // and that page's paragraph takes the focus (22 D.6, 17b review D2).
+      setDeleteAlert({
+        text: t('api-no-model-profile-named', ...args),
+        signIn: false,
+      })
+      onMissing()
+      onReread()
+      return
+    }
+    if (key === 'client-timeout') {
+      // Not confirmed: the read again says whether it is gone, and the alert
+      // stays either way (22 D.7, 17f.10). Gone, the read again lands on the
+      // paragraph saying so, which takes the focus (17b review D2).
+      setDeleteAlert({ text: t('delete-unknown'), signIn: false })
+      onMissing()
+      onReread()
+      return
+    }
+    setDeleteAlert({
+      text:
+        key === 'client-unavailable'
+          ? t('api-client-unavailable')
+          : answer.status === 422 && key !== undefined
+            ? t('api-other', key)
+            : t('request-failed'),
+      signIn: false,
+    })
+  }
+
+  /** A sign-in in the delete's dialog (22 D.7): the page keeps what it holds,
+   * the group stays open and the focus returns to the verb; nothing is sent
+   * again. */
+  function signedInDelete(session: Session) {
+    const kept = onRenewed(session)
+    flushSync(() => {
+      setAskingDeleteSignIn(false)
+      if (kept) setDeleteAlert(null)
+    })
+    if (!kept) return
+    document.getElementById('confirm-delete')?.focus()
+  }
+
+  function closeDeleteSignIn() {
+    flushSync(() => setAskingDeleteSignIn(false))
+    document.getElementById('confirm-delete')?.focus()
+  }
+
   /** Discard: the controls back to the loaded state, the field marks and the
    * status cleared, focus untouched (136). The bar's alert is left to
    * `useSaveAlert`: Discard is one more route to a clean form, so an alert with
@@ -1714,6 +1940,56 @@ function Content({
           gpu={gpu}
           tensor={tensor}
         />
+        {/* Brief 22, slice 22D: the refusal of a delete whose read again took
+            the group with it, in the place the delete had (22 D.4, 17b review
+            D2). It is no live region of the form: it is the answer outliving
+            the control that asked. */}
+        {refusal !== null && (
+          <p
+            id="model-profile-delete-refused"
+            role="alert"
+            tabIndex={-1}
+            className="alert"
+          >
+            {refusal}
+          </p>
+        )}
+        {/* 22 D.1: a switched-off model profile is deleted from its own page,
+            the delete asked in the page (fe/DESIGN.md 5.2); a switched-on one
+            is only told where to switch it off. The opener and its confirm
+            share one div: from 1280 px the section is the jump rail's grid
+            (`section:has(> .jump)`) and every direct child is a grid item,
+            which stretches, so a bare button there is a pill across the whole
+            content column (22D review D1). The div is the grid item, and the
+            button inside it keeps the width of its words, as it has on the
+            server profile page. */}
+        {doc.enabled ? (
+          <p className="muted">{t('model-profile-delete-needs-off')}</p>
+        ) : (
+          <div>
+            <button
+              ref={deleteOpener}
+              type="button"
+              id="model-profile-delete"
+              className="secondary"
+              aria-expanded={confirming}
+              onClick={() => setConfirming(true)}
+            >
+              {t('model-profile-delete')}
+            </button>
+            {confirming && (
+              <ConfirmDelete
+                id={doc.id}
+                status={deleteStatus}
+                alert={deleteAlert}
+                running={deleting}
+                onConfirm={() => void doDelete()}
+                onCancel={closeConfirm}
+                onSignIn={() => setAskingDeleteSignIn(true)}
+              />
+            )}
+          </div>
+        )}
         <SaveBar
           bar={bar}
           status={status}
@@ -1739,6 +2015,91 @@ function Content({
       {askSignIn.asking && (
         <SignInDialog onSignedIn={signedIn} onClose={() => askSignIn.close()} />
       )}
+      {/* The sign-in the delete's alert offers (22 D.7): the page and its group
+          stay behind it. */}
+      {askingDeleteSignIn && (
+        <SignInDialog onSignedIn={signedInDelete} onClose={closeDeleteSignIn} />
+      )}
     </>
+  )
+}
+
+/** The confirm in place of the delete (fe/DESIGN.md 5.2, 22 D.2 to 22 D.7, as
+ *  16 17b has it on a server profile): the question that names the model
+ *  profile, the verb and Cancel, the status line and the alert place. It is
+ *  mounted while the delete is asked, so its words and its alert are its own:
+ *  closing it clears all of them. */
+function ConfirmDelete({
+  id,
+  status,
+  alert,
+  running,
+  onConfirm,
+  onCancel,
+  onSignIn,
+}: {
+  /** The model profile's id, named in the question. */
+  id: string
+  status: string
+  alert: { text: string; signIn: boolean } | null
+  /** True while the delete runs: both buttons go inactive, Escape is inert. */
+  running: boolean
+  onConfirm: () => void
+  onCancel: () => void
+  onSignIn: () => void
+}) {
+  const uid = useId()
+  const questionId = `${uid}-question`
+
+  // The focus moves to Cancel, the verb is one Tab away (22 D.2).
+  useEffect(() => {
+    document.getElementById('confirm-cancel')?.focus()
+  }, [])
+
+  return (
+    <div
+      role="group"
+      className="confirm-group"
+      aria-labelledby={questionId}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && !running) onCancel()
+      }}
+    >
+      <p id={questionId}>{t('model-profile-delete-question', id)}</p>
+      <div className="save-actions">
+        <button
+          type="button"
+          id="confirm-delete"
+          className="primary"
+          aria-disabled={running || undefined}
+          onClick={onConfirm}
+        >
+          {t('confirm-delete')}
+        </button>
+        <button
+          type="button"
+          id="confirm-cancel"
+          className="secondary"
+          aria-disabled={running || undefined}
+          onClick={onCancel}
+        >
+          {t('confirm-cancel')}
+        </button>
+      </div>
+      <p role="status" className="save-status" aria-live="polite">
+        {status}
+      </p>
+      {alert !== null && <p role="alert">{alert.text}</p>}
+      {alert?.signIn && (
+        <button
+          type="button"
+          id="session-sign-in"
+          className="secondary"
+          onClick={onSignIn}
+        >
+          {t('session-sign-in')}
+        </button>
+      )}
+    </div>
   )
 }

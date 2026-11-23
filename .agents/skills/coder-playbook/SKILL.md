@@ -43,7 +43,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the fixtures in the copy (the colliding text, a `want` count the block's own refusals outgrow, a wire
   signature a slice grew) and rerun to green; every patch is one defect to report, with its line.
 - Flakes: reproduce solo, state it, move on. The manager's D-Bus and gpu-probe tests under load, xtask's
-  script-sandbox tests (one temp dir per process), the bff's `tests/session.rs` timing tests, the UX
+  script-sandbox tests (one temp dir per process), the bff's `tests/session.rs` timing tests, `fe`'s
+  `ServerSave.test.tsx` navigation test `1b.36b: the edits-dropped alert stays until the page is left`
+  (one of 3100 under `--maxWorkers=4`, green solo and on the rerun), the UX
   check's pre-existing states.
 
 ### Running the checks
@@ -148,6 +150,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   address families (strip the brackets and parse `IpAddr`). An axum handler takes `Path` first and
   `Bytes` last.
 - `crates/bff/build.rs` embeds the web UI from `PRIVATE_AI_FE_DIST` (absolute) or the fixture.
+- Every public router builder funnels into the one private `router_with_policy`, and the session store is
+  built there: a route with an injected dependency takes ONE more parameter there and the production
+  runner at each of the five other builders, so it is served by the service and by every test router.
+- A fake that answers from one shared FIFO queue cannot serve two concurrent callers in the canned order:
+  a concurrency test whose answers are `[refs, tree, refs, tree]` and which asserts both listings answer
+  200 is racy (the second listing's first call pops the tree body, which names no commit). Prove it in a
+  copy over N runs and report the count; no production shape fixes it, and serialising the calls breaks
+  the test's own "two in flight" assertion.
 - After a change, look for stale text: the route list in doc comments and the brief's own failure lines
   (a 503 the design later made 504) can be wrong; follow the design, report the stale pin.
 
@@ -155,8 +165,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - Run a filtered file as `npm --prefix fe test -- <file> -t '<title>'` (cwd `fe/`, so the jsdom config is
   read). `format:check` writes nothing: fix the named files with `npx prettier --write <file>` (it lists
-  every file it processes: check `git status --porcelain` after). The full suite loses one flaky file
-  under the parallel run; rerun it solo before touching code.
+  every file it processes: check `git status --porcelain` after). The full suite under load reddens
+  scores of files with `Test timed out in 5000ms` (vitest spawns one worker per file, 116 here): rerun
+  with `npm --prefix fe test -- --maxWorkers=4`, which is green, and rerun a named file solo, before
+  believing any of it.
 - New CSS is a test edit: `Reflow.test.ts` (`CLASSES`, `overflow-wrap`, `box-shadow`),
   `HearthTokens.test.ts` (`min-height`/`min-width` per rule, an exact ordered list), `HearthFonts.test.ts`
   (`font-family`) are exhaustive per property; a CSS test pins the SELECTOR as a string and a rule's
@@ -173,6 +185,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   exactly, five) and its colour must be in `HearthTokens.test.ts` H1a.12's `SYSTEM` list: a system
   keyword the list does not carry (`ButtonText`) is red there, and the rule must sit after the
   top-level one it answers, a media query adding no specificity.
+- From 1280 px the page's `section` with a jump list is a grid and stretches every direct child
+  (`section:has(> .jump) > *`), so a page-level button there is a pill across the column: wrap it (and
+  its confirm) in one `div`, the grid item, and the button keeps the width of its words. A `#id {
+  justify-self: start }` rule does the same but is red in R1.8, whose id list is a fixed set.
 - State by CLASS, never the `hidden` attribute, when a wider window must override it; scope a shorthand
   rule by renaming its selector.
 
@@ -220,6 +236,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   deps carry the read that lands. A test that reads `within(main).getByText(text)` wants that text on
   screen ONCE, so the group's alert and the surviving paragraph must never both carry it when the test
   looks.
+- In a page split outer read + inner form (`ModelProfilePage`, `InstancePage`), put state that must
+  outlive the FORM (a delete's 204, the focus move a 404 re-read lands on) in the OUTER component: a read
+  that answers no doc unmounts the form. State that outlives only a confirm group lives in the form,
+  which a re-read beside the form keeps mounted (a `reread()` that bumps `reads` and leaves `answer`
+  set).
 - Reading helpers shared across pages point one way (no import cycles between readers).
 
 ### The web UI (fe/): the UX check

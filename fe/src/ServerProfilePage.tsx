@@ -506,6 +506,7 @@ function ConfirmDelete({
   return (
     <div
       role="group"
+      className="confirm-group"
       aria-labelledby={questionId}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && !running) onCancel()

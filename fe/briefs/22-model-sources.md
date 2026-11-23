@@ -494,3 +494,49 @@ for this card.
    recommended): decision 7.
 3. Only listed items, no free text beside the lists (not the recommendation): decision 3, 22 P.2,
    22 P.3, 22 P.6, 22 P.9 to 22 P.11, 22 C.4, 22 C.5, 22 E.2 to 22 E.4.
+
+## 22D review (designer, 2026-11-23)
+
+I read the 22D diff (`ModelProfilePage.tsx` 298 to 431, 936 to 962, 1630 to 1740, 1943 to 1990, 2010 to
+2100; `en_US.json`; `fe/ux/`). I drove it in Chromium, Firefox and WebKit at 1280 and 320 px, light and
+dark, at 100 % and 200 % text (`build/ux-review/22d.js`, `22d2.js`, `22d3.js`; shots in
+`build/ux-review/22d/`). **Verdict: one defect, D1, and one small one, D2.**
+
+- **Met: 22 D.1 and 22 D.2.** Delete shows only while the profile is switched off; when it is on,
+  the muted line takes its place. The group is named by its question, and the focus lands on Cancel,
+  with Delete one Shift+Tab away. Escape closes the group and puts the focus back on the opener.
+- **Met: 22 D.3.** While the delete runs, the status reads "Deleting…" and both buttons are
+  `aria-disabled`. Playwright waits through an `aria-disabled` button, so the one request a second
+  press sent was a test artifact, not the page's. A 204 shows the focused paragraph and the back link.
+- **Met: 22 D.4 to 22 D.7, the same in all three engines.**
+  - A 409 `model-profile-enabled` (the read again answering `enabled: true`) moves the focus to
+    `p#model-profile-delete-refused[role=alert]`, and the opener is gone.
+  - A 409 `model-profile-assigned` puts its text, naming both instances, in the group's alert, with
+    the focus on Delete.
+  - A 404 moves the focus to the `model-profile-not-found` paragraph.
+  - A 504 shows `delete-unknown` with the focus on Delete when the profile is still there, and lands
+    on the focused not-found paragraph when it is gone.
+- **Met: 22 D.8.** The strings are in place. No sideways scroll at 320 px or 200 %, and every button
+  is at least 24 px.
+- **D1 (22 D.1, layout, 1280 px and wider): the opener is a 696 px pill across the whole content
+  column.** At 1280 px and wider the settings `section` becomes the page's two-column grid
+  (`index.css` ~1270, `section:has(> .jump)`). The button is a direct grid item there, so it
+  stretches; the same button on the server profile page and at 320 px is as wide as its words. Fix:
+  `#model-profile-delete { justify-self: start }`, or wrap the opener and its group in one `div`
+  (`ModelProfilePage.tsx` ~1963).
+- **D2 (small, both widths): the question touches the opener.** The group starts at the button's
+  bottom edge (gap 0, the `p` margin 0). Give the group `margin-top: var(--space-3)`, here and in
+  17b's `ConfirmDelete` (`ServerProfilePage.tsx` ~507), so the two pages stay alike.
+- `npm --prefix fe/ux run check`: 174 states per browser, 0 failing, the new `model-profile-delete`
+  state included (`build/ux-review/check-22d.txt`). After D1 and D2 are fixed, a re-check of the
+  layout is enough (`build/ux-review/22d.js`).
+
+**Re-check (2026-11-23): D1 and D2 fixed, 22D accepted.** Checked in Chromium, Firefox and WebKit at
+1280, 1600 and 320 px and at 200 % text, on the model profile page and 17b's server profile page
+(`build/ux-review/22d4.js`):
+- The opener is as wide as its words on both pages (185 to 187 px at 100 %), and it wraps inside the
+  column at 200 %.
+- The confirm group starts 12 px (`--space-3`) under the opener on both pages.
+- Cancel takes the focus, and nothing scrolls sideways.
+
+No UX check state changed, so the check was not run again.

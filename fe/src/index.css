@@ -2007,6 +2007,16 @@ ul.check-list {
   vertical-align: -0.25em;
 }
 
+/* The confirm in place of a delete (fe/DESIGN.md 5.2, 16 17b.7, 22 D.2): the
+   question starts below the opener, not at its bottom edge (22D review D2,
+   measured on both profile pages). The group's own margin, not a sibling
+   combinator from the opener: on the model profile page the group sits in the
+   wrapper the 22D review D1 gives the opener, where a combinator from the
+   button reaches nothing the sheet can see. */
+.confirm-group {
+  margin-top: var(--space-3);
+}
+
 /* Sign-in: labels above their fields. */
 .signin {
   max-width: 24rem;

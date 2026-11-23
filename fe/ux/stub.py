@@ -51,6 +51,9 @@ STATE = {
     # Brief 21 (21 T.2 to 21 T.9): `ot=1` puts the state's three rules in the
     # profile, so the Tensor placement card shows its rows and their legends.
     "ot": "none",
+    # Brief 22 slice 22D (22 D.1, the state `model-profile-delete` of check.js):
+    # `off=1` reads the model profile switched off, where the delete is offered.
+    "off": "0",
 }
 
 # How long a held read stays open, for the loading states of brief 17 U17a:
@@ -453,6 +456,10 @@ class Handler(SimpleHTTPRequestHandler):
                     values = dict(doc["values"])
                     values["override-tensor"] = OT_RULES
                     doc["values"] = values
+                if STATE["off"] == "1":
+                    # Brief 22, 22 D.1: a switched-off profile, the page where
+                    # the delete is offered.
+                    doc["enabled"] = False
                 return self.json(200, doc)
             return self.json(404, {"key": "no-model-profile-named", "args": [pid]})
         return super().do_GET()
@@ -508,6 +515,17 @@ class Handler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
             return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
+        # Brief 22 slice 22D (22 D.3, the state `model-profile-delete` of
+        # check.js): a model profile's page deletes it here, and the bff's reply
+        # is 204. The check opens the confirm and reads it; it never presses the
+        # verb, so the profile stays.
+        if p.startswith("/api/profiles/model/") and p.count("/") == 4:
+            pid = unquote(p.split("/")[4])
+            if pid == MODEL_PROFILE_DOC["id"]:
+                self.send_response(204)
+                self.end_headers()
+                return
+            return self.json(404, {"key": "no-model-profile-named", "args": [pid]})
         return self.send_error(404, "no DELETE of " + p)
 
 

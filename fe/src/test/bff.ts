@@ -410,6 +410,20 @@ export const EN: Record<string, string> = {
   'model-profile-loading': 'Loading the model profile…',
   'model-profile-load-failed': 'The model profile could not be read.',
   'model-profile-not-found': 'There is no model profile named {0}.',
+  // Slice 22D (fe/briefs/22-model-sources.md, section 2): deleting a model
+  // profile from its page. `delete-unknown` is 17f's text, brought by 22D.
+  'model-profile-delete': 'Delete model profile',
+  'model-profile-delete-needs-off':
+    'To delete this model profile, switch it off first in the list of model profiles.',
+  'model-profile-delete-question':
+    'Delete the model profile {0}? Its settings are removed, with any unsaved changes on this page. The model file is not deleted. This cannot be undone.',
+  'model-profile-deleted': 'The model profile {0} was deleted.',
+  'api-model-profile-enabled':
+    '{0} is switched on, so it cannot be deleted. Switch it off in the list of model profiles first.',
+  'api-model-profile-assigned':
+    "{0} is given to the instances {1}, so it cannot be deleted. Remove it from each of them first, on the instance's page; a row set to Off counts too.",
+  'delete-unknown':
+    'Not confirmed: the manager did not answer in time, so it may or may not have been removed. The list shows it if it is still there.',
   'model-profile-off':
     'This model profile is switched off: it is kept, but its engine does not serve it. To serve it, switch it on in the list of all model profiles.',
   'model-profile-settings-title': 'Model profile settings',
@@ -1479,6 +1493,15 @@ export type BffOptions = {
     n: number,
     init?: RequestInit,
   ) => Response | Promise<Response>
+  /**
+   * DELETE /api/profiles/model/{id} (brief 22, 22 D.3): the reply to the n-th
+   * delete (from 1) of the decoded id. Default 204.
+   */
+  modelProfileDelete?: (
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
   /** GET /api/instances/{id}/server: the reply per id. Default serverDoc(). */
   server?: (id: string, init?: RequestInit) => Response | Promise<Response>
   /**
@@ -1685,6 +1708,20 @@ export function fakeBff(options: BffOptions = {}) {
       return Promise.resolve(
         options.serverProfileDelete
           ? options.serverProfileDelete(id, n, init)
+          : reply(204),
+      )
+    }
+    const modelProfileDelete = /^DELETE \/api\/profiles\/model\/([^/]+)$/.exec(
+      route,
+    )
+    if (modelProfileDelete) {
+      const id = decodeURIComponent(modelProfileDelete[1]!)
+      const n = calls.filter(
+        (c) => c.method === 'DELETE' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.modelProfileDelete
+          ? options.modelProfileDelete(id, n, init)
           : reply(204),
       )
     }
