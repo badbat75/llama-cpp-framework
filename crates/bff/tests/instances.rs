@@ -6,7 +6,7 @@
 //! manager fails instead of hanging.
 //!
 //! The answer (fe/briefs/api-contract.md): 200 and
-//! `[{"id": ..., "engine": "llama.cpp", "serverProfile": ..., "state": ..., "port": ..., "tags":
+//! `[{"id": ..., "label": ..., "engine": "llama.cpp", "serverProfile": ..., "state": ..., "port": ..., "tags":
 //! [...], "instanceTags": [...]}]` in the manager's order, the state as the
 //! manager names it, `port` the configured one (0 when the manager answers
 //! no row for the instance), `tags` the union the bff builds of the two
@@ -822,7 +822,7 @@ async fn an_instance_removed_meanwhile_is_left_out() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
+        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
         "no rows: port 0, no tags"
     );
 }
@@ -861,12 +861,12 @@ async fn each_instance_with_its_state_in_the_manager_s_order() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
-            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "big-model", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "a", "engine": "llama.cpp", "serverProfile": null, "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "z", "engine": "llama.cpp", "serverProfile": null, "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "odd", "engine": "llama.cpp", "serverProfile": null, "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
+            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "big-model", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "a", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "z", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "odd", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
         ])
     );
 }
@@ -894,8 +894,8 @@ async fn each_instance_carries_its_own_boot_flag() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false },
-            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false },
+            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
         ])
     );
     assert_eq!(
@@ -938,8 +938,8 @@ async fn a_boot_flag_that_cannot_be_read_is_null_and_the_list_answers() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
-            { "id": "coder", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null, "removable": true },
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
+            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null, "removable": true },
         ]),
         "the instance whose flag is unanswerable is listed, its flag null"
     );
@@ -1011,7 +1011,7 @@ async fn a_manager_started_later_is_seen_at_the_next_request() {
     assert_eq!(second.status, StatusCode::OK, "{}", second.body);
     assert_eq!(
         second.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }])
+        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }])
     );
     assert_eq!(asked.load(Ordering::SeqCst), 2, "asked anew each time");
     assert_eq!(app.connects.load(Ordering::SeqCst), 2);
@@ -1092,7 +1092,7 @@ async fn a_session_read_only_through_the_gated_reads_still_expires() {
     let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
+        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
         "{}",
         r.body
     );
@@ -1152,8 +1152,8 @@ async fn the_row_carries_the_server_profile_the_manager_names() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "big", "engine": "llama.cpp", "serverProfile": "big-model", "state": "active", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "plain", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "big", "label": null, "engine": "llama.cpp", "serverProfile": "big-model", "state": "active", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "plain", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true },
         ]),
         "the profile the row names, and `null` where the row names none"
     );
@@ -1183,8 +1183,8 @@ async fn the_rows_carry_the_tags_of_the_profile_then_their_own_none_twice() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": "default", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false, "removable": false },
-            { "id": "coder", "engine": "llama.cpp", "serverProfile": "coder", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false, "removable": true },
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": "default", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false, "removable": false },
+            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": "coder", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false, "removable": true },
         ]),
         "the union, the profile's tags first, `v2` once, in the list's order; the port the row carries, not a constant"
     );
@@ -1210,6 +1210,7 @@ async fn the_shown_tags_are_the_union_the_editable_ones_the_instance_s_own() {
         r.json(),
         json!([{
             "id": "default",
+            "label": null,
             "engine": "llama.cpp",
             "serverProfile": "default",
             "state": "active",
@@ -1237,7 +1238,7 @@ async fn a_manager_that_answers_no_rows_shows_no_tags() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
+        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
         "no rows: port 0, no tags"
     );
     assert!(
@@ -1818,8 +1819,8 @@ async fn the_instance_list_carries_removable() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
-            { "id": "lan-2", "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true }
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
+            { "id": "lan-2", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true }
         ]),
         "{}",
         r.body

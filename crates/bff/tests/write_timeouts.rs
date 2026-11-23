@@ -4,7 +4,7 @@
 //! Every request runs under a deadline, so a bff that waits on the manager
 //! fails instead of hanging.
 //!
-//! The nine single-call write handlers, each one request:
+//! The ten single-call write handlers, each one request:
 //! - `model_profiles::create` `POST /api/profiles/model` and
 //!   `model_profiles::remove` `DELETE /api/profiles/model/{id}`
 //! - `server_profiles::create` `POST /api/profiles/server` and
@@ -15,6 +15,7 @@
 //!   restart}` (one handler, all three pinned)
 //! - `control::boot_write` `PUT /api/instances/{id}/boot` and
 //!   `control::tags_write` `PUT /api/instances/{id}/tags`
+//! - the label write `PUT /api/instances/{id}/label` (slice IL2)
 //!
 //! The rule is the server save's (`crates/bff/src/server.rs`, `WriteState`):
 //! while the manager was never handed the call, the answer is 503
@@ -45,10 +46,11 @@
 //!   outlasts the limit does, so it is 504 `client-timeout` with the session
 //!   kept. A connect that fails handed nothing over, so it stays 503: that half
 //!   is green before W2 and must stay green.
-//! - the run verbs, the boot write and the tags write run under the write's
-//!   limit like every other write, so a call longer than the read `TIMEOUT` and
-//!   shorter than `WRITE_TIMEOUT` answers its success (204 for a verb and for
-//!   the tags write, 200 with the flag for the boot write). The boot READ is a
+//! - the run verbs, the boot write, the tags write and the label write run
+//!   under the write's limit like every other write, so a call longer than the
+//!   read `TIMEOUT` and shorter than `WRITE_TIMEOUT` answers its success (204
+//!   for a verb, for the tags write and for the label write, 200 with the flag
+//!   for the boot write). The boot READ is a
 //!   read: past the read limit it stays 503.
 
 use axum::body::Body;
@@ -198,6 +200,15 @@ const TAGS_WRITE: Route = Route {
     call: "set_instance_tags default",
 };
 
+/// The label write (slice IL2), the same shape as the tags write: one call,
+/// answering 204. The text the call carries is pinned in `tests/instance_label.rs`.
+const LABEL_WRITE: Route = Route {
+    method: Method::PUT,
+    uri: "/api/instances/default/label",
+    body: Some(r#"{"label": "Coding box"}"#),
+    call: "set_instance_label default",
+};
+
 /// The three control verbs: one handler (`control::act`), so its pair runs over
 /// all three.
 const VERBS: [Route; 3] = [
@@ -221,7 +232,7 @@ const VERBS: [Route; 3] = [
     },
 ];
 
-/// A manager that receives every write verb of the nine routes, logs it, and
+/// A manager that receives every write verb of the ten routes, logs it, and
 /// then blocks for `Live::call_pause_ms`. The log line lands BEFORE the block:
 /// a call the bff answers 504 for is provably one the manager got.
 struct FakeManager {
@@ -330,6 +341,9 @@ impl ManagerClient for FakeManager {
     }
     fn set_instance_tags(&self, instance: &str, _tags: &[String]) -> Result<(), ClientError> {
         self.lost(&format!("set_instance_tags {instance}"))
+    }
+    fn set_instance_label(&self, instance: &str, _label: &str) -> Result<(), ClientError> {
+        self.lost(&format!("set_instance_label {instance}"))
     }
 }
 
@@ -786,7 +800,7 @@ async fn an_instance_remove_of_a_connect_that_never_returns_is_503() {
     app().hung_connect_is_503(&INSTANCE_REMOVE).await;
 }
 
-// ── The control verbs, the boot write and the tags write ─────────────────
+// ── The control verbs, the boot write, the tags write and the label write ─
 
 #[tokio::test]
 async fn a_control_verb_the_manager_never_comes_back_from_is_504() {
@@ -820,6 +834,16 @@ async fn a_tags_write_the_manager_never_comes_back_from_is_504() {
 #[tokio::test]
 async fn a_tags_write_of_a_connect_that_never_returns_is_503() {
     app().hung_connect_is_503(&TAGS_WRITE).await;
+}
+
+#[tokio::test]
+async fn a_label_write_the_manager_never_comes_back_from_is_504() {
+    app().blocked_write_is_504(&LABEL_WRITE).await;
+}
+
+#[tokio::test]
+async fn a_label_write_of_a_connect_that_never_returns_is_503() {
+    app().hung_connect_is_503(&LABEL_WRITE).await;
 }
 
 // ── W2 (b): a manager lost after the hand-over is 504, a failed connect 503 ─
@@ -918,6 +942,16 @@ async fn a_tags_write_of_a_connect_that_fails_is_503() {
     app().failed_connect_is_503(&TAGS_WRITE).await;
 }
 
+#[tokio::test]
+async fn a_label_write_the_manager_is_lost_after_taking_is_504() {
+    app().lost_after_hand_over_is_504(&LABEL_WRITE).await;
+}
+
+#[tokio::test]
+async fn a_label_write_of_a_connect_that_fails_is_503() {
+    app().failed_connect_is_503(&LABEL_WRITE).await;
+}
+
 // ── W2 (a): the writes under the write limit, the boot read on the read's ───
 
 #[tokio::test]
@@ -930,6 +964,11 @@ async fn a_control_verb_past_the_read_limit_answers_204() {
 #[tokio::test]
 async fn a_tags_write_past_the_read_limit_answers_204() {
     app().write_past_the_read_limit_is_204(&TAGS_WRITE).await;
+}
+
+#[tokio::test]
+async fn a_label_write_past_the_read_limit_answers_204() {
+    app().write_past_the_read_limit_is_204(&LABEL_WRITE).await;
 }
 
 #[tokio::test]

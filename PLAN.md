@@ -1115,7 +1115,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     instance shows its label when set, otherwise its engine and port ("llama.cpp :9931"); the id never
     changes and is shown small. Design `ARCHITECTURE.md` "Instance labels" (a `Label` key in
     `instances.ini`, 1 to 64 characters, unique on the node ignoring case, empty clears it); slices IL1
-    (manager and `pai-core`) and IL2 (bff), then the web UI as brief 16's 17f. IL1 built 2026-11-23; IL2 in progress.
+    (manager and `pai-core`) and IL2 (bff), then the web UI as brief 16's 17f. IL1 and IL2 built 2026-11-23; next 17f.
     W1 built 2026-11-23: the bff's nine single-call writes answer 504 `client-timeout` once the call
     reached the manager (`timeout_answer`, shared with the saves). W2 built 2026-11-23: the run verbs, `boot_write` and `tags_write` move to
     `write_timeout` (`boot_read` keeps the read limit), and a manager `Unavailable` after the call was

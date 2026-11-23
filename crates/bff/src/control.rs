@@ -1,16 +1,17 @@
 //! The control routes: `POST /api/instances/{id}/start`, `/stop` and
 //! `/restart`, and `GET`/`PUT /api/instances/{id}/boot`, and the instance's
-//! tags at `PUT /api/instances/{id}/tags`. The verbs answer 204
+//! tags at `PUT /api/instances/{id}/tags` and its label at
+//! `PUT /api/instances/{id}/label`. The verbs answer 204
 //! once the manager's job is accepted: the state right after can still be the
 //! previous one, so the web UI polls `GET /api/instances` and the reply carries
 //! no state. A start or a restart of an instance the manager will not give a
 //! job over (one with no model profile: `instance-no-model-profiles`) is 409
 //! naming the id, and `stop` is never refused, asking for no job. The boot flag is read by a signed-in user, as its write is, and
-//! the tags are written by one.
+//! the tags and the label are written by one.
 //!
-//! The verbs, the boot read, the boot write and the tags write sit behind a
-//! session. The verbs, the write and the tags
-//! act for the signed-in user: the session's user is the
+//! The verbs, the boot read, the boot write, the tags write and the label
+//! write sit behind a session. The verbs, the boot write, the tags write and
+//! the label write act for the signed-in user: the session's user is the
 //! principal of the connect, taken from the session alone, and the manager
 //! re-checks their right at every call. A refusal is 403 and ends the session
 //! that acted, as the server read does (`server.rs`). `GET .../boot` reads the
@@ -20,7 +21,7 @@
 //! so it ends no session.
 //!
 //! Every failure is `{"key": <strings key>, "args": []}`, never the manager's
-//! detail: the service manager's message stays in the bff's log. The three
+//! detail: the service manager's message stays in the bff's log. The four
 //! writes run under the write's limit and the boot read under the read's. A
 //! limit that runs out, or a manager that answers `Unavailable` (a broken
 //! stream, a missing reply), is 503 `client-unavailable` while the call was
@@ -45,12 +46,12 @@ use std::time::Duration;
 type Verb = fn(&Client, &str) -> Result<(), ClientError>;
 
 /// The control routes over the seams: the three verbs and the boot flag, read
-/// and written, and the tags write, all behind a session. The body of the
-/// routes that read one, the boot write and the tags write, is capped by the
-/// one layer in front of the whole router (`lib.rs`). The three writes, a boot
-/// switch (the unit's enable plus a daemon reload) and a tags write under the
-/// manager's write lock among them, run under `write_timeout`; the boot read is
-/// a read and keeps `timeout`.
+/// and written, and the tags and the label write, all behind a session. The
+/// body of the routes that read one, the boot write, the tags write and the
+/// label write, is capped by the one layer in front of the whole router
+/// (`lib.rs`). The four writes, a boot switch (the unit's enable plus a daemon
+/// reload), a tags write and a label write under the manager's write lock among
+/// them, run under `write_timeout`; the boot read is a read and keeps `timeout`.
 pub(crate) fn routes(
     connect: Connect,
     timeout: Duration,
@@ -106,6 +107,21 @@ pub(crate) fn routes(
             )
         }
     };
+    let set_label = {
+        let (connect, sessions) = (connect.clone(), sessions.clone());
+        move |Path(id): Path<String>,
+              headers: HeaderMap,
+              body: Result<axum::body::Bytes, BytesRejection>| {
+            label_write(
+                connect.clone(),
+                write_timeout,
+                sessions.clone(),
+                id,
+                headers,
+                body,
+            )
+        }
+    };
     axum::Router::new()
         .route(
             "/api/instances/{id}/start",
@@ -121,6 +137,7 @@ pub(crate) fn routes(
             axum::routing::get(boot).put(set_boot),
         )
         .route("/api/instances/{id}/tags", axum::routing::put(set_tags))
+        .route("/api/instances/{id}/label", axum::routing::put(set_label))
 }
 
 fn start(client: &Client, id: &str) -> Result<(), ClientError> {
@@ -329,6 +346,109 @@ fn tag_list(headers: &HeaderMap, body: &[u8]) -> Option<Vec<String>> {
         .iter()
         .map(|tag| tag.as_str().map(str::to_string))
         .collect()
+}
+
+/// `PUT /api/instances/{id}/label` `{"label": <string>}`: 204 with no body once
+/// the manager wrote the text. The text is the manager's to judge: a text its
+/// check refuses is 422 with the check's key, its values and `field` "label",
+/// the field the form marks, and the session of the writer lives on (a refusal
+/// of a value is no refusal of the user). The text travels trimmed of the
+/// spaces and tabs of its ends, the same trim `pai-core` `checks::instance_label`
+/// applies, so a space the page leaves at the edges changes nothing on the way;
+/// a text of nothing but spaces is the empty text, which the manager reads as
+/// "no label". A label another instance of the node carries is 409 with the
+/// label and that instance's id, no `field`: the clash is between two rows and
+/// the page has no control to mark. A body the bff cannot read is 400
+/// `instance-malformed` and the manager is not asked; the session check runs
+/// first, so with no session such a body is 401. A body over
+/// `origin::MAX_BODY` is the extractor's 413, which this handler answers as
+/// its second step, before the manager is connected to. The write runs under
+/// the write's limit: a time limit answers 503 while the write was never handed
+/// over the manager and 504 `client-timeout` once it was, the text's outcome
+/// unknown. A manager that takes the write and whose stream dies is the same
+/// 504 ([`label_failure`]). The label works while the instance runs: nothing the
+/// engine reads changes (`ARCHITECTURE.md`, slice IL2).
+async fn label_write(
+    connect: Connect,
+    write_timeout: Duration,
+    sessions: Arc<Sessions>,
+    id: String,
+    headers: HeaderMap,
+    body: Result<axum::body::Bytes, BytesRejection>,
+) -> Response {
+    let Some((session, identity)) = sessions.current(&headers) else {
+        return error(StatusCode::UNAUTHORIZED, "session-required", &[]);
+    };
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_refusal(&rejection, "instance-malformed"),
+    };
+    let Some(label) = label_text(&headers, &body) else {
+        return error(StatusCode::BAD_REQUEST, "instance-malformed", &[]);
+    };
+    let user = identity.user;
+    let state = Arc::new(WriteState::new());
+    let mine = state.clone();
+    let ask = tokio::task::spawn_blocking(move || -> Result<(), ClientError> {
+        let client = connect(Some(user.as_str()))?;
+        if !mine.may_write() {
+            return Ok(());
+        }
+        client.set_instance_label(&id, &label)?;
+        mine.landed();
+        Ok(())
+    });
+    match tokio::time::timeout(write_timeout, ask).await {
+        Ok(Ok(Ok(()))) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(Err(failure))) => label_failure(&sessions, &session, failure, state.sent()),
+        Err(_) => timeout_answer(state.timed_out(), StatusCode::NO_CONTENT.into_response()),
+        Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
+    }
+}
+
+/// The `label` of a JSON body `{"label": <string>}`, trimmed of the spaces and
+/// tabs of its ends, or None: the text alone, of the JSON type. The empty text
+/// is a write, not a malformed body: the manager takes it as "no label". A body
+/// of any other shape (no `label`, a value that is not a string, a document
+/// that is not an object, no JSON) is None.
+fn label_text(headers: &HeaderMap, body: &[u8]) -> Option<String> {
+    Some(
+        json_body(headers, body)?
+            .get("label")?
+            .as_str()?
+            .trim_matches([' ', '\t'])
+            .to_string(),
+    )
+}
+
+/// The answer to a label write that failed: the verbs' failures
+/// ([`action_failure`], `write_asked` the shared state's word that the write
+/// was sent), plus the refusal of the text: 422 with the check's key, its
+/// values and `field` "label", the manager's own message left out of the body
+/// and the session left alive. The one refusal that is no refusal of the text
+/// is left to [`action_failure`]: `instance-label-taken` is a state the manager
+/// refuses (the label of another row), so it is the 409 with its key and args
+/// and no field to mark.
+fn label_failure(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    failure: ClientError,
+    write_asked: bool,
+) -> Response {
+    if let ClientError::Invalid(refusal) = &failure {
+        if refusal.key != "instance-label-taken" {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                axum::Json(json!({
+                    "key": refusal.key,
+                    "args": refusal.values,
+                    "field": "label",
+                })),
+            )
+                .into_response();
+        }
+    }
+    action_failure(sessions, session, failure, write_asked)
 }
 
 /// The answer to a tags write that failed: the verbs' failures

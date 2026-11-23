@@ -64,7 +64,8 @@ pub const NODE_INFO_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// `GET /api/instances/{id}/server` and its `PUT`, the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}`, the boot flag at
 /// `GET`/`PUT /api/instances/{id}/boot`, the instance's tags at
-/// `PUT /api/instances/{id}/tags`, the instance writes `POST /api/instances`
+/// `PUT /api/instances/{id}/tags`, the instance's label
+/// `PUT /api/instances/{id}/label`, the instance writes `POST /api/instances`
 /// and `DELETE /api/instances/{id}` (`instances::routes`), the web UI's page at
 /// `/` and its
 /// files under `/assets/`, the model-profile list at `GET /api/profiles/model`, and the
@@ -171,7 +172,8 @@ pub(crate) fn router_with(
 /// `/api/profiles/server/{id}`, `server_profiles::routes`), the control verbs
 /// `POST /api/instances/{id}/{start,stop,restart}` and the boot write
 /// `PUT /api/instances/{id}/boot`, the instance's tags
-/// `PUT /api/instances/{id}/tags`, the instance create
+/// `PUT /api/instances/{id}/tags`, the instance's label
+/// `PUT /api/instances/{id}/label`, the instance create
 /// `POST /api/instances` and the removal `DELETE /api/instances/{id}`
 /// (`instances::routes`), the model-profile list
 /// `GET /api/profiles/model`, the model profile create `POST /api/profiles/model`,
@@ -610,13 +612,16 @@ async fn version(
     .into_response()
 }
 
-/// `GET /api/instances`: `[{"id", "engine", "serverProfile", "state", "port",
-/// "tags", "instanceTags", "boot", "removable"}]` in the manager's order, to a
+/// `GET /api/instances`: `[{"id", "label", "engine", "serverProfile", "state",
+/// "port", "tags", "instanceTags", "boot", "removable"}]` in the manager's order, to a
 /// signed-in reader, or
 /// `{"key": <strings key>, "args": []}`, never the manager's detail. The
 /// manager's row of the instance carries the server profile it runs, named as
 /// the manager names it (`serverProfile`, `null` when the row names none: the
-/// page shows which `server@<profile>.ini` the instance reads), the port and
+/// page shows which `server@<profile>.ini` the instance reads), its `label`
+/// (the `Label` of the instance's section, trimmed as the manager wrote it,
+/// `null` when the section carries none and when the rows do not mention the
+/// instance: the page falls back to the engine and the port), the port and
 /// the two tag lists:
 /// `port` is the configured one, `tags` the union the bff builds of the two
 /// lists (the server profile's first, none twice), `instanceTags` the
@@ -631,7 +636,7 @@ async fn version(
 /// of the bff's own account, so `connect` is handed `None`, and the idle
 /// deadline stays where it was (the page polls this read). A manager with no
 /// rows to answer (an install of an older protocol) leaves every row with
-/// port 0 and no tags: the rows are extra, not a part of the read that can
+/// port 0, no label and no tags: the rows are extra, not a part of the read that can
 /// fail it. So is a boot flag: one that cannot be read is `null` on that item
 /// and the list is answered.
 async fn instances(
@@ -655,6 +660,7 @@ async fn instances(
             match client.status(&id) {
                 Ok(state) => list.push(serde_json::json!({
                     "id": id,
+                    "label": row.and_then(|row| row.label.clone()),
                     "engine": ENGINE_LLAMA_CPP,
                     "serverProfile": row.and_then(|row| row.server_profile.clone()),
                     "state": state.name(),
