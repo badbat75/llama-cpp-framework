@@ -51,7 +51,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   "nothing is sent / one GET more" race per run (a late `GET /api/node/devices` in ModelProfileContent
   `2d.70`, a late session read in Nodes `13 N.3` and AboutPage `18 AN.2`: 1 to 2 of 3166, a DIFFERENT
   one each run, green solo, and green in the same run as the tester's stable reds), the UX
-  check's pre-existing states.
+  check's pre-existing states. `App.test.tsx` `1a.4` and `ModelProfileDelete.test.tsx` `22 D.6`
+  joined that list (2 of 3212 under `--maxWorkers=12`, green solo).
 
 ### Running the checks
 
@@ -202,7 +203,7 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   pattern": the paths resolve against the cwd, not the prefix; it lists
   every file it processes: check `git status --porcelain` after). The full suite under load reddens
   scores of files with `Test timed out in 5000ms` (vitest spawns one worker per file, 116 here): rerun
-  with `npm --prefix fe test -- --maxWorkers=12` (user, 2026-11-24; 4 was the earlier cap), and rerun a named file solo, before
+  with `npm --prefix fe test -- --maxWorkers=4` (user, 2026-11-24: back to 4 after Strata hung under RAM and disk pressure; 12 was tried that day), and rerun a named file solo, before
   believing any of it.
 - New CSS is a test edit: `Reflow.test.ts` (`CLASSES`, `overflow-wrap`, `box-shadow`),
   `HearthTokens.test.ts` (`min-height`/`min-width` per rule, an exact ordered list), `HearthFonts.test.ts`
@@ -271,6 +272,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 ### The web UI (fe/): React and the harness
 
+- jsdom fires no `focusin` for `el.focus()` on the element that already has the focus (one `focusin`
+  for two `focus()` calls, proven with a document listener): a test that focuses a control, presses
+  Escape to hide a focus-driven hint, and focuses the SAME control again expecting it back is a
+  witness pair, the hide would have to blur the control. Prove it in a copy by adding `el.blur()`
+  plus a flush between the two focuses: the file goes green, no production shape does.
+- A wrapper owns its child control's hover and focus: React's `onFocus`/`onBlur` on the wrapper fire
+  from a child's `focus()` (focusin/focusout bubble), `onMouseOver`/`onMouseOut` from a child's
+  (mouseover/mouseout bubble), and `onMouseLeave` fires from `fireEvent.mouseLeave(wrapper)`, the
+  non-bubbling event React listens for in capture at the root.
 - A test file that renders needs its own `cleanup`.
 - To print data from a scratch test (the default reporter hides `console.log` in a piped run): assert it
   against an impossible value, `expect(rows.join(' / '), 'PROOF').toBe('X')`, and read the received
