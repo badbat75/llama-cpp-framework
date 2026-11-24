@@ -124,6 +124,8 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 
 ## Pitfalls
 
+- Trouble with the local model (Strata :8580 stalls, out-of-memory, cut OpenCode runs) goes as a message, facts only, to the Claude agent working in `/mnt/data/git/strata-framework` (ListAgents), never a restart of Strata without the user (user, 2026-11-24).
+
 - A layout request ("a minus beside the status") can be read two ways; before briefing the tester, show the user the designer's layout as an ASCII preview in AskUserQuestion and build only on a yes (2026-11-24: 22D2 put the minus on the profile page, the user meant the list rows, a whole slice redone as 22D4).
 - The liveness check sees only OpenCode runs and stubs in the shell; a Claude subagent (designer, architect, reviewer) is invisible to `ps` and to TaskList. Its notification "is waiting on its own background work" means a command of its own still runs: note the time and, at the next check, stop it with TaskStop if it has not reported within 30 minutes (2026-11-24: a designer sat 11 h 50 min on a hung command, unnoticed).
 - Agents defined in a new `.claude/agents` directory appear only after a new session starts: if an agent
