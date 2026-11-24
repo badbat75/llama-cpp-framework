@@ -685,3 +685,40 @@ about 13), so I used a longer navigation timeout and a settle time after each ke
   read it as the heading missing the check's wait while the machine was loaded, not as a defect. A
   rerun on a quiet machine should confirm it. The first attempt did not start: its stub printed
   nothing within the check's 5 s.
+
+## 22D3: the server profile page says who uses it once (user, 2026-11-24)
+
+The user agreed with the 22D2 review's note: the status sentence and the Value list's "Used by" row,
+one line apart, say the same thing. **Decision (preference): the status sentence stays and the
+Value list goes.** The sentence carries the − and the delete rule, and it gains what the row had
+that the sentence lacks: the instance as a link, in its 17f name. One sub-slice, **5 criteria**.
+
+**22 D3.1 The Value list goes.** `ServerProfilePage.tsx` no longer renders the `dl.assets` with
+`server-profiles-column-used-by` (~459 to 473). Nothing stands between the status row (and its
+confirm group or refusal paragraph) and the Server section.
+
+**22 D3.2 The instance in the sentence is a link.** When the document names an instance, the
+paragraph reads `server-profile-used-by` with `{0}` drawn as the same `InstanceLink` the row used
+(the instance's 17f name, its id small beside it, going to its page). The text around it comes from
+the string split at `{0}`, so the words stay in the strings file. `server-profile-unused` is
+unchanged. The − stays the row's last item, at the paragraph's right (22 D2.1).
+
+**22 D3.3 The skeleton.** The 17a.6 skeleton line that stood for the Used by row now stands where the
+status row will be (one `.skeleton` line after 300 ms, the read's words in the hidden `role="status"`
+as before).
+
+**22 D3.4 The 409 in use.** After `client-server-profile-in-use` and its read again, the status row
+names the instance (a link), the − is gone, and `p#server-profile-in-use[role=alert][tabindex=-1]`
+right after the row takes the focus (17b review D2, 22 D2.8, unchanged).
+
+**22 D3.5 Strings and tests.** No key is added or removed: `server-profiles-column-used-by` and
+`server-profiles-unused` stay in use on the Server profiles list. The tests that change are those
+asserting the page's Used by row:
+- `ServerProfilePage1.test.tsx` and `ServerProfilePage2.test.tsx` (the row, its muted "No instance"
+  and its link);
+- `InstanceName17f.test.tsx` (the instance's name on the profile page, now inside the status
+  sentence);
+- `U17aSkeletons.test.tsx` (the skeleton's place);
+- `ModelProfileDelete2.test.tsx` (its server profile page checks of 22 D2.8, when they find the row).
+`ServerProfiles1.test.tsx` keeps its list's Used by column. The UX check's `server-profile-delete`
+state needs no change (it finds the − by id).
