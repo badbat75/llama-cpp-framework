@@ -47,7 +47,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   runs beside the suite (the suite alone: 142 s, a solo e2e beside a build: 669 s), xtask's
   script-sandbox tests (one temp dir per process), the bff's `tests/session.rs` timing tests, `fe`'s
   `ServerSave.test.tsx` navigation test `1b.36b: the edits-dropped alert stays until the page is left`
-  (one of 3100 under `--maxWorkers=4`, green solo and on the rerun), the UX
+  (one of 3100 under `--maxWorkers=4`, green solo and on the rerun), the `fe` full suite's one red
+  "nothing is sent / one GET more" race per run (a late `GET /api/node/devices` in ModelProfileContent
+  `2d.70`, a late session read in Nodes `13 N.3` and AboutPage `18 AN.2`: 1 to 2 of 3166, a DIFFERENT
+  one each run, green solo, and green in the same run as the tester's stable reds), the UX
   check's pre-existing states.
 
 ### Running the checks
@@ -221,6 +224,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   justify-self: start }` rule does the same but is red in R1.8, whose id list is a fixed set.
 - State by CLASS, never the `hidden` attribute, when a wider window must override it; scope a shorthand
   rule by renaming its selector.
+- Reusing one list-add class (`.ot-add`) on another page is free: R1.8's class list allows the card's
+  whole namespace, and HearthTokens' size filter `/ot-|tensor|placement/` reads only `min-height` and
+  `min-width`, so a `margin-top` there is unpinned and a new size there is red. A page with no `.jump`
+  child is not the 1280 px grid, so its page-level `+` keeps the width of its words.
+- A compound-with-combinator rule (`p + .ot-add`) is free of the cascade pins too: the sheet tests'
+  `cascade(classes)` keeps only a selector whose every token is `button` or one of the element's own
+  classes, so it never applies, and the element keeps the plain `.ot-add` declaration in those pins.
 
 ### The web UI (fe/): shared helpers and pins
 

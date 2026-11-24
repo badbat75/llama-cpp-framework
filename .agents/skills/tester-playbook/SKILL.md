@@ -335,6 +335,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - When a review names two sanctioned fixes (a sheet declaration, or a markup shape like a wrapper div),
   pin the DISJUNCTION: the cascade value for the sheet option, the parent chain read off the page for the
   markup option, `a || b` in one assertion. Forcing one shape writes the coder's fix into the contract.
+- Pin "the two controls share one rule" (a brief: share the class or the rule, not a copy) by reading the
+  selector GROUP of the rule that styles the existing class and asserting the new control carries one of
+  its parts: a comma group and a shared class both pass, a copy of the declarations does not.
 - Prove the teeth of a CSS pin in a scratch css + scratch test pair (`cp` both, one string swap, `-t`).
 - Send a test that cannot fail in jsdom (real layout, focus movement, `fireEvent.click` moving no focus,
   clipping) to the UX check, or state it as unproven.
@@ -492,6 +495,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   so the app keeps one entry.
 - A route read by several pages counts every reader, and React runs a child's effect before its parent's:
   a fixture handing ONE `Response` to every call starves the second reader.
+- A red assertion in the middle of a test hides every assertion AFTER it (they never run): put the
+  day-one guards of a multi-page test in their own test and run it, before reporting the split.
+- `fakeBff()` returns the fake, not `main`: a test that renders a second page needs
+  `screen.getByRole('main')` after `render(<App />)`. Vitest runs it red as `Property 'main' does not
+  exist`; `npm --prefix fe run typecheck` is what names it before the run.
 - A page check that does not exist reds as "Unable to find the bar's alert text", never as a request
   count: the check is absent so the save went out. That is the right red when a sibling test of the same
   slice proves, on the same fixture, that the PUT does go out.

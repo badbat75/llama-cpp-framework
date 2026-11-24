@@ -1992,17 +1992,34 @@ ul.check-list {
 
 /* The + that adds a rule, under the list (21 T.21): the same 40 px square, with
    the --control outline of a secondary button, so after the line that says
-   there is no rule it still reads as a control. */
+   there is no rule it still reads as a control. The room above it (21 T.24):
+   `ul.check-list` has no margin of its own, so with none here the + sits on the
+   last rule's bottom edge. One token, less than the `--space-4` between two
+   rules, so the + reads as the list's own control and not as another rule. This
+   is the rule of every list's add (brief 16, 17b2.2: share the class, not a
+   copy of these declarations). */
 .ot-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   min-height: 40px;
+  margin-top: var(--space-3);
   padding: 0;
   border: var(--border-w) solid var(--control);
   background: var(--bg);
   color: var(--text);
+}
+
+/* The same + right after a paragraph (the TP1c review's D1, the designer,
+   2026-11-24): the global `p` rule gives the line that says there is nothing in
+   the list a bottom margin, and the + is an inline-flex box, whose margin never
+   collapses with it, so the two rooms add up. There the paragraph's own room is
+   the gap: this selector (0,1,1) beats `.ot-add`'s (0,1,0), and after a list the
+   + follows the `ul`, so it keeps the --space-3 above it. One rule covers both
+   pages that share the class (brief 16, 17b2.2). */
+p + .ot-add {
+  margin-top: 0;
 }
 
 /* The room between two rules (the TP1b review's D3, the designer, 2026-11-23):

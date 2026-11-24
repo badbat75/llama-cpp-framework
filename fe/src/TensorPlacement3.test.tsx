@@ -618,6 +618,115 @@ test('21 T.21 (the sheet): Add is 40 by 40 px with the --control outline', async
   )
 })
 
+// ── TP1c: 21 T.24, the room above the + ───────────────────────────────────
+
+test('21 T.24: the Add + declares margin-top: var(--space-3), a room below the --space-4 that separates two rules, and nothing else about it moves', async () => {
+  // The user, on the deployed build: "il bottone + è attaccato alla riga
+  // sopra". `ul.check-list` has `margin: 0` and `.ot-add` carries no margin of
+  // its own, so the + sits on the last rule's bottom edge. One token of room,
+  // one step below the space between two rules, so the + reads as the list's
+  // own control and not as another rule. The same rule reaches the + after the
+  // `model-profile-ot-none` line, where there is no rule. The measure in the
+  // three browsers is the designer's, at the review; jsdom pins the sheet.
+  const { main } = await form(file(`${EMBD}=CUDA0`))
+  await landed(main)
+  const at = cascade([...addOf(cardOf(main, CARD)).classList])
+  expect(
+    norm(at['margin-top'] ?? ''),
+    '21 T.24: the room above the +, as a token, not a literal',
+  ).toBe('var(--space-3)')
+  // The room is smaller than the one between two rules, which is the point of
+  // the preference: the + belongs to the list, it is not a rule of its own.
+  const rules = topStyling(':root', 'the tokens')
+  const space = (name: string) => parseInt(prop(rules.body, name), 10)
+  expect(
+    norm(
+      prop(
+        topStyling('#model-profile-ot-rules li + li', 'D3').body,
+        'margin-top',
+      ),
+    ),
+    '21 T.24: the space between two rules, the one the + must stay under',
+  ).toBe('var(--space-4)')
+  expect(
+    space('--space-3') < space('--space-4'),
+    `21 T.24: --space-3 (${space('--space-3')}px) is less than --space-4 (${space('--space-4')}px)`,
+  ).toBe(true)
+  // Nothing else moves: the square of 21 T.21 is as it was, and the rule adds
+  // no other space around the +.
+  expect(norm(at['width'] ?? ''), '21 T.24: the + is still 40 px wide').toBe(
+    '40px',
+  )
+  expect(norm(at['min-height'] ?? ''), '21 T.24: and still 40 px high').toBe(
+    '40px',
+  )
+  expect(
+    norm(at['border'] ?? ''),
+    '21 T.24: and still the --control outline',
+  ).toBe('var(--border-w) solid var(--control)')
+  expect(norm(at['padding'] ?? ''), '21 T.24: its padding is untouched').toBe(
+    '0',
+  )
+  for (const name of [
+    'margin',
+    'margin-bottom',
+    'margin-left',
+    'margin-right',
+    'margin-inline',
+    'margin-block',
+  ])
+    expect(
+      norm(at[name] ?? ''),
+      `21 T.24: nothing else moves, so the + declares no ${name}`,
+    ).toBe('')
+})
+
+// ── TP1c review (the designer, 2026-11-24): D1, the + after the empty line ──
+
+test('21 T.24: after the empty-list line the + has no room of its own, so the gap is the paragraph’s 12 px and not 24 (TP1c review D1)', async () => {
+  // The + is an inline-flex box, so its margin-top never collapses with the
+  // bottom margin the global `p` rule gives the `model-profile-ot-none` line
+  // (index.css 314): after the empty line the + sits 12 + 12 = 24 px below it,
+  // twice the room of 21 T.24 (the review, D1). The fix the review names is a
+  // rule for a `.ot-add` right after a `p`, whose specificity (0,1,1) beats
+  // `.ot-add`’s (0,1,0), so the paragraph’s own 12 px is the gap. The measure
+  // in the three browsers is the designer’s re-check; jsdom pins the shape and
+  // the sheet.
+  const empty = await form({ ...AS_LOADED })
+  await landed(empty.main)
+  const card = cardOf(empty.main, CARD)
+  const add = addOf(card)
+  const line = within(card).getByText(NONE)
+  expect(
+    line.tagName,
+    '21 T.24: the empty-list line is a p, whose bottom margin is the gap',
+  ).toBe('P')
+  expect(
+    add.previousElementSibling,
+    '21 T.24: the + sits right after that paragraph, where the rule reaches it',
+  ).toBe(line)
+  const after = TOP.filter((r) =>
+    r.sel.split(',').some((p) => /^p\s*\+\s*\.ot-add$/.test(p.trim())),
+  )
+  expect(
+    after.length,
+    'D1: the sheet has one rule for a .ot-add right after a p (the review names it: p + .ot-add { margin-top: 0 })',
+  ).toBe(1)
+  expect(
+    norm(prop(after[0]!.body, 'margin-top')),
+    'D1: there the + declares no room of its own, so the paragraph’s 12 px is the gap',
+  ).toBe('0')
+  // After rules the + follows the list and not a paragraph, so the rule leaves
+  // it the --space-3 room of 21 T.24 (the cascade test above pins that room).
+  cleanup()
+  const withRule = await form(file(`${EMBD}=CUDA0`))
+  await landed(withRule.main)
+  expect(
+    addOf(cardOf(withRule.main, CARD)).previousElementSibling?.tagName,
+    '21 T.24: after rules the + follows the ul, not a p, so it keeps its room',
+  ).toBe('UL')
+})
+
 // ── 21 T.22: the sizes of the line ────────────────────────────────────────
 
 test('21 T.22 (as its TP1b review D2 amends it): Tensor is flex 2 1 18rem, Goes on flex 2 1 16rem, Layers flex 0 1 8rem, all three min-width: 0, and their controls width: 100%', async () => {

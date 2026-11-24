@@ -179,16 +179,16 @@ async function signInInDialog(user: string) {
 
 // ── 17b.1: the create form opens ────────────────────────────────────────
 
-test('16 17b.1: the list page puts a secondary server-profiles-new button with the plus icon and aria-expanded false after the intro and before the table, and pressing it opens right after it a form named by its h2, with the Name and Port fields and their hints, Create primary then Cancel, one empty status line, no alert, and the focus on Name', async () => {
+test('16 17b.1 (as 17b2.1 moves its place): the list page puts the server-profiles-new opener with the plus icon and aria-expanded false after the table, and pressing it opens right after it a form named by its h2, with the Name and Port fields and their hints, Create primary then Cancel, one empty status line, no alert, and the focus on Name', async () => {
   const { bff, main } = await loaded({ serverProfiles: ROWS })
   const t = within(main).getByRole('table')
   const intro = within(main).getByText(en('server-profiles-intro'))
   const box = t.closest('div.table-scroll')
   expect(box, 'the table is in its scrolling box').not.toBeNull()
   const opener = newButton(main)
-  expect(opener.classList.contains('secondary'), 'a secondary button').toBe(
-    true,
-  )
+  // 17b2.2: the opener is the list's Add icon button, drawn by the rule of
+  // `.ot-add`, so its class is no longer pinned here. The look, and the room
+  // above it, are `16 17b2.2` in ServerProfiles3.test.tsx.
   expect(opener.getAttribute('aria-expanded'), 'a disclosure, closed').toBe(
     'false',
   )
@@ -200,7 +200,12 @@ test('16 17b.1: the list page puts a secondary server-profiles-new button with t
     'the plus of Icon.tsx (brief 15)',
   ).toEqual(['M5 12h14', 'M12 5v14'])
   expect(before(intro, opener), 'the opener is after the intro').toBe(true)
-  expect(before(opener, box!), 'and before the table').toBe(true)
+  // 17b2.1: the opener is at the END of the list, outside its scrolling box.
+  expect(before(box!, opener), 'the opener is after the table').toBe(true)
+  expect(
+    opener.closest('div.table-scroll'),
+    'and outside the scrolling box',
+  ).toBeNull()
   // Opening.
   press(opener)
   expect(
@@ -220,7 +225,7 @@ test('16 17b.1: the list page puts a secondary server-profiles-new button with t
   expect(opener.nextElementSibling, 'the form is right after the opener').toBe(
     form,
   )
-  expect(before(form, box!), 'and the form is before the table').toBe(true)
+  expect(before(box!, form), 'and the form is below the table').toBe(true)
   // The fields.
   const name = boxIn(form, en('server-profile-name'))
   // The opening's focus, read before the hint toggles below take it.
@@ -298,13 +303,13 @@ test('16 17b.1: every time the form opens Port holds the smallest whole number f
   }
 })
 
-test('16 17b.1: the opener is there when the list is empty, before the empty text, and is not there while the list is loading or after a failed read', async () => {
+test('16 17b.1 (as 17b2.1 moves its place): the opener is there when the list is empty, after the empty text, and is not there while the list is loading or after a failed read', async () => {
   // The empty pool.
   const empty = await loaded({ serverProfiles: [] })
   const opener = newButton(empty.main)
   expect(
-    before(opener, within(empty.main).getByText(en('server-profiles-empty'))),
-    'the opener is before the empty text',
+    before(within(empty.main).getByText(en('server-profiles-empty')), opener),
+    'the opener is after the empty text (17b2.1)',
   ).toBe(true)
   const form = await openForm(empty.main)
   expect(boxIn(form, en('server-port')).value, 'and its default').toBe('9931')

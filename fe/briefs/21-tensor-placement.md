@@ -678,3 +678,21 @@ margin of its own, so the + sits on the last rule's bottom edge.
   rule. That is less than the `--space-4` between two rules, so the + reads as the list's own control
   and not as another rule **(preference)**. Nothing else moves. The tester pins the sheet rule as the
   TP1b sheet tests do; the designer measures it in the three browsers at the review.
+
+## TP1c review (designer, 2026-11-24)
+
+I measured it in Chromium, Firefox and WebKit at 1280 and 320 px, light and dark, at 200 % text and
+under forced colours (`build/ux-review/17b2.js`, shots in `build/ux-review/17b2/`).
+- **21 T.24 met after rules:** the + is 12 px below the last rule's `li` everywhere.
+- **D1, not met after the empty line:** with no rule, the + is 24 px below
+  `model-profile-ot-none`, not 12. That paragraph keeps the global `p` bottom margin of 12 px
+  (`index.css` 314 to 315), and the + is an `inline-flex` box, whose margin never collapses with it
+  (`index.css` ~2001 to 2007). Fix: `p + .ot-add { margin-top: 0 }`, so the paragraph's 12 px is the
+  gap. The same fix covers 17b2's empty pool.
+- The UX check is green (180 states per browser, 0 failing). **Verdict: not accepted until D1 is fixed;** a re-measure of the empty list is enough.
+- At 200 % text the + is 40 by 45 px: it grows with the text and is still above 24 px. It has no
+  sideways scroll, and under forced colours its icon and outline are `ButtonText`.
+
+**Re-check (2026-11-24): D1 fixed, TP1c accepted.** With no rule, the + is 12 px under the
+`model-profile-ot-none` line in Chromium, Firefox and WebKit, at 1280 and 320 px and at 200 % text,
+with no sideways scroll (`build/ux-review/tp1g.js`). The fix also covers 17b2's empty pool.

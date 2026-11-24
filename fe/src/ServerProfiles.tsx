@@ -6,7 +6,8 @@
 // (fe/briefs/16-server-profiles-and-instances.md, 17a.1 to 17a.4). The list's
 // read is its own: `readServerProfiles`, the tags pill's silent read, stays as
 // it is (17a.3). The pool is also where a profile is made: the Create form in
-// place of 17b, between the intro and the table (fe/DESIGN.md 5.2).
+// place of 17b, disclosed by the list's + at the end of the list (17b2.1,
+// fe/DESIGN.md 5.2 "Icon buttons of a list").
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -147,7 +148,8 @@ export default function ServerProfiles({
   )
 }
 
-/** The table with the create form before it, or the message in its place. */
+/** The table, then the opener of the create form after it, or the message in
+ * the table's place (17b2.1: the + is at the end of the list). */
 function Body({
   answer,
   onRenewed,
@@ -182,7 +184,6 @@ function Body({
   const rows = answer
   return (
     <>
-      <Create rows={rows} onRenewed={onRenewed} onReload={onReload} />
       {rows.length === 0 ? (
         <p>{t('server-profiles-empty')}</p>
       ) : (
@@ -224,6 +225,7 @@ function Body({
           </table>
         </div>
       )}
+      <Create rows={rows} onRenewed={onRenewed} onReload={onReload} />
     </>
   )
 }
@@ -307,12 +309,12 @@ function Create({
         ref={opener}
         type="button"
         id="server-profiles-new"
-        className="secondary"
+        className="ot-add"
         aria-expanded={open}
         onClick={() => (open ? close() : setOpen(true))}
       >
         <Icon name="plus" />
-        {t('server-profiles-new')}
+        <span className="visually-hidden">{t('server-profiles-new')}</span>
       </button>
       {open && (
         <CreateForm

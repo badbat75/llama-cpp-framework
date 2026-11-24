@@ -1063,3 +1063,26 @@ The fixes were re-checked in Chromium, Firefox and WebKit at 1280 and 320 px and
 UX check: 0 failing of 180 states per engine.
 
 **17f accepted.**
+
+## 17b2 review (designer, 2026-11-24)
+
+Driven in Chromium, Firefox and WebKit at 1280 and 320 px, light and dark, at 200 % text and under
+forced colours, with keyboard (`build/ux-review/17b2.js`, shots in `build/ux-review/17b2/`).
+- **Met: 17b2.1.** The + comes after the table's scroll box, 12 px below it, left-aligned at the
+  column's edge. Nothing stands between the intro and the table any more.
+- **Met: 17b2.2.** A 40 px square with the `--control` outline, drawn by `.ot-add` itself
+  (`ServerProfiles.tsx` 312, the shared class). Its accessibility snapshot reads `button "New server
+  profile"`, and it is found by that exact name. Under forced colours it is `ButtonText`.
+- **Met: 17b2.3.** Enter opens the form with the focus on Name and `aria-expanded="true"`. Escape
+  closes it and puts the focus back on the +. Shift+Tab from the + reaches the table's last link.
+- 17b2.4 and 17b2.5: 17b2.4 is carried by the 17c and 22C briefs; for 17b2.5 see the UX check line
+  below.
+- **The empty pool** was not driven: the stub has no empty pool. By the CSS, the + there would sit
+  24 px under `server-profiles-empty`, as the TP1c review's D1 says for the empty tensor list; the
+  same fix (`p + .ot-add { margin-top: 0 }`) covers it.
+- `npm --prefix fe/ux run check`: 180 states per browser, 0 failing, `server-profiles-new` included
+  (17b2.5; `build/ux-review/check-17b2.txt`). **Verdict: accepted once the TP1c review's D1 is fixed,**
+  which is the only open point and is shared with TP1c.
+
+**Re-check (2026-11-24): D1 fixed (`p + .ot-add { margin-top: 0 }`, measured on the empty tensor
+list, the same rule and paragraph margin as the empty pool), 17b2 accepted.**
