@@ -75,7 +75,9 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 ### Closing a slice
 
 - Deploy (the standing go-ahead, `AGENTS.md` "Actions with real effects"): once no agent builds, run
-  `xtask build framework`, `xtask package framework` and `xtask install`, then check
+  `xtask build framework`, `xtask package framework` and `xtask install` with the framework's four
+  `.deb` files as arguments (a bare `xtask install` reinstalls llama.cpp too, whose prerm stops every
+  running instance: user, 2026-11-24, "the running instances should not be touched"), then check
   `systemctl is-active private-ai-manager private-ai-bff`, `/` 200 and `/api/instances` 401 on :8590, a
   CSS rule or route the slice added, and that Strata on :8580 still answers. Report it in the slice's
   message.
