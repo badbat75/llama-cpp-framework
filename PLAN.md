@@ -1359,8 +1359,9 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   used to succeed. For the product: llama-server's ROCm instances could carry both variables in their
   environment (HIP backend only); first check a running instance's `/proc/<pid>/smaps` for large
   `/dev/zero (deleted)` rw-s mappings and `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms`. Waiting
-  for the Strata result under load, then the user's go-ahead (it changes how every ROCm instance
-  allocates); the architect places it (the instance unit's environment or `launch.rs`).
+  for the Strata result under load. The user confirmed the finding (2026-11-24): the architect places
+  it (the instance unit's environment or `launch.rs`), then a test-first slice, marked under test in
+  the docs until Strata's result under load arrives.
 
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
