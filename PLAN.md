@@ -1341,7 +1341,7 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
 
 ## Waiting for the user
 
-- **ROCm host memory as GTT, under test** (found by the strata-framework agent, 2026-11-24; the user
+- **ROCm host memory as GTT, confirmed under load on Strata 2026-11-24** (found by the strata-framework agent, 2026-11-24; the user
   asked it to be shared and carried into the product, marked under test until confirmed under load).
   On a discrete AMD GPU, ROCm's "paged" host memory (hipHostMalloc, the system memory pool) is an
   anonymous shared mapping registered as a KFD userptr (`HSA_USERPTR_FOR_PAGED_MEM`, on by default) or
@@ -1359,10 +1359,14 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   used to succeed. For the product: llama-server's ROCm instances could carry both variables in their
   environment (HIP backend only); first check a running instance's `/proc/<pid>/smaps` for large
   `/dev/zero (deleted)` rw-s mappings and `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms`. Waiting
-  for the Strata result under load. The user confirmed the finding (2026-11-24), for every instance
+  for the Strata result under load. Confirmed under load (strata-framework agent, 2026-11-24 20:41-21:33,
+  through two of our Playwright runs and a cargo build, with STRATA_RESIDENT_PIN=1 beside both
+  variables): 0 KFD queue evictions (evicted_ms 0 on every GPU, no kfd_process_evict_queues in
+  bpftrace), against up to 13 episodes of up to 48 s in 50 min under the same load earlier; host
+  memory as GTT (17.3 GB on GPU 1, RssShmem 0); speed not yet compared on a quiet machine. Both must be
+  0: USERPTR=0 alone falls back to SVM, which evicts the same way. The user confirmed the finding (2026-11-24), for every instance
   whatever its backend: the architect places
-  it (the instance unit's environment or `launch.rs`), then a test-first slice, marked under test in
-  the docs until Strata's result under load arrives.
+  it (the instance unit's environment or `launch.rs`), then a test-first slice (GT1, in progress).
 
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
