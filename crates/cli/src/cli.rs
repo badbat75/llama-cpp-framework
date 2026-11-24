@@ -886,6 +886,19 @@ fn show_lines_for(
         ),
     );
     row(
+        "RocmHostMemoryGtt:",
+        cfg.rocm_host_memory_gtt.map_or_else(
+            || "on (default, GTT)".into(),
+            |v| {
+                if v {
+                    "on (GTT)".into()
+                } else {
+                    "off (the runtime's defaults)".to_string()
+                }
+            },
+        ),
+    );
+    row(
         "CudaAllreduce:",
         cfg.cuda_allreduce
             .clone()
@@ -2506,6 +2519,10 @@ mod tests {
             devices: None,
             models_dir: Some("D:\\models".into()),
             rocblas_use_hipblaslt: Some(false),
+            // No flag carries the GTT switch, like the GPUs above and the tags
+            // below: `apply` leaves the state the loaded file had (None here,
+            // which the launch reads as the on state).
+            rocm_host_memory_gtt: None,
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
@@ -2570,6 +2587,9 @@ mod tests {
             devices: None,
             models_dir: Some(r"D:\models".into()),
             rocblas_use_hipblaslt: Some(false),
+            // The GTT switch: on explicitly (unset is the same for the launch),
+            // the state the row must print as `on`, not as a placeholder.
+            rocm_host_memory_gtt: Some(true),
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
@@ -2600,6 +2620,7 @@ mod tests {
             devices: _, // No GPUs row in `server show`, so no needle to bind.
             models_dir,
             rocblas_use_hipblaslt,
+            rocm_host_memory_gtt,
             cuda_allreduce,
             cuda_disable_graphs,
             attn_rot_disable,
@@ -2632,6 +2653,17 @@ mod tests {
                     "on".to_string()
                 } else {
                     "off".to_string()
+                },
+            ),
+            // The GTT row prints the state the launch acts on (unset reads as
+            // on), so the needle comes from the fixture's own value: a row
+            // printing a placeholder for `Some(true)` fails here.
+            (
+                "RocmHostMemoryGtt:",
+                if rocm_host_memory_gtt.unwrap() {
+                    "on (GTT)".to_string()
+                } else {
+                    "off (the runtime's defaults)".to_string()
                 },
             ),
             ("CudaAllreduce:", cuda_allreduce.unwrap()),

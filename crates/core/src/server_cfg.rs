@@ -122,6 +122,20 @@ pub struct ServerConfig {
     /// costs speed is unmeasured (the R9700 guide), and the runtime finding rests on one
     /// driver (32.0.22042.14002) on one box.
     pub rocblas_use_hipblaslt: Option<bool>,
+    /// Paged host memory as the driver's GTT, exported as the pair
+    /// `HSA_USERPTR_FOR_PAGED_MEM=0` and `HSA_SVM_FOR_PAGED_MEM=0`: with both at
+    /// `0` the ROCm runtime maps that memory through the driver's GTT
+    /// (libhsakmt `fmm.c` `fmm_allocate_host_gpu`), so compaction and reclaim no
+    /// longer evict the process's GPU queues. Unset or `true` exports both,
+    /// `false` exports neither and the runtime's own defaults return. Why a way
+    /// to turn it off exists: that memory stops being swappable and the GTT is
+    /// a capped window over the RAM (the cap, the design and the measures:
+    /// `ARCHITECTURE.md` "ROCm host memory as GTT"), so a large pinned host
+    /// allocation can fail where it used to succeed. Read by libhsakmt, below
+    /// llama.cpp, so it rides `launch::env_vars` like the knobs around it, and
+    /// goes out for every backend (one rule, no backend detection: CUDA, Vulkan
+    /// and Metal never read it).
+    pub rocm_host_memory_gtt: Option<bool>,
     /// Which AllReduce `--split-mode tensor` reduces through, exported as
     /// `GGML_CUDA_ALLREDUCE`: one of [`ALLREDUCE_MODES`]. None = never export
     /// the variable, which is the backend's own default: on Linux the
@@ -496,6 +510,11 @@ fn from_keys(keys: &std::collections::BTreeMap<String, String>) -> ServerConfig 
         rocblas_use_hipblaslt: keys
             .get("RocblasUseHipblaslt")
             .and_then(|v| ini::parse_bool(v)),
+        // Same three states: unset is not a stand-in for a default, it is the
+        // state the launch exports the pair from (see the field's doc).
+        rocm_host_memory_gtt: keys
+            .get("RocmHostMemoryGtt")
+            .and_then(|v| ini::parse_bool(v)),
         cuda_allreduce: keys
             .get("CudaAllreduce")
             .and_then(|v| normalize_allreduce(v))
@@ -723,6 +742,13 @@ pub fn render_for_os(cfg: &ServerConfig, leave_dirs_unset: bool, windows: bool) 
         "RocblasUseHipblaslt",
         "; RocblasUseHipblaslt = false  ; rocBLAS GEMM backend (env ROCBLAS_USE_HIPBLASLT): false = Tensile, true = hipBLASLt; commented = rocBLAS decides",
     );
+    // The GTT pair (see the field's doc): unset is the ON state for the launch,
+    // so the hint says the pair is exported; the commented line reloads as None.
+    let rocm_host_memory_gtt_line = bool_line_or_hint(
+        cfg.rocm_host_memory_gtt,
+        "RocmHostMemoryGtt",
+        "; RocmHostMemoryGtt = true  ; paged host memory as the driver's GTT (exports HSA_USERPTR_FOR_PAGED_MEM=0 and HSA_SVM_FOR_PAGED_MEM=0): true exports both, false exports neither and the ROCm runtime's own defaults return; commented = both exported, the on state",
+    );
     let cuda_allreduce_line = str_line_or_hint(
         cfg.cuda_allreduce.as_deref(),
         "CudaAllreduce",
@@ -839,6 +865,17 @@ LogVerbosity = {log_verbosity}
 ; its first prefill batch (ROCm issue #6461): set it false in that case. Inert
 ; on CUDA / Vulkan builds.
 {rocblas_hipblaslt_line}
+; RocmHostMemoryGtt exports HSA_USERPTR_FOR_PAGED_MEM=0 and
+; HSA_SVM_FOR_PAGED_MEM=0, which the ROCm runtime (libhsakmt) reads below
+; llama.cpp: with both at 0 the paged host memory is the driver's GTT, so
+; compaction and reclaim stop evicting this process's GPU queues. The pair goes
+; out for every backend, only ROCm reading it. true and commented export it;
+; false exports neither, putting the runtime's own defaults back: that memory is
+; no longer swappable and the GTT is a capped window over the RAM (the cap, the
+; design and the measures: the ROCm host memory as GTT record in
+; ARCHITECTURE.md), so a large pinned host allocation can fail where it used to
+; succeed.
+{rocm_host_memory_gtt_line}
 ; CudaAllreduce picks the AllReduce split-mode tensor reduces through (env
 ; GGML_CUDA_ALLREDUCE, read by the CUDA and the ROCm backend alike; inert in
 ; the other split modes): nccl = the collective library (RCCL on ROCm, NCCL on
@@ -1281,6 +1318,9 @@ mod tests {
             // Non-default (unset is the framework default): the state that
             // matters, and the one a `keep`-style collapse would swallow.
             rocblas_use_hipblaslt: Some(false),
+            // GT1: same shape, and `true` is the state a `keep`-style collapse
+            // (only write when false) would swallow.
+            rocm_host_memory_gtt: Some(true),
             // Non-default (unset is the default), like the knob above.
             cuda_allreduce: Some("none".into()),
             // true: false is the default and the hint line.
@@ -1334,6 +1374,10 @@ mod tests {
         // The one bool that stays None: unset means the env var is never
         // exported, so materializing a default would BE a decision.
         assert_eq!(reloaded.rocblas_use_hipblaslt, None);
+        // GT1: unset stays unset too. Here it is the ON state for the launch,
+        // so writing a default line for it would be a decision the file never
+        // made, and the commented hint is what reloads as None.
+        assert_eq!(reloaded.rocm_host_memory_gtt, None);
         assert_eq!(reloaded.cuda_allreduce, None);
         // ModelsDir and StateDir are written resolved, through `paths::`,
         // which `data_root_e2e` redirects on another thread: here only that
@@ -1360,6 +1404,76 @@ mod tests {
             };
             assert_eq!(round_trip(&cfg).rocblas_use_hipblaslt, state, "{state:?}");
         }
+    }
+
+    /// GT1: `RocmHostMemoryGtt` is a bool. `true` and `false` are values, a word
+    /// the reader does not know is unset (the launch then exports the pair, as
+    /// for an absent key), and an absent key stays unset.
+    #[test]
+    fn rocm_host_memory_gtt_reads_its_bool_and_drops_a_non_bool() {
+        for (text, want) in [
+            ("[Server]\nRocmHostMemoryGtt = true\n", Some(true)),
+            ("[Server]\nRocmHostMemoryGtt = false\n", Some(false)),
+            ("[Server]\nRocmHostMemoryGtt = sometimes\n", None),
+            ("[Server]\nRocmHostMemoryGtt =\n", None),
+            ("[Server]\n", None),
+        ] {
+            assert_eq!(from_text(text).rocm_host_memory_gtt, want, "reads {text:?}");
+        }
+    }
+
+    /// GT1: the three states round-trip through the writer. `false` is a value,
+    /// not an absence (the same trap as `RocblasUseHipblaslt`: "only write it
+    /// when true" would turn the off state back into unset on the next save),
+    /// `true` is the explicit on, and an absent key stays unset, which is the
+    /// on state for the launch.
+    #[test]
+    fn rocm_host_memory_gtt_round_trips_both_states_and_stays_unset_when_absent() {
+        for state in [Some(true), Some(false), None] {
+            let cfg = ServerConfig {
+                rocm_host_memory_gtt: state,
+                ..Default::default()
+            };
+            assert_eq!(round_trip(&cfg).rocm_host_memory_gtt, state, "{state:?}");
+        }
+    }
+
+    /// GT1: the render writes the key line only when the profile sets it; an
+    /// unset one writes the commented default line, which must say the pair is
+    /// on (unset is the on state, so a hint reading like an off state would
+    /// send a reader to the wrong side).
+    #[test]
+    fn rocm_host_memory_gtt_renders_as_a_key_only_when_set() {
+        // The directories are named so the render resolves nothing through
+        // `paths::`, which `data_root_e2e` redirects on another thread.
+        let dirs = || ServerConfig {
+            models_dir: Some("/var/lib/llama.cpp/models".into()),
+            state_dir: Some("/var/lib/llama.cpp/state".into()),
+            ..Default::default()
+        };
+        for (state, lit) in [(Some(true), "true"), (Some(false), "false")] {
+            let text = render(&ServerConfig {
+                rocm_host_memory_gtt: state,
+                ..dirs()
+            });
+            let line = format!("RocmHostMemoryGtt = {lit}");
+            assert!(
+                text.lines().any(|l| l == line),
+                "{state:?} writes {line:?}: {text}"
+            );
+        }
+        let text = render(&dirs());
+        assert!(
+            !text
+                .lines()
+                .any(|l| l.trim_start().starts_with("RocmHostMemoryGtt =")),
+            "unset writes no key line: {text}"
+        );
+        assert!(
+            text.lines()
+                .any(|l| l.starts_with("; RocmHostMemoryGtt = ")),
+            "unset writes its commented default line: {text}"
+        );
     }
 
     /// `CudaAllreduce` is a closed list: every member round-trips, a hand-edit

@@ -291,6 +291,13 @@ export struct ServerForm {
     // and the same form::tri_state / tri_bool pair the model-profile tri-states
     // use.
     rocblas_use_hipblaslt: string,
+    // RocmHostMemoryGtt (envs HSA_USERPTR_FOR_PAGED_MEM=0 +
+    // HSA_SVM_FOR_PAGED_MEM=0, the GTT of paged host memory): the SAME tri-state
+    // spelling as the key above, "default" (export the pair, the on state),
+    // "on" (export it), "off" (export neither). NO widget yet: the Server page
+    // shows it in its own slice, so the form carries the line's own spelling like
+    // `tags` does, and a Server tab save writes back what the file had.
+    rocm_host_memory_gtt: string,
     // GGML_CUDA_ALLREDUCE (the SDK tuning card's multi-GPU half): "default"
     // (never export the variable) or one of server_cfg::ALLREDUCE_MODES, a
     // dropdown over Options.allreduce_modes.

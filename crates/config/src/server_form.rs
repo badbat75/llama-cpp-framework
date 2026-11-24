@@ -145,6 +145,10 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // ROCBLAS_USE_HIPBLASLT" is a third instruction and the framework's
         // default. Shown as a dropdown (Options.tri_states).
         rocblas_use_hipblaslt: crate::form::tri_state(cfg.rocblas_use_hipblaslt),
+        // The GTT switch, the same tri-state spelling. No widget yet, so the
+        // form only carries the file's own state through a save (like `tags`):
+        // "default" for a file that sets no line, which is the on state.
+        rocm_host_memory_gtt: crate::form::tri_state(cfg.rocm_host_memory_gtt),
         // "default" is the dropdown's entry for "never export
         // GGML_CUDA_ALLREDUCE"; it two-way-binds to this, so the sentinel is
         // stored rather than "".
@@ -285,6 +289,9 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // explicit `ROCBLAS_USE_HIPBLASLT=0`, i.e. into the Tensile workaround
         // for everyone who never asked for it.
         rocblas_use_hipblaslt: crate::form::tri_bool(f.rocblas_use_hipblaslt.as_str()),
+        // Carried through untouched: no widget edits it, so a save writes back
+        // the state the file had ("default" and "" both read as unset).
+        rocm_host_memory_gtt: crate::form::tri_bool(f.rocm_host_memory_gtt.as_str()),
         // "default" (and anything that is not a mode) is None: exporting an
         // unknown word would run every tensor split as `none`.
         cuda_allreduce: server_cfg::normalize_allreduce(f.cuda_allreduce.as_str())
@@ -359,6 +366,10 @@ mod tests {
             // Non-default (None is the framework default), so the tri-state's
             // round-trip through the form's string spelling isn't vacuous.
             rocblas_use_hipblaslt: Some(false),
+            // The GTT switch: the explicit on, the state a form that carried
+            // only a bool would swallow. No widget, so the form's string must
+            // carry it through untouched.
+            rocm_host_memory_gtt: Some(true),
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,

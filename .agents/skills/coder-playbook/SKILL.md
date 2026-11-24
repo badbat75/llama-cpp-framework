@@ -197,7 +197,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 ### The web UI (fe/): running and CSS
 
 - Run a filtered file as `npm --prefix fe test -- <file> -t '<title>'` (cwd `fe/`, so the jsdom config is
-  read). `format:check` writes nothing: fix the named files with `npx prettier --write <file>` (it lists
+  read). `format:check` writes nothing: fix the named files with `npx prettier --write <file>` run from
+  `fe/` (from the repo root `npx --prefix fe prettier --write src/x.tsx` answers "No files matching the
+  pattern": the paths resolve against the cwd, not the prefix; it lists
   every file it processes: check `git status --porcelain` after). The full suite under load reddens
   scores of files with `Test timed out in 5000ms` (vitest spawns one worker per file, 116 here): rerun
   with `npm --prefix fe test -- --maxWorkers=12` (user, 2026-11-24; 4 was the earlier cap), and rerun a named file solo, before
@@ -232,7 +234,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `cascade(classes)` keeps only a selector whose every token is `button` or one of the element's own
   classes, so it never applies, and the element keeps the plain `.ot-add` declaration in those pins.
   So a declaration a cascade pin READS must sit on a rule naming only that element: write the status
-  row as `div.page-status` and `p.page-status` (two rules), never `.page-status p`.
+  row as `div.page-status` and `p.page-status` (two rules), never `.page-status p`. A `td` whose layout
+  a pin reads (a flex row for a new button) needs a class of its own (`.status-cell`): a
+  `.model-profiles td:nth-child(3)` rule is invisible to that reader, and a `.confirm-row td` rule is
+  free of it (a descendant selector), which is where a confirm cell's `white-space: normal` goes.
 - Moving a shared component (the Save bar: one `SaveBar.tsx` used by both form pages) reddens every
   HEAD test that pins its PLACE, not its behaviour: the tab-stop lists (`2d.67`, `2d.71`, `2d.78`,
   `2e.91`, `H9b.4`, `H10.10`, `H11b.4`, `2h.197`, `1b 6`, `6`), "the bar is the section's last child"
@@ -301,6 +306,19 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   documents every value a control needs to render, or that control is unmeasured (the tag vocabulary is
   the API's). Its summary prints `axe: <rule> x<count>`, not the node: add a probe in a scratch copy of
   the check to learn the node.
+- `fe/ux/` is in `fe/.prettierignore` (its own npm package, "checked by its own hand"): `format:check`
+  never reads `fe/ux/check.js`, ESLint does. A state's `set` names `stub.py`'s `STATE` keys, and each key
+  feeds only the route it was written for (`off=1` switches the ONE profile's document, the list keeps
+  its rows), so a list state needs no key beyond `session=admin` when the stub's pool already carries a
+  switched-off row. The per-state hooks are `click`, `open`, `hover` and `focus`, each called in the
+  normal pass and in the text pass.
+- Read the stub before changing it: `python3 fe/ux/stub.py fe/dist &` prints the port it bound, and
+  `curl "http://127.0.0.1:<port>/__set?session=admin&pool=long"` then `curl .../api/profiles/server/default`
+  shows what a state really gets. A review note saying "the stub answers X with an error" is a claim to
+  measure first: `pool` switches only the pool LIST, every page read answers the same under every pool.
+- A state's icon selector names a stroke NO other icon carries: the plus's `M12 5v14`, never its
+  `M5 12h14`, which is the whole of the minus. A `click` whose selector matches two buttons is a
+  Playwright strict-mode violation, in every browser, at every width.
 
 ## Pitfalls
 
@@ -354,7 +372,13 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   format strings, raw or multi-line strings and WiX component Ids (MSI identity, not prose); rewrapped
   prose defeats exact pairs.
 - `binding_lint` reddens the whole `-p pai-config` run when `strings::t` keys and the language file
-  differ.
+  differ. A new refusal key needs its arm in `checks::Refusal::text`, its keys in `en_US.toml` AND
+  `cli.toml`, and passes `binding_lint`'s `cli_print_paths_hold_no_language` only when the strings
+  carry no path: reuse an existing key (`not-one-of` names the offending key as its first value).
+- A new field in the Slint `ServerForm` struct reddens every EXHAUSTIVE `ServerForm {…}` literal in
+  `server_form.rs`'s tests (they carry no `..Default::default()`), and `rich_server_config_round_trips`
+  fails unless `config_to_form` and `form_to_config` both carry it: the tri-state pair
+  (`form::tri_state` / `form::tri_bool`) carries an `Option<bool>` with no widget, like `tags`.
 - A D-Bus signature pin is zbus's own rendering (a struct has no commas); a wire change with new REQUIRED
   fields reddens a sibling test in the same file whose fixture omits them. A signature a COMMENT states is
   provable in a copy: `panic!("{}", <Row as zbus::zvariant::Type>::SIGNATURE)` in a scratch test (core's
@@ -367,11 +391,27 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   pause.
 - A `Box<dyn ManagerClient + Send + Sync>` does not coerce to `&dyn ManagerClient`: pass `&*boxed`.
 - Setting `PRIVATE_AI_FE_DIST` reruns the bff's build script and recompiles every target of the crate.
+- `server::FIELDS` is the whitelist for `server-malformed` AND for the 422's `field`: a new server key
+  needs its `Field` entry, and `server::tests::the_values_keys_are_the_web_s_field_names` pins the
+  exact key set of the GET body as a literal `vec!`, so add the key there too. Nothing in `fe/` has to
+  declare a key for the API to read and save it (no test reads `fe/src/api.ts`).
+- A new `Kind::Bool` field needs no bff gate: `Kind::reads` already rejects a string or number body
+  with `server-malformed`, and `null` writes no line.
 
 ### The web UI (fe/)
 
 - `npx vitest` from the repo root has no config and reds every test with `window is not defined`.
+- A vitest file filter is a SUBSTRING of the path: `ModelProfiles` also runs `ModelProfilesFilter`,
+  `ModelProfilesOverMemory` and `ModelProfileSave16`. To tell your reds from another slice's uncommitted
+  work, build a second `git archive HEAD` copy with ONLY that slice's production files plus the working
+  tree's tests: the reds that reproduce there are not yours.
 - Vitest here has no globals and no setup file: RTL's auto-cleanup never runs by itself.
+- The Server page's `sectionStatuses` (`ServerSave.test.tsx`) and `status()` (`ServerProfilePage1`)
+  require the bar's `role="status"` line AFTER the section's `h2`, and inside `SaveBar` that line
+  precedes `.save-actions`, so a test pinning the bar's Delete `before(button, h2)` and
+  `closest('section')` null (the bar outside, above the section) is unsatisfiable with them: one
+  witness pair, the tester's to retarget. Prove it by moving the page's `<section>` after `<Body>`
+  in a copy: that test goes green, 73 of those two files go red.
 - `fireEvent.click` does not move focus like a real click.
 - Specificity: `button` and `.secondary` are (0,1,0), `.jump button` is (0,1,1); `input[role='switch']`
   and `input[type='checkbox']` tie, so source order decides.
@@ -438,11 +478,26 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   page state it must measure.
 - A test's `shownText` skips `.visually-hidden`: an icon button whose words are a
   `span.visually-hidden` passes "nothing is written on the box" (WCAG 2.5.3) and keeps its name.
+  The same helper's `isHidden` is `closest('[hidden]')`, so a span a test pins as NOT SHOWN needs the
+  `hidden` attribute: `.visually-hidden` alone is visible to it.
+- The older list tests read a cell's RAW `textContent` (`rows()` in `ModelProfilesSwitch`,
+  `ModelProfilesFilter`, `ModelProfiles.test.tsx`; only `cellText` clones drop `button` children), so a
+  new icon button whose name is a `span.visually-hidden` lands in every one of those pins: one − in the
+  Status cell reddened 26 tests across four files. The cell-text pins and the hidden-name-in-the-cell
+  rule are a pair to report, not to satisfy by moving the name to `aria-label` (the brief forbids it).
+- A test helper that finds a `+` by the plus icon's horizontal stroke (`PLUS[0]` is `M5 12h14`, the same
+  path as the `minus` icon) counts every − as a list add.
+- The react-hooks `refs` lint reddens `ref.current = props` written in the render body ("Cannot update ref
+  during render"): keep the latest props object in a ref from a plain `useEffect`, whose callbacks run
+  after mount.
 - One full run in ten reddens `AboutPage.test.tsx` 18 AN.3 and `NodesMenu1.test.tsx` (no timeout line):
   both are green solo and in five paired runs. Rerun the file solo before reporting them.
 
 ### The UX check
 
+- The stub is `python3.14` on a random loopback port; the machine's long-standing `python3.12` listener
+  on `0.0.0.0:8580` is the user's own service, never the check's. After a killed run, `ss -ltnp |
+  grep python3.14` is the check that no stub is left; `pkill -f ux/stub.py` kills the shell running it.
 - axe: `aria-required-children` fires on a plain `<div>` child of a `<ul role="list">` (webkit only);
   `target-size` (24 px) is satisfied by a small target fully clear of others, not by one partly covered,
   so a page a few px taller shifts the result; a `<button>` with no class gets a UA grey that fails
@@ -450,9 +505,16 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   for both).
 - A wrapping chip list capped by `max-width: 100%` on the chip is capped by its PARENT: the `ul` of a
   flex row needs `min-width: 0`.
+- The check's stub prints `BrokenPipeError` tracebacks when a browser closes a page mid-read: that is
+  noise, the run is judged by its `summary: ... N failing` line.
+- A backgrounded `cmd 2>&1 | tail -N` can finish with a 0-byte capture file (the pipe dies with the
+  shell): redirect the run to a log file and read that.
 
 ### Rust library traps
 
+- A `server_cfg::render` template is one `format!` string: a `"` in the INI text it carries breaks the
+  parse (Rust 2021 reads the word after a closed string as a literal prefix, "prefix `GTT` is unknown"),
+  so a `;` comment that names a doc section states it without quotes.
 - `nix` features (`fs` for `OFlag`, `feature` for `uname`); `Command::get_args()` yields `&OsStr`;
   chaining onto a temporary in a `?`-terminated statement is E0716 (bind first); `&unsafe { call() }?`
   is E0716; a module fn shadowed by a same-named local is E0618; ash in loaded mode needs a `Drop` guard

@@ -852,6 +852,20 @@ pub fn one_of(key: &str, value: &str, allowed: &[&str]) -> Result<(), Refusal> {
     ))
 }
 
+/// `value` of `key` as a bool the readers accept (`ini::parse_bool`: `true` or
+/// `false`, spaces around allowed). The refusal is [`one_of`]'s, naming the key
+/// in its first value, which is the control the web form marks
+/// (`bff::server::field_of`).
+pub fn bool_value(key: &str, value: &str) -> Result<(), Refusal> {
+    if ini::parse_bool(value).is_some() {
+        return Ok(());
+    }
+    Err(Refusal::new(
+        "not-one-of",
+        &[&key, &value.trim(), &"true, false"],
+    ))
+}
+
 /// Every entry of the comma-separated `spec-type` as one of [`SPEC_TYPES`].
 pub fn spec_type(value: &str) -> Result<(), Refusal> {
     value
@@ -1186,6 +1200,13 @@ pub fn server_file(text: &str, model_profiles: &str) -> Result<(), Refusal> {
     // the probe: a card can vanish for a while and must not block a save).
     if let Some(v) = s.get("Devices") {
         device_list("Devices", &v)?;
+    }
+    // The GTT switch is a bool in the file, and the launch reads it for every
+    // instance: a word the reader drops silently leaves a file that says one
+    // thing and a launch that does another (the runtime's own defaults return),
+    // so refuse it here, where every surface that writes the file is checked.
+    if let Some(v) = s.get("RocmHostMemoryGtt") {
+        bool_value("RocmHostMemoryGtt", &v)?;
     }
     bind_list(&s.get("Hostname").unwrap_or_default())?;
     tags_rule(&tags_list(s.get("Tags").as_deref().unwrap_or_default()))?;
@@ -1659,6 +1680,39 @@ top-p = 0.95\r\n";
     fn server_keys_with_no_check_today_pass() {
         let text = server("Threads = x\nThreadsBatch = -3\nWebui = maybe\n");
         assert_eq!(server_file(&text, ""), Ok(()));
+    }
+
+    /// GT1: `RocmHostMemoryGtt` is a bool in the file, so a hand-edited word is
+    /// refused (the launch reads the key for every instance, and a value the
+    /// reader drops silently returns the runtime's defaults: a file that says
+    /// one thing and launches another). The refusal names the key in its first
+    /// value, which is what the web form marks (`bff::server::field_of`).
+    #[test]
+    fn server_rocm_host_memory_gtt_must_be_a_bool() {
+        for good in ["true", "false", " true "] {
+            assert_eq!(
+                server_file(&server(&format!("RocmHostMemoryGtt = {good}\n")), ""),
+                Ok(()),
+                "{good:?} is a bool"
+            );
+        }
+        for bad in ["x", "1", "yes", ""] {
+            let e = server_file(&server(&format!("RocmHostMemoryGtt = {bad}\n")), "")
+                .expect_err("{bad:?} is not a bool");
+            assert_eq!(
+                e.values.first().map(String::as_str),
+                Some("RocmHostMemoryGtt"),
+                "the refusal names the key the form marks: {e:?}"
+            );
+        }
+        // A commented hint is no key.
+        assert_eq!(
+            server_file(
+                &server("; RocmHostMemoryGtt = true  ; paged host memory\n"),
+                ""
+            ),
+            Ok(())
+        );
     }
 
     /// `LogVerbosity` is one of llama.cpp's six levels, 0 to 5 (the Server

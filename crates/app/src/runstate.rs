@@ -879,6 +879,18 @@ mod tests {
     // the pasteable command line; a block that dropped it would run the backend
     // this setting exists to steer away from.
 
+    /// The launch env without the GTT pair (GT1): `env_vars` exports
+    /// `HSA_USERPTR_FOR_PAGED_MEM` and `HSA_SVM_FOR_PAGED_MEM` for every profile
+    /// that does not switch them off, so these env tests of the other knobs read
+    /// the env with that pair filtered out. The pair itself is pinned in
+    /// `pai_core::launch`.
+    fn env_vars_no_gtt(cfg: &ServerConfig) -> Vec<(String, String)> {
+        env_vars(cfg)
+            .into_iter()
+            .filter(|(k, _)| !k.starts_with("HSA_"))
+            .collect()
+    }
+
     #[test]
     fn rocblas_hipblaslt_rides_the_env_as_zero_or_one() {
         let with = |v: Option<bool>| ServerConfig {
@@ -886,15 +898,15 @@ mod tests {
             ..band_off()
         };
         assert_eq!(
-            env_vars(&with(Some(false))),
+            env_vars_no_gtt(&with(Some(false))),
             [("ROCBLAS_USE_HIPBLASLT".to_string(), "0".to_string())]
         );
         assert_eq!(
-            env_vars(&with(Some(true))),
+            env_vars_no_gtt(&with(Some(true))),
             [("ROCBLAS_USE_HIPBLASLT".to_string(), "1".to_string())]
         );
         assert!(
-            env_vars(&with(None)).is_empty(),
+            env_vars_no_gtt(&with(None)).is_empty(),
             "unset must export nothing"
         );
         // Not an argument on either surface: llama-server would refuse it.

@@ -17,7 +17,9 @@
 //!     plain switches with no unset state in the schema (`CudaDisableGraphs`,
 //!     `AttnRotDisable`, `RocprofAttach`) are `false` when absent;
 //!     `RocblasUseHipblaslt` is the select the web UI shows, `"on"`/`"off"`
-//!     (fe/src/ServerForm.tsx), `null` when unset.
+//!     (fe/src/ServerForm.tsx), `null` when unset. `RocmHostMemoryGtt` (GT1) is
+//!     `true`/`false` and `null` when unset, which is the ON state of the
+//!     launch: the bff sends no default, the launch decides.
 //!   - `defaults`: Port 9931 (`server_cfg::DEFAULT_PORT`), ModelsMax 4 and
 //!     ModelsMemoryMargin 0 (the configurator's), the base URL derived from
 //!     the saved Hostname and Port even when the file overrides it, ModelsDir
@@ -92,6 +94,11 @@
 //!   pair of limits through). A blank `ModelsDir` or `StateDir` is left unset
 //!   in the file; the key the body names is written and never sent in an
 //!   answer.
+//! - GT1: `RocmHostMemoryGtt` is a switch WITH an unset state: the read sends
+//!   `true`/`false`/`null` (unset is the ON state of the launch, so the bff
+//!   sends no default), the save writes the key line for a bool and leaves the
+//!   commented hint for `null`, and a value the manager's bool rule refuses is
+//!   422 with `field` the key.
 //! - A 403 refusal for the signed-in user ends their session at once
 //!   (user, 2026-11-16): the same cookie is 401 `session-required`
 //!   afterwards, so the page returns to the sign-in form. Only that
@@ -152,7 +159,7 @@ const KEY_B: [u8; 16] = [
 const SHIPPED: &str = include_str!("../../core/defaults/server@default.ini");
 
 /// Every `[Server]` key `server_cfg::from_text` reads.
-const KEYS: [&str; 21] = [
+const KEYS: [&str; 22] = [
     "Port",
     "Hostname",
     "Threads",
@@ -162,6 +169,7 @@ const KEYS: [&str; 21] = [
     "Devices",
     "ModelsDir",
     "RocblasUseHipblaslt",
+    "RocmHostMemoryGtt",
     "CudaAllreduce",
     "CudaDisableGraphs",
     "AttnRotDisable",
@@ -1498,6 +1506,7 @@ ModelsMemoryMargin = 1024
 Devices = CUDA0,ROCm1
 ModelsDir = /srv/models
 RocblasUseHipblaslt = false
+RocmHostMemoryGtt = false
 CudaAllreduce = NCCL
 CudaDisableGraphs = true
 AttnRotDisable = true
@@ -1525,6 +1534,7 @@ Unknown = 7
             "Devices": "CUDA0,ROCm1",
             "ModelsDir": "/srv/models",
             "RocblasUseHipblaslt": "off",
+            "RocmHostMemoryGtt": false,
             "CudaAllreduce": "nccl",
             "CudaDisableGraphs": true,
             "AttnRotDisable": true,
@@ -1551,6 +1561,23 @@ async fn rocblas_true_reads_on() {
     assert_eq!(doc["values"]["RocblasUseHipblaslt"], json!("on"));
 }
 
+/// GT1: `RocmHostMemoryGtt` reads as a switch that has an unset state: `true`
+/// and `false` as themselves, and `null` for a key the file does not set (unset
+/// is the ON state of the launch: the bff sends no default of its own) and for
+/// a value the configurator cannot read.
+#[tokio::test]
+async fn rocm_host_memory_gtt_reads_its_bool_and_unset() {
+    for (text, want) in [
+        ("[Server]\nRocmHostMemoryGtt = true\n", json!(true)),
+        ("[Server]\nRocmHostMemoryGtt = false\n", json!(false)),
+        ("[Server]\nRocmHostMemoryGtt = sometimes\n", Value::Null),
+        ("[Server]\nPort = 8580\n", Value::Null),
+    ] {
+        let doc = app_holding(text).read_default().await.document();
+        assert_eq!(doc["values"]["RocmHostMemoryGtt"], want, "{text:?}");
+    }
+}
+
 /// The shipped file: what it does not set is `null`, the plain switches
 /// `false`; every key present.
 #[tokio::test]
@@ -1571,6 +1598,9 @@ async fn unset_keys_are_null_in_the_shipped_file() {
         "ModelsMax",
         "ModelsMemoryMargin",
         "RocblasUseHipblaslt",
+        // GT1: the shipped file sets it no line of its own, so it reads unset,
+        // which is the ON state of the launch.
+        "RocmHostMemoryGtt",
         "CudaAllreduce",
         "Webui",
         "WebuiMcpProxy",
@@ -1607,6 +1637,7 @@ Hostname =
 ModelsDir =
 Webui = maybe
 RocblasUseHipblaslt = sometimes
+RocmHostMemoryGtt = sometimes
 ";
     let doc = app_holding(text).read_default().await.document();
     for key in [
@@ -1617,6 +1648,7 @@ RocblasUseHipblaslt = sometimes
         "ModelsDir",
         "Webui",
         "RocblasUseHipblaslt",
+        "RocmHostMemoryGtt",
     ] {
         assert_eq!(doc["values"][key], Value::Null, "{key}");
     }
@@ -2101,6 +2133,11 @@ async fn a_body_that_is_not_the_forms_shape_is_server_malformed() {
         json!({ "revision": revision, "values": { "Port": "abc" } }).to_string(),
         json!({ "revision": revision, "values": { "Webui": "true" } }).to_string(),
         json!({ "revision": revision, "values": { "RocblasUseHipblaslt": true } }).to_string(),
+        // GT1: the switch is a bool, so a word and a number are not the type the
+        // read gives (the value the manager's bool rule refuses is a file the
+        // bff never renders: `the_managers_bool_refusal_of_rocm_host_memory_gtt…`).
+        json!({ "revision": revision, "values": { "RocmHostMemoryGtt": "true" } }).to_string(),
+        json!({ "revision": revision, "values": { "RocmHostMemoryGtt": 1 } }).to_string(),
         json!({ "revision": revision, "values": { "Port": 8.5 } }).to_string(),
     ];
     for body in bodies {
@@ -2325,6 +2362,61 @@ async fn a_blank_directory_is_left_unset_in_the_file() {
         .into_owned();
     assert!(!cleared.contains(own_models.as_str()), "{cleared}");
     assert!(!cleared.contains(own_state.as_str()), "{cleared}");
+}
+
+/// GT1: the save takes `RocmHostMemoryGtt`. A bool writes the key line (the
+/// launch reads `false` as "export neither HSA variable", `true` as the
+/// explicit on), and `null`, the key unset, writes no line of its own: the file
+/// keeps the commented hint and reloads unset, which is the ON state.
+#[tokio::test]
+async fn a_save_writes_rocm_host_memory_gtt_as_the_body_holds() {
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    for (value, lit) in [(json!(true), "true"), (json!(false), "false")] {
+        let doc = app
+            .get("/api/instances/default/server", Some(&cookie))
+            .await
+            .document();
+        assert_saved(
+            &app.put(
+                Some(&cookie),
+                &save_body(&doc, &[("RocmHostMemoryGtt", value)]),
+            )
+            .await,
+        );
+        let text = app.file_text();
+        assert!(
+            text.lines()
+                .any(|l| l == format!("RocmHostMemoryGtt = {lit}")),
+            "the body's {lit}: {text}"
+        );
+        assert_eq!(
+            pai_core::server_cfg::from_text(&text).rocm_host_memory_gtt,
+            Some(lit == "true"),
+            "the file reloads the value the body named"
+        );
+    }
+    let doc = app
+        .get("/api/instances/default/server", Some(&cookie))
+        .await
+        .document();
+    assert_saved(
+        &app.put(
+            Some(&cookie),
+            &save_body(&doc, &[("RocmHostMemoryGtt", Value::Null)]),
+        )
+        .await,
+    );
+    let text = app.file_text();
+    assert!(
+        !text.lines().any(|l| l.starts_with("RocmHostMemoryGtt =")),
+        "unset writes no key line of its own: {text}"
+    );
+    assert_eq!(
+        pai_core::server_cfg::from_text(&text).rocm_host_memory_gtt,
+        None,
+        "it reloads unset: {text}"
+    );
 }
 
 /// The form's revision is stale (the file changed behind it): 409
@@ -2804,6 +2896,33 @@ async fn the_managers_value_refusal_is_422_naming_its_field() {
             &["Port", "70000", "1", "65535"],
             "Port",
         );
+    assert_eq!(app.file_text(), WITH_KEY, "nothing was written");
+}
+
+/// GT1: a `RocmHostMemoryGtt` that is not a bool is refused as a value, 422,
+/// with `field` naming the key the form marks. The refusal is the real one
+/// `checks::server_file` gives for a hand-edited file (the manager runs it on
+/// the text the bff hands the write), not a key written by hand here: the rule
+/// is free to name itself, and the field must still land on the key.
+#[tokio::test]
+async fn the_managers_bool_refusal_of_rocm_host_memory_gtt_is_422_naming_its_field() {
+    let refusal = pai_core::checks::server_file("[Server]\nRocmHostMemoryGtt = sometimes\n", "")
+        .expect_err("a non-bool value is refused");
+    let args: Vec<&str> = refusal.values.iter().map(String::as_str).collect();
+
+    let app = app_writing(WITH_KEY);
+    let cookie = app.sign_in().await;
+    let doc = app.read_default().await.document();
+    app.set_write_outcome(Outcome::Invalid {
+        key: refusal.key,
+        values: refusal.values.clone(),
+    });
+    app.put(
+        Some(&cookie),
+        &save_body(&doc, &[("RocmHostMemoryGtt", json!(false))]),
+    )
+    .await
+    .assert_refused(refusal.key, &args, "RocmHostMemoryGtt");
     assert_eq!(app.file_text(), WITH_KEY, "nothing was written");
 }
 

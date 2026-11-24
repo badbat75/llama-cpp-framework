@@ -37,6 +37,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   a literal is a COMPILE red there. Fill each literal with the value its own fixture implies. A new field
   on a wire struct reds every target that reads it: prove the field-independent rules with the one file
   put back at HEAD and report both lists.
+- A new `ServerConfig` field reddens every literal with no `..Default::default()`: `bff/src/server.rs`
+  `rich_cfg`, `cli/src/cli.rs` (the `server set` expected literal, its cfg, its destructure),
+  `core/src/launch.rs` (the all-fields literal AND its destructure), `config/src/server_form.rs`. Beside
+  the literals, `checks::KEYS` takes a new refusal key, and the CLI's `server show` key list,
+  `fe/ux/stub.py` and `fe/briefs/api-contract.md` name every key.
 - Give every wait a deadline (`recv_timeout`, a `try_wait` loop): a test must fail, not hang. Report a
   `Disconnected` (the thread panicked, e.g. a `todo!` stub) apart from a `Timeout`. Drive a timeout with
   `tokio::time::pause()`: a `tokio::time::sleep` on a current-thread runtime is real wall clock.
@@ -65,6 +70,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   snippet), the panic lines and the failing names, restores with plain `cp` and proves it with `cmp -s`.
 - Include the verb's own first distinguishing line in the snippet of a gate copied verbatim into every
   guarded verb, so the snippet matches once.
+- A guard of two disjuncts set in the SAME tick (`if (saving || sent.current) return`, the same line in the
+  save and in the close) is pinned by ONE of them: dropping the state disjunct of the save SURVIVES (the ref
+  set on the line below carries the second-press pin). Mutate the guard where the disjunct is alone (the
+  close-while-saving one) and report the survivor as unpinned.
 - Run nothing else with cargo on the crate while a prove loop rewrites the real source.
 - A mutant that SKIPS a check (drop one disjunct of a compound trigger) reds the test that pins the
   check's own side effect (the listing was asked: `0 != 2`) even where the outcome pin would pass: report
@@ -143,6 +152,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `--lib data_root_e2e` (~7 s incremental), and restoring with `cp` + `cmp -s`.
 - Drive a real save through `config_seam_e2e` (redirect, save through the seam, reload, assert): a unit
   test over a temp dir passes with no seam at all and is not a data-root e2e.
+- Pin the env of `launch::launch_command` (and `instance_command`, which calls it) inside the
+  `data_root_e2e` phase: `launch_command` calls `paths::data_root()`, and a unit test of it races the
+  phase's process-wide `PRIVATE_AI_DATA_ROOT` redirect.
+- A new DEFAULT export in `launch::env_vars` reddens every strict-equality env test of the OTHER knobs,
+  in `crates/core/src/launch.rs` and in `crates/app/src/runstate.rs`: filter the new pair out of those
+  (a `env_vars_no_gtt`-style helper), pin the pair in its own test, and assert by key presence, because
+  the order inside `env_vars` is the coder's freedom.
 - Pin names (present and absent), never counts, inside a phase that shares ONE tree; snapshot "the
   refusal wrote nothing" AFTER the last block allowed to write; assert "nothing left in the user tree" at
   the END of a phase. Pin a whole file the phase grows as `fixture + appended`.
@@ -195,6 +211,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   write sets the pause per call.
 - List the source's route-list doc comments for the coder when you gate a route (session or permission):
   they go false with the gate, and a tester edits no `src`.
+- The shape gate answers 400 `server-malformed` for a value of the WRONG JSON type; a 422 with `field`
+  comes only from a check (the bff's own, or the manager's `Invalid`). So a design line "refuses a
+  non-bool 422 with `field`" about a bool key means the manager's rule on the rendered file: feed the
+  real `checks::server_file` refusal of that text into the fake's `Outcome::Invalid` (its `key` is
+  `&'static str`, so it needs no leak) and assert `field`; pin the wrong-type case in the file's
+  existing malformed-bodies list.
 - Write a list criterion that keeps an item with defaulted fields, and an expected-rows array that omits
   it, as one fixture with opposite rows.
 
@@ -302,6 +324,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Pin "in the DOM and not shown" as two pins: the element's link to `.visually-hidden` (accepting both
   nestings), and the sheet's CSS text. Pin a note's order as `note.nextElementSibling === field`, and "the
   icon is the only element" as `children.length === 1`.
+- Pin an order chain against EVERY element its message names: a message "after the intro, before the
+  cards" that asserts only the `h2` and the card is a loosened pin (the 22D4 review). The Server page's
+  intro is `getByText(en('server-profile-intro', `server@${id}.ini`))` (as 17a.5 reads it), never a
+  class: pin `h2 → intro → bar → card` as three `before(..)`.
 - Pin an absence with `queryAllByRole(..)` and `toHaveLength(0)` (greens both the no-list and the
   empty-list shape); never `.value` on a `queryByRole(..)!`; index options from `options.length - 1`,
   never a literal; pin a LATER sub-slice's key absence structurally (`nextElementSibling` is null), not
@@ -337,9 +363,17 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - When a review names two sanctioned fixes (a sheet declaration, or a markup shape like a wrapper div),
   pin the DISJUNCTION: the cascade value for the sheet option, the parent chain read off the page for the
   markup option, `a || b` in one assertion. Forcing one shape writes the coder's fix into the contract.
+- Pin a spacing the brief states as a token gap ("a `--space-5` gap after it") loosely: exactly one
+  top-level rule naming the element carries the value in a spacing property (`gap`,
+  `margin-right`/`margin-inline-end`), zero on its neighbours. The coder picks flex gap or a margin, and
+  a strict cascade pin would write one of the two into the contract.
 - Pin "the two controls share one rule" (a brief: share the class or the rule, not a copy) by reading the
   selector GROUP of the rule that styles the existing class and asserting the new control carries one of
   its parts: a comma group and a shared class both pass, a copy of the declarations does not.
+- Pin a hover-reveal that must sit in the flow (not a popover) by what only the flow shape answers: the
+  box's `mouseleave` hides it, a `mouseover` of the box (not only of the control) shows it, and no rule
+  reaching it declares `position: absolute`/`fixed`. A popover that is a child of the same wrapper passes
+  every "the text is in the box" pin, so the text pins alone prove nothing (22 D4.13).
 - Prove the teeth of a CSS pin in a scratch css + scratch test pair (`cp` both, one string swap, `-t`).
 - Send a test that cannot fail in jsdom (real layout, focus movement, `fireEvent.click` moving no focus,
   clipping) to the UX check, or state it as unproven.
@@ -531,6 +565,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   is a list of RULES; a pin of a declaration's exact text must tolerate inner newlines.
 - A cascade or selector-ordering probe whose ancestor ORDER is inverted never matches; specificity ties
   go to source order.
+- `fireEvent.mouseOut(child, { relatedTarget })` DOES reach an ancestor's React `onMouseLeave` (React
+  derives leave from the bubbling mouseout): `relatedTarget: document.body` fires it, a `relatedTarget`
+  inside the ancestor does not, and `fireEvent.mouseLeave(box)` fires it alone. Probe a 12-line component
+  once before pinning a pointer-leaves-the-box rule.
+- An amendment that removes the LAST call of a file's local helper (the fe stylesheet readers' `cascade`,
+  `prop`) reds `npm --prefix fe run typecheck` with TS6133 "declared but its value is never read":
+  module-level locals count. Delete the helper in the same edit.
 - A save rule pinned as a comparison (the render of the rows differs from the loaded one) cannot be
   satisfied by a `dirty` flag: keep the brief's case (type, type back, expect 0 PUTs).
 - What the stub (`stub.py`) serves decides what the UX pass sees: a control that renders only for certain
@@ -541,3 +582,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A test file whose line count moves between two reads is being written by ANOTHER agent right now (the
   same slice briefed twice): stop, never rewrite it, report the collision. The shared edits (`src/test/bff.ts`,
   `fe/ux/`) survive the overwrite, the test file does not.
+- A new icon button with a visually-hidden label (and a hidden reason span) inside a table cell lands in
+  every existing cell-text pin of that cell: strip the buttons in those pins (clone the cell, remove
+  `button`, read `textContent`), and the same for the row's own text.
+- vitest's `toBe` takes ONE argument: a failure message passed to it is a typecheck red, not a test red.
+  The message is the second argument of `expect(x, 'msg')`.

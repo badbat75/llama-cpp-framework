@@ -156,6 +156,17 @@ pub fn env_vars(cfg: &crate::server_cfg::ServerConfig) -> Vec<(String, String)> 
             if on { "1" } else { "0" }.into(),
         ));
     }
+    // HSA_USERPTR_FOR_PAGED_MEM / HSA_SVM_FOR_PAGED_MEM: with both at `0` the
+    // ROCm runtime (libhsakmt) maps paged host memory through the driver's GTT,
+    // so compaction and reclaim stop evicting this process's GPU queues (see
+    // server_cfg::rocm_host_memory_gtt and `ARCHITECTURE.md` "ROCm host memory
+    // as GTT"). Unset is the on state, so the pair goes out unless the profile
+    // says `false`, and to every backend: only ROCm reads these two, the others
+    // ignore an env they never ask for.
+    if cfg.rocm_host_memory_gtt != Some(false) {
+        env.push(("HSA_USERPTR_FOR_PAGED_MEM".into(), "0".into()));
+        env.push(("HSA_SVM_FOR_PAGED_MEM".into(), "0".into()));
+    }
     // GGML_CUDA_ALLREDUCE: the AllReduce of `--split-mode tensor`, read by
     // ggml-cuda and ggml-hip alike (one source, one name). Normalized here as
     // well as on read: the backend runs an unknown word as `none` behind a
@@ -586,6 +597,60 @@ pub(crate) fn instance_launch_e2e() {
         !crate::paths::server_log().exists(),
         "the launcher must not create llama-server.log"
     );
+
+    // ── GT1: the GTT pair reaches the launch, `false` takes it away ───────
+    // Paged host memory as driver GTT: every instance exports both variables
+    // as `0`, so compaction and reclaim stop evicting its GPU queues, and the
+    // profile that sets `RocmHostMemoryGtt = false` exports neither (the
+    // runtime's defaults return). Pinned on the two paths that build a launch:
+    // `instance_command` (the manager's `run-instance`) and `launch_command`
+    // (what `start()` spawns), the one `instance_command` itself calls.
+    let gtt_of = |cmd: &std::process::Command| -> BTreeMap<String, String> {
+        envs_of(cmd)
+            .into_iter()
+            .filter(|(k, _)| k.to_string_lossy().starts_with("HSA_"))
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map_or(String::new(), |v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect()
+    };
+    let both = || {
+        BTreeMap::from([
+            ("HSA_USERPTR_FOR_PAGED_MEM".to_string(), "0".to_string()),
+            ("HSA_SVM_FOR_PAGED_MEM".to_string(), "0".to_string()),
+        ])
+    };
+    // The fixture of the block above names no `RocmHostMemoryGtt`: the unset
+    // state is the first case, and it is the state of every instance today.
+    for (key, want) in [("", both()), ("true", both()), ("false", BTreeMap::new())] {
+        let gtt = if key.is_empty() {
+            String::new()
+        } else {
+            format!("RocmHostMemoryGtt = {key}\n")
+        };
+        let text = format!(
+            "[Server]\nPort = 8081\nModelsDir = {}\nAttnRotDisable = true\n{gtt}",
+            models.display()
+        );
+        std::fs::write(sys.join("server@default.ini"), &text).expect("server@default.ini with GTT");
+        std::fs::write(&user_ini, &text).expect("server.ini with GTT");
+        let cmd = instance_command("default", &exe).expect("launch of server@default.ini");
+        assert_eq!(
+            gtt_of(&cmd),
+            want,
+            "instance_command with RocmHostMemoryGtt {key:?}"
+        );
+        // The same env on `launch_command`, the path `start()` takes.
+        let cmd = launch_command(&exe, &crate::server_cfg::load(), &render);
+        assert_eq!(
+            gtt_of(&cmd),
+            want,
+            "launch_command with RocmHostMemoryGtt {key:?}"
+        );
+    }
 
     // ── The instance file is what is read, not server.ini ────────────────
     let other_models = dir.path().join("other-models");
@@ -1127,6 +1192,9 @@ mod tests {
             // Two rules: the `,` that joins them must reach llama-server as ONE
             // argument (it does its own splitting), not as two.
             rocblas_use_hipblaslt: Some(false),
+            // GT1: on explicitly (unset is the same for the launch): launch env
+            // only, asserted in the env test further down.
+            rocm_host_memory_gtt: Some(true),
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
@@ -1158,6 +1226,10 @@ mod tests {
             // Also not a llama-server flag: rocBLAS reads it itself, below
             // llama.cpp. Its own assertions live in the env test further down.
             rocblas_use_hipblaslt: _,
+            // launch env only (GT1): `env_vars` exports the two HSA_* variables
+            // of the ROCm runtime, which reads them below llama.cpp. Asserted
+            // in the env test further down.
+            rocm_host_memory_gtt: _,
             // launch env only: `env_vars` exports it as GGML_CUDA_ALLREDUCE,
             // which ggml-cuda / ggml-hip read themselves. Asserted in the env
             // test further down.
@@ -1310,6 +1382,18 @@ mod tests {
         }
     }
 
+    /// The launch env without the GTT pair (GT1): `env_vars` exports
+    /// `HSA_USERPTR_FOR_PAGED_MEM` and `HSA_SVM_FOR_PAGED_MEM` for every profile
+    /// that does not switch them off, so the env tests of the other knobs read
+    /// the env with that pair filtered out. The pair itself is pinned by its own
+    /// test below, and on the real launch by `instance_launch_e2e`.
+    fn env_vars_no_gtt(cfg: &ServerConfig) -> Vec<(String, String)> {
+        env_vars(cfg)
+            .into_iter()
+            .filter(|(k, _)| !k.starts_with("HSA_"))
+            .collect()
+    }
+
     // The AllReduce choice rides the env verbatim, an unset one exports
     // nothing, and a word the backend does not know is not exported either (it
     // would be run as `none`).
@@ -1321,19 +1405,70 @@ mod tests {
         };
         for mode in crate::server_cfg::ALLREDUCE_MODES {
             assert_eq!(
-                env_vars(&with(Some(mode))),
+                env_vars_no_gtt(&with(Some(mode))),
                 [("GGML_CUDA_ALLREDUCE".to_string(), mode.to_string())]
             );
         }
-        assert!(env_vars(&with(None)).is_empty());
-        assert!(env_vars(&with(Some("butterfly"))).is_empty());
+        assert!(env_vars_no_gtt(&with(None)).is_empty());
+        assert!(env_vars_no_gtt(&with(Some("butterfly"))).is_empty());
+    }
+
+    /// GT1: the GTT pair is the default. A profile that never names the key,
+    /// and one that names it `true`, export BOTH variables as `0` (paged host
+    /// memory as driver GTT, so compaction and reclaim stop evicting the GPU
+    /// queues); `false` exports neither, which puts the runtime's own defaults
+    /// back. Every backend: the pair goes out for a CUDA and a Vulkan profile
+    /// too, only ROCm reading them (the decision is one rule, no detection).
+    #[test]
+    fn rocm_host_memory_gtt_exports_both_variables_unless_it_is_false() {
+        let gtt = |cfg: &ServerConfig| -> std::collections::BTreeMap<String, String> {
+            env_vars(cfg)
+                .into_iter()
+                .filter(|(k, _)| k.starts_with("HSA_"))
+                .collect()
+        };
+        let both = || {
+            std::collections::BTreeMap::from([
+                ("HSA_USERPTR_FOR_PAGED_MEM".to_string(), "0".to_string()),
+                ("HSA_SVM_FOR_PAGED_MEM".to_string(), "0".to_string()),
+            ])
+        };
+        for state in [None, Some(true)] {
+            assert_eq!(
+                gtt(&ServerConfig {
+                    rocm_host_memory_gtt: state,
+                    ..band_off()
+                }),
+                both(),
+                "{state:?} exports the pair, both as 0"
+            );
+        }
+        assert_eq!(
+            gtt(&ServerConfig {
+                rocm_host_memory_gtt: Some(false),
+                ..band_off()
+            }),
+            std::collections::BTreeMap::new(),
+            "false exports neither variable"
+        );
+        for devices in [None, Some("CUDA0,CUDA1"), Some("Vulkan0")] {
+            assert_eq!(
+                gtt(&ServerConfig {
+                    rocm_host_memory_gtt: None,
+                    devices: devices.map(str::to_string),
+                    ..band_off()
+                }),
+                both(),
+                "the pair rides every backend, devices {devices:?}"
+            );
+        }
     }
 
     // Off must export NOTHING: ggml checks GGML_CUDA_DISABLE_GRAPHS for
     // presence, so a `=0` would still switch the graphs off.
     #[test]
     fn diagnostic_toggles_export_one_or_nothing() {
-        assert!(env_vars(&band_off()).is_empty());
+        assert!(env_vars_no_gtt(&band_off()).is_empty());
         let cfg = ServerConfig {
             cuda_disable_graphs: true,
             attn_rot_disable: true,
@@ -1341,7 +1476,7 @@ mod tests {
             ..band_off()
         };
         assert_eq!(
-            env_vars(&cfg),
+            env_vars_no_gtt(&cfg),
             [
                 ("GGML_CUDA_DISABLE_GRAPHS".to_string(), "1".to_string()),
                 ("LLAMA_ATTN_ROT_DISABLE".to_string(), "1".to_string()),

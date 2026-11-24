@@ -1376,7 +1376,7 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   queues were suspended ~6 s per KFD node within 3 minutes of start, mostly while Strata allocated its
   GTT. The user confirmed the finding (2026-11-24), for every instance
   whatever its backend: the architect places
-  it (the instance unit's environment or `launch.rs`), then a test-first slice (GT1, in progress).
+  it (the instance unit's environment or `launch.rs`), then a test-first slice (GT1, built 2026-11-24; deployed with the next deploy, the instances take it at their next start).
 
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by

@@ -301,6 +301,15 @@ const FIELDS: &[Field] = &[
         },
         write: |c, v| c.rocblas_use_hipblaslt = tri_state(v),
     },
+    // The GTT switch (GT1): a bool WITH an unset state, so the read sends
+    // `null` for a key the file does not set and the launch decides (unset
+    // exports the pair); the save writes no line for a `null` body.
+    Field {
+        key: "RocmHostMemoryGtt",
+        kind: Kind::Bool,
+        read: |c| json!(c.rocm_host_memory_gtt),
+        write: |c, v| c.rocm_host_memory_gtt = switch(v),
+    },
     Field {
         key: "CudaAllreduce",
         kind: Kind::Text,
@@ -852,6 +861,10 @@ mod tests {
             devices: None,
             models_dir: Some("/srv/models".into()),
             rocblas_use_hipblaslt: Some(false),
+            // The GTT switch: the explicit on (unset is the same for the
+            // launch), the state a "write it only when false" collapse would
+            // swallow.
+            rocm_host_memory_gtt: Some(true),
             cuda_allreduce: Some("nccl".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
@@ -884,6 +897,7 @@ mod tests {
                 "RocblasUseHipblaslt": cfg
                     .rocblas_use_hipblaslt
                     .map(|on| if on { "on" } else { "off" }),
+                "RocmHostMemoryGtt": cfg.rocm_host_memory_gtt,
                 "CudaAllreduce": cfg.cuda_allreduce,
                 "CudaDisableGraphs": cfg.cuda_disable_graphs,
                 "AttnRotDisable": cfg.attn_rot_disable,
@@ -1399,6 +1413,7 @@ mod tests {
                 "OpencodeBaseUrl",
                 "Port",
                 "RocblasUseHipblaslt",
+                "RocmHostMemoryGtt",
                 "RocprofAttach",
                 "SaveStateOnShutdown",
                 "StateDir",
