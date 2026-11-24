@@ -3885,12 +3885,13 @@ port).
   the stub received the trimmed label, and the list carries `label`; the docs agent adds the route to
   `fe/briefs/api-contract.md` and `crates/bff/README.md`.
 
-### ROCm host memory as GTT (user, 2026-11-24): accepted (user, 2026-11-24), every instance, under test
+### ROCm host memory as GTT (user, 2026-11-24): accepted (user, 2026-11-24), every instance, confirmed under load
 
 The finding and its measures are `PLAN.md` "ROCm host memory as GTT, under test": with
 `HSA_USERPTR_FOR_PAGED_MEM=0` and `HSA_SVM_FOR_PAGED_MEM=0`, ROCm's paged host memory is driver GTT
 (libhsakmt `fmm.c` `fmm_allocate_host_gpu`), so compaction and reclaim no longer evict the process's GPU
-queues. **Decision (user, 2026-11-24): both variables on every instance, every backend.**
+queues. Both must be `0`: `HSA_USERPTR_FOR_PAGED_MEM=0` alone falls back to SVM, which reclaim moves too.
+**Decision (user, 2026-11-24): both variables on every instance, every backend.**
 
 - **Where: the launch, not the unit.** `pai_core::launch::env_vars` already turns server profile keys
   into llama-server's environment (`ROCBLAS_USE_HIPBLASLT`, `GGML_CUDA_*`), inherited by the router's
@@ -3907,9 +3908,9 @@ queues. **Decision (user, 2026-11-24): both variables on every instance, every b
   where it used to succeed. The key follows `RocblasUseHipblaslt`'s pattern (commented line in the
   render, the bff's key list, `checks.rs`' bool rule); the web Server page shows it with the designer's
   wording.
-- **Under test**: the docs (the build and engine pages, the key's help text) say "under test" with the
-  measured Strata result and its date until the result under load (a Playwright run, a build, decode
-  speed) is recorded; then the mark goes, or the default flips if it fails.
+- **Confirmed under load** (Strata, 2026-11-24): 0 KFD evictions from 20:41 to 21:33 through two
+  Playwright runs and a cargo build (`PLAN.md` "ROCm host memory as GTT"). The docs state it as measured
+  there, with that date; no "under test" mark.
 
 **Slice GT1** (test first; Linux, Windows type-checked). `ServerConfig.rocm_host_memory_gtt:
 Option<bool>`, read and rendered as `RocmHostMemoryGtt`; `env_vars` exports
