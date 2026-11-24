@@ -722,3 +722,165 @@ asserting the page's Used by row:
 - `ModelProfileDelete2.test.tsx` (its server profile page checks of 22 D2.8, when they find the row).
 `ServerProfiles1.test.tsx` keeps its list's Used by column. The UX check's `server-profile-delete`
 state needs no change (it finds the − by id).
+
+## 22D4: Delete as a − on each list row, and a Delete button in the profile pages' Save bar (user, 2026-11-24)
+
+The user, after the 22D2 deploy: "you did not understand, the − must be in the model profiles LIST
+beside each model, not in the model page; in the model page you could leave the Delete button beside
+Save and Discard". His answers to the coordinator: the same for server profiles; on the lists, the
+− of a profile that cannot be deleted is shown disabled, with a hint like "Switch it off to delete",
+not hidden, so the rows stay aligned.
+
+**What 22D4 supersedes:**
+- 22 D2.1 to D2.4 and D2.8 (the status row with its −, on both pages);
+- 22D3 entirely (it fixed a repetition the status row made);
+- 22 D.1's place of the opener.
+**What it keeps:**
+- 22 D2.5 to D2.7: the Save bar at the top, sticky;
+- 22 D.2 to D.7: the confirm's words, focus and answers, adapted below;
+- 22D's endpoint and texts.
+One sub-slice, **12 criteria (22 D4.1 to D4.12)**: past 12 the playbook splits, so 22 D4.1 to D4.8
+(the lists) may run before 22 D4.9 to D4.12 (the pages).
+
+**Decisions** (preferences, following the user and `fe/DESIGN.md` principles 6 to 14):
+- **The − sits in the row's status cell**, after the switch on the Models list and after the Used by
+  value on the Server profiles list. The status is beside the control that acts on it (principle
+  10), and no column is added.
+- **A − that cannot act is `aria-disabled`, not `disabled`.** It stays focusable, so a keyboard or
+  screen reader user meets its reason. The reason is its description, and a hint shows on hover and
+  focus.
+- **The confirm opens in a row of its own under the profile's row** (`tr` > one `td` spanning every
+  column). It is one group at a time, readable at 320 px inside the table's scroll box.
+- **On the pages, Delete is a text button in the Save bar**, at the start of the button group,
+  before Discard and Save changes, with a `--space-5` gap after it. The destructive verb sits apart
+  from Save (principle 9).
+
+### The lists (22 D4.1 to D4.8)
+
+**22 D4.1 The − on every row.** In the Status cell of each Models list row, after the switch, a button
+`.ot-add`-styled (the shared 40 px rule, `flex: none`) with the `minus` icon (`aria-hidden`) and a
+visually hidden `model-profiles-delete-row` (`Delete model profile {0}`, the row's id), so each row's
+name is unique ([2.4.6](https://www.w3.org/TR/WCAG22/#headings-and-labels),
+[4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)). In the Used by cell of each Server profiles
+row, after the value, the same button named `server-profiles-delete-row` (`Delete server profile
+{0}`). The cell is a flex row that wraps (`gap: var(--space-3)`, `align-items: center`), so the −
+lines up with the switch or the value.
+
+**22 D4.2 Enabled only when deletable.** The − is active for a switched-off model profile
+(`enabled: false`) and for a server profile no instance uses (`usedBy` empty, as the list row
+answers). Otherwise it carries `aria-disabled="true"` and `aria-describedby`, pointing to a
+visually hidden span holding:
+- `model-profiles-delete-needs-off` (`Switch it off to delete it.`), or
+- `server-profiles-delete-in-use` (`An instance uses it: give that instance another server profile
+  to delete this one.`).
+A press of a disabled − sends nothing and opens nothing. It follows each list read and each switch.
+
+**22 D4.3 The hint.** On hover, and on keyboard focus, of a disabled −, its description also shows
+as a small `.hint-tip` under the button:
+- `--surface` fill, `--control` border, the body text size, at most 16rem wide and wrapping;
+- it never covers the button itself;
+- it stays while the pointer is over the button or the tip, and Escape hides it
+  ([1.4.13](https://www.w3.org/TR/WCAG22/#content-on-hover-or-focus)).
+An active − shows no tip: its name says what it does.
+
+**22 D4.4 The confirm row.** Pressing an active − inserts right after the profile's row a
+`tr.confirm-row` with one `td` (`colspan` the column count). The `td` holds the 22 D.2 group:
+`role="group"`, named by its question, then `confirm-delete`, `confirm-cancel`, a `role="status"` line
+and the alert place. The question is the list's own:
+- `model-profiles-delete-question`: `Delete the model profile {0}? Its settings are removed; the model
+  file is not deleted. This cannot be undone.`
+- `server-profiles-delete-question`: `Delete the server profile {0}? Its settings file is removed.
+  This cannot be undone.`
+The − takes `aria-expanded="true"`, and the focus moves to Cancel. Cancel or Escape removes the row
+and puts the focus on the −. Opening another row's confirm closes the first, its focus going to the
+new Cancel. The filter hiding the row closes it.
+
+**22 D4.5 One delete at a time.** While a delete runs, the group's status reads `confirm-deleting`,
+its buttons and every row's − and switch are `aria-disabled`, and a second press sends nothing
+(`fe/DESIGN.md` 5.2, action feedback in a list).
+
+**22 D4.6 Done.** A 204 removes the profile's row and the confirm row. The list's region above the
+table (the switch's `role="status"` line on the Models list; the same line added above the Server
+profiles table) says `model-profiles-deleted` / `server-profiles-deleted` (`The model profile {0} was
+deleted.` / `The server profile {0} was deleted.`). The focus moves to the next row's −, else the
+previous row's −, else the list's +
+([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)). The list is not read again for a 204.
+
+**22 D4.7 Refusals.** Unless said, the text goes in the group's alert and the focus stays on
+`confirm-delete`; the 22 D.7 mapping holds (401 with Sign in, 403, 503, `api-other`,
+`request-failed`).
+- **409 `model-profile-enabled`** (the page was stale): the list is read again, the confirm row goes,
+  and the row now shows the profile switched on with its − disabled.
+  `api-model-profile-enabled` goes in the region's `role="alert"` line. The focus goes to the row's
+  −, which is still focusable.
+- **409 `model-profile-assigned`**: `api-model-profile-assigned` in the group.
+- **409 `client-server-profile-in-use`**: as `model-profile-enabled`, with
+  `api-client-server-profile-in-use`.
+- **404**: the list is read again. `api-no-model-profile-named` (or `api-client-no-server-profile`)
+  goes in the region's alert, and the focus moves as after a 204.
+- **504**: `delete-unknown` in the group, then the list is read again. If the row is gone, the same
+  text moves to the region's alert and the focus moves as after a 204.
+
+**22 D4.8 Widths.** At 320 px and at 200 % text the − wraps under the switch or value inside its
+cell, and the confirm row's group wraps inside the table's scroll box. The page has no sideways
+scroll ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)). The 40 px target holds
+([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)).
+
+### The profile pages (22 D4.9 to D4.12)
+
+**22 D4.9 The status row goes.**
+- **Model profile page:** `div.page-status` and its − leave. The status paragraph stays, a plain
+  `p` under the summary line: `model-profile-off`, or `model-profile-on`, whose last sentence now
+  reads `To delete it, switch it off first.`
+- **Server profile page:** the status row and its sentence leave (`server-profile-unused` and
+  `server-profile-used-by` leave the strings file). The Value list's Used by row stays as 17a has it,
+  and 22D3 is not built.
+
+**22 D4.10 Delete in the Save bar.** Both pages' Save bar holds, at the start of its button group, a
+secondary text button: `model-profile-delete` (`Delete model profile`) on the model page,
+`server-profile-delete` (`Delete server profile`) on the server page. It keeps the ids
+`model-profile-delete` and `server-profile-delete`. After it comes a `--space-5` gap, then Discard and
+Save changes.
+- It is **active** when the profile can be deleted: switched off, or no instance.
+- Otherwise it is `aria-disabled`, with the list's description and the 22 D4.3 tip:
+  `model-profiles-delete-needs-off` and `server-profiles-delete-in-use`.
+- Its state does not follow the form's dirty state.
+
+**22 D4.11 The confirm in the bar.** Pressing it opens the 22 D.2 group inside the bar, under its
+buttons, using the page's question (`model-profile-delete-question`, `server-profile-delete-question`),
+and the focus moves to Cancel. The bar grows, and its scroll padding follows its height
+(`--save-bar-height`, 22 D2.6). Escape and Cancel close it, the focus returning to Delete. The
+answers are 22 D.3 to D.7:
+- a 204 replaces everything after the `h1`;
+- a 409 `model-profile-enabled` or in-use reads the page again, leaves Delete disabled, puts its text
+  in the bar's alert and moves the focus to Delete;
+- a 409 `model-profile-assigned` goes in the group;
+- the 404 and 504 rules stand.
+
+**22 D4.12 Strings and tests.**
+- **Strings gained:** `model-profiles-delete-row`, `server-profiles-delete-row`,
+  `model-profiles-delete-needs-off`, `server-profiles-delete-in-use`,
+  `model-profiles-delete-question`, `server-profiles-delete-question`, `model-profiles-deleted`,
+  `server-profiles-deleted`.
+- **Strings removed:** `server-profile-unused` and `server-profile-used-by`.
+- **Strings changed:** the `model-profile-on` text.
+- **Tests that change:**
+  - `ModelProfileDelete.test.tsx` and `ModelProfileDelete2.test.tsx` (22D and 22D2: the opener's
+    place, the status row);
+  - `ModelProfiles.test.tsx` and `ModelProfilesSwitch.test.tsx` (the Status cell's content, a write
+    blocking the − and the switch);
+  - `ServerProfiles1.test.tsx`, `ServerProfiles2.test.tsx` and `ServerProfiles3.test.tsx` (the Used by
+    cell, the region line);
+  - `ServerProfilePage1.test.tsx` and `ServerProfilePage2.test.tsx` (no status row, Delete in the
+    bar);
+  - the Save bar tests that count its buttons (`HearthSaveBarScroll.test.tsx` and the save tests that
+    find Discard as the first button);
+  - `InstanceName17f.test.tsx`, only if it reads the status sentence.
+- **The UX check:** its states `model-profile-delete` and `server-profile-delete` (`fe/ux/check.js`,
+  edited by another agent now) must open the confirm from the bar's Delete. It gains
+  `model-profiles-delete` (the Models list with a confirm row open) and the disabled −'s tip on
+  focus.
+
+**Open for the user** (nothing waits on it): on the profile pages a disabled Delete with a tip
+mirrors the lists. If he would rather the page's Delete be hidden when it cannot act, 22 D4.10 drops
+its disabled state.

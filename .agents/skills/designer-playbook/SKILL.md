@@ -102,7 +102,7 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
 
 - Apply `fe/DESIGN.md` principles 6 to 14 to every brief unasked: actions at the top and sticky; at
   most 2 clicks from the Overview for a common task (shortcut on the row or tile); list add and
-  remove as `+` and `x`, delete as `−` beside the status; `--space-3` between a list and its
+  remove as `+` and `x`, delete as a `−` on each list row (disabled with a tip when it cannot act) and as text in the page's Save bar; `--space-3` between a list and its
   control; status beside its control; relations shown on lists; empty states with their next action;
   the instance's address; sizes as numbers, measured.
 

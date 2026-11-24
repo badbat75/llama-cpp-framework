@@ -34,8 +34,9 @@ admin-console practice unless a criterion is cited:
 7. **Few clicks to an action.** The common tasks of a list (start or stop an instance, switch a
    profile on or off) are on its row or tile, not only on the detail page. A brief counts the clicks
    from the Overview for the task it touches, and puts a shortcut where the count passes 2.
-8. **Lists add and remove with icons.** An `x` on the item, one `+` after the list, a `−` beside the
-   status of a thing that is deleted from its own page; each with its words visually hidden, and a
+8. **Lists add and remove with icons.** An `x` on the item, one `+` after the list, a `−` on each row of
+   a list whose things can be deleted (disabled with its reason when it cannot act), and a Delete text
+   button in the Save bar of the thing's own page; each with its words visually hidden, and a
    Confirm in place for anything that cannot be undone.
 9. **A control has room from what it does not belong to.** At least `--space-3` between a list and
    the control after it, and `--space-3` between a button and the group it opens. Group by distance:
@@ -648,10 +649,13 @@ Each is one React component, reused by every page.
     so the one way to grow the list reads as a control even after an empty-list line.
   - The focus ring is the shared one. Under forced colours the icon is `ButtonText` and the outline
     `ButtonBorder`.
-  - Delete of a real thing (a model or server profile) is a `minus` icon button, outlined like Add,
-    at the right of the page's status row (`div.page-status` under the `h1` and summary), named
-    "Delete model profile" and the like, and always opening a Confirm in place under the row (user,
-    2026-11-23, brief 22 22D2). A list's rows carry no delete.
+  - Delete of a real thing (a model or server profile) is, on its list, a `minus` icon button on
+    each row in the status cell, named with the row ("Delete model profile x"), outlined like Add;
+    when it cannot act it stays, `aria-disabled` with its reason as description and a `.hint-tip`
+    on hover and focus (1.4.13), so rows stay aligned. Its Confirm in place opens in a row of its own
+    under the profile's row. On the thing's own page, Delete is a text button at the start of the
+    Save bar's buttons, `--space-5` before Discard (user, 2026-11-24, brief 22 22D4, superseding
+    22D2's status-row minus).
 - **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
   (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
   the label on one line, cut with an ellipsis where the row is narrower than it (the chip at most the row's width; the x's name carries the full label; a cut chip, on hover or focus, shows a temporary `.chip-full` pill over it with the whole label, wrapping, leaving the x uncovered, hidden by Escape: WCAG 1.4.13; profile chips are focusable for it), wrapping anywhere only under `@media (max-width: 15em)`, the user's large text on a narrow screen (user, 2026-11-21) and, when it can be removed, a 24 px

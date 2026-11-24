@@ -1222,9 +1222,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     TP1c and 17b2 built 2026-11-24. After 17f (user, 2026-11-23: "the + touches the row above; New server profile should be a + at the end
     of the list"): TP1c (brief 21, 21 T.24, room above the +) and 17b2 (brief 16, 17b2.1 to 17b2.5, a list's
     add is a + after the list, its accessible name unchanged; the same rule amended into 17c.1 and 22 C.1).
-    Then 22D3 (brief 22, 22 D3.1 to D3.5: the server profile page says once which instance uses it, the
-    status sentence keeping the instance's link and the Used by row removed; user, 2026-11-24, on the
-    designer's note that the two repeated each other).
+    Then 22D4 (brief 22, 22 D4.1 to D4.12; user, 2026-11-24, on the deployed 22D2: "the minus goes in the
+    model profiles list beside each model, not in the model page; there Delete beside Save and Discard"):
+    a 40 px minus on each row of the Models and server profile lists, disabled with a hint while the
+    profile is on or used; on both profile pages Delete as a text button at the start of the top Save
+    bar, disabled with the same hint when it cannot act; 22D2's status row and minus and all of 22D3
+    superseded. The user confirmed the layout from a preview before the build.
     Then 17f2 (brief 16, 17f2.1 to 17f2.10: the display name set from a pencil after the page heading, the
     hint saying the ID, service, files and address stay, Rename removed; user, 2026-11-24: "Rename is not
     clear, we need another UX", the pencil chosen over a facts row), after 22D2.
