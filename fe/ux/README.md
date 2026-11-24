@@ -44,15 +44,20 @@ all as `!important`. A mode changes no colour, so the pass reads the
 `scrollWidth` alone: no axe. That is 10 states x 2 modes more per browser,
 counted in the summary line.
 
-The stub binds port 0 (the OS picks a free one) and prints the port it got on
-its first stdout line; the check reads it there, so it can never run against a
-foreign server on a fixed port. A stub that exits, errors, prints no port or
-stays silent for 5 s stops the run at once with its own message and exit 1.
+Each browser runs on its own stub, and the three browsers run at the same
+time: the stub's `/__set` state is shared, so two pages on one stub would
+race. Each stub binds port 0 (the OS picks a free one) and prints the port it
+got on its first stdout line; the check reads it there, so it can never run
+against a foreign server on a fixed port. A stub that exits, errors, prints
+no port or stays silent for 5 s stops the run at once with its own message
+and exit 1.
 
 One line per failing state (browser, width, theme, state, the axe rule ids, the
 overflow, `not rendered`, a `click` that never opened, or what a stored choice
 left unseen; the theme of a stored pass is tagged `light+dark`, a line of the
-text pass names its mode `200%` or `200%+1.4.12`), then a summary
+text pass names its mode `200%` or `200%+1.4.12`), printed in the fixed browser
+order (chromium, firefox, webkit) whatever order the parallel browsers finished
+in, then a summary
 line naming the browsers that ran.
 Exit 0 with nothing failing, 1 otherwise. A browser that does not start is
 reported and skipped: the check still runs on the others and a skipped browser

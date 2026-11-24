@@ -5,7 +5,10 @@
 // 22aa tags) and its scrollWidth compared with the viewport. At 320 px, light
 // only, every state is loaded once more per text mode (200 % text, and that
 // with the spacing of WCAG 1.4.12), where only the scrollWidth is read. The
-// stub bff (stub.py) answers for the server and prints the port it bound.
+// stub bff (stub.py) answers for the server: one per browser, each printing
+// the port it bound, because the stub's /__set state is shared and two pages
+// on one stub would race. The three browsers run at the same time, and their
+// lines print in the fixed browser order.
 // Run: npm --prefix fe run build, then npm --prefix fe/ux run check (README.md).
 const { spawn } = require('child_process')
 const { existsSync } = require('fs')
@@ -18,8 +21,6 @@ const pw = require('playwright')
 const S = require('../src/strings/en_US.json')
 
 const DIST = path.resolve(__dirname, '..', 'dist')
-// Set once the stub has printed its port: the check talks to that stub alone.
-let BASE = ''
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']
 const BROWSERS = ['chromium', 'firefox', 'webkit']
 const WIDTHS = [1280, 320]
@@ -786,13 +787,13 @@ async function hovered(page, state) {
  *  the placement state for ot=1, the delete state for off=1, and a state that
  *  ran before them leaves none of them behind for the pages after it. A hash
  *  change does not reload the app, so every state starts from a blank page. */
-async function load(page, state) {
+async function load(page, state, base) {
   const found = []
   for (const q of [
     'list=one&tags=few&load=fast&node=ok&split=tensor&ot=none&off=0',
     state.set,
   ]) {
-    const res = await fetch(`${BASE}/__set?${q}`)
+    const res = await fetch(`${base}/__set?${q}`)
     if (!res.ok) {
       found.push(`set request: ${res.status} ${res.statusText}`)
     }
@@ -801,7 +802,7 @@ async function load(page, state) {
   // A `hold` state: the stub keeps its reads open for seconds, so the network
   // never goes idle and 'networkidle' would only end at the navigation timeout.
   // The page is at rest once it is parsed: its skeleton is the state to read.
-  await page.goto(`${BASE}${state.hash}`, {
+  await page.goto(`${base}${state.hash}`, {
     waitUntil: state.hold === true ? 'domcontentloaded' : 'networkidle',
   })
   return found
@@ -833,14 +834,14 @@ async function problems(page, width) {
 }
 
 /** The computed background of body in one theme, on the Overview page. */
-async function bodyBackground(browser, theme) {
+async function bodyBackground(browser, theme, base) {
   const ctx = await browser.newContext({
     viewport: { width: WIDTHS[0], height: HEIGHT },
     colorScheme: theme,
   })
   try {
     const page = await ctx.newPage()
-    await page.goto(`${BASE}/#/`, { waitUntil: 'networkidle' })
+    await page.goto(`${base}/#/`, { waitUntil: 'networkidle' })
     return await page.evaluate(
       () => getComputedStyle(document.body).backgroundColor,
     )
@@ -878,7 +879,7 @@ async function chosen(page, other, background) {
 /** The text pass: every state, at TEXT_WIDTH in TEXT_THEME, once per mode. The
  *  mode's CSS is added after the page settles, and only its scrollWidth is
  *  read. One line per state with something to say, naming the mode. */
-async function textPass(browser, name, lines) {
+async function textPass(browser, name, base, lines) {
   const ctx = await browser.newContext({
     viewport: { width: TEXT_WIDTH, height: HEIGHT },
     colorScheme: TEXT_THEME,
@@ -887,7 +888,7 @@ async function textPass(browser, name, lines) {
     const page = await ctx.newPage()
     for (const [mode, css] of TEXT_MODES) {
       for (const state of STATES) {
-        const found = await load(page, state)
+        const found = await load(page, state, base)
         found.push(...(await menuOpened(page, state)))
         const missing = await rendered(page, state)
         if (missing !== null) {
@@ -916,11 +917,11 @@ async function textPass(browser, name, lines) {
 /** Every width, theme, choice and state in one browser; one line per failing
  *  state, its theme tag `light+dark` when a choice is stored. The text pass
  *  runs last and names its mode. */
-async function check(browser, name, lines) {
+async function check(browser, name, base, lines) {
   // The dark scheme has to reach the page: index.css sets --bg under
   // prefers-color-scheme, so body's background differs between the themes.
-  const light = await bodyBackground(browser, 'light')
-  const dark = await bodyBackground(browser, 'dark')
+  const light = await bodyBackground(browser, 'light', base)
+  const dark = await bodyBackground(browser, 'dark', base)
   if (light === dark) {
     lines.push(
       `${name} theme: dark did not change the page (body background ${dark}, as in light)`,
@@ -954,7 +955,7 @@ async function check(browser, name, lines) {
           }
           const page = await ctx.newPage()
           for (const state of states) {
-            const found = await load(page, state)
+            const found = await load(page, state, base)
             found.push(...(await menuOpened(page, state)))
             const missing = await rendered(page, state)
             if (missing !== null) {
@@ -983,7 +984,7 @@ async function check(browser, name, lines) {
       }
     }
   }
-  await textPass(browser, name, lines)
+  await textPass(browser, name, base, lines)
 }
 
 async function main() {
@@ -991,49 +992,75 @@ async function main() {
     console.log(`no web UI in ${DIST}: run npm --prefix fe run build first`)
     return 1
   }
-  const stub = spawn(
-    'python3',
-    ['-I', path.join(__dirname, 'stub.py'), DIST, '0'],
-    { stdio: ['ignore', 'pipe', 'inherit'] },
-  )
-  let port
+  // One stub per browser: the stub's /__set state is shared, so two pages on
+  // one stub would race. Each stub binds its own free port, and the three
+  // browsers run at the same time, each against its own.
+  const stubs = []
+  const killStubs = () => {
+    for (const stub of stubs) stub.kill()
+  }
+  // Ctrl+C and a kill must not leave a stub behind.
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => {
+      killStubs()
+      process.exit(1)
+    })
+  }
+  let bases
   try {
-    port = await stubPort(stub)
+    const ports = await Promise.all(
+      BROWSERS.map(async () => {
+        const stub = spawn(
+          'python3',
+          ['-I', path.join(__dirname, 'stub.py'), DIST, '0'],
+          { stdio: ['ignore', 'pipe', 'inherit'] },
+        )
+        stubs.push(stub)
+        return stubPort(stub)
+      }),
+    )
+    bases = ports.map((port) => `http://127.0.0.1:${port}`)
+    BROWSERS.forEach((name, i) => console.log(`stub bff ${name}: ${bases[i]}`))
   } catch (e) {
-    stub.kill()
+    killStubs()
     console.log(`stub bff ${e.message}: nothing to check`)
     return 1
   }
-  BASE = `http://127.0.0.1:${port}`
-  console.log(`stub bff: ${BASE}`)
-  const lines = []
-  const ran = []
-  const skipped = []
+  const linesByBrowser = BROWSERS.map(() => [])
+  const started = BROWSERS.map(() => false)
   try {
-    for (const name of BROWSERS) {
-      let browser
-      try {
-        browser = await pw[name].launch()
-      } catch (e) {
-        console.log(`${name}: did not start (${e.message.split('\n')[0]})`)
-        skipped.push(name)
-        continue
-      }
-      ran.push(name)
-      try {
-        await check(browser, name, lines)
-      } catch (e) {
-        // One throw in one browser must not lose what every state of every
-        // browser produced: the failing line is recorded like a finding, the
-        // next browser runs, and the summary prints.
-        lines.push(`${name}: check threw: ${e.message.split('\n')[0]}`)
-      } finally {
-        await browser.close()
-      }
-    }
+    await Promise.all(
+      BROWSERS.map(async (name, i) => {
+        let browser
+        try {
+          browser = await pw[name].launch()
+        } catch (e) {
+          console.log(`${name}: did not start (${e.message.split('\n')[0]})`)
+          return
+        }
+        started[i] = true
+        try {
+          await check(browser, name, bases[i], linesByBrowser[i])
+        } catch (e) {
+          // One throw in one browser must not lose what every state of every
+          // browser produced: the failing line is recorded like a finding,
+          // the other browsers run, and the summary prints.
+          linesByBrowser[i].push(
+            `${name}: check threw: ${e.message.split('\n')[0]}`,
+          )
+        } finally {
+          await browser.close()
+        }
+      }),
+    )
   } finally {
-    stub.kill()
+    killStubs()
   }
+  const ran = BROWSERS.filter((name, i) => started[i])
+  const skipped = BROWSERS.filter((name, i) => !started[i])
+  // The lines print in the fixed browser order (chromium, firefox, webkit),
+  // whatever order the concurrent browsers finished in.
+  const lines = linesByBrowser.flat()
   for (const line of lines) console.log(line)
   const plain = WIDTHS.length * THEMES.length * STATES.length
   const stored = WIDTHS.length * THEMES.length * CHOICE_STATES.length

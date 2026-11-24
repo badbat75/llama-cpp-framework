@@ -65,7 +65,7 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
   `prefs.js` after.
 - Text at 200 %: inject `html { font-size: 200% !important }` (every size is in `rem`; equals Firefox's
   real 32 px default, `font.size.variable.x-western`).
-- The UX check runs 138 states per browser and takes about 12 minutes: longer than the 600 s foreground
+- The UX check runs 180 states per browser, its three browsers in parallel, in about 5 minutes (it took 12 one after another): near the 600 s foreground
   limit, so run it in the background with `timeout 1500` and wait for its notification (a `timeout 590`
   killed it during WebKit). Send it to a file (`> build/ux-review/<slice>/check.txt`) and read the lines
   without a leading space (the stub's BrokenPipe tracebacks are noise).
