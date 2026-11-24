@@ -76,6 +76,14 @@
 //! The revision is computed in this file by an own SipHash-2-4, validated
 //! against the published vectors (`the_helper_is_the_published_siphash_2_4`),
 //! never read back from the code under test.
+//!
+//! The last section is the model source of M3b of "Choosing the model file on
+//! the web" (`ARCHITECTURE.md`): the save of `model`, `hf-repo` and `hf-file`,
+//! held to the manager's listing of the node's models folder and to M2's
+//! listing of the Hugging Face repo. Those apps are built with
+//! `router_with_session_and_hf` and a fake `Fetch`, so the HF half is pinned
+//! with no network, and the cache the picker warmed is the cache the save
+//! reads.
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -85,9 +93,12 @@ use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::checks::Refusal;
-use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{
+    ClientError, InstanceState, ManagerClient, ManagerFile, ModelFileRow, ModelFilesReply,
+};
+use pai_core::hf::{Fetch, HfError, Token};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -800,6 +811,13 @@ impl ManagerClient for FakeManager {
     fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
         Err(ClientError::Unavailable)
     }
+
+    /// The node's one models folder: always the canned [`listed_model_files`],
+    /// the two files a test's `model` value is checked against.
+    fn model_files(&self) -> Result<ModelFilesReply, ClientError> {
+        self.record("model-files".into());
+        Ok(listed_model_files())
+    }
 }
 
 /// `alice` and `root`, two signed-in sessions (both members of `pai`, the group
@@ -820,6 +838,54 @@ impl Authenticator for FakeAuth {
     }
 }
 
+/// The `Connect` of these fixtures: a manager holding `files` live, refusing
+/// the calls of `refuse`, answering every connect with `connect_result`,
+/// recording every call in `log` and the principal of every connect in
+/// `principals`.
+fn fixture_connect(
+    live: &Live,
+    log: &Log,
+    connects: &Arc<AtomicUsize>,
+    principals: &Principals,
+    files: &[(&str, &str)],
+    refuse: &[&str],
+    connect_result: Result<(), ClientError>,
+) -> Connect {
+    {
+        let mut held = live.files.lock().unwrap();
+        for (name, text) in files {
+            held.insert((*name).to_string(), (*text).to_string());
+        }
+    }
+    let (l, c, p) = (log.clone(), connects.clone(), principals.clone());
+    let shared = live.clone();
+    let refuse: Vec<String> = refuse.iter().map(|u| u.to_string()).collect();
+    Arc::new(move |principal: Option<&str>| {
+        c.fetch_add(1, Ordering::SeqCst);
+        p.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(principal.map(str::to_string));
+        connect_result.clone()?;
+        connect_hook(&shared)?;
+        Ok(Box::new(FakeManager {
+            live: shared.clone(),
+            log: l.clone(),
+            as_user: principal.map(str::to_string),
+            refuse: refuse.clone(),
+        }) as Client)
+    })
+}
+
+/// The clock of these fixtures, at the moment the app was built. A test moves
+/// it with `App::advance`, so a test of the idle deadline is a number, not a
+/// wait; every other test leaves it still.
+fn fixture_clock(tick: &Arc<AtomicU64>) -> pai_bff::session::Clock {
+    let start = Instant::now();
+    let tick = tick.clone();
+    Arc::new(move || start + Duration::from_millis(tick.load(Ordering::SeqCst)))
+        as pai_bff::session::Clock
+}
+
 /// The app: a manager holding the files, refusing the calls of `refuse`, and
 /// answering every connect with `connect_result`. The reads run under
 /// `TIMEOUT`, the whole save under `write_timeout`, the revisions are computed
@@ -833,42 +899,20 @@ fn app_for_full(
 ) -> App {
     let live = Live::default();
     live.idle();
-    {
-        let mut held = live.files.lock().unwrap();
-        for (name, text) in files {
-            held.insert((*name).to_string(), (*text).to_string());
-        }
-    }
     let log = Log::default();
     let connects = Arc::new(AtomicUsize::new(0));
     let principals = Principals::default();
-    let (l, c, p) = (log.clone(), connects.clone(), principals.clone());
-    let shared = live.clone();
-    let refuse: Vec<String> = refuse.iter().map(|u| u.to_string()).collect();
-    let connect: Connect = Arc::new(move |principal: Option<&str>| {
-        c.fetch_add(1, Ordering::SeqCst);
-        p.lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(principal.map(str::to_string));
-        connect_result.clone()?;
-        connect_hook(&shared)?;
-        Ok(Box::new(FakeManager {
-            live: shared.clone(),
-            log: l.clone(),
-            as_user: principal.map(str::to_string),
-            refuse: refuse.clone(),
-        }) as Client)
-    });
-    // The clock the session routes read, at the moment the app was built. A
-    // test moves it with `App::advance`, so a test of the idle deadline is a
-    // number, not a wait; every other test leaves it still.
-    let start = Instant::now();
     let tick = Arc::new(AtomicU64::new(0));
-    let clock = {
-        let tick = tick.clone();
-        Arc::new(move || start + Duration::from_millis(tick.load(Ordering::SeqCst)))
-            as pai_bff::session::Clock
-    };
+    let connect = fixture_connect(
+        &live,
+        &log,
+        &connects,
+        &principals,
+        files,
+        refuse,
+        connect_result,
+    );
+    let clock = fixture_clock(&tick);
     let router = pai_bff::router_with_session_and_write_timeout(
         connect,
         TIMEOUT,
@@ -993,6 +1037,225 @@ fn app_no_manager() -> App {
         TIMEOUT,
         KEY_A,
     )
+}
+
+// ── The model source fixtures (M3b) ─────────────────────────────────────
+
+/// The folder the fake manager lists: the engine's one models folder
+/// (`paths::instance_models_dir()`), a path no real install has here.
+const MODELS_DIR: &str = "/var/lib/llama.cpp/models";
+
+/// A file of that folder the listing names: the absolute path a `model` pick
+/// writes into the profile.
+const LISTED_MODEL: &str = "/var/lib/llama.cpp/models/models/alpha.gguf";
+
+/// A second listed file, in the `mmprojs` subfolder, so a check that reads the
+/// listing cannot pass by looking at one row.
+const LISTED_MMPROJ: &str = "/var/lib/llama.cpp/models/mmprojs/mm.gguf";
+
+/// The repo these tests pick from, and a file of its listing.
+const REPO: &str = "o/r";
+const REPO_FILE: &str = "x-Q4_K_M.gguf";
+
+/// The repo the M3b review D2 tests switch TO, and the one GGUF its listing
+/// holds: [`REPO_FILE`] is NOT in it.
+const OTHER_REPO: &str = "n/r";
+const OTHER_REPO_FILE: &str = "y-Q8_0.gguf";
+
+/// The listing the fake manager answers for a test that does not look: two
+/// files of [`MODELS_DIR`], one of them in the `models` subfolder.
+fn listed_model_files() -> ModelFilesReply {
+    ModelFilesReply {
+        dir: MODELS_DIR.into(),
+        files: vec![
+            ModelFileRow {
+                path: LISTED_MODEL.into(),
+                size: 4_000_000_000,
+                shards: 1,
+                category: Some("models".into()),
+            },
+            ModelFileRow {
+                path: LISTED_MMPROJ.into(),
+                size: 1_000_000,
+                shards: 1,
+                category: Some("mmprojs".into()),
+            },
+        ],
+        truncated: false,
+        error: None,
+    }
+}
+
+/// The commit the canned refs answer names (40 hex, the rule of
+/// `commit_from_refs`).
+const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// The refs answer of the canned listing of [`REPO`].
+fn refs_json() -> String {
+    json!({"branches": [{"name": "main", "targetCommit": COMMIT}]}).to_string()
+}
+
+/// The tree answer of the canned listing: one GGUF and a README the listing
+/// drops.
+fn tree_json() -> String {
+    json!([
+        {"type": "file", "path": REPO_FILE,
+         "lfs": {"oid": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "size": 1000}},
+        {"type": "file", "path": "README.md", "size": 5}
+    ])
+    .to_string()
+}
+
+/// The two canned answers of one listing of [`REPO`], in call order.
+fn hf_answers() -> Vec<(u16, String)> {
+    vec![(200, refs_json()), (200, tree_json())]
+}
+
+/// The tree answer of a listing of [`OTHER_REPO`]: one GGUF that is not
+/// [`REPO_FILE`], so the file the section holds is absent from it (M3b review
+/// D2).
+fn other_tree_json() -> String {
+    json!([
+        {"type": "file", "path": OTHER_REPO_FILE,
+         "lfs": {"oid": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2", "size": 1000}}
+    ])
+    .to_string()
+}
+
+/// A Hugging Face that records every url it was asked for and answers the
+/// canned `(status, body)` list in call order. `fail_next` answers the next
+/// `n` calls with a transport failure: the host never reached.
+#[derive(Clone, Default)]
+struct FakeFetch {
+    log: Arc<Mutex<Vec<String>>>,
+    answers: Arc<Mutex<VecDeque<(u16, String)>>>,
+    fails: Arc<AtomicUsize>,
+}
+
+impl FakeFetch {
+    fn new(answers: Vec<(u16, String)>) -> Self {
+        Self {
+            log: Arc::new(Mutex::new(Vec::new())),
+            answers: Arc::new(Mutex::new(answers.into())),
+            fails: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+    /// The next `n` `get` calls fail with nothing fetched.
+    fn fail_next(&self, n: usize) {
+        self.fails.store(n, Ordering::SeqCst);
+    }
+    /// The urls asked, in order.
+    fn asked(&self) -> Vec<String> {
+        self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
+impl Fetch for FakeFetch {
+    fn get(&self, url: &str, _token: Option<&Token>) -> Result<(u16, String), HfError> {
+        self.log
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(url.to_string());
+        if self.fails.load(Ordering::SeqCst) > 0 {
+            self.fails.fetch_sub(1, Ordering::SeqCst);
+            return Err(HfError::Network(
+                "fake: the host was never reached".to_string(),
+            ));
+        }
+        Ok(self
+            .answers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_front()
+            .unwrap_or((599, "no canned answer".to_string())))
+    }
+
+    /// The save and the listing read nothing but the two GETs.
+    fn get_range(
+        &self,
+        url: &str,
+        _token: Option<&Token>,
+        _start: u64,
+        _len: u64,
+    ) -> Result<(u16, Vec<u8>), HfError> {
+        Err(HfError::Protocol(format!("fake: no range read of {url}")))
+    }
+}
+
+/// The save's app and the Hugging Face it lists through.
+struct HfApp {
+    app: App,
+    fetch: FakeFetch,
+}
+
+impl HfApp {
+    /// The urls Hugging Face was asked for, in order.
+    fn hf_asked(&self) -> Vec<String> {
+        self.fetch.asked()
+    }
+
+    /// Warm M2's cache the way the picker does: a signed-in
+    /// `GET /api/hf/files?repo=REPO`.
+    async fn warm_hf(&self) {
+        let cookie = self.app.sign_in().await;
+        let rep = self
+            .app
+            .get(&format!("/api/hf/files?repo={REPO}"), Some(&cookie))
+            .await;
+        assert_eq!(rep.status, StatusCode::OK, "{}", rep.body);
+    }
+
+    /// Signed in as `alice`, the save of `[alpha]` of `FILE_ON` with `values`.
+    async fn save_alpha(&self, values: Value) -> Reply {
+        let revision = rev(&KEY_A, MODELS, FILE_ON, ALPHA);
+        self.app.save_on_revision(ALPHA, &revision, values).await
+    }
+}
+
+/// The two model profile files, a manager answering the model file listing with
+/// the canned [`listed_model_files`], and a Hugging Face answering `answers`:
+/// the app of the model source tests. Built with
+/// `pai_bff::router_with_session_and_hf`, so the save's check of `hf-file` and
+/// `GET /api/hf/files` read one cache and one fetch. The write runs under the
+/// read's `TIMEOUT`: both fakes answer at once, and no test here is about the
+/// write's own limit.
+fn app_with_hf(on: &str, off: &str, answers: Vec<(u16, String)>) -> HfApp {
+    let live = Live::default();
+    live.idle();
+    let log = Log::default();
+    let connects = Arc::new(AtomicUsize::new(0));
+    let principals = Principals::default();
+    let tick = Arc::new(AtomicU64::new(0));
+    let fetch = FakeFetch::new(answers);
+    let connect = fixture_connect(
+        &live,
+        &log,
+        &connects,
+        &principals,
+        &[(MODELS, on), (DISABLED, off)],
+        &[],
+        Ok(()),
+    );
+    let clock = fixture_clock(&tick);
+    let router = pai_bff::router_with_session_and_hf(
+        connect,
+        TIMEOUT,
+        Arc::new(FakeAuth),
+        clock,
+        KEY_A,
+        Arc::new(fetch.clone()),
+    );
+    HfApp {
+        app: App {
+            router,
+            log,
+            connects,
+            principals,
+            live,
+            tick,
+        },
+        fetch,
+    }
 }
 
 struct Reply {
@@ -1593,8 +1856,7 @@ async fn save_a_json_content_type_with_a_charset_is_served() {
 async fn save_key_outside_the_web_list_is_400_and_reaches_no_manager() {
     let app = app_holding(FILE_ON, FILE_OFF);
     for key in [
-        "model",  // the Assets card, not web-editable
-        "mmproj", // the same
+        "mmproj", // the Assets card, not web-editable
         "moe-cache-mib",
         "foo",            // a name no reader knows
         "CTX-SIZE",       // the right key, the wrong case
@@ -3289,4 +3551,402 @@ async fn save_restart_leaves_out_a_record_section_naming_no_instance() {
         "a state was asked of an instance the manager does not list: {:?}",
         app.calls()
     );
+}
+
+// ---------------------------------------------------------------------------
+// M3b: the save takes the model source, from the lists only
+// (ARCHITECTURE.md, "Choosing the model file on the web", slice M3b)
+// ---------------------------------------------------------------------------
+
+// The three keys of the two pickers (`model`, `hf-repo`, `hf-file`) are on the
+// web's list, so the body carries them. The save enforces one rule on the
+// section as it leaves it, exactly one source (`model`, or `hf-repo` with an
+// optional `hf-file`), and the "listed only" rule on a value that differs from
+// the one on disk: `model` is a member of the manager's walk of the node's
+// models folder, asked in the same save; `hf-repo` is an id `valid_repo_id`
+// holds; `hf-file` is a file of M2's listing of that repo, read through M2's
+// cache. The HF half is pinned through HTTP: the app is built with
+// `pai_bff::router_with_session_and_hf` and a fake `Fetch`, so a test warms the
+// cache with `GET /api/hf/files` and the save that follows is checked against
+// that same cache.
+//
+// Two readings of the design are pinned here and stated as assumptions:
+// - `hf-repo` carries the quant tag the picker's `value` writes (`o/r:Q4_K_M`),
+//   so the id rule is applied to the repo part, as `parse_spec` cuts it: a tag
+//   is not a refusal.
+// - "HF failing at that moment answers M2's keys (..., a 503 for no answer)":
+//   the key M2 answers for "the host was never reached" is `hf-unreachable`,
+//   and the save answers it at 503 (nothing was handed over to write), not at
+//   M2's 504.
+
+/// `FILE_ON`'s `[alpha]` with the Hugging Face source instead of a file: the
+/// section as the picker leaves it, and the starting point of a switch back to
+/// a model file.
+const FILE_ON_HF: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+hf-repo = o/r:Q4_K_M\r\n\
+hf-file = x-Q4_K_M.gguf\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";
+
+/// [`FILE_ON_HF`] with `model` set to a listed path and both HF keys removed:
+/// the two source keys go, `model` lands after the section's last real line,
+/// and nothing else moved.
+const ON_MODEL_LISTED: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+model = /var/lib/llama.cpp/models/models/alpha.gguf\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";
+
+/// `FILE_ON` with the HF source written and `model` removed: the two keys land
+/// in key order (`hf-file` before `hf-repo`), the `model` line goes with its
+/// ending, and nothing else moved.
+const ON_HF_SOURCE: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+hf-file = x-Q4_K_M.gguf\r\n\
+hf-repo = o/r:Q4_K_M\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";
+
+/// [`FILE_ON_HF`] with `hf-repo` switched to [`OTHER_REPO`] and `hf-file` kept
+/// as it was: the `hf-repo` line is rewritten in place and nothing else moved
+/// (M3b review D2).
+const ON_HF_REPO_OTHER: &str = "\
+; The presets llama-server is offered (--models-preset).\r\n\
+[alpha]\r\n\
+hf-repo = n/r:Q8_0\r\n\
+hf-file = x-Q4_K_M.gguf\r\n\
+ctx-size = 4096 ; the context the page shows\r\n\
+n-gpu-layers = 99\r\n\
+\r\n\
+[Qwen]\r\n\
+model = /models/Qwen3.8-27B-Q8_0.gguf\r\n\
+load-on-startup = 1\r\n\
+temp = 0.7\r\n\
+";
+
+/// A `model` the manager's listing names is written, and the source the section
+/// held goes with it: the page sends the chosen key and `null` for the others.
+#[tokio::test]
+async fn save_a_listed_model_writes_it_and_drops_the_hf_keys() {
+    let app = app_holding(FILE_ON_HF, FILE_OFF);
+    let revision = rev(&KEY_A, MODELS, FILE_ON_HF, ALPHA);
+    app.save_on_revision(
+        ALPHA,
+        &revision,
+        json!({ "model": LISTED_MODEL, "hf-repo": null, "hf-file": null }),
+    )
+    .await
+    .assert_saved(&rev(&KEY_A, MODELS, ON_MODEL_LISTED, ALPHA), false, &[]);
+    assert_eq!(
+        app.file_text(MODELS).as_deref(),
+        Some(ON_MODEL_LISTED),
+        "the listed path lands inside [alpha], the two HF lines are gone"
+    );
+    assert_eq!(
+        app.sorted_calls(),
+        "model-files read assignments.ini read models.ini write-if alice models.ini",
+        "the list the save checks against is the manager's walk, asked in this save"
+    );
+}
+
+/// A repo and a file of its listing are written, and the model file the section
+/// held goes. The cache is warm, the picker having just listed the repo, so the
+/// save asks Hugging Face for nothing.
+#[tokio::test]
+async fn save_a_listed_repo_and_file_writes_both_and_drops_the_model() {
+    let app = app_with_hf(FILE_ON, FILE_OFF, hf_answers());
+    app.warm_hf().await;
+    let warmed = app.hf_asked().len();
+    assert_eq!(warmed, 2, "the picker's listing asked the two GETs");
+    app.save_alpha(json!({
+        "model": null,
+        "hf-repo": "o/r:Q4_K_M",
+        "hf-file": REPO_FILE,
+    }))
+    .await
+    .assert_saved(&rev(&KEY_A, MODELS, ON_HF_SOURCE, ALPHA), false, &[]);
+    assert_eq!(
+        app.app.file_text(MODELS).as_deref(),
+        Some(ON_HF_SOURCE),
+        "both keys land in key order, the model line is gone"
+    );
+    assert_eq!(
+        app.hf_asked().len(),
+        warmed,
+        "the save read the cached listing: Hugging Face was asked for nothing more"
+    );
+}
+
+/// A `model` the manager's listing does not name is refused, naming the path,
+/// and the save asks for no write.
+#[tokio::test]
+async fn save_an_unlisted_model_path_is_refused_with_nothing_written() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.save_on(ALPHA, json!({ "model": "/somewhere/else.gguf" }))
+        .await
+        .assert_refused(
+            "model-profile-model-not-listed",
+            &["/somewhere/else.gguf"],
+            "model",
+        );
+    assert!(app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
+    let mut asked: Vec<String> = app.calls();
+    asked.sort();
+    assert_eq!(
+        asked,
+        ["model-files".to_string(), "read models.ini".to_string()],
+        "the section was read, the listing asked, and the save stopped there"
+    );
+}
+
+/// An `hf-file` that is not a file of the repo's listing is refused, naming the
+/// repo and the file. The cache is cold, so the save lists the repo itself,
+/// through M2's fetch, and writes nothing.
+#[tokio::test]
+async fn save_an_unlisted_repo_file_is_refused_with_nothing_written() {
+    let app = app_with_hf(FILE_ON, FILE_OFF, hf_answers());
+    app.save_alpha(json!({
+        "model": null,
+        "hf-repo": "o/r:Q4_K_M",
+        "hf-file": "nope.gguf",
+    }))
+    .await
+    .assert_refused(
+        "model-profile-file-not-listed",
+        &[REPO, "nope.gguf"],
+        "hf-file",
+    );
+    assert!(app.app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.app.file_text(MODELS).as_deref(), Some(FILE_ON));
+    assert_eq!(
+        app.hf_asked().len(),
+        2,
+        "the save listed the repo through M2's fetch: {:?}",
+        app.hf_asked()
+    );
+}
+
+/// A changed `hf-repo` with the `hf-file` left exactly as the section holds it
+/// (M3b review D2): the file was listed in the repo the section named, so
+/// "unchanged" proves nothing about the NEW repo. The save checks it against the
+/// new repo's listing: it is not there, so the refusal names the new repo and
+/// the file, and nothing is written.
+#[tokio::test]
+async fn m3b_review_d2_a_changed_repo_checks_the_unchanged_file_against_the_new_listing() {
+    let app = app_with_hf(
+        FILE_ON_HF,
+        FILE_OFF,
+        vec![(200, refs_json()), (200, other_tree_json())],
+    );
+    let revision = rev(&KEY_A, MODELS, FILE_ON_HF, ALPHA);
+    app.app
+        .save_on_revision(
+            ALPHA,
+            &revision,
+            json!({ "model": null, "hf-repo": "n/r:Q8_0", "hf-file": REPO_FILE }),
+        )
+        .await
+        .assert_refused(
+            "model-profile-file-not-listed",
+            &[OTHER_REPO, REPO_FILE],
+            "hf-file",
+        );
+    assert!(app.app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(
+        app.app.file_text(MODELS).as_deref(),
+        Some(FILE_ON_HF),
+        "the section keeps the repo and the file it had"
+    );
+    let asked = app.hf_asked();
+    assert_eq!(
+        asked.len(),
+        2,
+        "the save listed the repo it is writing: {asked:?}"
+    );
+    assert!(
+        asked.iter().all(|url| url.contains(OTHER_REPO))
+            && !asked.iter().any(|url| url.contains(REPO)),
+        "the listing asked is the NEW repo's, not the one the section held: {asked:?}"
+    );
+}
+
+/// The other half of the same rule (M3b review D2): the file IS one of the new
+/// repo's listing, so the save lands, writing the new repo beside the file it
+/// keeps. The check runs, it does not refuse every repo switch.
+#[tokio::test]
+async fn m3b_review_d2_a_changed_repo_whose_listing_holds_the_file_saves() {
+    let app = app_with_hf(FILE_ON_HF, FILE_OFF, hf_answers());
+    let revision = rev(&KEY_A, MODELS, FILE_ON_HF, ALPHA);
+    app.app
+        .save_on_revision(
+            ALPHA,
+            &revision,
+            json!({ "model": null, "hf-repo": "n/r:Q8_0", "hf-file": REPO_FILE }),
+        )
+        .await
+        .assert_saved(&rev(&KEY_A, MODELS, ON_HF_REPO_OTHER, ALPHA), false, &[]);
+    assert_eq!(
+        app.app.file_text(MODELS).as_deref(),
+        Some(ON_HF_REPO_OTHER),
+        "the hf-repo line is rewritten in place; the hf-file line and every other line stayed"
+    );
+    let asked = app.hf_asked();
+    assert_eq!(
+        asked.len(),
+        2,
+        "the save listed the new repo through M2's fetch: {asked:?}"
+    );
+    assert!(
+        asked.iter().all(|url| url.contains(OTHER_REPO)),
+        "the listing asked is the new repo's: {asked:?}"
+    );
+}
+
+/// A repo id the rule refuses is refused with M2's key, and nothing is fetched:
+/// a hostile id never reaches the network.
+#[tokio::test]
+async fn save_an_invalid_repo_is_refused_and_fetches_nothing() {
+    let app = app_with_hf(FILE_ON, FILE_OFF, hf_answers());
+    app.save_alpha(json!({ "model": null, "hf-repo": "not-a-repo" }))
+        .await
+        .assert_refused("hf-repo-invalid", &["not-a-repo"], "hf-repo");
+    assert!(
+        app.hf_asked().is_empty(),
+        "nothing fetched for an id the rule refuses: {:?}",
+        app.hf_asked()
+    );
+    assert!(app.app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.app.file_text(MODELS).as_deref(), Some(FILE_ON));
+}
+
+/// Two sources at once is the one refusal of the source rule, naming the
+/// profile and marking `model`: the page marks the source, not one key of it.
+#[tokio::test]
+async fn save_with_both_sources_is_refused_with_nothing_written() {
+    let app = app_holding(FILE_ON_HF, FILE_OFF);
+    let revision = rev(&KEY_A, MODELS, FILE_ON_HF, ALPHA);
+    app.save_on_revision(
+        ALPHA,
+        &revision,
+        json!({ "model": LISTED_MODEL, "hf-repo": "o/r:Q4_K_M" }),
+    )
+    .await
+    .assert_refused("model-profile-bad-source", &[ALPHA], "model");
+    assert!(app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON_HF));
+}
+
+/// An `hf-file` with no `hf-repo` is no source: the same refusal, and the
+/// model file the section held is left where it was.
+#[tokio::test]
+async fn save_an_hf_file_without_a_repo_is_refused_with_nothing_written() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.save_on(ALPHA, json!({ "model": null, "hf-file": REPO_FILE }))
+        .await
+        .assert_refused("model-profile-bad-source", &[ALPHA], "model");
+    assert!(app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
+}
+
+/// A section left with no source at all is the same refusal: a profile with
+/// neither a model file nor a repo names nothing to load.
+#[tokio::test]
+async fn save_with_no_source_left_in_the_section_is_refused() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.save_on(ALPHA, json!({ "model": null }))
+        .await
+        .assert_refused("model-profile-bad-source", &[ALPHA], "model");
+    assert!(app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(FILE_ON));
+}
+
+/// A `model` the page leaves alone is never checked, so a path outside the
+/// listed folder, written by the GUI or `pai`, stays saveable: the save of
+/// another key lands, and the manager's listing is not even asked for.
+#[tokio::test]
+async fn save_leaving_an_out_of_folder_model_untouched_saves() {
+    let app = app_holding(FILE_ON, FILE_OFF);
+    app.save_on(ALPHA, json!({ "ctx-size": "8192" }))
+        .await
+        .assert_saved(&rev(&KEY_A, MODELS, ON_CTX_8192, ALPHA), false, &[]);
+    assert_eq!(app.file_text(MODELS).as_deref(), Some(ON_CTX_8192));
+    assert!(
+        !app.calls().iter().any(|call| call == "model-files"),
+        "an unchanged model is not checked against the listing: {:?}",
+        app.calls()
+    );
+}
+
+/// Hugging Face was never reached at a changed `hf-file`: the save answers M2's
+/// key for that, at 503, and writes nothing, so the file keeps the source it
+/// had.
+#[tokio::test]
+async fn save_a_changed_hf_file_while_hf_is_unreachable_is_refused() {
+    let app = app_with_hf(FILE_ON, FILE_OFF, hf_answers());
+    app.fetch.fail_next(1);
+    app.save_alpha(json!({
+        "model": null,
+        "hf-repo": "o/r:Q4_K_M",
+        "hf-file": REPO_FILE,
+    }))
+    .await
+    .assert_error(StatusCode::SERVICE_UNAVAILABLE, "hf-unreachable");
+    assert!(app.app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.app.file_text(MODELS).as_deref(), Some(FILE_ON));
+}
+
+/// HF's 404 at a changed `hf-file` is M2's `hf-repo-unavailable`, with the repo
+/// as its arg, and nothing written.
+#[tokio::test]
+async fn save_a_changed_hf_file_while_hf_answers_404_is_refused() {
+    let app = app_with_hf(FILE_ON, FILE_OFF, vec![(404, json!({}).to_string())]);
+    app.save_alpha(json!({
+        "model": null,
+        "hf-repo": "o/r:Q4_K_M",
+        "hf-file": REPO_FILE,
+    }))
+    .await
+    .assert_error_with_args(StatusCode::NOT_FOUND, "hf-repo-unavailable", &[REPO]);
+    assert!(app.app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.app.file_text(MODELS).as_deref(), Some(FILE_ON));
+}
+
+/// A 3xx at a changed `hf-file` is M2's `hf-repo-moved`: the listing stops at
+/// the bff and no request reaches the host the answer names. Nothing is
+/// written.
+#[tokio::test]
+async fn save_a_changed_hf_file_while_hf_redirects_is_refused() {
+    let app = app_with_hf(FILE_ON, FILE_OFF, vec![(302, String::new())]);
+    app.save_alpha(json!({
+        "model": null,
+        "hf-repo": "o/r:Q4_K_M",
+        "hf-file": REPO_FILE,
+    }))
+    .await
+    .assert_error_with_args(StatusCode::BAD_GATEWAY, "hf-repo-moved", &[REPO]);
+    assert!(app.app.no_write_asked(), "no write of any kind was asked");
+    assert_eq!(app.app.file_text(MODELS).as_deref(), Some(FILE_ON));
 }

@@ -66,6 +66,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Include the verb's own first distinguishing line in the snippet of a gate copied verbatim into every
   guarded verb, so the snippet matches once.
 - Run nothing else with cargo on the crate while a prove loop rewrites the real source.
+- A mutant that SKIPS a check (drop one disjunct of a compound trigger) reds the test that pins the
+  check's own side effect (the listing was asked: `0 != 2`) even where the outcome pin would pass: report
+  both names, the second is the "the check runs" half. A trigger condition repeated in two adjacent blocks
+  of one function matches twice: put the block's first inner line in the snippet.
+- After a mutant, solo-run the killed test on the restored source: the `Compiling` line proves the restored
+  file is newer than the MUTANT binary (plain `cp` moves the mtime), so no mutant binary survives.
 - A pin of a SEAM (a function the production code must call, whose stub the tester added) is red on the
   stub, and its teeth show only with the seam wired: the prove loop applies the simulated fix first, shows
   the pin green, then mutates (the mutant the brief names, and its twin at the other end of the seam), and

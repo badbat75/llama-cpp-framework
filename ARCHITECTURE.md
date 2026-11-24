@@ -3598,9 +3598,10 @@ slice 17 (fe brief 16).
   `models.ini.disabled`: `checks::models_disabled_file`, `model_profile_ids_free`, the renders, the
   model files and memory of what renders), `write_served_file`, `render_all_locked`. The section rule
   (`checks::model_profile_section`, ~907) requires the id rule (`model_profile_id`: not empty, `a-zA-Z0-9.-_`,
-  so `*` fails) and a non-blank **`model`** (`model_profile_model`): a section with only `hf-repo` is
-  refused `model-profile-no-model` today, although llama.cpp downloads it (`FETCH_KEYS`, `service.rs`
-  2428, private to the manager). Ids are one profile in any letter case across both files
+  so `*` fails) and a model source (`model_profile_has_model`): a non-blank `model` or a non-blank key of
+  `checks::FETCH_KEYS` (`hf-repo`, `model-url`, `docker-repo`), else `model-profile-no-model`; MP1 moved
+  `FETCH_KEYS` into `pai-core` and loosened the rule. The configurator's save uses the same rule
+  (`checks::model_profile_source`, since M3b), and the web save adds M3b's exactly-one-source rule. Ids are one profile in any letter case across both files
   (`model-profile-name-taken`).
 - Assignment keys are exact case (`assign.rs` `assigned`); `assign::rows` gives per instance and per
   pool id the explicit `value` and `effective` (the render's one rule).

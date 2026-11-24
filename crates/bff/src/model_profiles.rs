@@ -56,6 +56,7 @@
 //! nothing; see [`create`]. `DELETE /api/profiles/model/{id}` removes one the
 //! pool holds switched off and assigned nothing; see [`remove`].
 
+use crate::hf::{self, Hf};
 use crate::origin::body_refusal;
 use crate::server::{revision, runs, timeout_answer, WriteState};
 use crate::session::{error, json_body, Sessions};
@@ -1307,11 +1308,12 @@ fn section_revision(file: &str, text: &str, id: &str, key: &[u8; 16]) -> String 
 /// The section a save starts from: the file that holds it, the text of that
 /// file as the manager read it (the compare and swap expects it), and the text
 /// of the other pool file, with the connect made for the signed-in user, reused
-/// for the write. `NotFound` when neither model profile file has a section of
+/// for the write and for the model file listing the save checks a `model`
+/// against. `NotFound` when neither model profile file has a section of
 /// that name.
 enum Read {
     Found {
-        client: Client,
+        client: Arc<Client>,
         file: String,
         text: String,
         other: String,
@@ -1343,11 +1345,66 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
         (MODELS_DISABLED.to_string(), off, on.unwrap_or_default())
     };
     Ok(Read::Found {
-        client,
+        client: Arc::new(client),
         file,
         text,
         other,
     })
+}
+
+/// The three keys of the model source of the section `id` of `text`, as
+/// `ini::parse_sections` reads them, in the order of the source rule: the model
+/// file, the repository, the file inside it. `None` is a key the section does
+/// not carry. A key the body sets is never blank (`parse_body` refuses an empty
+/// value), so a key that is there names a source.
+fn source_of(text: &str, id: &str) -> (Option<String>, Option<String>, Option<String>) {
+    let section = ini::text::section_text(text, id).unwrap_or_default();
+    let keys = ini::parse_sections(&section)
+        .into_iter()
+        .next()
+        .map(|section| section.keys)
+        .unwrap_or_default();
+    (
+        keys.get("model").cloned(),
+        keys.get("hf-repo").cloned(),
+        keys.get("hf-file").cloned(),
+    )
+}
+
+/// The node's model files, as the manager walks its one models folder, asked in
+/// a save over the connect its section was read with (slice M3b of "Choosing the
+/// model file on the web"): the paths the picker offers, the only ones a changed
+/// `model` may name. A manager that refuses the signed-in user, is gone, or
+/// answers later than `timeout` is answered as every other read of the save is:
+/// the answer is in `Err`, boxed, as the other routes of this crate box it.
+async fn list_models(
+    sessions: &Arc<Sessions>,
+    session: &str,
+    client: Arc<Client>,
+    timeout: Duration,
+) -> Result<Vec<String>, Box<Response>> {
+    let ask = tokio::task::spawn_blocking(move || client.model_files());
+    let reply = match tokio::time::timeout(timeout, ask).await {
+        Err(_elapsed) => {
+            return Err(Box::new(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "client-unavailable",
+                &[],
+            )))
+        }
+        Ok(Err(_join)) => {
+            return Err(Box::new(error(
+                StatusCode::BAD_GATEWAY,
+                "client-other",
+                &[],
+            )))
+        }
+        Ok(Ok(Err(failure))) => {
+            return Err(Box::new(switch_failure(sessions, session, failure, false)))
+        }
+        Ok(Ok(Ok(reply))) => reply,
+    };
+    Ok(reply.files.into_iter().map(|row| row.path).collect())
 }
 
 /// `PUT /api/profiles/model/{id}`: the save of one model profile, as the signed-in user. The
@@ -1374,6 +1431,23 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
 /// the body carries: a card that started from an older text is 409
 /// `model-profile-changed-elsewhere` with nothing written, and a body that asks for the
 /// text the file already holds answers 200 and writes nothing.
+///
+/// The model source is checked on the section as the save leaves it (slice M3b
+/// of "Choosing the model file on the web"): exactly one of `model` and
+/// `hf-repo`, `hf-file` only beside a repo, else 422 `model-profile-bad-source`
+/// marking `model`. A source is then checked against the node's lists, and only
+/// where the body changed it: a `model` is a path the manager's walk of the
+/// engine's models folder names ([`list_models`], asked in this save), the repo
+/// id is one `pai_core::hf::parse_spec` holds (422 `hf-repo-invalid`, fetched
+/// nothing), and an `hf-file` is a file of that repo's listing (slice M2's,
+/// through its cache, [`hf::file_is_listed`]): a file the body left alone is
+/// checked when the repo changed, that file having been listed in the repo the
+/// section named. A value the body leaves alone beside a source it leaves alone
+/// is never checked, so a source the configurator or `pai` wrote outside the
+/// lists stays saveable, and the listing is not even asked for. Every one of these
+/// answers before the write is asked, so the file keeps the source it had; a
+/// listing that never reached Hugging Face answers M2's key at 503
+/// ([`hf::Refused::save_response`]).
 ///
 /// The write is the compare and swap, expecting the text this request read, so
 /// the file is never changed under a card that read it earlier: 409
@@ -1405,6 +1479,7 @@ pub(crate) async fn save(
     timeout: Duration,
     write_timeout: Duration,
     sessions: Arc<Sessions>,
+    hf: Arc<Hf>,
     id: String,
     headers: HeaderMap,
     key: [u8; 16],
@@ -1450,6 +1525,68 @@ pub(crate) async fn save(
         return error(StatusCode::CONFLICT, "model-profile-changed-elsewhere", &[]);
     }
     let new_text = apply(&edits, &text, &id);
+    // The model source, as the save leaves the section (slice M3b): exactly one
+    // of the two, `hf-file` only beside a repo.
+    let (src_model, src_repo, src_file) = source_of(&new_text, &id);
+    let (was_model, was_repo, was_file) = source_of(&text, &id);
+    if usize::from(src_model.is_some()) + usize::from(src_repo.is_some()) != 1
+        || (src_file.is_some() && src_repo.is_none())
+    {
+        return refused(
+            "model-profile-bad-source",
+            std::slice::from_ref(&id),
+            Some("model"),
+        );
+    }
+    if src_model != was_model {
+        if let Some(path) = src_model {
+            let listed = match list_models(&sessions, &session, Arc::clone(&client), timeout).await
+            {
+                Ok(listed) => listed,
+                Err(answer) => return *answer,
+            };
+            if !listed.contains(&path) {
+                return refused("model-profile-model-not-listed", &[path], Some("model"));
+            }
+        }
+    }
+    // The repo id rule runs before any listing is fetched, so a hostile id
+    // never reaches the network: it runs whenever the save has to look at the
+    // source, the tag `parse_spec` cuts off being no refusal.
+    let mut spec = None;
+    if src_repo != was_repo || src_file != was_file {
+        if let Some(sent) = &src_repo {
+            match pai_core::hf::parse_spec(sent) {
+                Ok(parsed) => spec = Some(parsed),
+                Err(_) => {
+                    return refused(
+                        "hf-repo-invalid",
+                        std::slice::from_ref(sent),
+                        Some("hf-repo"),
+                    );
+                }
+            }
+        }
+    }
+    // The file of the source the save is writing, checked against that source's
+    // listing: a file present in the section as the save leaves it, and the repo
+    // or the file changed. A file kept as it was beside a NEW repo proves
+    // nothing about the new repo: it was listed in the one the section named.
+    if src_repo != was_repo || src_file != was_file {
+        if let (Some(name), Some(spec)) = (src_file, spec.as_ref()) {
+            match hf::file_is_listed(&hf, &spec.repo, &name).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return refused(
+                        "model-profile-file-not-listed",
+                        &[spec.repo.clone(), name],
+                        Some("hf-file"),
+                    )
+                }
+                Err(refused) => return refused.save_response(),
+            }
+        }
+    }
     let written = section_revision(&file, &new_text, &id, &key);
     let changed = new_text != text;
     // The pool as the save leaves it, for the record's rows: the file the

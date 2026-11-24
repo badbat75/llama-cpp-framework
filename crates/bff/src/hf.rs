@@ -181,8 +181,10 @@ fn curl_failure(code: i32, stderr: &str) -> HfError {
 }
 
 /// The route's refusal: the design's key, the args its text fills, and the
-/// status the key answers with (section (5)).
-struct Refused {
+/// status the key answers with (section (5)). The model profile save answers
+/// the same keys ([`Refused::save_response`]), so the listing of slice M2 and
+/// the save of slice M3b speak one key list.
+pub(crate) struct Refused {
     status: StatusCode,
     key: &'static str,
     args: Vec<String>,
@@ -278,6 +280,23 @@ impl Refused {
         )
             .into_response()
     }
+
+    /// The same key and args, at the status a model profile save gives (slice
+    /// M3b): the save has handed nothing over to write, so a listing that never
+    /// reached Hugging Face, and a node with no `curl` to reach it with, answer
+    /// the 503 every read that cannot answer gives, not the 504 of a write whose
+    /// outcome is unknown. HF's own refusals keep the status of `response`.
+    pub(crate) fn save_response(&self) -> Response {
+        let status = match self.key {
+            "hf-unreachable" | "hf-tool-missing" => StatusCode::SERVICE_UNAVAILABLE,
+            _ => self.status,
+        };
+        (
+            status,
+            axum::Json(serde_json::json!({ "key": self.key, "args": self.args })),
+        )
+            .into_response()
+    }
 }
 
 /// One repo's tree as the cache keeps it: the commit the tree was listed at,
@@ -298,8 +317,10 @@ struct Cached {
 }
 
 /// The route's state, shared by every request of one router: the fetch, the
-/// clock the cache ages by, the cache, and the slots a listing takes.
-struct Hf {
+/// clock the cache ages by, the cache, and the slots a listing takes. The model
+/// profile save shares it with the route, so a repo the picker listed is checked
+/// against that listing (slice M3b, [`file_is_listed`]).
+pub(crate) struct Hf {
     fetch: Arc<dyn Fetch + Send + Sync>,
     clock: Clock,
     cache: Mutex<HashMap<String, Cached>>,
@@ -314,6 +335,34 @@ impl Hf {
             cache: Mutex::new(HashMap::new()),
             slots: Arc::new(tokio::sync::Semaphore::new(MAX_CALLS)),
         }
+    }
+
+    /// The repo's tree: the one this cache keeps when it is young, else the
+    /// listing, fetched in a blocking task (the runner is a child process) under
+    /// [`crate::HF_TIMEOUT`] and kept for the next caller. 429 `hf-busy` when
+    /// [`MAX_CALLS`] listings are already running.
+    async fn tree(&self, repo: &str) -> Result<Tree, Refused> {
+        if let Some(tree) = self.cached(repo) {
+            return Ok(tree);
+        }
+        let Ok(permit) = Arc::clone(&self.slots).try_acquire_owned() else {
+            return Err(Refused::busy());
+        };
+        let fetch = Arc::clone(&self.fetch);
+        let asked = repo.to_string();
+        let ask = tokio::task::spawn_blocking(move || listing(fetch.as_ref(), &asked));
+        let tree = match tokio::time::timeout(crate::HF_TIMEOUT, ask).await {
+            Ok(Ok(Ok(tree))) => tree,
+            Ok(Ok(Err(refused))) => return Err(refused),
+            Ok(Err(_)) => return Err(Refused::bad_answer()),
+            Err(_) => return Err(Refused::unreachable()),
+        };
+        // The slot is held for the whole listing and goes back when this call
+        // ends, on every path: a listing the caller gave up on keeps running, it
+        // keeps no slot (the M2 review's G1).
+        drop(permit);
+        self.keep(repo, &tree);
+        Ok(tree)
     }
 
     /// The tree kept for `repo`, when it is younger than [`CACHE_WINDOW`].
@@ -349,14 +398,16 @@ impl Hf {
     }
 }
 
-/// The route of this module: `GET /api/hf/files`, gated by `sessions`,
-/// listing through `fetch` and ageing its cache by `clock`.
-pub(crate) fn routes(
-    fetch: Arc<dyn Fetch + Send + Sync>,
-    clock: Clock,
-    sessions: Arc<Sessions>,
-) -> axum::Router {
-    let hf = Arc::new(Hf::new(fetch, clock));
+/// The listing state of one router, from its fetch and the clock its cache ages
+/// by: the router hands it to `routes` and to the model profile save, so the two
+/// read one cache.
+pub(crate) fn state(fetch: Arc<dyn Fetch + Send + Sync>, clock: Clock) -> Arc<Hf> {
+    Arc::new(Hf::new(fetch, clock))
+}
+
+/// The route of this module: `GET /api/hf/files`, gated by `sessions`, listing
+/// through `hf` (its fetch, its cache, its slots).
+pub(crate) fn routes(hf: Arc<Hf>, sessions: Arc<Sessions>) -> axum::Router {
     axum::Router::new().route(
         "/api/hf/files",
         axum::routing::get(
@@ -366,6 +417,17 @@ pub(crate) fn routes(
             },
         ),
     )
+}
+
+/// The save's check of a `hf-file` (slice M3b of "Choosing the model file on the
+/// web"): `true` when `file` is one of `repo`'s listing, read through this
+/// cache, warm when the picker listed the repo just before the save; `false`
+/// when the listing answered and names no such file. The listing's own failures
+/// are this module's refusals, as on the route, and the save answers them at
+/// [`Refused::save_response`].
+pub(crate) async fn file_is_listed(hf: &Arc<Hf>, repo: &str, file: &str) -> Result<bool, Refused> {
+    let tree = hf.tree(repo).await?;
+    Ok(tree.files.iter().any(|kept| kept.path == file))
 }
 
 /// The answer to `GET /api/hf/files?repo=<id>`: 401 `session-required` with
@@ -391,28 +453,10 @@ async fn files(
         Ok(spec) => spec,
         Err(_) => return Refused::invalid(&sent).response(),
     };
-    if let Some(tree) = hf.cached(&spec.repo) {
-        return match document(&tree, &spec) {
-            Ok(doc) => axum::Json(doc).into_response(),
-            Err(refused) => refused.response(),
-        };
-    }
-    let Ok(permit) = Arc::clone(&hf.slots).try_acquire_owned() else {
-        return Refused::busy().response();
+    let tree = match hf.tree(&spec.repo).await {
+        Ok(tree) => tree,
+        Err(refused) => return refused.response(),
     };
-    let (fetch, repo) = (Arc::clone(&hf.fetch), spec.repo.clone());
-    let ask = tokio::task::spawn_blocking(move || listing(fetch.as_ref(), &repo));
-    let tree = match tokio::time::timeout(crate::HF_TIMEOUT, ask).await {
-        Ok(Ok(Ok(tree))) => tree,
-        Ok(Ok(Err(refused))) => return refused.response(),
-        Ok(Err(_)) => return Refused::bad_answer().response(),
-        Err(_) => return Refused::unreachable().response(),
-    };
-    // The slot is held for the whole listing and goes back when this route
-    // ends, on every path: a listing the route gave up on keeps running, it
-    // keeps no slot (the M2 review's G1).
-    drop(permit);
-    hf.keep(&spec.repo, &tree);
     match document(&tree, &spec) {
         Ok(doc) => axum::Json(doc).into_response(),
         Err(refused) => refused.response(),

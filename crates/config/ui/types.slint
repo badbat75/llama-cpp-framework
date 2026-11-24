@@ -18,6 +18,12 @@ export struct ModelProfileSummary {
 export struct ModelProfileForm {
     id: string,
     model: string,
+    // hf-repo / hf-file: the Hugging Face pick the web writes and the engine
+    // downloads. No widget: the GUI has no picker for them (its own Hugging Face
+    // path downloads the file and writes `model`), so the form carries them
+    // untouched, and a GUI save of a profile the web created keeps its model.
+    hf_repo: string,
+    hf_file: string,
     // The model's project page, "" = none: a `; url =` comment in the INI, the
     // Assets card's Open button opens it.
     project_url: string,

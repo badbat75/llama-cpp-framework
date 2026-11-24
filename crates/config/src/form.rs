@@ -153,6 +153,8 @@ pub fn model_profile_to_form(p: &model_profiles::ModelProfile) -> ModelProfileFo
     ModelProfileForm {
         id: p.id.clone().into(),
         model: p.model.clone().into(),
+        hf_repo: p.hf_repo.clone().into(),
+        hf_file: p.hf_file.clone().into(),
         project_url: p.project_url.clone().into(),
         placement_note: p.placement_note.clone().into(),
         load_on_startup: p.load_on_startup,
@@ -317,6 +319,10 @@ pub fn form_to_model_profile(f: &ModelProfileForm) -> model_profiles::ModelProfi
     model_profiles::ModelProfile {
         id: f.id.to_string(),
         model: f.model.to_string(),
+        // Carried through untouched: the GUI edits no Hugging Face pick, and
+        // dropping it here would delete the profile's only model source.
+        hf_repo: f.hf_repo.trim().to_string(),
+        hf_file: f.hf_file.trim().to_string(),
         project_url: f.project_url.trim().to_string(),
         placement_note: f.placement_note.trim().to_string(),
         load_on_startup: f.load_on_startup,
@@ -1094,6 +1100,9 @@ mod tests {
         let p = ModelProfile {
             id: "round".into(),
             model: r"E:\m\model.gguf".into(),
+            // The other source, as the web's picker writes it.
+            hf_repo: "org/repo:Q4_K_M".into(),
+            hf_file: "repo-Q4_K_M.gguf".into(),
             project_url: "https://huggingface.co/org/repo".into(),
             placement_note: "estimated at download for a 32k context".into(),
             load_on_startup: true,

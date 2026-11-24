@@ -28,6 +28,9 @@ fn data_root_e2e() {
     // ── The model profile checks on every backend (model_profiles.rs) ──────────────────
     crate::model_profiles::model_profile_checks_every_backend_e2e();
 
+    // ── A Hugging Face model profile survives a save (model_profiles.rs) ──
+    crate::model_profiles::hf_keys_survive_a_save_e2e();
+
     // ── A save after the manager withheld the API key ───────────────────
     crate::server_control::api_key_kept_e2e();
 

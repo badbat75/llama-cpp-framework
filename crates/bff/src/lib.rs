@@ -345,6 +345,9 @@ fn router_with_policy(
 ) -> axum::Router {
     use axum::extract::Path;
     let sessions = session::sessions(auth, clock.clone());
+    // The Hugging Face listing state, shared by the picker's route and by the
+    // model profile save's check of a `hf-file`, so the two read one cache.
+    let hf = hf::state(fetch, clock.clone());
     let read = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
         move |Path(id): Path<String>, headers: axum::http::HeaderMap| {
@@ -402,6 +405,7 @@ fn router_with_policy(
     };
     let save_model_profile = {
         let (connect, sessions) = (connect.clone(), sessions.clone());
+        let hf = hf.clone();
         move |Path(id): Path<String>,
               headers: axum::http::HeaderMap,
               body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>| {
@@ -410,6 +414,7 @@ fn router_with_policy(
                 timeout,
                 write_timeout,
                 sessions.clone(),
+                hf.clone(),
                 id,
                 headers,
                 key,
@@ -496,7 +501,7 @@ fn router_with_policy(
             sessions.clone(),
             versions_dir,
         ))
-        .merge(hf::routes(fetch, clock, sessions))
+        .merge(hf::routes(hf, sessions))
         .layer(axum::extract::DefaultBodyLimit::max(origin::MAX_BODY))
         .layer(axum::middleware::from_fn_with_state(policy, origin::guard))
         .layer(axum::middleware::from_fn(framing))

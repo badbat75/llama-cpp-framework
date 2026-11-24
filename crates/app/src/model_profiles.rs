@@ -86,6 +86,18 @@ use pai_core::checks::LLAMA_MODELS_MAX_DEFAULT;
 pub struct ModelProfile {
     pub id: String,
     pub model: String,
+    /// The Hugging Face repository the engine downloads the model from
+    /// (`hf-repo`), the web's picker writing it with the quant tag the pick
+    /// chose (`org/repo:Q4_K_M`). It is the other source of a model: a profile
+    /// carrying it names its model with NO file of the node, so `model` may be
+    /// empty (`checks::model_profile_source`), and the model-file check skips it
+    /// (`FETCH_KEYS`). Empty = no key.
+    pub hf_repo: String,
+    /// The file inside `hf_repo` (`hf-file`), spelled as the picker's listing
+    /// spells it. It names no model of its own: the source rule
+    /// (`checks::model_profile_source`) reads `model` and `hf-repo` alone, so a
+    /// section whose only key is `hf-file` names nothing. Empty = no key.
+    pub hf_file: String,
     /// The model's project page (e.g. its Hugging Face repository), for the
     /// Models tab's Open button. Empty = no line. It is stored as a COMMENT
     /// (`; url = <value>`, `PROJECT_URL_MARKER`), never as a key: llama-server
@@ -680,6 +692,8 @@ impl Default for ModelProfile {
         Self {
             id: String::new(),
             model: String::new(),
+            hf_repo: String::new(),
+            hf_file: String::new(),
             project_url: String::new(),
             placement_note: String::new(),
             load_on_startup: false,
@@ -777,6 +791,8 @@ impl ModelProfile {
         Self {
             id: id.to_string(),
             model: get("model"),
+            hf_repo: get("hf-repo"),
+            hf_file: get("hf-file"),
             // Comments, not keys: `from_section` fills them.
             project_url: String::new(),
             placement_note: String::new(),
@@ -1449,9 +1465,18 @@ pub fn valid_id(id: &str) -> bool {
 /// INI can, which is exactly why the check lives at the save boundary too.
 pub(crate) fn validate_for_save(model_profile: &ModelProfile) -> io::Result<()> {
     checks::model_profile_id(&model_profile.id).map_err(refused)?;
-    checks::model_profile_model(&model_profile.id, &model_profile.model).map_err(refused)?;
+    // One source for the model: the file pick (`model`) or the Hugging Face
+    // pick (`hf-repo`), the rule of `checks::model_profile_source`.
+    checks::model_profile_source(
+        &model_profile.id,
+        &model_profile.model,
+        &model_profile.hf_repo,
+    )
+    .map_err(refused)?;
     for (field, value) in [
         ("model", &model_profile.model),
+        ("hf-repo", &model_profile.hf_repo),
+        ("hf-file", &model_profile.hf_file),
         ("mmproj", &model_profile.mmproj),
         ("model-draft", &model_profile.model_draft),
         ("chat-template-kwargs", &model_profile.chat_template_kwargs),
@@ -1765,8 +1790,23 @@ pub fn render_section(p: &ModelProfile) -> String {
             p.placement_note.trim()
         ));
     }
-    out.push_str("; Model: local path (-m).\r\n");
-    out.push_str(&format!("model = {}\r\n", p.model.trim()));
+    // The model file is an optional key like the others: with its comment line,
+    // only when the profile has one. A profile whose source is the Hugging Face
+    // pick names no file of the node, and a blank `model =` beside `hf-repo`
+    // reads back as a second source, which the web's save rule refuses.
+    let model = p.model.trim();
+    if !model.is_empty() {
+        out.push_str("; Model: local path (-m).\r\n");
+        out.push_str(&format!("model = {model}\r\n"));
+    }
+    out.push_str(
+        "; hf-repo / hf-file: the Hugging Face pick the engine downloads: the repository\r\n",
+    );
+    out.push_str(
+        "; with the quant tag after `:`, and the file inside it. One source with `model`.\r\n",
+    );
+    emit_str(&mut out, "hf-repo", &p.hf_repo);
+    emit_str(&mut out, "hf-file", &p.hf_file);
     if p.load_on_startup {
         out.push_str(
             "; load-on-startup = true loads the model when the router starts, not on the\r\n",
@@ -2244,6 +2284,65 @@ pub(crate) fn model_profile_checks_every_backend_e2e() {
     assert_eq!(fake::writes(&log), ["write_file models.ini"]);
 }
 
+/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): a model profile
+/// created from a Hugging Face pick (`hf-repo` with the picker's quant tag,
+/// `hf-file`, no `model`) survives a save on every backend: load it, save it
+/// unchanged, and the file still holds both keys with their values. The save
+/// replaces the whole section with `render_section`, so a key the struct does
+/// not carry is dropped from the file, and the round trip of an hf-only profile
+/// writes NO `model` key at all: a blank `model =` beside `hf-repo` reads back
+/// as a second source, which the web's save rule refuses (M3b review D1).
+#[cfg(test)]
+pub(crate) fn hf_keys_survive_a_save_e2e() {
+    use crate::paths;
+    use crate::server_control::{fake, Backend};
+    use pai_core::client::InstanceState;
+    let dir = tempfile::tempdir().expect("tempdir");
+    paths::redirect_for_tests(dir.path());
+
+    let fixture = "[hf-made]\r\nhf-repo = o/r:Q4_K_M\r\nhf-file = x-Q4_K_M.gguf\r\n";
+    let log = fake::log();
+    let manager = fake::FakeClient::new(&log, InstanceState::Inactive);
+    for (name, backend) in [
+        ("Direct", Backend::Direct),
+        ("manager", fake::backend(manager)),
+    ] {
+        fake::scoped(backend, || {
+            let files = server_control::backend();
+            files.write(ConfigFile::Models, fixture).expect("fixture");
+            let p = load_all()
+                .into_iter()
+                .find(|p| p.id == "hf-made")
+                .expect("the hf section loads");
+            save(&p).unwrap_or_else(|e| panic!("{name}: save of an hf section: {e}"));
+            let written = files
+                .read(ConfigFile::Models)
+                .expect("read")
+                .expect("written");
+            let section = ini::parse_sections(&written)
+                .into_iter()
+                .find(|s| s.id == "hf-made")
+                .expect("the section is still there");
+            assert_eq!(
+                section.keys.get("hf-repo").map(String::as_str),
+                Some("o/r:Q4_K_M"),
+                "{name}: the save dropped hf-repo"
+            );
+            assert_eq!(
+                section.keys.get("hf-file").map(String::as_str),
+                Some("x-Q4_K_M.gguf"),
+                "{name}: the save dropped hf-file"
+            );
+            assert!(
+                !section.keys.contains_key("model"),
+                "{name}: the round trip of an hf-only profile wrote a model key \
+                 beside hf-repo, which reads back as a second source (M3b review D1): \
+                 {written}"
+            );
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2719,6 +2818,8 @@ ctx-size = 262144\r\n";
         let clean = ModelProfile {
             id: "m".into(),
             model: r"C:\models\m.gguf".into(),
+            hf_repo: "org/repo:Q4_K_M".into(),
+            hf_file: "repo-Q4_K_M.gguf".into(),
             mmproj: r"C:\models\m-mmproj.gguf".into(),
             model_draft: r"C:\models\mtps\m-mtp.gguf".into(),
             chat_template_kwargs: r#"{"enable_thinking":true}"#.into(),
@@ -2731,6 +2832,10 @@ ctx-size = 262144\r\n";
 
         for (field, hostile) in [
             ("model", r"C:\Models #1\m.gguf"),
+            // The Hugging Face pick: a repository and a file name, free text
+            // like a path, so the same rule runs on both.
+            ("hf-repo", "org/model#q8"),
+            ("hf-file", "model #1.gguf"),
             ("mmproj", r"C:\a;b\m-mmproj.gguf"),
             ("model-draft", r"C:\models\m #mtp.gguf"),
             // Legal inside a JSON string, fatal to the INI reader.
@@ -2749,6 +2854,8 @@ ctx-size = 262144\r\n";
             let mut p = clean.clone();
             match field {
                 "model" => p.model = hostile.into(),
+                "hf-repo" => p.hf_repo = hostile.into(),
+                "hf-file" => p.hf_file = hostile.into(),
                 "fit-target" => p.fit_target = hostile.into(),
                 "mmproj" => p.mmproj = hostile.into(),
                 "chat-template-kwargs" => p.chat_template_kwargs = hostile.into(),
@@ -2876,6 +2983,73 @@ ctx-size = 262144\r\n";
         assert!(!value_lines.iter().any(|l| l.starts_with("tensor-split =")));
     }
 
+    /// The `model` key is written only when the profile has a model (M3b review
+    /// D1). A profile whose source is the Hugging Face pick leaves the key out
+    /// entirely: a blank `model =` beside `hf-repo` reads back as a second
+    /// source, which the web's save rule refuses (`model-profile-bad-source`),
+    /// and `llama-server` is handed an empty `-m`. The other half: a profile
+    /// with a model file still writes it, and a model of pure padding is no
+    /// model.
+    #[test]
+    fn m3b_review_d1_the_model_key_is_written_only_when_the_profile_has_one() {
+        let keys_of = |p: &ModelProfile| {
+            ini::parse_sections(&render_section(p))
+                .into_iter()
+                .next()
+                .expect("the rendered section")
+                .keys
+        };
+
+        let with_model = ModelProfile {
+            id: "file-made".into(),
+            model: r"E:\m\model.gguf".into(),
+            ..Default::default()
+        };
+        let ini = render_section(&with_model);
+        assert!(
+            ini.contains("model = E:\\m\\model.gguf\r\n"),
+            "a profile with a model file writes it: {ini}"
+        );
+        assert_eq!(
+            keys_of(&with_model).get("model").map(String::as_str),
+            Some(r"E:\m\model.gguf"),
+            "the written model reads back as the model it names"
+        );
+
+        let hf_only = ModelProfile {
+            id: "hf-made".into(),
+            hf_repo: "o/r:Q4_K_M".into(),
+            hf_file: "x-Q4_K_M.gguf".into(),
+            ..Default::default()
+        };
+        let keys = keys_of(&hf_only);
+        assert!(
+            !keys.contains_key("model"),
+            "an hf-only profile writes no model key at all (M3b review D1): {}",
+            render_section(&hf_only)
+        );
+        assert_eq!(
+            keys.get("hf-repo").map(String::as_str),
+            Some("o/r:Q4_K_M"),
+            "the source the profile has is still written"
+        );
+        assert_eq!(
+            keys.get("hf-file").map(String::as_str),
+            Some("x-Q4_K_M.gguf"),
+            "the source the profile has is still written"
+        );
+
+        let padded = ModelProfile {
+            model: "   ".into(),
+            ..hf_only
+        };
+        assert!(
+            !keys_of(&padded).contains_key("model"),
+            "a model of pure padding is no model: {}",
+            render_section(&padded)
+        );
+    }
+
     #[test]
     fn from_keys_parses_mtp_keys() {
         let mut k: BTreeMap<String, String> = BTreeMap::new();
@@ -2907,6 +3081,10 @@ ctx-size = 262144\r\n";
         ModelProfile {
             id: "full".into(),
             model: r"E:\m\model.gguf".into(),
+            // The other source, as the web's picker writes it: the repository
+            // with the quant tag after `:`, and the file inside it.
+            hf_repo: "org/repo:Q4_K_M".into(),
+            hf_file: "repo-Q4_K_M.gguf".into(),
             // A `#` fragment and a `;`: a key's value would lose both to the
             // inline-comment rule, a comment line keeps them.
             project_url: "https://huggingface.co/org/repo?a=1;b=2#files".into(),
@@ -3604,6 +3782,22 @@ ctx-size = 262144\r\n";
         let p =
             ModelProfile::new_default("Qwen3.8-27B".into(), "/models/Qwen3.8-27B-Q8_0.gguf".into());
         assert!(validate_for_save(&p).is_ok());
+    }
+
+    /// A section the web wrote from a Hugging Face pick: `hf-repo` (with the
+    /// picker's quant tag) and `hf-file`, no `model`. The save accepts it: one
+    /// source, `model` or `hf-repo`, the rule of
+    /// `checks::model_profile_has_model` (a `FETCH_KEYS` line names the model
+    /// with no file of the node).
+    #[test]
+    fn a_hf_repo_is_a_model_source_at_the_save() {
+        let section =
+            ini::parse_sections("[hf-made]\r\nhf-repo = o/r:Q4_K_M\r\nhf-file = x-Q4_K_M.gguf\r\n")
+                .first()
+                .cloned()
+                .expect("the fixture section");
+        let p = ModelProfile::from_section(&section);
+        assert!(validate_for_save(&p).is_ok(), "hf-repo is a source");
     }
 
     /// Every integer key the Models tab's form holds to a range

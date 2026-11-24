@@ -285,6 +285,11 @@ pub const MODEL_PROFILE_MIN_MAX_KEYS: [(&str, &str); 3] = [
 /// a fully populated model profile, read by `ini::parse_sections`, are the union of
 /// the two, and the two share no key.
 pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
+    // The model source: the file pick of the node's models folder, and the
+    // repository and the file inside it ("Choosing the model file on the web").
+    "model",
+    "hf-repo",
+    "hf-file",
     // Resource and context card.
     "ctx-size",
     "parallel",
@@ -376,7 +381,6 @@ pub const WEB_MODEL_PROFILE_KEYS: &[&str] = &[
 /// to [`WEB_MODEL_PROFILE_KEYS`], in the same commit as its control.
 pub const MODEL_PROFILE_KEYS_NOT_ON_WEB: &[&str] = &[
     // The Assets card's file picks, until it exists.
-    "model",
     "mmproj",
     "model-draft",
     "spec-type",
@@ -480,12 +484,15 @@ pub fn model_profile_id(id: &str) -> Result<(), Refusal> {
     }
 }
 
-/// A model profile names a model file: `model`, the value as read, not blank.
-/// Strict on purpose: the configurator's own pre-check (`model_profiles.rs`)
-/// asks for a file of the node, since it has no Hugging Face pick to offer. The
-/// whole-file rule is looser, [`model_profile_has_model`].
-pub fn model_profile_model(id: &str, model: &str) -> Result<(), Refusal> {
-    if model.trim().is_empty() {
+/// A model profile names its model with ONE source: `model`, a file of the
+/// node, not blank, or `hf_repo`, the Hugging Face pick the web writes and the
+/// engine downloads, not blank. The save's rule, the one the two pickers
+/// answer to. The whole-file rule is [`model_profile_has_model`], which takes
+/// every [`FETCH_KEYS`] key: `model-url` and `docker-repo` name a model to the
+/// engine and are not fields of the configurator's schema, so a save never
+/// sees one.
+pub fn model_profile_source(id: &str, model: &str, hf_repo: &str) -> Result<(), Refusal> {
+    if model.trim().is_empty() && hf_repo.trim().is_empty() {
         Err(Refusal::new("model-profile-no-model", &[&id]))
     } else {
         Ok(())
@@ -515,9 +522,9 @@ fn model_profile_has_model(s: &RawSection) -> bool {
 /// llama.cpp writes, `{base}-{NNNNN}-of-{NNNNN}.{ext}`: `model_scan`,
 /// `gguf::read_tensors`). A value that is not blank always names at least
 /// itself, whatever its spelling. Empty for a blank value: the profile has no
-/// file of its own (the `hf-repo` case, and [`model_profile_model`]'s to
-/// refuse). The list is the whole of what the model-file check looks at, so a
-/// repository in `hf-repo` adds nothing to look for.
+/// file of its own, the `hf-repo` case a save accepts through
+/// [`model_profile_source`]. The list is the whole of what the model-file
+/// check looks at, so a repository in `hf-repo` adds nothing to look for.
 pub fn model_files_of(model: &str) -> Vec<String> {
     let value = model.trim();
     if value.is_empty() {
@@ -2428,19 +2435,15 @@ top-p = 0.95\r\n";
     // pinned against the configurator's writer by `pai-app`'s
     // `web_key_lists_are_exactly_what_render_section_writes`.
     #[test]
-    fn web_model_profile_keys_exclude_the_five_and_hold_the_named_ones() {
-        // The five the design keeps off the web until the slice it names
+    fn web_model_profile_keys_exclude_the_four_and_hold_the_named_ones() {
+        // The four the design keeps off the web until the slice it names
         // (`n-cpu-moe` moved with L3 of "Layers, MoE and tensor placement on
         // the web model profile page", pinned by `n_cpu_moe_is_on_the_web`;
         // `override-tensor` with J1 of the same design, pinned by
-        // `override_tensor_is_on_the_web`).
-        for key in [
-            "model",
-            "mmproj",
-            "model-draft",
-            "spec-type",
-            "moe-cache-mib",
-        ] {
+        // `override_tensor_is_on_the_web`; `model` with M3b of "Choosing the
+        // model file on the web", pinned by
+        // `the_model_source_keys_are_on_the_web`).
+        for key in ["mmproj", "model-draft", "spec-type", "moe-cache-mib"] {
             assert!(
                 !WEB_MODEL_PROFILE_KEYS.contains(&key),
                 "{key} is the configurator's to write, not the web's"
@@ -2504,6 +2507,25 @@ top-p = 0.95\r\n";
             !MODEL_PROFILE_KEYS_NOT_ON_WEB.contains(&"override-tensor"),
             "override-tensor is on the web, so it must not also be listed as off the web"
         );
+    }
+
+    // M3b of "Choosing the model file on the web" (ARCHITECTURE.md): the save
+    // takes the model source, so the three keys of the two pickers move to the
+    // web's list, `model` with them off the list of keys off the web. The union
+    // of the two lists is unchanged, so `pai-app`'s pin of it against
+    // `render_section` stays green; what moves is which side each key sits on.
+    #[test]
+    fn the_model_source_keys_are_on_the_web() {
+        for key in ["model", "hf-repo", "hf-file"] {
+            assert!(
+                WEB_MODEL_PROFILE_KEYS.contains(&key),
+                "{key} is a key of the model source pickers, so the web's list must hold it"
+            );
+            assert!(
+                !MODEL_PROFILE_KEYS_NOT_ON_WEB.contains(&key),
+                "{key} is on the web, so it must not also be listed as off the web"
+            );
+        }
     }
 
     /// L3: the key's value rule, `("n-cpu-moe", 0..=4096)` in
@@ -3290,11 +3312,12 @@ top-p = 0.95\r\n";
     /// whichever shard the value happens to name; the value alone when the
     /// `-NNNNN-of-NNNNN` spelling is not there (a short counter, a total of
     /// zero, a `-of-` inside a directory name, a name with no extension);
-    /// nothing for a blank value, which is `model_profile_model`'s to refuse
-    /// and what a profile with only `hf-repo` leaves. Every name is the value's
-    /// own spelling: a relative one is resolved by the caller, against the
-    /// instance's folder, and a model profile carrying `hf-repo`, `model-url`
-    /// or `docker-repo` leaves the model-file check with nothing to look at.
+    /// nothing for a blank value, which is `model_profile_source`'s to refuse
+    /// when no `hf-repo` names the model, and what a profile with only `hf-repo`
+    /// leaves. Every name is the value's own spelling: a relative one is resolved
+    /// by the caller, against the instance's folder, and a model profile carrying
+    /// `hf-repo`, `model-url` or `docker-repo` leaves the model-file check with
+    /// nothing to look at.
     #[test]
     fn model_files_of_lists_the_files_a_model_value_names() {
         // One line per file: the list reads straight, and an empty list is "".
