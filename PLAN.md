@@ -1364,7 +1364,11 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   variables): 0 KFD queue evictions (evicted_ms 0 on every GPU, no kfd_process_evict_queues in
   bpftrace), against up to 13 episodes of up to 48 s in 50 min under the same load earlier; host
   memory as GTT (17.3 GB on GPU 1, RssShmem 0); speed not yet compared on a quiet machine. Both must be
-  0: USERPTR=0 alone falls back to SVM, which evicts the same way. The user confirmed the finding (2026-11-24), for every instance
+  0: USERPTR=0 alone falls back to SVM, which evicts the same way. Seen live on our llama-server too
+  (strata-framework agent, 2026-11-24 22:00, `default` started without the variables): its paged host
+  memory is SVM (bpftrace: svm_range_cpu_invalidate_pagetables -> kfd_process_evict_queues), and its
+  queues were suspended ~6 s per KFD node within 3 minutes of start, mostly while Strata allocated its
+  GTT. The user confirmed the finding (2026-11-24), for every instance
   whatever its backend: the architect places
   it (the instance unit's environment or `launch.rs`), then a test-first slice (GT1, in progress).
 
