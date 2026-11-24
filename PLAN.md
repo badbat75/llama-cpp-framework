@@ -1228,6 +1228,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     profile is on or used; on both profile pages Delete as a text button at the start of the top Save
     bar, disabled with the same hint when it cannot act; 22D2's status row and minus and all of 22D3
     superseded. The user confirmed the layout from a preview before the build.
+    Then GT2 (user, 2026-11-24): `RocmHostMemoryGtt` (GT1's server profile key, on when unset) as a
+    field in the Server page's SDK tuning card beside `RocblasUseHipblaslt` (designer brief, then
+    tester and coder), after 22D4.
     Then 17f2 (brief 16, 17f2.1 to 17f2.10: the display name set from a pencil after the page heading, the
     hint saying the ID, service, files and address stay, Rename removed; user, 2026-11-24: "Rename is not
     clear, we need another UX", the pencil chosen over a facts row), after 22D2.
