@@ -108,6 +108,12 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
 
 ## Pitfalls
 
+- A floating tip or popup inside a table's `.table-scroll` (overflow-x auto, so it clips both axes)
+  is cut off; brief such a tip in the top layer (`popover`) or in the flow, and in a review measure
+  its right edge against the scroll box and move the pointer from the control onto it (1.4.13).
+- The stub's default `key=withheld` makes the `default` server profile page show
+  `server-load-failed`; set `key=set` to render it.
+
 - jsdom applies no CSS, so check specificity by eye: `input[type='text']` (0,1,1) with `font: inherit`
   beats a class such as `.mono` (0,1,0).
 - Playwright's WebKit does not scroll a control into view on a script `focus()` (checkbox and text input

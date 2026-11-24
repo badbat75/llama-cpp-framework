@@ -884,3 +884,109 @@ answers are 22 D.3 to D.7:
 **Open for the user** (nothing waits on it): on the profile pages a disabled Delete with a tip
 mirrors the lists. If he would rather the page's Delete be hidden when it cannot act, 22 D4.10 drops
 its disabled state.
+
+## 22D4 review (designer, 2026-11-24)
+
+Driven in Chromium at 1280 and 320 px, light and dark, 200 % text and forced colours
+(`build/ux-review/22d4.js`); Firefox and WebKit wait for the fixes below. The UX check
+(`npm --prefix fe/ux run check`) did not finish a pass: it threw in all three browsers.
+
+Met: D4.1 (40 px −, its name "Delete model profile {id}" / "Delete server profile {id}"), D4.2
+(`aria-disabled` and the description on switched-on and used rows; Enter on a disabled − opens
+nothing), D4.4 (the confirm row spans every column, the focus goes to Cancel; Escape and Cancel
+return it to the −), D4.6 (a 204 removes the row, the region says `server-profiles-deleted`, the
+focus goes to the previous row's −), D4.7 for 409 `model-profile-enabled` (the alert in the region,
+the focus on the row's −), D4.8 (no sideways scroll at 320 px or 200 %, with the confirm open), D4.9
+to D4.11 on both pages where the profile can be deleted (Delete first in the bar, a 32 px gap before
+Discard, the confirm inside the bar, the focus on Cancel, Escape back to Delete).
+
+Not met:
+- **D1 (D4.3) The tip is not under the −.** `.hint-tip` is `position: absolute` (`fe/src/index.css`
+  2125-2129), and no ancestor of the − is positioned (`fe/src/RowDelete.tsx` 162-197 renders the
+  button and the tip as siblings in the `.status-cell` td). The tip lands at the page's left edge,
+  432 px below the − at 1280 px, below the fold, and 650 px above it, out of view, at 200 %. A
+  pointer user never sees the reason. Fix: wrap the − and its tip in a `position: relative` box.
+  The Save bar's tip (`fe/src/SaveBar.tsx` 332-342) anchors to `.save-bar` (sticky, so positioned):
+  it starts at the bar's left edge, not under Delete; the same wrapper fixes it.
+- **D2 (`fe/DESIGN.md`, "aria-disabled ... drawn inactive") The disabled − looks active.** Its border
+  and icon match the active −'s (computed `rgb(140, 125, 112)` on both). `fe/src/index.css`
+  2397-2401 draws `.primary` and `.secondary` inactive, not `.ot-add`. Fix: add
+  `.ot-add[aria-disabled='true']` to that rule (the `--muted` icon).
+- **D3 The UX check throws.** `fe/ux/check.js` 415 and 420 pick the + by `path[d="M5 12h14"]`, which
+  the minus icon (`fe/src/Icon.tsx` 186) shares, so the state `server-profiles-new` hits a strict-mode
+  violation in every browser. Fix: `path[d="M12 5v14"]`, the plus's second stroke.
+- **D4 (D4.7, minor) A region alert outlives the next delete.** After a 404 the region's alert stays
+  when a later delete succeeds: the status says "was deleted" beside "There is no server profile of
+  that name." Clear the region's alert when a confirm opens.
+
+Not checked in a browser: the server page's disabled Delete (the stub answers the `default` page's
+server read with an error under `pool=long`, so the bar does not render); the vitest suite covers it.
+
+### 22D4 re-check (designer, 2026-11-24)
+
+Driven in Chromium, Firefox and WebKit at 1280 and 320 px, light, dark, 200 % text and (Chromium)
+forced colours (`build/ux-review/22d4r.js`, `22d4s.js`; the used server page needs the stub's
+`key=set`, since its default `withheld` makes the page say `server-load-failed`).
+
+- D2 met: the disabled − draws `--muted` (107, 93, 82 against 42, 33, 28 on the active one; GrayText
+  under forced colours) in all three engines.
+- D3 met by the code (`fe/ux/check.js` picks the + by `M12 5v14`); the coder's pass was 0 failing.
+- D4 met: after a 404 the region's alert is cleared when the next confirm opens.
+- The used server page's Delete is `aria-disabled`, described by `server-profiles-delete-in-use`, and
+  Enter opens nothing.
+- **D1 still not met**, in all three engines:
+  - **D1a: the list tip is clipped by the table's scroll box.** `.table-scroll` has
+    `overflow-x: auto` (`fe/src/index.css` 714-715). The − sits in the last column and the tip opens
+    to its right (`left: 0`, `fe/src/index.css` `.hint-tip`), so at 1280 px it runs to 1263 px while
+    the box ends at 1144 px: only "An instance uses" shows. At 320 px it is cut at 304 px, and at
+    200 % its 512 px run to 652 px. An absolute tip inside that box will always be clipped there (a
+    scroll box clips both axes). Fix: show the tip in the top layer, out of the box (`popover="manual"`,
+    placed under the − from its `getBoundingClientRect`, its right edge at the −'s right edge and
+    kept inside the viewport), or in the flow under the − if the coder prefers no script placement.
+  - **D1b: the tip cannot be hovered (1.4.13).** Moving the pointer straight down from the − onto the
+    tip hides it: the `margin-top: var(--space-1)` gap between them means the pointer first leaves
+    to the cell, and `leave` (`fe/src/Hint.tsx` 33-41) hides it. Fix: no gap the pointer crosses
+    (the tip's top edge touching the control, or its room given as transparent padding of the tip).
+  - **D1c: the Save bar's tip is not under Delete once the bar wraps** (the reviewer's point,
+    confirmed). `SaveBar.tsx` 300-331 renders Delete and the tip as siblings in `.save-actions`, the
+    positioned box (`fe/src/index.css` about 2417), not in a `.hint-box`. At 320 px Delete is alone on
+    the first line and the tip lands 52 px under it (dx -46), below Discard and Save; at 200 % 145 px
+    under it. Fix: wrap Delete and its tip in a `.hint-box`, as `RowDelete.tsx` 155 does (and move the
+    `.save-actions > [aria-expanded]:first-child` gap to that box).
+- Cleanup: `.hint-box { position: relative }` is declared twice (`fe/src/index.css` 2134 and 2143).
+
+### 22D4 D1 decision: the reason in the flow (designer, 2026-11-24)
+
+Choice: the reason in the normal flow, no top layer. It cannot be clipped by the table's scroll box,
+leaves no gap for the pointer to cross, and follows the bar when it wraps, with no script placement.
+On the pages, where there is one Delete, the reason is always shown while Delete cannot act, so it is
+not content on hover at all. On the lists, where most rows can be switched on, it shows on hover and
+focus only, so the list is not filled with the same sentence on every row. These criteria replace the
+tip parts of 22 D4.3 and 22 D4.10.
+
+**22 D4.13 The list's reason.** While a row's − is disabled and hovered or focused, a
+`span.hint-tip` with `aria-hidden="true"` and the reason's text is the next sibling of the − inside
+the same `span.hint-box`, in the same cell. The hint box, not the −, owns the pointer handlers: the
+reason goes on `mouseleave` of the hint box, on blur of the −, and on Escape. Moving the pointer from
+the − onto the reason keeps it ([1.4.13](https://www.w3.org/TR/WCAG22/#content-on-hover-or-focus)).
+The −'s `aria-describedby` still points to the hidden `${id}-reason` span (22 D4.2).
+
+**22 D4.14 The page's reason.** While the Save bar's Delete cannot act, a `p` with id
+`<delete-id>-reason` (`model-profile-delete-reason`, `server-profile-delete-reason`) and the reason's
+text (`model-profiles-delete-needs-off`, `server-profiles-delete-in-use`) is shown in the bar, after
+its buttons, where the confirm opens (22 D4.11). It is shown all the time, not on hover or focus,
+and Delete's `aria-describedby` names it, so it is read once and seen without pointing. Delete has
+no `.hint-tip`. When Delete can act the `p` is absent.
+
+**22 D4.15 Layout (the designer checks it in the three browsers; jsdom does not apply CSS).**
+`.hint-tip` is in the flow (no `position: absolute`, no outer margin between it and the −; its room
+is its own padding). In a list the hint box is a column inside the status cell, so the reason sits
+under the − and wraps within the cell's width; showing it makes the row taller and moves nothing above
+it. At 320 px and 200 % text no part of the reason is cut off, and the page does not scroll sideways
+([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)).
+
+Tests to change: `fe/src/ModelProfilesDelete1.test.tsx` and `fe/src/ServerProfilesDelete1.test.tsx`
+(22 D4.13: the hint box's `mouseleave` hides the reason; `mouseover` of the reason keeps it; the
+`mouseout` of the − alone does not hide it), and `fe/src/ModelProfileDelete3.test.tsx` and
+`fe/src/ServerProfilePage3.test.tsx` (22 D4.14: the always-shown `p#...-reason` replaces the hover and
+focus tip assertions).

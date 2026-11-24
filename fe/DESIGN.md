@@ -651,11 +651,13 @@ Each is one React component, reused by every page.
     `ButtonBorder`.
   - Delete of a real thing (a model or server profile) is, on its list, a `minus` icon button on
     each row in the status cell, named with the row ("Delete model profile x"), outlined like Add;
-    when it cannot act it stays, `aria-disabled` with its reason as description and a `.hint-tip`
-    on hover and focus (1.4.13), so rows stay aligned. Its Confirm in place opens in a row of its own
-    under the profile's row. On the thing's own page, Delete is a text button at the start of the
-    Save bar's buttons, `--space-5` before Discard (user, 2026-11-24, brief 22 22D4, superseding
-    22D2's status-row minus).
+    when it cannot act it stays, `aria-disabled` and drawn `--muted`, with its reason as description
+    and, on hover and focus, a `.hint-tip` in the flow under it in the same cell, never floating (a
+    table's scroll box clips a floating tip), kept while the pointer is over it (1.4.13). Its Confirm
+    in place opens in a row of its own under the profile's row. On the thing's own page, Delete is a
+    text button at the start of the Save bar's buttons, `--space-5` before Discard; when it cannot
+    act, its reason is a line always shown in the bar under the buttons (user, 2026-11-24, brief 22
+    22D4 and its D1 decision, superseding 22D2's status-row minus).
 - **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
   (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
   the label on one line, cut with an ellipsis where the row is narrower than it (the chip at most the row's width; the x's name carries the full label; a cut chip, on hover or focus, shows a temporary `.chip-full` pill over it with the whole label, wrapping, leaving the x uncovered, hidden by Escape: WCAG 1.4.13; profile chips are focusable for it), wrapping anywhere only under `@media (max-width: 15em)`, the user's large text on a narrow screen (user, 2026-11-21) and, when it can be removed, a 24 px
