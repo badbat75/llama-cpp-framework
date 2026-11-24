@@ -124,6 +124,8 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 
 ## Pitfalls
 
+- `server@<id>.ini` can hold `OpencodeApiKey`: read it with `grep -vE "Key|Token|Secret"` (or key-scoped), never whole (2026-11-24: a full read showed the key in the session output).
+
 - A local-model coder can loop reading (the same brief section and greps again and again after a context compaction) while its log keeps growing: at each liveness check past 30 minutes look at `git diff --stat` of the production files it was given; unchanged means stuck, so stop it and relaunch on a narrower brief (one area of files, exact paths and lines, first step "run these red tests, then edit this file"). 2026-11-24: 22D4's coder read for 1 h 40 min and only added strings.
 
 - Before launching an agent that runs Playwright (a designer review, the UX check, a coder running `fe/ux`), and when it reports, send the Strata agent one line with the time and what (user, 2026-11-24: browser starts fragment memory and stall Strata).
