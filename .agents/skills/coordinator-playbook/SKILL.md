@@ -51,6 +51,11 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 - The local model server, Strata on :8580 (`PARALLEL=4`): up to 3 OpenCode runs at once, 4 only briefly (user,
   2026-11-19, once this session ran both sides); the reviewer, designer and architect are Claude and do
   not count. Count the live runs before launching (`pgrep -fc 'opencode run'`).
+- Launch every OpenCode agent with `opencode run --standalone` (its own private server): without it the
+  session lives in the shared background service (`opencode serve --service`) and keeps running and
+  editing files after its client is killed (bb-auth, 2026-11-24: a killed session ran 3 h and overwrote
+  another agent's work). With it, a `kill` of the PID really stops the agent. `opencode session list`
+  shows each session's last update.
 - RAM is the other limit: one cargo build at a time, and one npm user in `fe/`, so pair a crate run with
   an `fe/` run or a docs run, not two crate builds. Never the designer's browsers (the UX check) and a
   Vitest run together.
