@@ -3885,6 +3885,43 @@ port).
   the stub received the trimmed label, and the list carries `label`; the docs agent adds the route to
   `fe/briefs/api-contract.md` and `crates/bff/README.md`.
 
+### ROCm host memory as GTT (user, 2026-11-24): accepted (user, 2026-11-24), every instance, under test
+
+The finding and its measures are `PLAN.md` "ROCm host memory as GTT, under test": with
+`HSA_USERPTR_FOR_PAGED_MEM=0` and `HSA_SVM_FOR_PAGED_MEM=0`, ROCm's paged host memory is driver GTT
+(libhsakmt `fmm.c` `fmm_allocate_host_gpu`), so compaction and reclaim no longer evict the process's GPU
+queues. **Decision (user, 2026-11-24): both variables on every instance, every backend.**
+
+- **Where: the launch, not the unit.** `pai_core::launch::env_vars` already turns server profile keys
+  into llama-server's environment (`ROCBLAS_USE_HIPBLASLT`, `GGML_CUDA_*`), inherited by the router's
+  per-model children, and `launch_command` serves both `run-instance` (Linux exec, Windows child) and
+  the macOS spawn. The unit's `Environment=` (llama.cpp's package) was the other option: rejected, it is
+  Linux only, needs an engine package release, and could not be turned off per instance.
+- **Every backend**: the two variables are read only by ROCm's runtime (libhsakmt); CUDA, Vulkan and
+  Metal never read them (preference: one rule, no backend detection; harmless where unread). Windows: the
+  HIP SDK there does not run on libhsakmt/KFD, so no effect is expected (unverified; the type check is
+  all that runs there).
+- **Turning it off**: a server profile key `RocmHostMemoryGtt` (bool), unset or `true` exporting both
+  as `0`, `false` exporting neither (the runtime's defaults return). Why a switch: that memory is no
+  longer swappable and GTT is capped near half the RAM, so a large pinned host allocation can fail
+  where it used to succeed. The key follows `RocblasUseHipblaslt`'s pattern (commented line in the
+  render, the bff's key list, `checks.rs`' bool rule); the web Server page shows it with the designer's
+  wording.
+- **Under test**: the docs (the build and engine pages, the key's help text) say "under test" with the
+  measured Strata result and its date until the result under load (a Playwright run, a build, decode
+  speed) is recorded; then the mark goes, or the default flips if it fails.
+
+**Slice GT1** (test first; Linux, Windows type-checked). `ServerConfig.rocm_host_memory_gtt:
+Option<bool>`, read and rendered as `RocmHostMemoryGtt`; `env_vars` exports
+`HSA_USERPTR_FOR_PAGED_MEM=0` and `HSA_SVM_FOR_PAGED_MEM=0` unless it is `Some(false)`; the bff's server
+keys and `checks.rs` take it. Done when: a profile without the key, and one with `true`, launch with both
+variables `0` (the `launch_command` env, also through `instance_command`); `false` launches with
+neither; the render writes the key only when set and its commented default line otherwise; the bff reads
+and saves it and refuses a non-bool 422 with `field`; each crate's clippy and fmt green. Check on this
+machine after the deploy and the user's next instance start (starting llama-server is the user's):
+`/proc/<pid>/environ` holds both; `/proc/<pid>/smaps` shows no large `/dev/zero (deleted)` rw-s
+mappings; `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms` stays flat under load.
+
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
