@@ -124,6 +124,7 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 
 ## Pitfalls
 
+- The liveness check sees only OpenCode runs and stubs in the shell; a Claude subagent (designer, architect, reviewer) is invisible to `ps` and to TaskList. Its notification "is waiting on its own background work" means a command of its own still runs: note the time and, at the next check, stop it with TaskStop if it has not reported within 30 minutes (2026-11-24: a designer sat 11 h 50 min on a hung command, unnoticed).
 - Agents defined in a new `.claude/agents` directory appear only after a new session starts: if an agent
   type is missing, start one before doing its work yourself.
 - OpenCode's first answer after a file changes can be stale: `opencode debug agents` gave `[]`, and
