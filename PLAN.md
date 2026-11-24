@@ -1278,6 +1278,18 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     phase by three product arguments: `llama.cpp`, `strata` and `pai` (today's `framework`), so each
     builds, packages and installs on its own. The design decides the backend argument, the package
     names, Strata's licence in the packages and what happens to the strata-framework repo.
+    Also (user, 2026-11-24): keep systemd-oomd from killing an engine instance. This machine runs
+    systemd-oomd (systemd 259, Ubuntu): `user@.service` ships `ManagedOOMMemoryPressure=kill` at 50 %
+    (`/usr/lib/systemd/system/user@.service.d/10-oomd-user-service-defaults.conf`), which the user
+    turned off here with `ManagedOOMMemoryPressure=auto` in `/etc/systemd/system/user@.service.d/
+    90-oomd-pressure-off.conf`, so the Strata started from the user's session is not killed under
+    pressure. The instance units (`llama.cpp@.service`, later `strata@.service`) run in `system.slice`,
+    where nothing sets `kill` today, so they already read `auto` (`systemctl show`). Read in
+    `systemd.resource-control(5)`: `auto` on a unit does not shield it when an ancestor slice has
+    `kill`; the shield is `ManagedOOMPreference=avoid` or `omit` (root-owned cgroup, xattr support).
+    The architect decides which keys the instance units ship (`ManagedOOMMemoryPressure=auto`
+    explicitly and `ManagedOOMPreference=avoid` or `omit`), and whether `pai-manager` and `pai-bff`
+    take them too.
 13d. **Hardware monitoring, metrics and log consultation** (user, 2026-11-21; built after 13c, user's order). In the web UI: a live
     view of the node's hardware streamed as the native GUI's HW Monitor does (`crates/app/src/hwmon.rs`:
     GPU busy, VRAM, GTT, memory activity, PCIe, CPU, I/O wait, RAM, swap, disk, one sample a second),
