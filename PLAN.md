@@ -1222,6 +1222,9 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     TP1c and 17b2 built 2026-11-24. After 17f (user, 2026-11-23: "the + touches the row above; New server profile should be a + at the end
     of the list"): TP1c (brief 21, 21 T.24, room above the +) and 17b2 (brief 16, 17b2.1 to 17b2.5, a list's
     add is a + after the list, its accessible name unchanged; the same rule amended into 17c.1 and 22 C.1).
+    Then 17f2 (brief 16, 17f2.1 to 17f2.10: the display name set from a pencil after the page heading, the
+    hint saying the ID, service, files and address stay, Rename removed; user, 2026-11-24: "Rename is not
+    clear, we need another UX", the pencil chosen over a facts row), after 22D2.
     Then 22D2 (brief 22, 22 D2.1 to D2.10: Delete as a − beside a status row on both profile pages, the Save
     bar sticky at the top; user, 2026-11-23: "put a minus right of the status and the edit commands at the
     top", the bar at the top confirmed) and the UX audit, brief 24 (A1 to A10, 26 criteria, ranked: A1 run

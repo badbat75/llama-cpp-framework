@@ -13,6 +13,7 @@ brief's number first, `16 17a.4`**, because brief 17's UX pass already has tests
 | 17a | The Server profiles list, a server profile's page with the Server form moved there, the nav entry; the instance page stops reading `/api/instances/{id}/server` | 12 | TP1 (2j) committed: shared files, section 3 "17a and 2j" |
 | 17b | Create and delete a server profile | 10 | 17a |
 | 17f | The instance's name: a free label, else engine and port, the id small; Rename; the "not confirmed" texts of a 504 | 12 | 17b (it amends `writeFailure`, which 17b brings); the bff's label route (`ARCHITECTURE.md`, the architect's slice) built first |
+| 17f2 | The display name set from the page heading (pencil, "Display name" field), replacing 17f's Rename; built 17f stays as it is until 17f2 lands | 10 | 17f (built) |
 | 17c | Create and remove an instance; the start refused for no model profile | 12 | 17a, 17f |
 | 17d | The restart offer; the instance's server profile switch | 11 | 17a, 17f, and the whole of 2j (17d.4 edits the model profile page) |
 | 17e | The instance's model profiles | 11 | 17a, 17f |
@@ -182,7 +183,7 @@ them.
 | `api-unknown-engine` | ``unknown engine `{0}`: this manager serves the engine llama.cpp`` (en_US.toml 1024) | 17b |
 | `instances-new` | `New instance` | 17c |
 | `instances-new-title` | `New instance` | 17c |
-| `instance-name` | `Name` | 17c |
+| `instance-name` | `ID` | 17c (17f2.10: was `Name`) |
 | `instance-name-hint` | `1 to 32 characters: a-z, 0-9 and -, starting with a letter or a digit. It names the instance's service and cannot be changed later.` | 17c |
 | `instance-new-server` | `Server profile` | 17c |
 | `instance-new-server-hint` | `The server profile it runs: its port, addresses and settings. Only server profiles no other instance uses are listed.` | 17c |
@@ -237,14 +238,14 @@ them.
 | `instance-name-auto` | `{0} :{1}` (engine, port) | 17f |
 | `instance-id-shown` | `ID {0}` | 17f |
 | `instance-id-said` | `, instance {0}` | 17f |
-| `instance-rename` | `Rename` | 17f |
-| `instance-label` | `Label` | 17f |
-| `instance-label-hint` | `A name of your own for this instance, shown in the menu, on the overview and on this page. Leave it empty to name the instance by its engine and port again. The ID does not change.` | 17f |
-| `instance-label-save` | `Save label` | 17f |
-| `instance-label-cancel` | `Cancel` | 17f |
-| `instance-label-saving` | `Saving the label…` | 17f |
-| `instance-label-saved` | `The instance is now named {0}.` | 17f |
-| `instance-label-cleared` | `The label is removed: the instance is named {0} again.` | 17f |
+| `instance-rename` | `Rename` | 17f, replaced by 17f2 |
+| `instance-label` | `Label` | 17f, replaced by 17f2 |
+| `instance-label-hint` | `A name of your own for this instance, shown in the menu, on the overview and on this page. Leave it empty to name the instance by its engine and port again. The ID does not change.` | 17f, replaced by 17f2 |
+| `instance-label-save` | `Save label` | 17f, replaced by 17f2 |
+| `instance-label-cancel` | `Cancel` | 17f, replaced by 17f2 |
+| `instance-label-saving` | `Saving the label…` | 17f, replaced by 17f2 |
+| `instance-label-saved` | `The instance is now named {0}.` | 17f, replaced by 17f2 |
+| `instance-label-cleared` | `The label is removed: the instance is named {0} again.` | 17f, replaced by 17f2 |
 | `api-instance-bad-label` | ``invalid instance label `{0}`: use 1 to 64 characters with no control character, or leave it empty to remove the label`` (proposed for the toml line IL1 adds; copied from what IL1 commits) | 17f |
 | `api-instance-label-taken` | ``the label `{0}` is already used by instance {1}: pick another one`` (proposed, as above) | 17f |
 | `write-timeout` | `Not confirmed: the manager did not answer in time, so this may or may not have been done. The page shows what the manager holds once it answers.` | 17f |
@@ -593,6 +594,125 @@ tests of `id · profile` are retired by 17f.2 (the entry is the name only). `tes
 **Out of scope of 17f**: a label in the create form (17c: the new instance is named by engine and
 port until renamed); a label for a server profile; sorting or searching by label; the director's
 view of several nodes (the same rule then, per node).
+
+### 17f2: the display name, set from the heading (10)
+
+User feedback on the deployed 17f (2026-11-24): "what does Rename do?", and once told it sets only the
+name shown: "this way it is not clear". Two causes:
+- the word: "Rename" says the instance itself is renamed, and nothing near it says the id, the
+  service, the files and the address stay;
+- the place: the button sits among the run controls, far from the name it changes
+  (`fe/DESIGN.md` principle 10).
+17f2 calls the thing a **display name** everywhere, puts its control on the heading it changes, and
+says on the open form what does not change. The API, the name rule (17f.1), the nav, the tiles, Used by,
+the refusals (17f.7), the 504 texts (17f.10) and the long-text rules (17f.8) stay as built.
+
+Pattern (a preference, from admin consoles that edit an object's display name beside its title, such
+as a repository's or a resource's name with a pencil): a pencil icon button right after the page
+title opens a small form under it. It keeps the `h1` a plain heading (no input in it, so heading
+navigation and the page's focus on arrival, 1.3.1 and 2.4.3, stay as they are) and costs one click
+from the page, two from the Overview (principle 7).
+
+Superseded: 17f.5, 17f.6's and 17f.9's references to Rename and its place, and the `instance-rename`
+state of 17f.12. Kept: everything else of 17f.
+
+**17f2.1 The pencil.** In the instance page's title row, right after the `h1` (same line when it
+fits, the next line when the name wraps), an icon button: the `pencil` icon (`aria-hidden`; added to
+`Icon.tsx` from the same icon set as the others) and a `span.visually-hidden` holding
+`instance-name-edit` ("Edit display name"), `aria-expanded`, `aria-controls` the form. Look: the
+icon button rule the list's + uses (`fe/DESIGN.md` "Icon buttons of a list", 17b2.2: a 40 px square,
+`--control` outline), so the target is 40 by 40 px
+([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)); `--space-2` from the heading's text. The
+`h1` keeps `id="page-heading"`, its text (the name) and its focus on arrival; the button is outside the
+`h1`, so the heading's accessible name stays the name alone. 17f's Rename button is removed from the
+header.
+
+**17f2.2 The id line says it stays.** The `p.instance-id` under the heading reads
+`instance-id-fixed` ("ID {0}, does not change") on the instance page only; the tiles and Used by keep
+`instance-id-shown` ("ID {0}"). It shows whenever the name is not the id, as 17f.4. When the name IS
+the id (no label, port 0) it shows too on this page, so the reader always sees which word is the key.
+
+**17f2.3 The form.** Pressing the pencil sets `aria-expanded="true"` and shows, right under the id
+line and before the engine, port and state lines, a `form` named `instance-name-label`
+("Display name"), `--space-3` under the title row (principle 9), laid out as 17f's
+`.instance-label-form` (D3): the label "Display name" (`instance-name-label`) above a text box
+(`autocomplete="off"`, `spellcheck="false"`, the form's width up to the Server form's field width)
+holding the current label (empty when none), its text selected, the focus in it; the hint; the error
+place; then Save (`instance-name-save`, "Save", primary) and Cancel (`instance-label-cancel`) in a row,
+`--space-2` apart; then the status line and the alert place. No placeholder (its contrast is weak,
+[1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)): the hint names the automatic name.
+
+**17f2.4 The hint says what changes and what does not.** `instance-name-hint`, with `{0}` the
+automatic name (`instance-name-auto` with the engine and port, or the id when the port is 0) and
+`{1}` the id: "Shown in the menu, on the overview and on this page. Leave it empty to show {0}. The ID
+{1}, the service, the files and the address stay the same." It is always shown (not behind About),
+and the box's `aria-describedby` names it, then the error when there is one
+([3.3.2](https://www.w3.org/TR/WCAG22/#labels-or-instructions)).
+
+**17f2.5 The empty state.** With no label the heading reads the automatic name (17f.1), the id line
+reads `instance-id-fixed`, and the form opens with an empty box and the hint naming that automatic
+name. Saving an empty box when there is no label sends nothing and closes the form (17f.6).
+
+**17f2.6 Save and close.** As 17f.6 and 17f.7, with these changes: Enter or Save sends
+`PUT /api/instances/<id>/label`; Escape, Cancel or the pencil pressed again closes; after a 204, a
+close or an unchanged text, the form closes and the focus goes to the pencil. The status line, right
+after the title row and kept after the form closes, reads `instance-name-saved` ("Display name saved:
+{0}.") or, for the clear, `instance-name-cleared` ("Display name removed: shown as {0}."), both
+`role="status"` ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)); `instance-name-saving`
+("Saving the display name…") while it runs; Save and Cancel `aria-disabled` meanwhile, and the form does
+not close while saving (the reviewer's 17f fix stays). The heading, the title, the nav and the tiles
+follow from the list read again (no optimistic name). A 401's sign-in puts the focus back on Save.
+
+**17f2.7 Refusal texts say "display name".** `api-instance-bad-label` becomes "A display name has 1
+to 64 characters and no control character; leave it empty to remove it." and
+`api-instance-label-taken` becomes "Instance {1} already shows the display name {0}; pick another
+one." (same keys and arguments, under the field as 17f.7).
+
+**17f2.8 Keyboard.** Tab order in `main`: the pencil (first stop, before Start), then, with the form
+open, the box, Save, Cancel, then Start, Stop, Restart, Start at boot, the tags. The focus never drops
+when the form closes ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)); the pencil's name is
+"Edit display name" and its state `aria-expanded`
+([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)).
+
+**17f2.9 Long text.** A 64-character label with no break point beside the pencil, and the
+40-character id in `instance-id-fixed`, cause no sideways scroll at 320 px and 200 % text
+([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)): the title row wraps (flex with `flex-wrap: wrap`, the
+`h1` `min-width: 0` and `overflow-wrap: anywhere`), the pencil never shrinks below 40 px.
+
+**17f2.10 One word per thing, everywhere.** "ID" is the key, "display name" the label:
+- 17c's create form field `instance-name` reads "ID" (was "Name"; its hint already says it names
+  the service and cannot be changed);
+- the strings file loses `instance-rename`, `instance-label`, `instance-label-hint`,
+  `instance-label-save`, `instance-label-saving`, `instance-label-saved` and `instance-label-cleared`,
+  and gains the 17f2 keys below;
+- `fe/ux/check.js`: the `instance-rename` state becomes `instance-name-edit` (`#/instances/default`,
+  press the pencil by its name, expect the "Display name" field), and `instance-page` expects
+  `instance-id-fixed`.
+
+| Key | English | Part |
+|---|---|---|
+| `instance-name-edit` | `Edit display name` | 17f2 |
+| `instance-id-fixed` | `ID {0}, does not change` | 17f2 |
+| `instance-name-label` | `Display name` | 17f2 |
+| `instance-name-hint` | `Shown in the menu, on the overview and on this page. Leave it empty to show {0}. The ID {1}, the service, the files and the address stay the same.` | 17f2 |
+| `instance-name-save` | `Save` | 17f2 |
+| `instance-name-saving` | `Saving the display name…` | 17f2 |
+| `instance-name-saved` | `Display name saved: {0}.` | 17f2 |
+| `instance-name-cleared` | `Display name removed: shown as {0}.` | 17f2 |
+
+`instance-label-cancel` ("Cancel") stays.
+
+**Tests that change**: `InstanceRename17f.test.tsx` (the opener found by "Edit display name", the
+field by "Display name", the texts above, the Tab order of 17f2.8), the `instance-page` tests that
+read the id line, and 17c's tests of the `Name` field when they are written.
+
+**Out of scope of 17f2**: editing the name from a tile or the menu; a display name for a server or
+model profile; the id itself (never editable).
+
+**Option B (not chosen, for the user if A still reads unclear):** a "Display name" row in the header's
+facts (`Display name: Coding assistant` with an Edit button beside it, `ID: default (does not change)`
+under it), opening the same form. Trade-off: the field's name is visible before any click, at the cost
+of the name appearing twice on the page (heading and row).
 
 ### 17c: create and remove an instance (12)
 
