@@ -71,14 +71,31 @@ const LONG_POOL_ID = 'abcdefghijklmnopqrstuvwxyz01234x'
 // The host's name (stub.py `VERSION`), which the nav's host label reads (20 N.4).
 const HOST = 'gpu-box'
 // The instances of stub.py `list=many`, as the stub spells them (brief 20
-// section 6): the 40-character id with no break point, its server profile of
-// the same length, and the short profile of `default`.
+// section 6, and brief 16 17f.12): the 40-character id with no break point, and
+// the id of the instance the stub answers by default.
 const MANY_ID = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890123'
-const LONG_SERVER_PROFILE = 'QWEN327BTHIRTYCHARACTERSPROFILE012345678'
-// The host's list, where the nav's instance links live (20 N.3), and
-// `shownProfile`, the profile as an instance link shows it beside the id (N.5).
+const DEFAULT_ID = 'default'
+// The label stub.py `list=many` gives the `MANY_ID` row (16 17f.12): the longest
+// the rule allows, 64 characters with no break point, so the nav pill and the
+// tile have to break the name inside them.
+const LONG_LABEL = 'QWEN327BTHIRTYCHARACTERSTILELABEL0123456789012345678901234567890'
+// The label stub.py `list=many` gives the `default` row: a plain one with
+// spaces, the shape a name has when it is read.
+const OWNED_LABEL = 'Coding assistant'
+// The name of the stub's `default` instance (stub.py's one-instance answer,
+// port 9931, no label): `instance-name-auto` with the engine and the port,
+// which 16 17f.1 puts in the page's heading, the nav and the tile.
+const DEFAULT_NAME = 'llama.cpp :9931'
+// The id line of 16 17f.3 and 17f.4, as the strings file spells it. Absent
+// from the strings file until 17f.11 adds the key, where the marker's text is
+// the key's own placeholder, so the state fails, as it asks.
+const ID_LINE = (id) => (S['instance-id-shown'] ?? '{0}').replace('{0}', id)
+// The host's list, where the nav's instance links live (20 N.3).
 const NAV_HOST = '#nav ul[aria-labelledby="nav-host"]'
-const shownProfile = (p) => S['nav-instance-profile-shown'].replace('{0}', p)
+// The Rename of 16 17f.5, named by the key 17f.11 adds: absent from the strings
+// file it names a button of the text "undefined", so the state fails until the
+// slice lands, as it asks.
+const RENAME = `main button:has-text("${S['instance-rename']}")`
 // The start of the GPU card's as-of line (brief 14 GD1.7): the sentence of
 // `model-profile-gpu-probed-at` up to its `{0}`, which the page fills with the
 // probe's moment in the browser's own locale, so no state can name the whole
@@ -202,18 +219,48 @@ const STATES = [
         count: 13,
         message: 'the 13 chips of the four tiles: 3 + 2 + 0 + 8',
       },
+      {
+        // 16 17f.3: the tile's link reads the name, which is the label where
+        // there is one, so the widest name the tile has to fit is the 64-character
+        // label with no break point.
+        selector: '.tile-id',
+        count: 4,
+        message: 'one name per tile',
+      },
+      {
+        selector: '.tile-id',
+        text: LONG_LABEL,
+        message: 'the 64-character label, unbroken, inside its tile',
+      },
+      {
+        selector: '.tile-id',
+        text: OWNED_LABEL,
+        message: 'the label of `default`, with its spaces',
+      },
+      {
+        // 16 17f.3: the id rides under the name, and is absent from the tile
+        // whose name IS the id (`embed`, port 0, no label): 4 tiles, 3 lines.
+        selector: '.tile .instance-id',
+        count: 3,
+        message: 'the id line of every tile whose name is not the id',
+      },
+      {
+        selector: '.tile .instance-id',
+        text: ID_LINE(MANY_ID),
+        message: 'the 40-character id, unbroken, under its label',
+      },
     ],
   },
   {
-    // Brief 20 section 6 (the N1 review, D2): the nav with the menu opened. At
-    // 1280 px the nav is the column and its markers are read as they stand; at
-    // 320 px the nav is `display: none` until it opens (index.css 627), so
-    // `menu: true` clicks the Menu button first. `list=many` gives the links
-    // the server profiles of section 6, the `null` and the missing key
-    // included, and the 40-character id with its 40-character profile, so the
-    // check reads the open menu, its profiles and the long id at 320 px in both
-    // themes (axe and the scrollWidth), and again at 200 % text, where the text
-    // pass runs every state.
+    // Brief 20 section 6 (the N1 review, D2), as brief 16 17f.2 amends it: the
+    // nav with the menu opened. At 1280 px the nav is the column and its markers
+    // are read as they stand; at 320 px the nav is `display: none` until it
+    // opens (index.css 627), so `menu: true` clicks the Menu button first.
+    // `list=many` gives the links the 40-character id and the ids with a server
+    // profile, so the check reads the open menu and the long id at 320 px in
+    // both themes (axe and the scrollWidth), and again at 200 % text, where the
+    // text pass runs every state. The link's text is the name alone, so the long
+    // id is the whole of the widest pill.
     name: 'nav-open',
     set: 'session=admin&list=many',
     hash: '#/',
@@ -229,35 +276,34 @@ const STATES = [
       {
         selector: `${NAV_HOST} .nav-instance`,
         count: 4,
-        message:
-          'the id run of each link: coder answers null and embed has no key, so both are the id alone',
+        message: 'the name of each link, in the manager order',
       },
       {
-        selector: `${NAV_HOST} .nav-instance [aria-hidden="true"]`,
-        count: 2,
-        message:
-          'the profile shown beside the id, on the two links that have one',
-      },
-      {
-        selector: `${NAV_HOST} .nav-instance [aria-hidden="true"]`,
-        text: shownProfile('qwen-27b'),
-        message: 'the short profile as the pill shows it: "default . qwen-27b"',
+        // 16 17f.2: the entry is the name alone, so the widest pill is the
+        // 64-character label with no break point to find.
+        selector: `${NAV_HOST} .nav-instance`,
+        text: LONG_LABEL,
+        message: 'the 64-character label, unbroken, inside its pill',
       },
       {
         selector: `${NAV_HOST} .nav-instance`,
-        text: MANY_ID,
-        message: 'the 40-character id, unbroken, inside its pill',
+        text: OWNED_LABEL,
+        message: 'the label of `default`, with its spaces',
       },
       {
-        selector: `${NAV_HOST} .nav-instance [aria-hidden="true"]`,
-        text: shownProfile(LONG_SERVER_PROFILE),
-        message: 'its 40-character profile, which has no break point to find',
+        selector: `${NAV_HOST} .nav-instance`,
+        text: 'llama.cpp :8580',
+        message: '`coder`, unlabelled with a port, named by engine and port',
       },
       {
-        selector: `${NAV_HOST} .nav-instance .visually-hidden`,
-        text: S['nav-instance-profile'].replace('{0}', LONG_SERVER_PROFILE),
-        message: 'the run only the reader says, naming what the second word is',
+        selector: `${NAV_HOST} .nav-instance`,
+        text: 'embed',
+        message: '`embed`, unlabelled and with no port, named by its id',
       },
+      // The entry holds the name and nothing else (17f.2: no server profile, no
+      // id, no run only a reader says). A marker proves a thing is there, so the
+      // check reads the four names above; the absence of the rest is pinned by
+      // InstanceName17f.test.tsx.
     ],
   },
   {
@@ -276,11 +322,16 @@ const STATES = [
   {
     // Brief 16, 17a.10: the instance page as it is now, with no Server form:
     // its header, its tags field and the section naming its server profile.
+    // 16 17f.1: the heading is the instance's name, which the stub's port spells
+    // out of the id.
     name: 'instance-page',
     set: 'session=admin',
     hash: '#/instances/default',
     expect: [
-      { selector: '#page-heading', text: 'default' },
+      { selector: '#page-heading', text: DEFAULT_NAME },
+      // 16 17f.4: the id rides right after the name, so the page says which
+      // instance it is by the word the menu uses.
+      { selector: 'p.instance-id', text: ID_LINE(DEFAULT_ID) },
       { selector: 'h2', text: S['instance-server-title'] },
     ],
   },
@@ -293,7 +344,7 @@ const STATES = [
     set: 'session=admin&key=shown&tags=long',
     hash: '#/instances/default',
     expect: [
-      { selector: '#page-heading', text: 'default' },
+      { selector: '#page-heading', text: DEFAULT_NAME },
       { selector: 'li.chip', count: 8 },
       { selector: '.chips-profile li.chip', count: 8 },
     ],
@@ -312,10 +363,25 @@ const STATES = [
     set: 'session=admin&key=shown&tags=long',
     hash: '#/instances/default',
     expect: [
-      { selector: '#page-heading', text: 'default' },
+      { selector: '#page-heading', text: DEFAULT_NAME },
       { selector: '.tag-add' },
     ],
     open: { click: '.tag-add', then: '.tag-new input' },
+  },
+  {
+    // Brief 16, slice 17f (17f.12): the rename form opened on the instance page,
+    // on the name the stub's port spells. The marker names the key 17f.11 adds:
+    // absent from the strings file it names a button of the text "undefined", so
+    // the state fails until the slice lands, as it asks. The box the click opens
+    // is the page's only form input: the tags field is chips, its pill closed.
+    name: 'instance-rename',
+    set: 'session=admin',
+    hash: '#/instances/default',
+    expect: [
+      { selector: '#page-heading', text: DEFAULT_NAME },
+      { selector: RENAME, message: 'the Rename, beside the name' },
+    ],
+    open: { click: RENAME, then: 'main form input' },
   },
   {
     // Brief 16, slice 17a (17a.11): the pool list at its widest row, so the

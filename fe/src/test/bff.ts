@@ -23,8 +23,29 @@ export const EN: Record<string, string> = {
   // once for the eye.
   'nav-nodes': 'Nodes',
   'nav-this-node': 'This node',
-  'nav-instance-profile': ', server profile {0}',
-  'nav-instance-profile-shown': '· {0}',
+  // Brief 16, slice 17f (section 2): the instance's name, the id shown beside
+  // it, and the rename form. 17f.11 takes `nav-instance-profile` and
+  // `nav-instance-profile-shown` out of the strings file: 17f.2 makes the menu
+  // entry the name only, so the mirror no longer carries them either.
+  'instance-name-auto': '{0} :{1}',
+  'instance-id-shown': 'ID {0}',
+  'instance-id-said': ', instance {0}',
+  'instance-rename': 'Rename',
+  'instance-label': 'Label',
+  'instance-label-hint':
+    'A name of your own for this instance, shown in the menu, on the overview and on this page. Leave it empty to name the instance by its engine and port again. The ID does not change.',
+  'instance-label-save': 'Save label',
+  'instance-label-cancel': 'Cancel',
+  'instance-label-saving': 'Saving the label…',
+  'instance-label-saved': 'The instance is now named {0}.',
+  'instance-label-cleared':
+    'The label is removed: the instance is named {0} again.',
+  'api-instance-bad-label':
+    'invalid instance label `{0}`: use 1 to 64 characters with no control character, or leave it empty to remove the label',
+  'api-instance-label-taken':
+    'the label `{0}` is already used by instance {1}: pick another one',
+  'write-timeout':
+    'Not confirmed: the manager did not answer in time, so this may or may not have been done. The page shows what the manager holds once it answers.',
   loading: 'Loading…',
   'not-found': 'There is no page at this address.',
   'not-found-home': 'Go to the overview',
@@ -1013,7 +1034,31 @@ export type Instance = {
   instanceTags?: string[]
   boot?: boolean | null | string | number
   serverProfile?: string | null | number
+  /** The label the user gave the instance (brief 16, 16 17f.1), `null` when it
+   * has none. The default fixtures leave it out, as they leave `port`: the name
+   * is then the id, so every test that finds an instance link by the name
+   * `default` stays green. */
+  label?: string | null | number
 }
+
+/**
+ * The name 16 17f.1 gives an item: its label when it is a non-empty string,
+ * else `instance-name-auto` with the engine and the port when the port is above
+ * 0, else the id. A port that is not a number is unread, as the tile's Port row
+ * reads it (12 T1.3). The tests build the accessible name of a link, a tile or
+ * the instance page's `h1` with it, so they do not restate the rule.
+ */
+export const instanceName = (item: {
+  id: string
+  engine: string
+  port?: number | string
+  label?: string | null | number
+}): string =>
+  typeof item.label === 'string' && item.label !== ''
+    ? item.label
+    : typeof item.port === 'number' && item.port > 0
+      ? en('instance-name-auto', item.engine, String(item.port))
+      : item.id
 
 export const INSTANCES: Instance[] = [
   { id: 'default', engine: 'llama.cpp', state: 'active' },
@@ -1593,6 +1638,18 @@ export type BffOptions = {
     n: number,
     init?: RequestInit,
   ) => Response | Promise<Response>
+  /**
+   * PUT /api/instances/{id}/label: the reply to the n-th save of the instance's
+   * label (from 1), given the parsed body and the decoded id. Brief 16, 16
+   * 17f.6: the body is `{"label": <the text trimmed>}`, the answer 204 with no
+   * body. Default 204.
+   */
+  instanceLabel?: (
+    body: unknown,
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
 }
 
 export type Call = { method: string; path: string; body: unknown }
@@ -1861,6 +1918,18 @@ export function fakeBff(options: BffOptions = {}) {
           : reply(204),
       )
     }
+    const instanceLabel = /^PUT \/api\/instances\/([^/]+)\/label$/.exec(route)
+    if (instanceLabel) {
+      const id = decodeURIComponent(instanceLabel[1]!)
+      const n = calls.filter(
+        (c) => c.method === 'PUT' && c.path.endsWith('/label'),
+      ).length
+      return Promise.resolve(
+        options.instanceLabel
+          ? options.instanceLabel(body, id, n, init)
+          : reply(204),
+      )
+    }
     return Promise.reject(new TypeError(`unexpected ${route}`))
   })
   vi.stubGlobal('fetch', fetch)
@@ -1897,6 +1966,25 @@ export function isHidden(el: Element | null): boolean {
 /** True when `a` comes before `b` in the document. */
 export function before(a: Node, b: Node): boolean {
   return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+}
+
+/**
+ * What the eye reads inside `root`: its text with the runs the reader says and
+ * the eye does not (`.visually-hidden`) left out. 16 17f.3 puts
+ * `instance-id-said` in a visually hidden span inside the tile's link, so a
+ * link's `textContent` is not what the page shows.
+ */
+export function shownText(root: Node): string {
+  let out = ''
+  for (const node of Array.from(root.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) out += node.textContent ?? ''
+    else if (
+      node.nodeType === Node.ELEMENT_NODE &&
+      !(node as Element).matches('.visually-hidden')
+    )
+      out += shownText(node)
+  }
+  return out.replace(/\s+/g, ' ').trim()
 }
 
 /**

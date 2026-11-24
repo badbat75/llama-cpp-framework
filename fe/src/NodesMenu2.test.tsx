@@ -385,8 +385,8 @@ test('20 N.10: at #/about the Tab path is the shell, Overview, the two instance 
   })
   expect(document.activeElement, 'the page takes the focus on its h1').toBe(h1)
   // The Menu button is the shell's, before the theme switch (H5b.7, 13 N.11),
-  // and the visible text is what Tab names: the reader phrase of the profile
-  // is inside the name, not the text (decision 5).
+  // and the visible text is what Tab names. 16 17f.2: the entry is the name
+  // alone, so the visible text IS the name (brief 20 decision 5 is closed).
   expect(
     tabbable().map(shown),
     'the tab order of 20 N.10, About last, the page adding no stop',
@@ -397,7 +397,7 @@ test('20 N.10: at #/about the Tab path is the shell, Overview, the two instance 
     en('theme-dark'),
     en('session-sign-out'),
     en('nav-overview'),
-    'default · qwen-27b',
+    'default',
     'coder',
     en('nav-node'),
     en('nav-server-profiles'),
@@ -427,7 +427,7 @@ test('20 N.10: the Menu button opens the nav holding the same links in the same 
     'the same links, in the same order, as the Tab path',
   ).toEqual([
     en('nav-overview'),
-    'default · qwen-27b',
+    'default',
     'coder',
     en('nav-node'),
     en('nav-server-profiles'),
@@ -651,9 +651,9 @@ test('20 N.12: signed out there is no nav, so no Nodes label, no host entry and 
     'the signed-in shell has the Nodes label',
   ).toBe(en('nav-nodes'))
   expect(byId('nav-host'), 'and the host entry').not.toBeNull()
-  await within(nav).findByRole('link', {
-    name: 'default, server profile qwen-27b',
-  })
+  // 16 17f.2: the entry is the name alone, and this item has no label and no
+  // port, so the name is the id.
+  await within(nav).findByRole('link', { name: 'default' })
 })
 
 test('20 N.12: the h2 over the Overview tiles still reads the host name, and instances-title when the read answers with none', async () => {

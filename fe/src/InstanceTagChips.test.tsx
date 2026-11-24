@@ -25,6 +25,7 @@ import {
   en,
   fakeBff,
   held,
+  instanceName,
   isHidden,
   reply,
   startAt,
@@ -270,7 +271,10 @@ async function openPage(
     await flush()
     serverTitle(main)
   } else {
-    await screen.findByRole('heading', { level: 1, name: 'default' })
+    await screen.findByRole('heading', {
+      level: 1,
+      name: instanceName(TAG_ITEM),
+    })
     await within(main).findByRole('heading', {
       level: 2,
       name: en('instance-server-title'),
@@ -628,7 +632,10 @@ async function openPageFromOverview(): Promise<Page> {
     name: en('overview-title'),
   })
   await typeHash('#/instances/default')
-  await within(main).findByRole('heading', { level: 1, name: 'default' })
+  await within(main).findByRole('heading', {
+    level: 1,
+    name: instanceName(TAG_ITEM),
+  })
   await within(main).findByRole('heading', {
     level: 2,
     name: en('instance-server-title'),
@@ -723,6 +730,8 @@ test('15 C1.2 (as 15 section 10 R5 amends it): the tab order is Start at boot, A
   const stops = tabbable(p.main)
   const order = [
     boot,
+    // 16 17f.9: the rename form's opener follows Start at boot.
+    within(p.main).getByRole('button', { name: en('instance-rename') }),
     within(p.main).getByRole('button', {
       name: `${en('field-about')} ${en('instance-tags-own')}`,
     }),

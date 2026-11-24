@@ -5,7 +5,13 @@
 // The instance page keeps its own read (Boot.test.tsx). "13 N.1" is the
 // brief's criterion 1.
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import App from './App.tsx'
 import {
   INSTANCES,
@@ -60,10 +66,21 @@ async function open(options: BffOptions = {}) {
   return { bff, list: await tilesList(section) }
 }
 
+/** The tile link of one instance id: 16 17f.1 names a tile by the item's name,
+ *  which is the engine and the port when the item has one, so the tile of an id
+ *  is found by the address it leads to, not by its text. */
+function tileLink(list: HTMLElement, id: string): HTMLAnchorElement | null {
+  return list.querySelector<HTMLAnchorElement>(
+    `a.tile-id[href="#/instances/${encodeURIComponent(id)}"]`,
+  )
+}
+
 /** The tile of one instance id, once it is on screen. */
 async function tileOf(list: HTMLElement, id: string): Promise<HTMLLIElement> {
-  const link = await within(list).findByRole('link', { name: id })
-  const tile = link.closest('li')
+  await waitFor(() =>
+    expect(tileLink(list, id), `the tile link of ${id}`).not.toBeNull(),
+  )
+  const tile = tileLink(list, id)!.closest('li')
   expect(tile, `the tile of ${id} is a list item`).not.toBeNull()
   return tile as HTMLLIElement
 }

@@ -27,8 +27,10 @@ import {
 import { Icon, type IconName } from './Icon.tsx'
 import {
   errorText,
+  instanceName,
   readInstanceTagSuggestions,
   readServerProfiles,
+  writeLabel,
   writeTags,
   type Answer,
   type Instance,
@@ -165,6 +167,10 @@ function failureText(id: string, key: string): string {
       return t('api-client-unavailable')
     case 'client-service-failed':
       return t('api-client-service-failed')
+    // A 504 reached the manager: the write may have happened, and the page
+    // reads again to show what the manager holds (16 17f.10).
+    case 'client-timeout':
+      return t('write-timeout')
     default:
       return t('request-failed')
   }
@@ -185,6 +191,9 @@ function refusalText(id: string, refusal: TagsRefusal): string {
       return t('instance-not-found', args[0] ?? id)
     case 'client-unavailable':
       return t('api-client-unavailable')
+    // A 504 reached the manager: the list may have changed (16 17f.10).
+    case 'client-timeout':
+      return t('write-timeout')
     default:
       return status === 422 ? t('api-other', key) : t('request-failed')
   }
@@ -239,7 +248,9 @@ export default function InstancePage({
     null,
   )
   // The Sign in whose dialog is open (43a, 45e).
-  const [asking, setAsking] = useState<'run' | 'boot' | 'tags' | null>(null)
+  const [asking, setAsking] = useState<
+    'run' | 'boot' | 'tags' | 'label' | null
+  >(null)
   const [runs, setRuns] = useState<Runs>({ started: 0, settled: 0 })
   // Sign-ins in the page's dialogs (43b): after each one as another session, the
   // tags field is remounted (keyed by `rereads`), so it shows what the page reads
@@ -374,7 +385,9 @@ export default function InstancePage({
       text: failureText(id, result),
       signIn: result === 'signed-out' || result === 'revoked',
     })
-    setNext({ delay: IDLE_MS, run: null })
+    // A 504 is not confirmed: the state shown must follow the manager, so the
+    // list is read now, not at the next idle poll (16 17f.10).
+    setNext({ delay: result === 'client-timeout' ? 0 : IDLE_MS, run: null })
   }
 
   /** A sign-in in any of the page's dialogs (43b): true when the page stays. */
@@ -395,7 +408,9 @@ export default function InstancePage({
         ? `${uid}-boot-sign-in`
         : from === 'tags'
           ? `${uid}-tags-sign-in`
-          : `${uid}-sign-in`
+          : from === 'label'
+            ? `${uid}-rename-sign-in`
+            : `${uid}-sign-in`
     document.getElementById(signIn)?.focus()
   }
 
@@ -405,8 +420,9 @@ export default function InstancePage({
     flushSync(() => setAsking(null))
     if (!kept) return
     // Back on the control the sign-in answers for: the run button that was
-    // clicked, Start at boot's checkbox, and in the tags field the New tag box
-    // while its pill is open, else the Add tag button (15 C1.10). The box is
+    // clicked, Start at boot's checkbox, in the tags field the New tag box
+    // while its pill is open, else the Add tag button (15 C1.10), and in the
+    // rename form Save label with what was typed kept (16 17f.7). The box is
     // in the document only while the pill is open.
     const pillOpen = document.getElementById(`${uid}-tags-box`) !== null
     const control =
@@ -414,13 +430,24 @@ export default function InstancePage({
         ? `${uid}-boot-control`
         : from === 'tags'
           ? `${uid}-tags-${pillOpen ? 'box' : 'add'}`
-          : `${uid}-${clicked.current}`
+          : from === 'label'
+            ? `${uid}-rename-save`
+            : `${uid}-${clicked.current}`
     document.getElementById(control)?.focus()
   }
 
   return (
     <>
-      <PageHeading text={id} />
+      {/* The name, and the id as the stable key right after it (16 17f.4): the
+          title follows the name, the route stays the id. */}
+      <PageHeading
+        text={instance === undefined ? id : instanceName(instance)}
+        idLine={
+          instance === undefined || instanceName(instance) === id
+            ? undefined
+            : t('instance-id-shown', id)
+        }
+      />
       <Body answer={answer} id={id}>
         {instance !== undefined && (
           <>
@@ -473,6 +500,14 @@ export default function InstancePage({
                 fieldId={`${uid}-boot`}
                 renewals={signIns.rereads + signIns.kept}
                 onSignIn={() => setAsking('boot')}
+              />
+              <Rename
+                id={id}
+                fieldId={`${uid}-rename`}
+                instance={instance}
+                renewals={signIns.rereads + signIns.kept}
+                onSignIn={() => setAsking('label')}
+                onSaved={reread}
               />
             </div>
             <TagsField
@@ -730,6 +765,321 @@ function Boot({
 }
 
 /**
+ * The rename form of the header (fe/briefs/16-server-profiles-and-instances.md,
+ * 16 17f.5 to 17f.9): a secondary `Rename` opener with `aria-expanded`, and
+ * right after it the form with the Label box, Save label and Cancel, its status
+ * line and its alert place. The form is part of the header and not a page edit:
+ * typing in it arms the unsaved-changes question of nothing.
+ *
+ * The outcome of a write is committed to the form's status while the form is
+ * open, and the form closes one commit later, where the header's own line after
+ * the opener carries it: the page shows the outcome once, whether the form is
+ * open or closed.
+ */
+function Rename({
+  id,
+  fieldId,
+  instance,
+  renewals,
+  onSignIn,
+  onSaved,
+}: {
+  id: string
+  fieldId: string
+  /** The instance as the page last read it: its label, engine and port. */
+  instance: Instance
+  /** Raised by every sign-in that kept the page: a session alert goes. */
+  renewals: number
+  /** The Sign in of the 401 and the 403: the page opens its dialog. */
+  onSignIn: () => void
+  /** Raised when the name shown must follow the manager's: the page reads the
+   * list again. */
+  onSaved: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [saving, setSaving] = useState(false)
+  // The outcome of the last write, in the form's status while it is open and in
+  // the header's line once it is closed (17f.6).
+  const [outcome, setOutcome] = useState('')
+  // The 422 and the 409, under the box (17f.7); one keystroke clears it.
+  const [error, setError] = useState<string | undefined>(undefined)
+  const [stored, setAlert] = useState<{
+    text: string
+    signIn: boolean
+    at: number
+  } | null>(null)
+  const alert = stored?.signIn && stored.at !== renewals ? null : stored
+  // The write in flight, guarded by a ref: Enter in the box and the form's
+  // submit are the same save, and a press while it runs sends nothing (17f.6).
+  const sent = useRef(false)
+  const mounted = useRef(true)
+  const renewalsNow = useRef(renewals)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  useEffect(() => {
+    renewalsNow.current = renewals
+  }, [renewals])
+
+  /** The line a write leaves: `instance-label-saved` with the name the label
+   *  gives, or `instance-label-cleared` with the name the instance is back to
+   *  (the engine and the port, or the id) for the empty label (17f.6). */
+  function outcomeOf(trimmed: string): string {
+    if (trimmed !== '') return t('instance-label-saved', trimmed)
+    return t(
+      'instance-label-cleared',
+      instance.port > 0
+        ? t('instance-name-auto', instance.engine, String(instance.port))
+        : instance.id,
+    )
+  }
+
+  /** Opens the form with the current label, its text selected and the focus in
+   *  the box, so typing replaces it (17f.5). */
+  function openForm() {
+    flushSync(() => {
+      setOutcome('')
+      setError(undefined)
+      setAlert(null)
+      setText(instance.label ?? '')
+      setOpen(true)
+    })
+    const box = document.getElementById(`${fieldId}-box`)
+    if (box instanceof HTMLInputElement) {
+      box.focus()
+      box.setSelectionRange(0, box.value.length)
+    }
+  }
+
+  /** Closes the form at once: the typing goes, and the outcome stays in the
+   *  header's line (17f.5, 17f.9). A write on its way is not cancelled: the
+   *  three ways of closing are refused while it runs, so the answer lands in
+   *  the status of the form the reader is looking at, with the typing they
+   *  made (17f review R1). */
+  function closeForm() {
+    if (saving || sent.current) return
+    leaveForm()
+  }
+
+  /** The closing of every path, the write's own included: the form goes, the
+   *  typing goes, and the opener takes the focus so it never drops. */
+  function leaveForm() {
+    setOpen(false)
+    setText('')
+    setError(undefined)
+    setAlert(null)
+    setSaving(false)
+    sent.current = false
+    document.getElementById(fieldId)?.focus()
+  }
+
+  /** Leaves a write's outcome and closes the form. The open form's status is
+   *  committed first (flushSync), so the line the reader hears is the outcome
+   *  and not the text of the closing form; the header's own line after the
+   *  opener carries it from there (17f.6, 17f.9). */
+  function showOutcome(line: string) {
+    flushSync(() => setOutcome(line))
+    leaveForm()
+  }
+
+  /** Saves what is in the box: the text trimmed, `""` for the clear (17f.6). A
+   *  text that trims to the label the instance has sends nothing. The trim is
+   *  the manager's, spaces and tabs only (17f review R2, `checks.rs`
+   *  `instance_label`): `String.prototype.trim` also strips a no-break space,
+   *  which the manager keeps, so the form would send a label the manager never
+   *  received and take such a label for the one the instance has. */
+  async function save() {
+    if (saving || sent.current) return
+    const trimmed = text.replace(/^[ \t]+|[ \t]+$/g, '')
+    if (trimmed === (instance.label ?? '').replace(/^[ \t]+|[ \t]+$/g, '')) {
+      showOutcome(outcomeOf(trimmed))
+      return
+    }
+    sent.current = true
+    setSaving(true)
+    setError(undefined)
+    setAlert(null)
+    setOutcome(t('instance-label-saving'))
+    const result = await writeLabel(id, trimmed)
+    if (!mounted.current) return
+    setSaving(false)
+    sent.current = false
+    if (result === 'saved') {
+      showOutcome(outcomeOf(trimmed))
+      onSaved()
+      return
+    }
+    setOutcome('')
+    const failure = labelFailure(id, result)
+    if (failure.at === 'field') {
+      setError(failure.text)
+      document.getElementById(`${fieldId}-box`)?.focus()
+      return
+    }
+    setAlert({
+      text: failure.text,
+      signIn: failure.signIn,
+      at: renewalsNow.current,
+    })
+    // A 504 is not confirmed: the name shown is the manager's, so the list is
+    // read again (17f.7, 17f.10).
+    if (failure.again) onSaved()
+  }
+
+  const describedBy = [
+    `${fieldId}-hint`,
+    ...(error === undefined ? [] : [`${fieldId}-error`]),
+  ].join(' ')
+
+  return (
+    <>
+      <button
+        id={fieldId}
+        type="button"
+        className="secondary"
+        aria-expanded={open}
+        onClick={() => (open ? closeForm() : openForm())}
+      >
+        {t('instance-rename')}
+      </button>
+      {open && (
+        <form
+          className="instance-label-form"
+          aria-label={t('instance-label')}
+          onSubmit={(e) => {
+            e.preventDefault()
+            void save()
+          }}
+        >
+          <label htmlFor={`${fieldId}-box`}>{t('instance-label')}</label>
+          <input
+            id={`${fieldId}-box`}
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={text}
+            aria-describedby={describedBy}
+            {...(error === undefined ? {} : { 'aria-invalid': true })}
+            onChange={(e) => {
+              setText(e.target.value)
+              setError(undefined)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                // The key is stopped (17f review D2): the save closes the form
+                // and focuses Rename, and the same Enter would press it.
+                e.preventDefault()
+                void save()
+              } else if (e.key === 'Escape') closeForm()
+            }}
+          />
+          <Hint id={`${fieldId}-hint`} text={t('instance-label-hint')} open />
+          {error !== undefined && (
+            <FieldError id={`${fieldId}-error`} text={error} />
+          )}
+          <div className="save-actions">
+            <button
+              id={`${fieldId}-save`}
+              type="button"
+              className="primary"
+              aria-disabled={saving || undefined}
+              onClick={() => void save()}
+            >
+              {t('instance-label-save')}
+            </button>
+            <button
+              id={`${fieldId}-cancel`}
+              type="button"
+              className="secondary"
+              aria-disabled={saving || undefined}
+              onClick={closeForm}
+            >
+              {t('instance-label-cancel')}
+            </button>
+          </div>
+          <p role="status">{outcome}</p>
+          {alert !== null && <p role="alert">{alert.text}</p>}
+          {alert?.signIn && (
+            <button
+              id={`${fieldId}-sign-in`}
+              type="button"
+              className="secondary"
+              onClick={onSignIn}
+            >
+              {t('session-sign-in')}
+            </button>
+          )}
+        </form>
+      )}
+      {!open && outcome !== '' && <p role="status">{outcome}</p>}
+    </>
+  )
+}
+
+/**
+ * What a refused label write is (16 17f.7): `field` is the text under the box,
+ * with the box marked and the focus back in it; `alert` is the line in the form,
+ * with the Sign in button when the session ended, and `again` says the list is
+ * read because the outcome is not confirmed. The keys are the ones the contract
+ * of the slice answers for the route.
+ */
+function labelFailure(
+  id: string,
+  result: TagsRefusal | string,
+):
+  | { at: 'field'; text: string }
+  | { at: 'alert'; text: string; signIn: boolean; again: boolean } {
+  if (typeof result !== 'object')
+    return {
+      at: 'alert',
+      text: alertText(result),
+      signIn: result === 'signed-out' || result === 'revoked',
+      again: false,
+    }
+  const { key, args, status } = result
+  switch (key) {
+    case 'instance-bad-label':
+      return { at: 'field', text: t('api-instance-bad-label', ...args) }
+    case 'comment-markers':
+      return { at: 'field', text: t('api-comment-markers', ...args) }
+    case 'instance-label-taken':
+      return { at: 'field', text: t('api-instance-label-taken', ...args) }
+    case 'client-no-instance':
+      return {
+        at: 'alert',
+        text: t('instance-not-found', args[0] ?? id),
+        signIn: false,
+        again: false,
+      }
+    case 'client-unavailable':
+      return {
+        at: 'alert',
+        text: t('api-client-unavailable'),
+        signIn: false,
+        again: false,
+      }
+    case 'client-timeout':
+      return {
+        at: 'alert',
+        text: t('write-timeout'),
+        signIn: false,
+        again: true,
+      }
+    default:
+      return {
+        at: 'alert',
+        text: status === 422 ? t('api-other', key) : t('request-failed'),
+        signIn: false,
+        again: false,
+      }
+  }
+}
+
+/**
  * The instance's own tags as chips (fe/briefs/15-tag-chips.md, slice C1, as its
  * section 10 rules): each chip's `x` and each label the pill adds write the
  * whole list at once with `PUT /api/instances/<id>/tags`, beside the fixed
@@ -973,6 +1323,11 @@ function TagsField({
     })
   }
 
+  /** A 504: the manager got the write and did not answer in time, so the chips
+   *  shown are not the manager's and the list is read again (16 17f.10). */
+  const notConfirmed = (result: TagsRefusal | string) =>
+    typeof result === 'object' && result.key === 'client-timeout'
+
   /** The alert a refused write is: the text of its key, and the Sign in
    *  button when the session ended (15 C1.9, C1.10). */
   function refusalAlert(result: TagsRefusal | string) {
@@ -1074,6 +1429,7 @@ function TagsField({
     if (typeof result === 'object' && result.key === 'server-bad-tags') {
       focusControl('-box')
     }
+    if (notConfirmed(result)) onSaved()
   }
 
   /** Sends the list without `tag` (15 C1.8). */
@@ -1111,6 +1467,7 @@ function TagsField({
       onSaved()
       return
     }
+    if (notConfirmed(result)) onSaved()
     // The restored chip's `x` takes the focus back (15 C1.9).
     focusControl(`-remove-${tag}`)
   }

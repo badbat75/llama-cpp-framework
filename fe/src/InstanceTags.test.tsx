@@ -13,6 +13,7 @@ import {
   before,
   en,
   fakeBff,
+  instanceName,
   reply,
   startAt,
   type BffOptions,
@@ -64,8 +65,14 @@ async function flushTasks(n = 2) {
   })
 }
 
-/** The app at the instance page, with the brief's fixture, loaded. */
-async function openPage(options: BffOptions = {}) {
+/** The app at the instance page, with the brief's fixture, loaded. `name` is
+ *  the `h1` the fixture gives (16 17f.1): the name of the item the page reads.
+ *  A caller that changes the fixture passes the name the change gives (port 0
+ *  names the instance by its id). */
+async function openPage(
+  options: BffOptions = {},
+  name: string = instanceName(TAG_ITEM),
+) {
   const bff = fakeBff({
     instances: [TAG_ITEM],
     boot: { read: () => reply(200, { enabled: true }) },
@@ -73,7 +80,7 @@ async function openPage(options: BffOptions = {}) {
   })
   render(<App />)
   const main = screen.getByRole('main')
-  await screen.findByRole('heading', { level: 1, name: 'default' })
+  await screen.findByRole('heading', { level: 1, name })
   await within(main).findByRole('group', { name: en('instance-tags-own') })
   return { bff, main }
 }
@@ -104,9 +111,13 @@ test('12 T1.4: the paragraph Port 8080 follows the engine line; with port 0 ther
     true,
   )
   cleanup()
-  const second = await openPage({
-    instances: itemsAnswer(() => [{ ...TAG_ITEM, port: 0 }]),
-  })
+  const second = await openPage(
+    {
+      instances: itemsAnswer(() => [{ ...TAG_ITEM, port: 0 }]),
+    },
+    // Port 0 and no label: the name is the id (16 17f.1).
+    instanceName({ ...TAG_ITEM, port: 0 }),
+  )
   expect(
     within(second.main).queryByText(/^Port \d/),
     'port 0: no port paragraph',

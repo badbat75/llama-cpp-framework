@@ -107,7 +107,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   Here the test binaries sit under `debug/build/<crate>/<hash>/out/` (`debug/deps/` is absent):
   take the paths from the `Running` lines, never glob `deps`.
 - Use `--no-fail-fast` for the slice's map (a target that fails to compile, or a test that fails, stops
-  the run): every `test result:` line, and
+  the run), written BEFORE the filter separator (`cargo test -p <crate> --lib --no-fail-fast`): after `--`
+  it reaches the test harness, which dies with `Unrecognized option: 'no-fail-fast'` and prints no
+  `test result:` at all. The map: every `test result:` line, and
   `awk '/^---- /{name=$2} /panicked at/{print name" | "$0}'` for one line per red; then run the untouched
   binaries in a second invocation to show them green.
 - Filter test names with `cargo test -p <crate> <word>` (never target names); reach a file with
@@ -246,6 +248,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   sets it needs the name. `grep -n "port: [0-9]" *.test.tsx` is the sweep.
 - Give a page-open helper the name it awaits as a parameter defaulting to the fixture's name: a case that
   changes the fixture (port 0, a label) awaits the name the change gives, and a hard-coded name reds it.
+  The same for an open-form helper that PRESSES the opener: a test that presses first and then calls it
+  presses twice, and the second press closes the form (the opener toggles).
+- A 403 `session-not-administrator` on a WRITE is the field's alert `session-revoked` with a Sign in
+  after it (15 C1.9, 17b), the form open with the typing: the brief's "403 → session-revoked" is the
+  alert family, not the sign-in page.
 - Pin a 422 whose `field` names a control the form checks itself (a port) with a value the check accepts,
   and the args exactly as the bff sends them: with a value that check refuses the reply is UNREACHABLE,
   because the check sends nothing.
@@ -264,7 +271,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   and settle the nav's instance links too: a snapshot taken earlier prints `indexOf = -1` for a real tab
   stop (about one run in two). Grep the suite and amend the tester's lists when you add a focusable
   control, each list moving by one position. Pin "nothing between A and B" with indices from the settled
-  list.
+  list. The Start-at-boot field renders only after its OWN read (`Boot` returns null while awaited): the
+  page's h1 settles on the list read, so settle the boot group/checkbox with `findByRole` before querying
+  it synchronously or taking the snapshot. A tab-order name map of `aria-label ?? textContent` never sees
+  an input (its name comes from its label): map the element to the wanted name by identity, as
+  `Boot.test.tsx` does.
 - Read a state-dependent list (devices, a select that shows a placeholder while pending) only after the
   page's `landed()` helper, the deliberate pending case excepted. The probe also gates ACTIONS that read
   it (Add rule seeds the first probed GPU): clicking one before `landed()` seeds the pending-case value
@@ -321,6 +332,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Prove the teeth of a CSS pin in a scratch css + scratch test pair (`cp` both, one string swap, `-t`).
 - Send a test that cannot fail in jsdom (real layout, focus movement, `fireEvent.click` moving no focus,
   clipping) to the UX check, or state it as unproven.
+- Pin a `preventDefault()` with the return of `fireEvent.keyDown(box, { key: 'Enter' })` (false when the
+  handler prevented it): jsdom never runs the key's default action, so the implicit submit, and the Enter
+  that presses the control the handler just focused, are invisible here and only the prevention is
+  pinnable (16 17f review D2).
+- A link's accessible name joins the text of its children with NO separator, so a name built as text plus
+  an inline `span` reads "Coding assistantID default": pin the space as a text node in the markup
+  (`textContent` and the name both), and the span's own line in the sheet (16 17f review D1).
 
 ### The web UI (fe/): nav and order literals
 
@@ -375,6 +393,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A cargo test binary does not inherit a variable set on the command line for a harness process; a unit
   test body does see it.
 - Piping a long cargo log into `grep` dies on SIGPIPE.
+- A background run killed by the shell's timeout leaves a partial log full of `test result: ok` and no
+  `FAILED`: judge a run complete only by its own exit line, and rerun the crate whole.
 - Setting `PRIVATE_AI_FE_DIST` reruns the bff's build script and recompiles every target of the crate (it
   falls back to `crates/bff/fe-fixture`): set it only to escape a stale `fe/dist`. `PAI_BFF_FE_DIR` in the
   shell does nothing.
@@ -384,6 +404,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A test that touches the live `bench.db` path hangs the crate's suites behind the machine-wide lock.
 - An attribute glued to the end of a doc comment leaves the test unregistered: it never runs, and clippy
   says `dead_code`.
+- `map.get(k).is_none()` is a clippy `unnecessary_get_then_check` red under `-D warnings`: pin a key's
+  ABSENCE with `!map.contains_key(k)`.
 - A source lint over a `cfg(windows)` file is green on inspection, never "test passed", and "nothing runs
   here" is not proof a later guard passes.
 - A text red is often a missing strings key: `en()` throws `no English for <key> in the test`. Look the
@@ -431,6 +453,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the route's helper, not the session's.
 - `cargo test -p pai-bff <word>` filters test NAMES: naming the test FILE runs 0 tests and prints
   `N filtered out` for every target, which reads as a clean run. Reach a file with `--test <name>`.
+- The fake HF fetch answers its canned `(status, body)` list in CALL ORDER, whatever the url: a test that
+  switches repo pins WHICH repo was listed through the recorded urls (`hf_asked()`), never through the
+  body it got back.
 - A fake that parks a blocking call with `while !*released { cvar.wait_timeout(guard, T) }` re-arms `T`
   forever: the parked task never wakes on its own, and the `#[tokio::test]` runtime drop blocks on the
   abandoned `spawn_blocking` task, so the binary hangs past every deadline (no `test result:` line).

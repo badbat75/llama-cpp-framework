@@ -17,8 +17,9 @@ import {
 } from './api.ts'
 import Dialog from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
+import { InstanceLink } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
-import { instanceHref, modelProfileIdUnreadable } from './route.ts'
+import { modelProfileIdUnreadable } from './route.ts'
 import SignIn from './SignIn.tsx'
 import ServerForm, {
   type Runs,
@@ -102,6 +103,7 @@ export default function ServerProfilePage({
   onSignedOut,
   onRenewed,
   onDirty,
+  nameOf,
 }: {
   /** The id from the address. */
   id: string
@@ -110,6 +112,9 @@ export default function ServerProfilePage({
   onRenewed: (session: Session) => boolean
   /** Told whether the form holds unsaved changes; false when it goes. */
   onDirty: (dirty: boolean) => void
+  /** The name of an instance by its id (16 17f.4): the Used by row says the
+   * word the menu uses, not the key. */
+  nameOf: (id: string) => string
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -310,6 +315,14 @@ export default function ServerProfilePage({
       reread()
       return
     }
+    if (error !== null && error.key === 'client-timeout') {
+      // The manager got the delete and did not answer in time: it may or may
+      // not have been removed, so the document is read again to show what the
+      // manager holds (16 17f.10).
+      setDeleteAlert({ text: t('delete-unknown'), signIn: false })
+      reread()
+      return
+    }
     setDeleteAlert({
       text:
         error?.key === 'client-unavailable'
@@ -391,8 +404,9 @@ export default function ServerProfilePage({
               {read.instance === null ? (
                 <dd className="muted">{t('server-profiles-unused')}</dd>
               ) : (
+                // The name the menu uses, then the id it is the key of (16 17f.4).
                 <dd>
-                  <a href={instanceHref(read.instance)}>{read.instance}</a>
+                  <InstanceLink id={read.instance} nameOf={nameOf} />
                 </dd>
               )}
             </dl>

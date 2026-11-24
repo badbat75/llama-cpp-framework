@@ -7,7 +7,15 @@ import { t } from './strings.ts'
 /** Raised by the app on every page change; 0 until the first one. */
 export const FocusRequest = createContext(0)
 
-export default function PageHeading({ text }: { text: string }) {
+export default function PageHeading({
+  text,
+  idLine,
+}: {
+  text: string
+  /** The quiet id line right after the heading (16 17f.4), for a page that
+   * names its subject by something other than its key: the instance page. */
+  idLine?: string
+}) {
   const request = useContext(FocusRequest)
   const ref = useRef<HTMLHeadingElement>(null)
 
@@ -20,8 +28,11 @@ export default function PageHeading({ text }: { text: string }) {
   }, [request])
 
   return (
-    <h1 id="page-heading" ref={ref} tabIndex={-1}>
-      {text}
-    </h1>
+    <>
+      <h1 id="page-heading" ref={ref} tabIndex={-1}>
+        {text}
+      </h1>
+      {idLine === undefined ? null : <p className="instance-id">{idLine}</p>}
+    </>
   )
 }

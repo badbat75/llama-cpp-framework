@@ -1164,6 +1164,8 @@ const TAB_PATH_INSTANCE = [
   en('run-restart'),
   about(en('boot-label')),
   en('boot-toggle'),
+  // 16 17f.9: the rename form's opener follows Start at boot.
+  en('instance-rename'),
   // fe/briefs/12-instance-tags.md, section 5, as fe/briefs/15-tag-chips.md
   // section 3 leaves it: the field's About toggle, then the + button (the
   // instances of this fixture have no tags, so the field shows no chip). The

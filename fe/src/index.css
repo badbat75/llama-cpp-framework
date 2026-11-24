@@ -967,6 +967,51 @@ tr:last-child td {
   margin-bottom: var(--space-1);
 }
 
+/* The id as the stable key, shown small under the name the label gives (16
+   17f.8): a quiet line, and `anywhere` because an id is one long word with no
+   break point (CSS Text 3, overflow-wrap). */
+.instance-id {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+/* The id of a Used by link is the line under the name, as it is on the tile and
+   the page (16 17f review D1): inline it runs into the name ("Coding
+   assistantID default", WCAG 2.4.4), and in the table's cell a long id has no
+   line to break on (1.4.10). */
+.server-profiles .instance-id,
+.assets .instance-id {
+  display: block;
+}
+
+/* The rename form of the header (16 17f.5, its review D3): a column like the
+   page's other fields, so the label sits above the box and the box takes the
+   form's width (17f.8, 1.4.10). It starts --space-3 under the Rename that
+   opens it (DESIGN.md principle 9). */
+.instance-label-form {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+/* The label above the box (17f review D3): inline, the box's focus ring covers
+   its last letter. The weight is the one the page's other field labels have. */
+.instance-label-form > label {
+  display: block;
+  font-weight: 600;
+}
+
+/* The two buttons in a row of their own, --space-2 between them (17f review
+   D3): they touch today. The row wraps, so the buttons keep their room at the
+   largest browser text (1.4.10). */
+.instance-label-form > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 /* The Overview's instances as tiles (08-hearth-h6-overview.md H6a.5): a list
    of links, so the number of instances and the way in are read. A track never
    asks for more width than the page has, so a narrow page gets one column and

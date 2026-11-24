@@ -1,6 +1,6 @@
 // The manager's instances and the state of each, read from the bff's
 // /api/instances.
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   apiError,
   call,
@@ -35,6 +35,23 @@ export type Instance = {
    * none (fe/briefs/20-nodes-menu.md, 20 N.2): the nav's link shows it, the
    * Overview's tile does not. */
   serverProfile: string | null
+  /** The free label the user gave the instance (fe/briefs/16-server-profiles-and-instances.md,
+   * 16 17f.1), null when it has none: `instanceName` is what every place shows. */
+  label: string | null
+}
+
+/**
+ * The name of an instance (16 17f.1): its label as the bff gives it when it is
+ * a non-empty string, else `instance-name-auto` with the engine and the port
+ * when the port is above 0, else the id. Every place that shows an instance
+ * uses this, and shows the id beside it except when the name IS the id.
+ */
+export function instanceName(item: Instance): string {
+  return item.label !== null
+    ? item.label
+    : item.port > 0
+      ? t('instance-name-auto', item.engine, String(item.port))
+      : item.id
 }
 
 /** What the bff answered: the instances, or the key of the message saying why
@@ -108,6 +125,13 @@ function serverProfileIn(item: Item): string | null {
     : null
 }
 
+/** `label` of an item: the label as the manager gives it, null when the
+ * instance has none (16 17f.1): missing, null, the empty string or not a
+ * string is no label. A label of spaces is a label, kept as it is. */
+function labelIn(item: Item): string | null {
+  return typeof item.label === 'string' && item.label !== '' ? item.label : null
+}
+
 /** The instance an item of the reply describes. */
 function instanceOf(item: Item): Instance {
   return {
@@ -119,6 +143,7 @@ function instanceOf(item: Item): Instance {
     instanceTags: tagsIn(item, 'instanceTags'),
     boot: bootIn(item),
     serverProfile: serverProfileIn(item),
+    label: labelIn(item),
   }
 }
 
@@ -140,6 +165,30 @@ export async function writeTags(
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tags }),
+    })
+    if (reply.ok) return 'saved'
+    if (reply.status === 401) return 'signed-out'
+    if (sessionRevoked(reply)) return 'revoked'
+    const refusal = apiError(reply.body)
+    return refusal === null ? 'failed' : { ...refusal, status: reply.status }
+  } catch {
+    return 'failed'
+  }
+}
+
+/** Writes an instance's label (`PUT /api/instances/<id>/label`, 16 17f.6):
+ * 'saved' on 204, 'signed-out' on 401, 'revoked' on a 403
+ * `session-not-administrator`, a refusal as its key and args, else the answer's
+ * key or 'failed'. The body is the text trimmed, `""` for the clear. */
+export async function writeLabel(
+  id: string,
+  label: string,
+): Promise<'saved' | 'signed-out' | 'revoked' | TagsRefusal | string> {
+  try {
+    const reply = await call(`/api/instances/${encodeURIComponent(id)}/label`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
     })
     if (reply.ok) return 'saved'
     if (reply.status === 401) return 'signed-out'
@@ -237,6 +286,62 @@ export function instancesStore(): InstancesStore {
       }
     },
   }
+}
+
+/**
+ * The name of every instance of the app's list, by id (16 17f.4): a page that
+ * names an instance it did not read, like a server profile's "Used by", says it
+ * by the word the menu uses. The id for an instance the list does not have
+ * (before the read, or one the manager removed).
+ */
+export function useInstanceNames(
+  store: InstancesStore,
+): (id: string) => string {
+  const [names, setNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    // The list is polled, so the names are compared: an answer that changes
+    // none of them asks for no re-render.
+    let last = ''
+    const unwatch = store.watch((answer) => {
+      if (!Array.isArray(answer)) return
+      const map = Object.fromEntries(answer.map((i) => [i.id, instanceName(i)]))
+      const key = JSON.stringify(map)
+      if (key === last) return
+      last = key
+      setNames(map)
+    })
+    return unwatch
+  }, [store])
+  return useCallback((id: string) => names[id] ?? id, [names])
+}
+
+/**
+ * An instance as a link to its page, named as the menu names it, with the id
+ * after the name in a `span.instance-id` (16 17f.4): the id is the key the
+ * reader can act on. The id line is left out when the name IS the id, which
+ * would say the same twice (17f.1).
+ */
+export function InstanceLink({
+  id,
+  nameOf,
+}: {
+  /** The instance's id: the key, and the route. */
+  id: string
+  /** The name of an instance, as the app's list has it. */
+  nameOf: (id: string) => string
+}) {
+  const name = nameOf(id)
+  return (
+    <a href={instanceHref(id)}>
+      {name}
+      {name !== id && (
+        <>
+          {' '}
+          <span className="instance-id">{t('instance-id-shown', id)}</span>
+        </>
+      )}
+    </a>
+  )
 }
 
 export default function Instances({
@@ -344,18 +449,27 @@ function Tile({
   engines: boolean
 }) {
   const { id, engine, state, port, tags, boot } = instance
+  // The name, and the id beside it except when the name IS the id (16 17f.3):
+  // the eye reads `ID default` under the head, the reader says it inside the
+  // link, so two tiles labelled alike are told apart.
+  const name = instanceName(instance)
+  const idShown = name !== id
 
   return (
     <li className="tile">
       <div className="tile-head">
         <a className="tile-id" href={instanceHref(id)}>
-          {id}
+          {name}
+          {idShown && (
+            <span className="visually-hidden">{t('instance-id-said', id)}</span>
+          )}
         </a>
         <span className="badge">
           <StateShape state={state} />
           {stateLabel(state)}
         </span>
       </div>
+      {idShown && <p className="instance-id">{t('instance-id-shown', id)}</p>}
       {engines && <p className="tile-engine">{t('instance-engine', engine)}</p>}
       {(port > 0 || tags.length > 0 || boot !== null) && (
         <dl className="tile-facts">

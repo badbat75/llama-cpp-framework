@@ -163,14 +163,14 @@ async function advance(ms: number): Promise<void> {
 
 test('20 N.1: en_US.json gains the four keys of section 2 with that English, and loses nav-instances', () => {
   const table = strings as Record<string, string>
-  // The English of section 2, typed from the brief. `· {0}` is the middle dot
-  // U+00B7 the brief names, and the leading comma and space of
-  // nav-instance-profile are part of the text.
+  // The English of section 2, typed from the brief.
+  //
+  // 16 17f.11 takes the two profile keys of that section out again: 17f.2 makes
+  // the nav entry the name alone, so nothing shows a server profile in the
+  // menu. Their retirement is pinned in InstanceName17f.test.tsx.
   const SECTION_2: Array<[string, string]> = [
     ['nav-nodes', 'Nodes'],
     ['nav-this-node', 'This node'],
-    ['nav-instance-profile', ', server profile {0}'],
-    ['nav-instance-profile-shown', '· {0}'],
   ]
   expect(
     SECTION_2.filter(([key, english]) => table[key] !== english).map(
@@ -199,10 +199,11 @@ test('20 N.1: en_US.json gains the four keys of section 2 with that English, and
 
 // ── 20 N.2: the reader ──────────────────────────────────────────────────────
 
-test('20 N.2: a non-empty serverProfile reaches the nav link, a missing, null, empty or number one reaches nothing, and the tiles never show the profile', async () => {
-  // The nav link is the profile only face the fe shows (20 N.5), so the reader
-  // is pinned through it: a value that is not a non-empty string must read as
-  // no profile, exactly like the id alone.
+test('20 N.2 (as 16 17f.2 amends it): no serverProfile shape reaches the nav link, and the tiles never show the profile', async () => {
+  // 20 N.2 pinned the reader through the nav link, the profile's only face.
+  // 16 17f.2 takes that face away: the entry is the name alone, so a
+  // serverProfile of any shape must read as nothing there. The reader's own
+  // fields are pinned by Instances.test.tsx.
   const withProfile = (
     id: string,
     serverProfile: string | null | number | undefined,
@@ -224,20 +225,12 @@ test('20 N.2: a non-empty serverProfile reaches the nav link, a missing, null, e
   })
   render(<App />)
   const nav = await navOf()
-  // The links arrive with the list read, after the nav does, and the names
-  // carry the profile, so each is awaited by name.
-  expect(
-    shown(
-      await within(nav).findByRole('link', {
-        name: 'with, server profile qwen-27b',
-      }),
-    ),
-    'the non-empty string reaches the link, in the name and shown',
-  ).toBe('with · qwen-27b')
-  for (const id of ['nully', 'empty', 'missing', 'numeric'])
+  // The links arrive with the list read, after the nav does, so each is
+  // awaited by name.
+  for (const id of ['with', 'nully', 'empty', 'missing', 'numeric'])
     expect(
       shown(await within(nav).findByRole('link', { name: id })),
-      `${id}: no profile in the name, and none shown`,
+      `${id}: the id alone, whatever the serverProfile`,
     ).toBe(id)
   const main = await screen.findByRole('main')
   await within(main).findByText('with')
@@ -447,7 +440,7 @@ const hostReads = (bff: ReturnType<typeof fakeBff>): number =>
 
 // ── 20 N.5: the instance links ──────────────────────────────────────────────
 
-test('20 N.5: the link of an instance with a server profile is a decorative box icon then a span.nav-instance holding the id, the reader phrase, a space and the shown profile, heard "default, server profile qwen-27b" and seen "default · qwen-27b"', async () => {
+test('20 N.5 (as 16 17f.2 amends it): the link of an instance is a decorative box icon then a span.nav-instance holding the name alone, heard and seen as the name, with no server profile in it', async () => {
   fakeBff({
     version: VERSION_HOST,
     instances: [
@@ -461,9 +454,7 @@ test('20 N.5: the link of an instance with a server profile is a decorative box 
   })
   render(<App />)
   const nav = await navOf()
-  const link = await within(nav).findByRole('link', {
-    name: 'default, server profile qwen-27b',
-  })
+  const link = await within(nav).findByRole('link', { name: 'default' })
   expect(
     Array.from(link.children).map((el) => el.tagName.toLowerCase()),
     'the link holds two children: the icon, then the span',
@@ -478,32 +469,17 @@ test('20 N.5: the link of an instance with a server profile is a decorative box 
   expect(span, 'the text run is the span the sheet wraps').not.toBeNull()
   expect(
     childrenAsText(span!),
-    'the four children of decision 5, in order, with their exact text',
-  ).toEqual([
-    '#text "default"',
-    `span ${JSON.stringify(en('nav-instance-profile', 'qwen-27b'))}`,
-    '#text " "',
-    `span ${JSON.stringify(en('nav-instance-profile-shown', 'qwen-27b'))}`,
-  ])
-  const hidden = span!.querySelector('.visually-hidden')!
-  expect(hidden.tagName.toLowerCase(), 'the reader phrase is a span').toBe(
-    'span',
-  )
+    'the span holds the name and nothing else: no reader phrase, no shown ' +
+      'profile, no id run (17f.2)',
+  ).toEqual(['#text "default"'])
   expect(
-    hidden.hasAttribute('aria-hidden'),
-    'it is not aria-hidden: it is what the reader says',
-  ).toBe(false)
-  const seenSpan = span!.querySelector('span[aria-hidden="true"]')!
-  expect(
-    seenSpan.classList.contains('visually-hidden'),
-    'the shown run is not visually hidden: it is what the eye reads',
-  ).toBe(false)
-  expect(shown(link), 'what the eye reads, the hidden span left out').toBe(
-    'default · qwen-27b',
-  )
+    span!.querySelector('.visually-hidden'),
+    'nothing is hidden from the reader: the name is the whole text',
+  ).toBeNull()
+  expect(shown(link), 'what the eye reads').toBe('default')
 })
 
-test('20 N.5: the links are the instances of the list in the manager order, at the instance addresses, aria-current page on that page only, the profile shown even when it is the id, and with no profile the link is the id alone', async () => {
+test('20 N.5 (as 16 17f.2 amends it): the links are the instances of the list in the manager order, at the instance addresses, aria-current page on that page only, and each is the name alone, with no server profile in it', async () => {
   fakeBff({
     version: VERSION_HOST,
     instances: [
@@ -549,15 +525,17 @@ test('20 N.5: the links are the instances of the list in the manager order, at t
   ).toEqual(['#/instances/alpha', '#/instances/beta', '#/instances/gamma'])
   expect(
     shown(links[0]!),
-    'the profile is shown even when it equals the id (decision 5, Q2)',
-  ).toBe('alpha · qwen-27b')
+    'the profile is not shown even when the item has one (17f.2)',
+  ).toBe('alpha')
   expect(shown(links[1]!), 'no profile: the id alone, as today').toBe('beta')
   expect(
     shown(
-      within(nav).getByRole('link', { name: 'gamma, server profile gamma' }),
+      within(nav).getByRole('link', {
+        name: 'gamma',
+      }),
     ),
-    'gamma · gamma',
-  ).toBe('gamma · gamma')
+    'gamma: the id alone, its profile of the same name left out',
+  ).toBe('gamma')
   for (const a of links)
     expect(a.hasAttribute('aria-current'), 'none on the Overview').toBe(false)
   navigate('#/instances/beta')
@@ -679,14 +657,14 @@ test('20 N.6: a later failed list read keeps the instance links of the last succ
   expect(nav, 'the nav is there').not.toBeNull()
   const link = nav!.querySelector('a[href="#/instances/default"]')
   expect(link, 'the link of the instance is there').not.toBeNull()
-  expect(shown(link!), 'and carries its server profile').toBe(
-    'default · qwen-27b',
-  )
+  // 16 17f.2: the entry is the name alone. This item has no label and no port,
+  // so the name is the id, and the server profile it carries is not shown.
+  expect(shown(link!), 'and is the name alone').toBe('default')
   expect(calls, 'the list is read once at opening').toBe(1)
   await advance(5_000)
   expect(calls, 'the poll read again').toBeGreaterThan(1)
   expect(
     shown(nav!.querySelector('a[href="#/instances/default"]')!),
-    'the link of the last success stays, with its profile',
-  ).toBe('default · qwen-27b')
+    'the link of the last success stays, the name alone',
+  ).toBe('default')
 })

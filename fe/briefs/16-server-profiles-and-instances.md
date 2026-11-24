@@ -987,3 +987,79 @@ Buttons that are not a list's add keep their words (Show quants, the Save bar).
 **17b2.5 The UX check.** The `server-profiles-new` state still opens the form through the + (the
 selector by id or by name, the hidden text included), and nothing scrolls sideways at 320 px or
 200 %.
+
+## 17f review (designer, 2026-11-23)
+
+Read on the uncommitted 17f diff in `fe/` and driven with Playwright against `fe/ux/stub.py`
+(`list=many`, `pool=long`), with the label route fulfilled per case: Chromium, Firefox and WebKit at 1280
+and 320 px, light and dark, and at 200 % text (scripts `build/ux-review/17f*.js`, not committed).
+
+Met:
+
+- 17f.1 to 17f.3: the nav reads the name only ("Coding assistant", "llama.cpp :8580", "embed", the
+  64-character label); the tiles read the name plus the hidden ", instance <id>", and the `p.instance-id`
+  sits under the head, absent for `embed` (name = id).
+- 17f.4: the `h1` "Coding assistant", the "ID default" line, the title "Coding assistant | Private AI
+  Framework"; the route stays the id.
+- 17f.5, 17f.6: the opener has `aria-expanded`; the box opens prefilled, selected and focused; Escape and
+  Cancel close it with the focus on Rename; one PUT for Enter pressed twice while saving (both
+  buttons `aria-disabled`); a 204 closes the form, the focus goes to Rename, the status reads the saved
+  text and the list is read again; the clear sends `{"label":""}` and says "named llama.cpp :8080 again".
+- 17f.7: 409 `instance-label-taken` goes under the field, with `aria-invalid`, described and focused,
+  the same after Save label; a 504 shows `write-timeout` in the alert and reads the list once more; a 403
+  shows `session-revoked` and a 401 shows `session-ended-retry`, both with Sign in; the typed text stays
+  in all three engines.
+- 17f.8 with the form closed: no sideways scroll on the Overview, the default page, the 40-character id's page or the pool,
+  in any engine, width, theme or text size; the long label and id wrap in the nav, the `h1` and the
+  id line.
+- 17f.9: the Tab order is Start, Stop, Restart, (About), Start at boot, Rename, then the form.
+- 17f.10, 17f.11: `client-timeout` is mapped for the run verbs (`failureText`), boot, tags, the label,
+  the create (17b.5) and the profile delete (`delete-unknown`); the strings are added and the two
+  `nav-instance-profile*` keys removed.
+- The + / minus rule (`fe/DESIGN.md` principle 8) does not reach Rename: it neither adds to a list nor
+  deletes.
+
+Defects:
+
+- **D1 (17f.4) The Used by link runs the name into the id.** `InstanceLink` puts
+  `span.instance-id` inline right after the name with no space (`fe/src/Instances.tsx:336-338`), so the
+  cell shows "Coding assistantID default" and the link's accessible name says the same, in the three
+  engines ([2.4.4](https://www.w3.org/TR/WCAG22/#link-purpose-in-context)). Fix: a space before the
+  span, and the span on its own line (`display: block`) as on the tile and the page.
+- **D2 (17f.6) Enter on an unchanged label reopens the form in Chromium and WebKit.** The Enter branch
+  of the box's `onKeyDown` (`fe/src/InstancePage.tsx:958`) closes the form and moves the focus to
+  Rename without `preventDefault()`, so the same key then presses Rename and the form opens again with
+  the text selected (Firefox closes it). Fix: `e.preventDefault()` in that branch, which also stops the
+  implicit submit from calling `save` a second time.
+- **D3 (17f.5, `fe/DESIGN.md` principle 9) The rename form has no layout.** The `<form>`
+  (`fe/src/InstancePage.tsx:937`) has no class: the Label text sits inline against the box (the label
+  ends at x 305 and the box starts at 305 at 1280 px, and at 57 px at 320 px), so the focus ring covers
+  its last letter; the form starts 0 px under Rename (principle 9 asks `--space-3`); Save label and
+  Cancel touch. At 1280 px, opening it also moves Start at boot's checkbox to a row of its own. With the form open, the UX check's `instance-rename` state scrolls sideways at 320 px and 200 % text in the three engines (scrollWidth 411 to 586 > 320; the box's own width beside the inline label), against 17f.8 "the field takes the form's width" ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)). Fix: a
+  class on the form that stacks like the page's other fields: the label above the box (`display:
+  block`, `--space-1` under it), the box at the form's width up to the field width the Server form uses,
+  then the hint, the error, and the two buttons in a row with `--space-2` between them; `margin-top:
+  var(--space-3)` from Rename; the form taking the header's full row.
+
+UX check: 6 failing of 180 states per engine, all six this overflow (D3); nothing else, no axe finding.
+
+Accepted once D1 to D3 are fixed and re-checked.
+
+### 17f re-check (designer, 2026-11-24)
+
+The fixes were re-checked in Chromium, Firefox and WebKit at 1280 and 320 px and at 200 % text.
+
+- D1 met: the Used by link reads "Coding assistant ID default", with the id on its own line
+  (`.server-profiles .instance-id`, `display: block`).
+- D2 met: Enter on an unchanged label sends nothing, closes the form and leaves the focus on Rename,
+  in all three engines.
+- D3 met: `.instance-label-form` starts 12 px (`--space-3`) under Rename, and the buttons are 8 px
+  (`--space-2`) apart. At 1280 px the label and the box take the same two columns as the header's
+  other fields; at 320 px the label sits above the box; at 320 px and 200 % the buttons wrap. Nothing
+  scrolls sideways.
+- Start at boot's checkbox is at the same height before and after the form opens. The row of its own
+  that WebKit gives it at 1280 px was there before 17f.
+
+UX check: 0 failing of 180 states per engine.
+
+**17f accepted.**

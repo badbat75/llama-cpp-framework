@@ -17,8 +17,10 @@ import { Icon } from './Icon.tsx'
 import InstancePage from './InstancePage.tsx'
 import {
   instancesStore,
+  instanceName,
   type Instance,
   type InstancesStore,
+  useInstanceNames,
 } from './Instances.tsx'
 import { Mark } from './Mark.tsx'
 import ModelProfiles, { type Sort } from './ModelProfiles.tsx'
@@ -116,6 +118,9 @@ export default function App() {
   const going = useRef<string | null>(null)
   // The one read of /api/instances the nav and the pages share.
   const [store] = useState(instancesStore)
+  // The name of every instance of that list, for a page that names an instance
+  // it did not read (16 17f.4).
+  const nameOf = useInstanceNames(store)
   // The host's name, from the one read of /api/node a session brings
   // (fe/briefs/13-node-about.md, 13 N.3): the nav's instance group and the
   // Overview's heading. null while the read is open and after any failure,
@@ -561,6 +566,7 @@ export default function App() {
               store={store}
               session={session}
               host={host}
+              nameOf={nameOf}
               filterText={filter?.text ?? ''}
               onFilterText={typedFilter}
               sort={sort}
@@ -648,23 +654,11 @@ function NavHost({
               }
             >
               <Icon name="box" />
-              {/* The id, then its server profile twice (20 N.5, decision 5): a
-                  run only the reader says, naming what the second word is, and
-                  a run only the eye reads. The profile is the manager's
-                  spelling, so it is never translated. */}
-              <span className="nav-instance">
-                {i.id}
-                {i.serverProfile !== null && (
-                  <>
-                    <span className="visually-hidden">
-                      {t('nav-instance-profile', i.serverProfile)}
-                    </span>{' '}
-                    <span aria-hidden="true">
-                      {t('nav-instance-profile-shown', i.serverProfile)}
-                    </span>
-                  </>
-                )}
-              </span>
+              {/* The name alone (16 17f.2, closing 20 N.5's decision 5): the
+                  label, the engine and the port, or the id. No server profile
+                  and no id run: two unlabelled instances on one port read
+                  alike, and their pages tell them apart. */}
+              <span className="nav-instance">{instanceName(i)}</span>
             </a>
           </li>
         ))}
@@ -688,6 +682,7 @@ function Page({
   store,
   session,
   host,
+  nameOf,
   filterText,
   onFilterText,
   sort,
@@ -701,6 +696,8 @@ function Page({
   session: Session | undefined
   /** The host's name the shell read once for this session (13 N.3, N.5). */
   host: string | null
+  /** The name of an instance by its id, from the app's list (16 17f.4). */
+  nameOf: (id: string) => string
   filterText: string
   onFilterText: (text: string) => void
   /** The Model profiles list's sort, kept for the tab's life (U17c). */
@@ -759,7 +756,13 @@ function Page({
   if (route.page === 'server-profiles') {
     // The pool, read again at every arrival (16 17a.3), and the create form of
     // 17b, whose sign-in dialog renews the session.
-    return <ServerProfiles onSignedOut={onSignedOut} onRenewed={onRenewed} />
+    return (
+      <ServerProfiles
+        onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
+        nameOf={nameOf}
+      />
+    )
   }
   if (route.page === 'server-profile') {
     // One profile: its "Used by" fact and the Server form (16 17a.5).
@@ -769,6 +772,7 @@ function Page({
         onSignedOut={onSignedOut}
         onRenewed={onRenewed}
         onDirty={onDirty}
+        nameOf={nameOf}
       />
     )
   }

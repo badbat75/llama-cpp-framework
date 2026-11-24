@@ -80,12 +80,13 @@ USER = "abcdefghijklmnopqrstuvwxyz012345"
 # and at 200 % text has to break both inside one pill.
 MANY_ID = "ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890123"
 LONG_SERVER_PROFILE = "QWEN327BTHIRTYCHARACTERSPROFILE012345678"  # 40, no break point
+LONG_LABEL = "QWEN327BTHIRTYCHARACTERSTILELABEL0123456789012345678901234567890"  # 64, no break point
 LONG_TAG = "abcdefghijklmnopqrstuvwxyz01234"  # 31 characters
 INSTANCES_MANY = [
-    {"id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": True, "serverProfile": "qwen-27b"},
-    {"id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 8580, "tags": ["coding", "fast"], "instanceTags": ["coding"], "boot": False, "serverProfile": None},
-    {"id": "embed", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": []},
-    {"id": MANY_ID, "engine": "strata", "state": "activating", "port": 65535, "tags": [LONG_TAG + str(n) for n in range(8)], "instanceTags": [LONG_TAG + str(n) for n in range(2)], "boot": True, "serverProfile": LONG_SERVER_PROFILE},
+    {"id": "default", "engine": "llama.cpp", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": True, "serverProfile": "qwen-27b", "label": "Coding assistant"},
+    {"id": "coder", "engine": "llama.cpp", "state": "inactive", "port": 8580, "tags": ["coding", "fast"], "instanceTags": ["coding"], "boot": False, "serverProfile": None, "label": None},
+    {"id": "embed", "engine": "llama.cpp", "state": "failed", "port": 0, "tags": [], "instanceTags": [], "label": None},
+    {"id": MANY_ID, "engine": "strata", "state": "activating", "port": 65535, "tags": [LONG_TAG + str(n) for n in range(8)], "instanceTags": [LONG_TAG + str(n) for n in range(2)], "boot": True, "serverProfile": LONG_SERVER_PROFILE, "label": LONG_LABEL},
 ]
 
 # The tags of the one instance the check opens (brief 15 section 7), as
@@ -383,10 +384,12 @@ class Handler(SimpleHTTPRequestHandler):
             # The one instance of the page the check opens: its port, its tags
             # (brief 15, `tags=`) where the profile brings one the instance does
             # not carry (12), its boot (13 N.1), on, as its /boot read says, and
-            # its server profile (brief 20 section 6), so the nav's link reads
-            # "default · qwen-27b" on every page the check opens.
+            # its server profile (brief 20 section 6). 16 17f.12: no label, so
+            # the name the page's heading, the nav's link and the tile show is
+            # `instance-name-auto` with the engine and the port, "llama.cpp :9931",
+            # and the nav says nothing beside it (17f.2).
             tags, profile = OWN_TAGS[STATE["tags"]]
-            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 8080, "tags": tags, "instanceTags": profile, "boot": True, "serverProfile": "qwen-27b"}])
+            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 9931, "tags": tags, "instanceTags": profile, "boot": True, "serverProfile": "qwen-27b", "label": None}])
         # The boot row of the tiles and the instance page's boot field
         # (08-hearth-h6-overview.md section 3): on for default, off for every
         # other instance.
@@ -471,6 +474,14 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if length:
             self.rfile.read(length)
+        # Brief 16 slice 17f (17f.12, the state `instance-rename` of check.js):
+        # the instance page's rename form saves the label here, and the bff's
+        # reply is 204. The check opens the form and reads it; it never presses
+        # Save, so the answer is a plain 204.
+        if p.startswith("/api/instances/") and p.count("/") == 4 and p.endswith("/label"):
+            self.send_response(204)
+            self.end_headers()
+            return
         # Brief 16 slice 17a (17a.7): the Server form of a profile's page saves
         # to this address, and the bff's reply is the file's revision and whether
         # the instance that runs it is up. The check has no manager and starts

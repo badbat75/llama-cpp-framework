@@ -23,6 +23,7 @@ import {
   before,
   en,
   fakeBff,
+  instanceName,
   isHidden,
   reply,
   startAt,
@@ -181,10 +182,16 @@ async function openPage(
     // Under the fake clock a findBy never resolves: the flush runs the reads
     // due now, then the look is synchronous.
     await flush()
-    within(main).getByRole('heading', { level: 1, name: 'default' })
+    within(main).getByRole('heading', {
+      level: 1,
+      name: instanceName(TAG_ITEM),
+    })
     serverTitle(main)
   } else {
-    await screen.findByRole('heading', { level: 1, name: 'default' })
+    await screen.findByRole('heading', {
+      level: 1,
+      name: instanceName(TAG_ITEM),
+    })
     await within(main).findByRole('heading', {
       level: 2,
       name: en('instance-server-title'),
@@ -643,7 +650,10 @@ test('15 C2.6: on 401, 503, a body that is not JSON, a network failure and while
       `${what}: the status says nothing`,
     ).toBe('')
     expect(
-      within(p.main).queryByRole('heading', { level: 1, name: 'default' }),
+      within(p.main).queryByRole('heading', {
+        level: 1,
+        name: instanceName(TAG_ITEM),
+      }),
       `${what}: the page stays`,
     ).not.toBeNull()
     cleanup()

@@ -1048,6 +1048,10 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
   const tagAdd = within(main).getByRole('button', {
     name: en('instance-tag-add'),
   })
+  // 17f.9: the rename form's opener follows Start at boot.
+  const rename = within(main).getByRole('button', {
+    name: en('instance-rename'),
+  })
   const names = (expected: [string, HTMLElement][]) => {
     const map = new Map(expected.map(([n, el]) => [el as Element, n]))
     return tabbable(main)
@@ -1060,6 +1064,7 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['Restart', button(main, 'run-restart')],
     ['About Start at boot', aboutBoot(main)],
     ['Start at boot', bootBox(main)],
+    ['Rename', rename],
     ['About Instance tags', tagsAbout],
     ['Add tag', tagAdd],
     ['Server profile link', profileLink],
@@ -1078,6 +1083,7 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['About Start at boot', aboutBoot(main)],
     ['Start at boot', bootBox(main)],
     ['boot Sign in', bootSignIns(main)[0]!],
+    ['Rename', rename],
     ['About Instance tags', tagsAbout],
     ['Add tag', tagAdd],
     ['Server profile link', profileLink],

@@ -97,9 +97,22 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - A new `[Server]` key carried by the web UI touches several places (the `ServerConfig` field,
   `from_keys`, the web key list, the const-generic array length, the strings, the bff's off-list test);
-  a key moved onto `WEB_MODEL_PROFILE_KEYS` reddens the bff's exhaustive off-list test. `ServerForm` is a
-  Slint struct: a `ServerConfig` field needs its mirror. One shipped engine default file lives in several
+  a key moved onto `WEB_MODEL_PROFILE_KEYS` reddens the bff's exhaustive off-list test. A model profile
+  key moved between the two `checks` lists reddens two pins no bff test names: `pai-app`'s
+  `web_key_lists_are_exactly_what_render_section_writes` (the union of the two lists is what
+  `render_section` writes: a key `pai-app` never writes cannot join either list without the tester's
+  change, and a key it starts writing needs a NON-EMPTY value in `full_model_profile` and in the
+  `form.rs` rich fixture (both full struct literals; an empty value makes the round trips vacuous) and
+  the bff's `save_key_outside_the_web_list_is_400_and_reaches_no_manager` (it lists `model`).
+  `ServerForm` is a Slint struct: a `ServerConfig` field needs its mirror. So is `ModelProfileForm`: a
+  model profile field the GUI has NO widget for (`hf-repo`, `hf-file`) still rides it in BOTH
+  conversions, or a GUI save of a profile the web wrote drops the key, and `form.rs`'s
+  `rich_model_profile_round_trips` reddens. One shipped engine default file lives in several
   places (`crates/core/defaults/` and the package tables), pinned a third way by the bff's server test.
+- A model profile key `render_section` makes OPTIONAL (written only when its value is not blank, M3b's
+  `model`) keeps its own comment line INSIDE the same guard, and the reader treats the key's absence as
+  the blank: a blank `model =` line beside `hf-repo` reads back as a second source, which the web's save
+  refuses (`model-profile-bad-source`) and `llama-server` takes as an empty `-m`.
 - `set_key` and `remove_key` keep the section's trailing blank separator line (a trimming writer eats it);
   `parse_sections` drops key lines before the first header; a section copied from a file with no final
   newline needs one appended; `ini::detect_eol` styles a writer's appended section. Writers outside core
@@ -169,6 +182,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   drops the handler, its permit goes with it, the abandoned task keeps none (hf.rs, the G1 pin).
 - A cache keyed by repo keeps what no caller owns (the tree: commit + files), never the built answer:
   every request applies its own tag and file with `build_listing`, so no caller's tag leaks (hf.rs D1).
+- The `Hf` state is built ONCE per router (`hf::state`) and handed to the picker's route and to the
+  model profile save, so one cache and one slot pool serve both; the route's body is `hf.tree(repo)`
+  and the save's check is `file_is_listed`, never a second copy of the fetch. The save's `hf-file`
+  check runs when a file is present and the repo OR the file changed (a file kept beside a NEW repo
+  was listed in the OLD one), and answers `hf-unreachable` / `hf-tool-missing` at 503 through
+  `Refused::save_response` (nothing was handed over to write, so no 504).
 - A test reads one function's body as text (`fn_body`): the caller of a builder seam names no
   `Command::new` and no `.args(`, so the seam builds the command and the caller only spawns it (hf.rs G2).
 
@@ -297,7 +316,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   at an early assertion of a phase it never reached is that cross-talk, not a red.
 - rustfmt: `use` groups sort a plain `use` before a `pub use` of the same prefix and lowercase items
   before `CamelCase` ones; consecutive `mod` lines are sorted; a one-line `if/else` past 50 characters is
-  written multi-line; a `return Err(format!(..))` at deep indent is written broken.
+written multi-line; a `return Err(format!(..))` at deep indent is written broken; a `push_str("<INI
+  comment literal>\r\n")` past 100 columns is rewritten as a call whose literal sits on its own
+  line.
 - clippy: `s == ""` is `comparison_to_empty` (use `is_empty()`); `|| other()` as a fallback is
   `redundant_closure` (pass `&other`); `iter().any(|x| *x == y)` is `manual_contains`; a `Result` whose
   error carries an axum `Response` is `result_large_err`; a pub builder over 7 args takes
@@ -340,6 +361,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   snapshots tab stops before the awaited element lands, is the TEST's race (`indexOf = -1`, a
   `Loading...` status quoted where a page's line is wanted). A page that returns `null` while its read is
   pending is not the defect. State the shape, do not touch production.
+- A field's read moved UP to its page so a test's synchronous `getByRole` finds the field is that same
+  race answered in production: revert it, and prove the revert in a copy (the slice's files plus the
+  field's own test file). `git diff --stat` over the slice's files is the check that nothing out of
+  scope is left behind.
 - `vi.useFakeTimers()` breaks RTL's `findBy*`; a test that holds a request and advances the clock sees
   only what the flush after `advance` renders. A fixture handing ONE `Response` to several readers of an
   endpoint starves the second (React runs a child's effect before its parent's); a count over one
@@ -348,7 +373,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   a 'break' statement before 'case'"). `querySelectorAll` over a CSS selector yields `Element`, so a loop
   that calls `.focus()` needs `querySelectorAll<HTMLElement>`.
 - The react-hooks lint answers `set-state-in-effect` for a state update that answers a prop change:
-  derive it during render or key the component.
+  derive it during render or key the component. The same lint reddens an effect that closes a form in
+  the commit after its outcome: close it from the handler with `flushSync(() => setOutcome(line))` then
+  the close, which is also what a test holding the form's node needs (it reads the node's LAST
+  COMMITTED children once the form is gone, so the outcome must be committed while the form is open).
+- `document.getElementById` is not generic (TS2558): narrow with `if (el instanceof HTMLInputElement)`
+  to reach `value` and `setSelectionRange`.
 - `el.enabled` is not a DOM property (use `disabled`).
 - A row whose `group` is `null` has no `<key>-box` / `<key>-control` id; an editable text field with no
   default box is a plain labelled field, not a `role="group"`. A jump target is named by a slug carried
@@ -363,6 +393,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   only a `useRef` local of that very function).
 - A sub-slice's page-wide test helpers (`h3s(main)`, a "no other word" loop over `document.body`) are
   reddened by the NEXT sub-slice's new heading or nav label: the brief amends them; prove it in a copy.
+  The same for a new focusable control in a disclosure's own file: a helper that clicks the opener AND
+  awaits the form reddens every test that clicked the opener first (the toggle closes it again), and
+  `openPage` awaiting the heading of a labelled fixture reddens every test that passes `label: null`.
+  Prove each in a scratch copy (delete the click, pass the heading, add the `cleanup()` between two
+  `openPage()` calls in one loop turn) and report each as its own defect.
+- A tab-order test that names a control `aria-label ?? textContent` names NO checkbox and NO text box
+  (both have an empty `textContent`): its `indexOf` is `-1` and no production shape names them. A test
+  that compares `at.every((i) => i >= 0)` with `order.map(() => true)` compares a boolean with an array
+  and can never pass. Both are test-side: prove them in a copy.
 - Two tests in one file can pin incompatible DOM for the same fixture: report the pair.
 - A shared tree means shared output: one `npm --prefix fe test` tail can interleave another role's
   vitest run (its counts, a file that exists nowhere in this tree). Judge a run by the failing file names

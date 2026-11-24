@@ -165,7 +165,7 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
   // these that sets it is a break no brief asked for.
   expect(
     sets('overflow-wrap'),
-    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, 16 17a review D1 adds the three cells of the Server profiles table, the rest are unchanged',
+    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, 16 17a review D1 adds the three cells of the Server profiles table, 16 17f.8 adds .instance-id, the rest are unchanged',
   ).toEqual(
     [
       'body = break-word',
@@ -209,6 +209,10 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
       // Brief 20 20 N.11: the text run of an instance link breaks a 40-character
       // id and server profile with no break point, inside the pill, at 320 px.
       '.nav-instance = anywhere',
+      // Brief 16 slice 17f (17f.8): the id line under a name that is not the id
+      // is a grid item of the tile and a block of the page header, so a
+      // 32-character id with no break point needs the break.
+      '.instance-id = anywhere',
     ].sort(),
   )
   for (const r of RULES.filter((r) => prop(r.body, 'overflow-wrap') !== ''))
@@ -414,13 +418,15 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // 21 section 6), so the card's classes are allowed by the card's own namespace,
 // the `ot` of its strings keys (model-profile-ot-*), and the `tensor`/`placement`
 // of its card title: the test names what that namespace is, and every class
-// outside these and the frozen list is a look no brief asked for.
+// outside these and the frozen list is a look no brief asked for. Brief 16
+// slice 17f (17f.8) adds the fourteenth: instance-id, the quiet id line beside a
+// name that is not the id, on the page header, a tile and a Used by link.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed confirm-group dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary server-profiles session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed confirm-group dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header instance-id intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary server-profiles session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1 and brief 21 TP1 review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8 and brief 21 TP1 review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -432,11 +438,19 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
   // row items, so they are kept in the card's namespace (the comment above
   // the frozen list), and the review's 720 px rule selects the card by an id.
   const ofCard = (c: string) => /^(ot|tensor|placement)[-a-z0-9]*$/.test(c)
+  // Brief 16, its 17f review (D3, 2026-11-23): the rename form gains a class
+  // the review describes and does not name, so it is kept in the namespace of
+  // the slice's strings keys (`instance-rename`, `instance-label`).
+  const ofRename = (c: string) => /^instance-(rename|label)[-a-z0-9]*$/.test(c)
   const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
-    [...used].filter((c) => !ofCard(c)).sort(),
-    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, tags-save gone, and nothing else outside the Tensor placement namespace (R1.8: a class the designer did not brief is a look nothing asked for)',
+    [...used].filter((c) => !ofCard(c) && !ofRename(c)).sort(),
+    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, tags-save gone, and nothing else outside the Tensor placement namespace and the rename form of brief 16 17f review D3 (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
+  expect(
+    [...used].filter(ofRename).sort(),
+    '16 17f review D3: the rename form is styled by at least one class of the slice namespace, the one the markup carries: today the form has no class and the sheet lays out none of it',
+  ).not.toEqual([])
   expect(
     [...used].filter(ofCard).sort(),
     '21 TP1 review D1: the card of brief 21 is styled by at least one class of its own namespace: the row items the review wraps each label and its control in',
@@ -454,6 +468,85 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
     cardIds[0],
     '21 TP1 review D1: the id names the Tensor placement card: its heading id model-profile-card-tensor (21 T.2), or the Rules fieldset id the review writes #…ot',
   ).toMatch(/^#model-profile-(card-tensor|ot(-rules)?)$/)
+})
+
+// ── 16 17f.8: the id line breaks (brief 16 slice 17f) ──────────────────────
+
+test('16 17f.8: the .instance-id rule is a quiet small line that breaks anywhere, declaring font-size var(--fs-sm), color var(--muted), overflow-wrap: anywhere and margin 0, and nothing else', () => {
+  // The id beside a name that is not the id (17f.3, 17f.4): a 32-character id
+  // with no break point, at 320 px and 200 % text, must not scroll the page
+  // sideways. The tile's link already breaks (`.tile-id`, pinned by R1.1
+  // above), and so does the nav's name (`.nav-instance`, 20 N.11).
+  declares(
+    topBy('.instance-id', 'the id line rule'),
+    'the id line',
+    [
+      ['font-size', 'var(--fs-sm)'],
+      ['color', 'var(--muted)'],
+      ['overflow-wrap', 'anywhere'],
+      ['margin', '0'],
+    ],
+    'the four of 17f.8: small and muted as a quiet line, the break for a long id, and no margin so the line sits where the page puts it (--muted on --bg and --surface is an existing token pair, WCAG 1.4.3)',
+  )
+})
+
+// ── 16 17f review (designer, 2026-11-23): D1 the id span, D3 the form ──────
+
+test('16 17f review D1: a rule scoped to .instance-id makes the id of a Used by link a block, so it sits on its own line under the name', () => {
+  // The Used by cell and the Used by row put the id in a `span` after the name
+  // (17f.4). Inline, it runs into the name ("Coding assistantID default"), and
+  // in the table's cell a long id has no line to break on. The space in the
+  // markup is pinned in InstanceName17f.test.tsx; here, the span on its own
+  // line, as the tile's and the page's `p.instance-id` are. The shared
+  // `.instance-id` rule keeps the four of 17f.8 (pinned above), so the block
+  // is a rule scoped to the link.
+  const scoped = TOP.filter((r) => r.compact.includes('.instance-id'))
+  expect(
+    scoped
+      .filter((r) => norm(prop(r.body, 'display')) === 'block')
+      .map((r) => r.flat)
+      .sort(),
+    'a rule scoped to .instance-id declares display: block: the id line breaks under the name (17f.8, WCAG 1.4.10)',
+  ).not.toEqual([])
+})
+
+test('16 17f review D3: the rename form is laid out by one class of the slice namespace: it starts --space-3 under Rename and stacks, its label is a block above the box, and its buttons are a row with --space-2 between them', () => {
+  // The form of 17f.5 has no class today, so the sheet lays out nothing of it:
+  // the Label text ends at x 305 and the box starts at 305 (the focus ring
+  // covers the last letter), the form starts 0 px under Rename (DESIGN.md
+  // principle 9 asks --space-3), Save label and Cancel touch, and the open form
+  // scrolls sideways at 320 px and 200 % text (17f.8, WCAG 1.4.10). The coder
+  // names the class, as brief 21 TP1 review D1 names the card's row items.
+  const names = new Set<string>()
+  for (const r of RULES)
+    for (const m of r.sel.matchAll(/\.(instance-(?:rename|label)[-a-z0-9]*)/g))
+      names.add(m[1]!)
+  expect(
+    [...names].sort(),
+    'the rename form is styled by exactly one class of the slice namespace, the one the markup carries (pinned in InstanceRename17f.test.tsx)',
+  ).toHaveLength(1)
+  const cls = [...names][0]!
+  const rule = topBy(`.${cls}`, 'the rename form rule')
+  expect(
+    norm(prop(rule.body, 'margin-top')),
+    'the form starts --space-3 under Rename (DESIGN.md principle 9)',
+  ).toBe('var(--space-3)')
+  const display = norm(prop(rule.body, 'display'))
+  expect(
+    display === 'grid' ||
+      (display === 'flex' &&
+        norm(prop(rule.body, 'flex-direction')) === 'column'),
+    `the form stacks its children in one column, so the box takes the form's width (17f.8) and the label goes above it: display flex with flex-direction column, or grid. Today: "${display}"`,
+  ).toBe(true)
+  const scoped = TOP.filter((r) => r.compact.includes(`.${cls}`))
+  expect(
+    scoped.some((r) => norm(prop(r.body, 'display')) === 'block'),
+    'the label is a block above the box, with the --space-1 under it the brief gives it (today it sits inline against the box)',
+  ).toBe(true)
+  expect(
+    scoped.some((r) => norm(prop(r.body, 'gap')) === 'var(--space-2)'),
+    'the two buttons are a row with --space-2 between them (today they touch)',
+  ).toBe(true)
 })
 
 // ── 12 T1 layout: the tile's facts break (brief 12 section 3, T1 review) ───

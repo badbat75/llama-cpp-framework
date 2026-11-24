@@ -19,9 +19,10 @@ import {
 import Dialog from './Dialog.tsx'
 import { FieldError, Hint, HintToggle } from './Field.tsx'
 import { Icon } from './Icon.tsx'
+import { InstanceLink } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
 import { refusalOf, type RefusalTable } from './refusal.ts'
-import { instanceHref, serverProfileHref } from './route.ts'
+import { serverProfileHref } from './route.ts'
 import SignIn from './SignIn.tsx'
 import type { Session, SignedOut } from './session.ts'
 import { Lines, Loading, LoadingText } from './Skeleton.tsx'
@@ -86,11 +87,15 @@ async function readServerPool(): Promise<Answer> {
 export default function ServerProfiles({
   onSignedOut,
   onRenewed,
+  nameOf,
 }: {
   /** The session a read says is gone. */
   onSignedOut: (reason: SignedOut) => void
   /** A sign-in in the form's dialog: true when the page stays. */
   onRenewed: (session: Session) => boolean
+  /** The name of an instance by its id (16 17f.4): the Used by cell says the
+   * word the menu uses, not the key. */
+  nameOf: (id: string) => string
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -131,7 +136,12 @@ export default function ServerProfiles({
       <PageHeading text={t('server-profiles-title')} />
       <section>
         <p className="intro">{t('server-profiles-intro')}</p>
-        <Body answer={answer} onRenewed={onRenewed} onReload={reload} />
+        <Body
+          answer={answer}
+          onRenewed={onRenewed}
+          onReload={reload}
+          nameOf={nameOf}
+        />
       </section>
     </>
   )
@@ -142,10 +152,12 @@ function Body({
   answer,
   onRenewed,
   onReload,
+  nameOf,
 }: {
   answer: Answer | undefined
   onRenewed: (session: Session) => boolean
   onReload: () => void
+  nameOf: (id: string) => string
 }) {
   if (answer === undefined) {
     // The rows' skeleton (17a.3): three lines in the table's place, the read's
@@ -200,8 +212,10 @@ function Body({
                   {p.instance === null ? (
                     <td className="muted">{t('server-profiles-unused')}</td>
                   ) : (
+                    // The name the menu uses, then the id it is the key of
+                    // (16 17f.4): two instances named alike are told apart.
                     <td>
-                      <a href={instanceHref(p.instance)}>{p.instance}</a>
+                      <InstanceLink id={p.instance} nameOf={nameOf} />
                     </td>
                   )}
                 </tr>
@@ -419,9 +433,9 @@ function CreateForm({
       return
     }
     const key = apiError(reply.body)?.key
-    if (key === 'client-unavailable') {
-      // The manager did not answer: the list read again says whether the
-      // profile is there (17b.5).
+    if (key === 'client-unavailable' || key === 'client-timeout') {
+      // The manager did not answer, or did not answer in time: the list read
+      // again says whether the profile is there (17b.5, 16 17f.10).
       setAlert({ text: t('create-unknown'), signIn: false })
       onReload()
       return
