@@ -169,7 +169,7 @@ test('H9b.4: the rail is the region the settings heading names, and a press open
   ).toEqual([])
 })
 
-test('H9b.4: the disclosure and the entries are the stops right after the back link, in the cards order, and add no others', async () => {
+test('H9b.4: the disclosure and the entries are the stops right after the save bar, in the cards order, and add no others', async () => {
   const { main } = await form()
   const { nav, buttons, toggle } = railOf(main)
   expect(buttons.length, 'one entry per card').toBe(TITLES.length)
@@ -185,19 +185,26 @@ test('H9b.4: the disclosure and the entries are the stops right after the back l
     "the nav's stops are the disclosure, then its entries",
   ).toEqual([toggle, ...buttons])
 
-  // In the page, the disclosure and the entries are the stops right after
-  // the back link (H10.10).
+  // In the page, the disclosure and the entries are the stops right after the
+  // save bar, which 22 D2.5 moved to the top of the settings section (H10.10).
   const stops = tabbables(main)
   expect(stops[0], 'the back link stays the first stop of the page').toBe(
     screen.getByRole('link', { name: en('model-profile-back') }),
   )
   expect(
-    stops.slice(1, buttons.length + 2),
+    stops.slice(1, 3),
+    '22 D2.5: the bar’s Discard and Save changes are the stops right after the back link',
+  ).toEqual([
+    within(main).getByRole('button', { name: en('save-discard') }),
+    within(main).getByRole('button', { name: en('save-button') }),
+  ])
+  expect(
+    stops.slice(3, buttons.length + 4),
     'H10.10: the disclosure then the entries are the next stops, in their order',
   ).toEqual([toggle, ...buttons])
 
-  // The reading order of the rail page: back link, region, Assets card,
-  // cards, save bar.
+  // The reading order of the rail page: back link, save bar (22 D2.5), region,
+  // Assets card, cards.
   const section = railOf(main).section
   const assets = within(section).getByRole('heading', {
     level: 3,
@@ -218,12 +225,12 @@ test('H9b.4: the disclosure and the entries are the stops right after the back l
         'back link',
         screen.getByRole('link', { name: en('model-profile-back') }),
       ],
+      ['save bar', bar],
       ['nav.jump', nav],
       ['Assets card', assets],
       ['first card', firstCard],
-      ['save bar', bar],
     ]),
-    'H9b.4: the rail sits between the back link and the fields it jumps to',
+    'H9b.4: the rail sits between the save bar and the fields it jumps to',
   ).toEqual([])
 })
 
@@ -261,7 +268,8 @@ test('H9b.6 and H9b.5: no new element, class or text, and the cards and the save
   ).toEqual([])
 
   // H9b.5: the cards and the save bar are the same markup the rail shares the
-  // grid with: cards as the sections of the rail section, bar its last child.
+  // grid with: cards as the sections of the rail section, the bar its second
+  // child, right after the settings heading (22 D2.5).
   const cards = Array.from(section.children).filter(
     (el) => el.tagName === 'SECTION' && el !== section,
   )
@@ -275,7 +283,11 @@ test('H9b.6 and H9b.5: no new element, class or text, and the cards and the save
   ).toEqual(cards.map(() => section))
   const children = Array.from(section.children)
   expect(
-    (children[children.length - 1] as HTMLElement).className,
-    'H9b.5: the save bar is still the last child of the section',
+    (children[0] as HTMLElement).tagName,
+    'the settings heading is the first child',
+  ).toBe('H2')
+  expect(
+    (children[1] as HTMLElement).className,
+    'H9b.5, 22 D2.5: the save bar is the child right after it',
   ).toContain('save-bar')
 })

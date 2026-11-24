@@ -1182,6 +1182,10 @@ const TAB_PATH_FORM = [
   en('server-profile-back'),
   // 17a.5: the one Value row, the instance that runs this profile.
   'default',
+  // 22 D2.5 moved the bar to the top of the form, so its stops follow the
+  // Used by link (test 6 had them at the end of the fields).
+  en('save-discard'),
+  en('save-button'),
   ...[
     [about('Port'), en('option-default'), 'Port'],
     [
@@ -1214,8 +1218,6 @@ const TAB_PATH_FORM = [
     [about('Disable GPU graphs'), en('server-gpu-graphs-toggle')],
     [about('KV rotation'), en('server-kv-rotation-toggle')],
   ].flat(),
-  en('save-discard'),
-  en('save-button'),
 ]
 
 test('6 (17a.10): Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the run buttons, Start at boot and Instance tags, and no control of a Server form', async () => {
@@ -1236,7 +1238,7 @@ test('6 (17a.10): Tab goes skip link, product link, Menu, theme switch, Sign out
   expect(main.querySelector('.save-bar'), 'no save bar').toBeNull()
 })
 
-test('6: Tab goes the shell, Back, the Used by link, then every control of the editable form in table order, then the save bar', async () => {
+test('6 (22 D2.5): Tab goes the shell, Back, the Used by link, the save bar at the top of the form, then every control of the editable form in table order', async () => {
   await loaded()
   expect(tabbable().map(nameOf)).toEqual(TAB_PATH_FORM)
   // The h1 takes focus only from the page (tabindex -1).

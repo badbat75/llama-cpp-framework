@@ -28,8 +28,7 @@ import {
 import {
   MODEL_PROFILE_CARDS,
   fieldTabStops,
-  pageStartTabStops,
-  saveBarTabStops,
+  pageTopTabStops,
 } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
@@ -59,12 +58,10 @@ const CARD_LABELS = [ENGINE_DT, ...LABELS]
 /** The 2e cards' fields, in card and field order: each is one tab stop, its
  * About toggle (criterion 91), and nothing else of a 2e card takes focus
  * (criterion 85). The list is test/modelProfileCards.ts. H11a.3's Assets
- * disclosure and H11b.4's drop of the Engine stops live in pageStartTabStops,
- * so this list is the field stops and the bar. */
-const CARD_TAB_STOPS = [
-  ...fieldTabStops(fullDoc().values),
-  ...saveBarTabStops(),
-]
+ * disclosure and H11b.4's drop of the Engine stops live in pageTopTabStops,
+ * and so do the save bar's two buttons since 22 D2.5 moved the bar to the top
+ * of the page, so this list is the field stops only. */
+const CARD_TAB_STOPS = [...fieldTabStops(fullDoc().values)]
 
 /** The five group headings of the Speculative decoding card of 2e.5 (criterion
  * 114): the strings text of `model-profile-draft-model-group`, and the four speculator
@@ -291,15 +288,12 @@ test('2d.81: a key of values the page does not show is ignored, and a values who
   expect(within(main).queryByRole('heading', { level: 3 })).toBeNull()
 })
 
-test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes and Discard, and in main Tab reaches the back link, the ten jump buttons of 2h.10, the Assets toggle, then each 2e field About toggle, the editable controls and the bar', async () => {
+test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes and Discard, and in main Tab reaches the back link, the save bar of 22 D2.5, the ten jump buttons of 2h.10, the Assets toggle, then each 2e field About toggle and the editable controls', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, fullDoc()) })
   for (const name of [en('save-button'), en('save-discard')])
     expect(within(main).queryByRole('button', { name }), name).toBeTruthy()
   expect(main.querySelector('.save-bar'), 'the save bar').toBeTruthy()
-  expect(mainTabbable(main)).toEqual([
-    ...pageStartTabStops(),
-    ...CARD_TAB_STOPS,
-  ])
+  expect(mainTabbable(main)).toEqual([...pageTopTabStops(), ...CARD_TAB_STOPS])
 })
 
 // ── The order and the off line (68, 69) ─────────────────────────────────
@@ -658,7 +652,7 @@ test('2d.76: a key absent from values, an empty string, an empty projectUrl and 
 
 // ── Keyboard and screen reader (78, 79) ─────────────────────────────────
 
-test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back link, the ten jump buttons of 2h.10 in card order, the Assets toggle, then each 2e field About toggle, and nothing else on the page takes focus', async () => {
+test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back link, the save bar of 22 D2.5, the ten jump buttons of 2h.10 in card order, the Assets toggle, then each 2e field About toggle, and nothing else on the page takes focus', async () => {
   await loaded({ modelProfile: () => reply(200, fullDoc()) })
   expect(tabbable().map(nameOf)).toEqual([
     en('skip-to-content'),
@@ -676,7 +670,7 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
     en('nav-model-profiles'),
     // 13 N.6: About, last in the nav, before the page.
     en('nav-about'),
-    ...pageStartTabStops(),
+    ...pageTopTabStops(),
     ...CARD_TAB_STOPS,
   ])
   // The h1 takes the focus only from the page (tabindex -1): Tab starts below it.

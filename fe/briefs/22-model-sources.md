@@ -647,3 +647,41 @@ and `server-profile-used-by`, and loses `model-profile-delete-needs-off`. These 
 bottom of the viewport since 2h, so in a normal window Save and Discard were always on screen. If
 "the edit commands" meant only Delete, 22 D2.5 to 22 D2.7 can be dropped and the bar stays at the
 bottom.
+
+## 22D2 review (designer, 2026-11-24)
+
+I drove both profile pages in Chromium, Firefox and WebKit at 1280 and 320 px, light and dark, at
+200 % text and under forced colours (Chromium), with keyboard (`build/ux-review/22d2.js`, `22d2s.js`,
+`22d2c.js`; shots and the run log in `build/ux-review/22d2/`). The machine was loaded (load average
+about 13), so I used a longer navigation timeout and a settle time after each key press.
+**Verdict: accepted, no defect.**
+- **22 D2.1 and D2.2 met.**
+  - The − is 40 px (40 by 45 px at 200 % text) and is the last item of `div.page-status`. At 1280 px
+    it sits on the paragraph's row at the right; at 320 px and 200 % it wraps under it.
+  - It is announced as `button "Delete model profile"` and `button "Delete server profile"`.
+  - The icon and outline follow the theme, and are `ButtonText` under forced colours.
+  - No sideways scroll anywhere.
+- **22 D2.5 and D2.6 met in all three engines.** The bar starts after the settings `h2` (the model
+  page) or the Server intro (the server page). While the page scrolls (y = 800, 2000, 4000) its top
+  stays at 0, at 1280, 1600 and 320 px.
+  - **The reviewer's suspected D1 is refuted:** as a grid item of `section:has(> .jump)` at 1280 and
+    1600 px, the bar still sticks for the whole scroll in Chromium, Firefox and WebKit. No wrapper is
+    needed.
+- **22 D2.7 met.** From the `h1`, Tab goes: the −, Discard, Save changes, then the jump list or the
+  first field, on both pages and at both widths.
+- **2.4.11, no focused control under the bar.** I Shift+Tabbed 60 steps up from the end of each page
+  with a 250 ms settle. Every control focused after the page had scrolled lay clear of the bar, in all
+  three engines. The first run, without a settle, reported controls under or beyond the bar in Firefox
+  and WebKit. They were measured before the scroll that focus starts had ended, and they did not
+  repeat with the settle.
+- 22 D2.3, D2.4 and D2.8 behave as 22D's re-checked rules: the group opens under the row, and the
+  focus goes to Cancel and back to the −.
+- A note, not a defect: on the server page, the status sentence and the Value list's "Used by" row say
+  the same thing one line apart. The brief keeps the row as data; whether to drop it is the user's
+  call.
+- `npm --prefix fe/ux run check`: 180 states per browser. One fails: WebKit 1280 px light
+  `sign-in-at-home`, "not rendered: #page-heading Sign in" (`build/ux-review/check-22d2.txt`). That is
+  the sign-in page, which 22D2 does not touch; its other three variants and both 22D2 states pass. I
+  read it as the heading missing the check's wait while the machine was loaded, not as a defect. A
+  rerun on a quiet machine should confirm it. The first attempt did not start: its stub printed
+  nothing within the check's 5 s.

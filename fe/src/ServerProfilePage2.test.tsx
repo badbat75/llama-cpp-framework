@@ -5,6 +5,14 @@
 // `1a strings` in App.test.tsx, which compares the strings file against the test's
 // EN map, where 17b's keys are listed. Test names cite the brief first, `16 17b.6`,
 // because brief 17's UX pass owns the bare `17b.n` names.
+//
+// Slice 22D2 (fe/briefs/22-model-sources.md, section 22D2) gives this page the
+// status row of the model profile page: the delete becomes a minus icon button
+// in a div.page-status under the h1, the row says whether an instance uses the
+// profile, and the confirm and the refusal paragraph of 17b.9 sit under that
+// row instead of after the Value list. The answers of 17b.6 to 17b.9 stand;
+// what changes here is the place. The row, the minus and the strings are
+// 22 D2.8 in ModelProfileDelete2.test.tsx.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -110,6 +118,16 @@ function deleteButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('server-profile-delete') })
 }
 
+/** The status row of 22 D2.8, the place of the delete since 22D2. */
+function statusRow(main: HTMLElement): Element | null {
+  return main.querySelector('div.page-status')
+}
+
+/** The words a node shows, whitespace folded. */
+function words(el: Element | null): string {
+  return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
+}
+
 /** The confirm group's accessible name: its question (17b.7). */
 const QUESTION = en('server-profile-delete-question', ID)
 
@@ -182,23 +200,30 @@ function asksBrowser(): boolean {
 
 // ── 17b.6: delete is offered while unused ───────────────────────────────
 
-test('16 17b.6: a profile whose document says no instance runs offers a secondary server-profile-delete after the Value list and before the Server section; one whose document names an instance offers nothing; the button follows the document read', async () => {
+test('16 17b.6: a profile whose document says no instance runs offers the server-profile-delete delete in the status row under the h1, above the Value list and the Server section, the row saying server-profile-unused; one whose document names an instance offers nothing, the row saying server-profile-used-by; the button follows the document read', async () => {
   const { main } = await loaded()
+  const h1 = within(main).getByRole('heading', { level: 1, name: ID })
+  const row = statusRow(main)
+  expect(row, 'the status row of 22 D2.8').not.toBeNull()
+  expect(before(h1, row!), 'it is under the h1').toBe(true)
   const dl = main.querySelector('dl.assets')
   expect(dl, 'the Value list is there').not.toBeNull()
+  expect(before(row!, dl!), 'and above the Value list').toBe(true)
   const button = deleteButton(main)
-  expect(button.classList.contains('secondary'), 'a secondary button').toBe(
-    true,
-  )
-  expect(before(dl!, button), 'it follows the Value list').toBe(true)
+  expect(button.parentElement, 'the delete is in the row').toBe(row)
+  expect(button.closest('section'), 'outside the Server section').toBeNull()
+  expect(
+    words(row!.querySelector('p')),
+    '22 D2.8: an unused profile says no instance uses it',
+  ).toBe(en('server-profile-unused'))
   const h2 = within(main).getByRole('heading', {
     level: 2,
     name: en('server-title'),
   })
-  expect(before(button, h2), 'and sits before the Server section').toBe(true)
+  expect(before(button, h2), 'and it sits before the Server section').toBe(true)
   cleanup()
   vi.unstubAllGlobals()
-  // A profile an instance runs: nothing.
+  // A profile an instance runs: nothing, and the row names the instance.
   const used = await loaded({ serverProfile: () => usedDoc(TAKEN) })
   expect(
     within(used.main).queryByRole('button', {
@@ -206,6 +231,10 @@ test('16 17b.6: a profile whose document says no instance runs offers a secondar
     }),
     'no delete for a profile in use',
   ).toBeNull()
+  expect(
+    words(statusRow(used.main)!.querySelector('p')),
+    '22 D2.8: the row names the instance that runs it',
+  ).toBe(en('server-profile-used-by', TAKEN))
   cleanup()
   vi.unstubAllGlobals()
   // It follows the read.
@@ -229,9 +258,12 @@ test('16 17b.7: pressing it shows right after it a div role="group" named by its
   const opener = deleteButton(main)
   const group = await confirmGroup(main)
   expect(group.tagName, 'a div of role="group"').toBe('DIV')
-  expect(opener.nextElementSibling, 'the group is right after the opener').toBe(
-    group,
-  )
+  const row = statusRow(main)
+  expect(row, 'the status row of 22 D2.8').not.toBeNull()
+  expect(
+    row!.nextElementSibling,
+    '22 D2.8: the group is right after the row, not after the opener',
+  ).toBe(group)
   const label = group.getAttribute('aria-labelledby')
   expect(label, 'the group is named by an element').toBeTruthy()
   const question = document.getElementById(label!)
@@ -462,7 +494,7 @@ test('16 17b.9: a 409 client-server-profile-in-use shows its text in the group�
   expect(queryConfirm(main), 'and so is the confirm').toBeNull()
 })
 
-test('16 17b.9: after the 409 client-server-profile-in-use and the read again, the in-use text stays in a p[role="alert"][tabindex="-1"] right after the Value list, and that paragraph has the focus: the focus never ends on body (17b review D2)', async () => {
+test('16 17b.9: after the 409 client-server-profile-in-use and the read again, the in-use text stays in a p[role="alert"][tabindex="-1"] right after the status row of 22 D2.8, and that paragraph has the focus: the focus never ends on body (17b review D2)', async () => {
   let reads = 0
   const { main } = await loaded({
     serverProfile: () => (++reads === 1 ? freeDoc() : usedDoc(TAKEN)),
@@ -492,7 +524,12 @@ test('16 17b.9: after the 409 client-server-profile-in-use and the read again, t
   expect(alert.getAttribute('tabindex'), 'a place the focus can take').toBe(
     '-1',
   )
-  expect(dl!.nextElementSibling, 'right after the Value list').toBe(alert)
+  const row = statusRow(main)
+  expect(row, 'the status row of 22 D2.8').not.toBeNull()
+  expect(
+    row!.nextElementSibling,
+    '22 D2.8: right after the row, where the group was',
+  ).toBe(alert)
   expect(document.activeElement, 'and it has the focus').toBe(alert)
   expect(document.activeElement, 'the focus did not drop to body').not.toBe(
     document.body,

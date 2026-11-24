@@ -12,6 +12,15 @@
 // Not provable in jsdom, so not tested here: the focus ring and the muted look
 // of the line of 22 D.1 (the designer's review), and the 320 px and 200 % text
 // widths, which the UX check's `model-profile-delete` state measures.
+//
+// Slice 22D2 (the same brief, section 22D2) moves the opener into the status
+// row under the summary line, moves the save bar to the top of the settings
+// section, and replaces the muted "switch it off first" line with the row's
+// model-profile-on. The answers of D.1 to D.7 stand; what changes here is the
+// place of the opener, of the line and of the bar, so D.1, D.2 and D.4 name
+// the new place, and the switched-on state reads model-profile-on. The minus
+// itself, the row, the bar at the top and the server page's row are
+// ModelProfileDelete2.test.tsx.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -36,7 +45,6 @@ import {
   stubDialog,
   type BffOptions,
 } from './test/bff.ts'
-import { MODEL_PROFILE_CARDS } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/profiles/model/${ID}`
@@ -131,13 +139,12 @@ function makeDirty(main: HTMLElement) {
   fireEvent.change(select, { target: { value: 'false' } })
 }
 
-/** The last card's `h3` (22 D.1: the button comes after the last card). */
-function lastCardHeading(main: HTMLElement): HTMLElement {
-  const heading = MODEL_PROFILE_CARDS[MODEL_PROFILE_CARDS.length - 1]!.heading
-  return within(main).getByRole('heading', { level: 3, name: en(heading) })
+/** The status row of 22 D2.1, the place of the delete since 22D2. */
+function statusRow(main: HTMLElement): Element | null {
+  return main.querySelector('div.page-status')
 }
 
-/** The save bar (22 D.1: the button comes before it). */
+/** The save bar (22 D.1: the row comes before it; 22D2 moved it to the top). */
 function saveBar(main: HTMLElement): HTMLElement | null {
   return main.querySelector('.save-bar')
 }
@@ -219,27 +226,27 @@ async function signInInDialog(user: string) {
 
 // ── 22 D.1: offered while switched off ──────────────────────────────────
 
-test('22 D.1: a switched-off profile offers a secondary model-profile-delete after the last card and before the save bar, outside every fieldset; a switched-on one offers nothing and shows p.muted model-profile-delete-needs-off in that place', async () => {
+test('22 D.1: a switched-off profile offers the model-profile-delete delete in the status row under the summary line, outside every fieldset and above the save bar; a switched-on one offers nothing and the row says model-profile-on in that place', async () => {
   const { main } = await loaded()
-  const heading = lastCardHeading(main)
+  const summary = main.querySelector('p.model-profile-summary')
+  expect(summary, 'the summary line is there').not.toBeNull()
+  const row = statusRow(main)
+  expect(row, 'the status row of 22 D2.1').not.toBeNull()
+  expect(summary!.nextElementSibling, 'it is right under it').toBe(row)
   const bar = saveBar(main)
   expect(bar, 'the save bar is there').not.toBeNull()
   const button = deleteButton(main)
-  expect(button.classList.contains('secondary'), 'a secondary button').toBe(
-    true,
-  )
-  expect(button.querySelector('svg'), 'no icon, as 17b has none').toBeNull()
-  expect(before(heading, button), 'it follows the last card').toBe(true)
-  expect(before(button, bar!), 'and sits before the save bar').toBe(true)
+  expect(button.parentElement, 'the delete is in the row').toBe(row)
   expect(button.closest('fieldset'), 'outside the form').toBeNull()
   expect(button.closest('.save-bar'), 'and outside the save bar').toBeNull()
+  expect(before(row!, bar!), 'the row is above the bar of 22 D2.5').toBe(true)
   expect(
-    within(main).queryByText(en('model-profile-delete-needs-off')),
-    'a switched-off profile says nothing about switching it off',
+    within(main).queryByText(en('model-profile-on')),
+    'a switched-off profile says nothing about being on',
   ).toBeNull()
   cleanup()
   vi.unstubAllGlobals()
-  // A switched-on profile: no button, the muted line in its place.
+  // A switched-on profile: no delete, the row says the state in its place.
   const on = await loaded({ modelProfile: () => onDoc() })
   expect(
     within(on.main).queryByRole('button', {
@@ -247,16 +254,21 @@ test('22 D.1: a switched-off profile offers a secondary model-profile-delete aft
     }),
     'no delete for a switched-on profile',
   ).toBeNull()
-  const line = within(on.main).getByText(en('model-profile-delete-needs-off'))
-  expect(line.tagName, 'a paragraph').toBe('P')
-  expect(line.classList.contains('muted'), 'a muted line').toBe(true)
-  const onHeading = lastCardHeading(on.main)
-  const onBar = saveBar(on.main)
-  expect(before(onHeading, line), 'it stands where the button would').toBe(true)
-  expect(before(line, onBar!), 'after the last card, before the bar').toBe(true)
+  const onRow = statusRow(on.main)
+  expect(onRow, 'the row is there too').not.toBeNull()
+  const line = onRow!.querySelector('p')
+  expect(line, 'the row says the state in a paragraph').not.toBeNull()
+  expect(
+    (line!.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    '22 D2.1: the words of the switched-on state',
+  ).toBe(en('model-profile-on'))
+  expect(
+    onRow!.nextElementSibling,
+    'nothing of the delete is left under the row',
+  ).toBe(on.main.querySelector('section'))
 })
 
-test('22 D.1: the offer follows the document read: nothing while the read is open, the button when a read answers switched off, the muted line when it answers switched on', async () => {
+test('22 D.1: the offer follows the document read: nothing while the read is open, the delete when a read answers switched off, the row saying model-profile-on when it answers switched on', async () => {
   const gate = deferred()
   fakeBff({ modelProfile: () => gate.promise })
   render(<App />)
@@ -267,14 +279,14 @@ test('22 D.1: the offer follows the document read: nothing while the read is ope
     'nothing while the document is open',
   ).toBeNull()
   expect(
-    within(main).queryByText(en('model-profile-delete-needs-off')),
-    'nor the line that replaces it',
+    within(main).queryByText(en('model-profile-on')),
+    'nor the row that replaces it',
   ).toBeNull()
   gate.resolve(offDoc())
   await within(main).findByRole('button', {
     name: en('model-profile-delete'),
   })
-  // The next read of the same page answers switched on: the line replaces it.
+  // The next read of the same page answers switched on: the row says the state.
   cleanup()
   vi.unstubAllGlobals()
   const gate2 = deferred()
@@ -283,10 +295,10 @@ test('22 D.1: the offer follows the document read: nothing while the read is ope
   const m = screen.getByRole('main')
   await within(m).findByRole('heading', { level: 1, name: ID })
   gate2.resolve(onDoc())
-  await within(m).findByText(en('model-profile-delete-needs-off'))
+  await within(m).findByText(en('model-profile-on'))
   expect(
     within(m).queryByRole('button', { name: en('model-profile-delete') }),
-    'the button is gone with the switch',
+    'the delete is gone with the switch',
   ).toBeNull()
 })
 
@@ -297,9 +309,12 @@ test('22 D.2: pressing it shows right after it a div role="group" named by its p
   const opener = deleteButton(main)
   const group = await confirmGroup(main)
   expect(group.tagName, 'a div of role="group"').toBe('DIV')
-  expect(opener.nextElementSibling, 'the group is right after the opener').toBe(
-    group,
-  )
+  const row = statusRow(main)
+  expect(row, 'the status row of 22 D2.1').not.toBeNull()
+  expect(
+    row!.nextElementSibling,
+    '22 D2.3: the group is right after the row, not after the opener',
+  ).toBe(group)
   const label = group.getAttribute('aria-labelledby')
   expect(label, 'the group is named by an element').toBeTruthy()
   const question = document.getElementById(label!)
@@ -540,7 +555,7 @@ test('22 D.3: a profile whose id needs encoding is deleted at a percent-encoded 
 
 // ── 22 D.4: switched on meanwhile ───────────────────────────────────────
 
-test('22 D.4: a 409 model-profile-enabled reads the document again: the group and the button go, and api-model-profile-enabled stays in a p[role="alert"][tabindex="-1"] where the button was, with the focus, until the next read', async () => {
+test('22 D.4: a 409 model-profile-enabled reads the document again: the group and the delete go, the row says model-profile-on, and api-model-profile-enabled stays in a p[role="alert"][tabindex="-1"] right after the row, with the focus, until the next read', async () => {
   let reads_ = 0
   const { bff, main } = await loaded({
     modelProfile: (id) => (++reads_ === 1 ? offDoc(id) : onDoc(id)),
@@ -555,9 +570,9 @@ test('22 D.4: a 409 model-profile-enabled reads the document again: the group an
     alert.closest('[role="alert"]'),
     'the text is in the group’s alert',
   ).not.toBeNull()
-  // The read again lands: the switch shows, the muted line comes with it, and
-  // the button and its group go: the alert must outlive them.
-  await within(main).findByText(en('model-profile-delete-needs-off'))
+  // The read again lands: the switch shows, the row says it, and the delete and
+  // its group go: the alert must outlive them.
+  await within(main).findByText(en('model-profile-on'))
   expect(
     within(main).queryByRole('button', { name: en('model-profile-delete') }),
     'the button is gone',
@@ -569,11 +584,12 @@ test('22 D.4: a 409 model-profile-enabled reads the document again: the group an
   expect(kept.tagName, 'the text is in a paragraph').toBe('P')
   expect(kept.getAttribute('role'), 'an alert').toBe('alert')
   expect(kept.getAttribute('tabindex'), 'a place the focus can take').toBe('-1')
-  const heading = lastCardHeading(main)
-  const bar = saveBar(main)
-  expect(bar, 'the save bar is still there').not.toBeNull()
-  expect(before(heading, kept), 'it stands where the button was').toBe(true)
-  expect(before(kept, bar!), 'after the last card, before the bar').toBe(true)
+  const row = statusRow(main)
+  expect(row, 'the status row is still there').not.toBeNull()
+  expect(
+    row!.nextElementSibling,
+    '22 D2.4: it stands right after the row, where the group was',
+  ).toBe(kept)
   expect(document.activeElement, 'and it has the focus').toBe(kept)
   expect(document.activeElement, 'the focus did not drop to body').not.toBe(
     document.body,
@@ -865,39 +881,12 @@ function cascade(el: HTMLElement): Record<string, string> {
   return out
 }
 
-test('22 D.1 (22D review D1): the delete opener is not a stretched grid item of the 1280 px jump grid: the sheet gives it justify-self: start, or the page wraps it in a div that is the grid item', async () => {
-  // From 1280 px the settings section is the page’s two-column grid
-  // (`section:has(> .jump)`, index.css 1271) and every direct child takes the
-  // first column. A grid item stretches, so the button is a 696 px pill across
-  // the whole content column (the review, build/ux-review/22d/), where the
-  // same button on the server profile page and at 320 px is as wide as its
-  // words. The review’s fix: the opener asks its own width
-  // (`#model-profile-delete { justify-self: start }`), or it is no grid item
-  // at all (the opener and its group wrapped in one div, ModelProfilePage.tsx
-  // ~1963). jsdom lays nothing out: the cascade and the parent chain pin it.
-  const { main } = await loaded()
-  const button = deleteButton(main)
-  const jump = within(main).getByRole('navigation', {
-    name: en('model-profile-jump-label'),
-  })
-  const grid = jump.parentElement
-  expect(
-    grid,
-    'the jump list is a direct child of the settings section (section:has(> .jump))',
-  ).not.toBeNull()
-  expect(
-    button.closest('section'),
-    'the opener sits in that section, the grid that stretches it',
-  ).toBe(grid)
-  const at = cascade(button)
-  const wrapped =
-    button.parentElement?.tagName === 'DIV' &&
-    button.parentElement?.parentElement === grid
-  expect(
-    norm(at['justify-self'] ?? '') === 'start' || wrapped,
-    'D1: the opener stretches as a grid item unless the sheet gives it justify-self: start (the review names #model-profile-delete { justify-self: start }) or the page wraps it in a div that is the grid item: justify-self',
-  ).toBe(true)
-})
+// 22 D.1 (22D review D1), the opener not stretching as a grid item of the
+// 1280 px jump grid, is retired here: 22 D2.1 moved the opener out of the
+// settings section into the status row under the summary line, so it is no
+// grid item at all. The row's own shape, the 40 px square the − shares with
+// .ot-add and its flex: none (the width the review was about) are 22 D2.2 and
+// 22 D2.9 of ModelProfileDelete2.test.tsx.
 
 test('22 D.2 (22D review D2): the confirm group keeps margin-top: var(--space-3) from its opener (the sheet)', async () => {
   // The group starts at the button’s bottom edge (gap 0, the question p has no

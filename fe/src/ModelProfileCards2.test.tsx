@@ -31,8 +31,7 @@ import {
   cardHeadingKeys,
   expectedInputMode,
   fieldTabStops,
-  pageStartTabStops,
-  saveBarTabStops,
+  pageTopTabStops,
 } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
@@ -1031,12 +1030,11 @@ test('2e.83, 2e.96, 2e.97, 2e.98: the three cards of 2e.2 are D5.2 Cards inside 
 
 // ── Keyboard (91) ───────────────────────────────────────────────────────
 
-test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), and no control of a 2e card', async () => {
+test('2e.91: Tab in main reaches the back link, the save bar of 22 D2.5, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), and no control of a 2e card', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
-    ...pageStartTabStops(),
+    ...pageTopTabStops(),
     ...fieldTabStops(docOf(SET).values),
-    ...saveBarTabStops(),
   ])
 })
 

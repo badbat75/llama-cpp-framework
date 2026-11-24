@@ -35,7 +35,11 @@ import {
   heavyTest,
   type BffOptions,
 } from './test/bff.ts'
-import { cardButtons, cardHeadings } from './test/modelProfileCards.ts'
+import {
+  cardButtons,
+  cardHeadings,
+  saveBarTabStops,
+} from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/profiles/model/${ID}`
@@ -996,22 +1000,21 @@ test('2d.67: the model profile is read once on open and once on each route chang
   // titles; criterion 88: then the Assets disclosure and the buttons each card
   // holds (one About toggle per 2e field, and a card's own controls at its
   // card's place, brief 21's Add rule), in DOM order (the list of
-  // test/modelProfileCards.ts; H11b.1 retires the Engine About toggle), and
-  // 2h.1's 135 adds
-  // the save bar's two buttons at the end of the settings section: so no other
-  // button (a refresh) is in main.
+  // test/modelProfileCards.ts; H11b.1 retires the Engine About toggle). 22
+  // D2.5 moved the save bar to the top of the settings section, so its two
+  // buttons lead the list (2h.1's 135 had them at the end). So no other button
+  // (a refresh) is in main.
   expect(
     within(main)
       .queryAllByRole('button')
       .map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    'main holds the jump disclosure of H10.10, one jump button per card, the Assets disclosure, every card button, then the bar',
+    'main holds the bar of 22 D2.5, the jump disclosure of H10.10, one jump button per card, the Assets disclosure, every card button',
   ).toEqual([
+    ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...cardHeadings(),
     en('model-profile-assets'),
     ...cardButtons(),
-    en('save-discard'),
-    en('save-button'),
   ])
   await advance(60_000)
   expect(modelProfileReads(bff), 'no polling').toBe(1)

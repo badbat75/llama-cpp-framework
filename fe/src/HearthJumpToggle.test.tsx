@@ -35,7 +35,7 @@ import {
   startAt,
   type BffOptions,
 } from './test/bff.ts'
-import { cardHeadings } from './test/modelProfileCards.ts'
+import { cardHeadings, saveBarTabStops } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/profiles/model/${ID}`
@@ -479,13 +479,15 @@ function tabbableElements(root: HTMLElement): HTMLElement[] {
 const tabNames = (root: HTMLElement): string[] =>
   tabbableElements(root).map((el) => textOf(el))
 
-test('H10.10: in jsdom, with no CSS, Tab from the top reaches the back link, then the jump toggle, then the ten jump buttons in card order (the page start of 2h.197 with the toggle inserted)', async () => {
+test('H10.10 (22 D2.5): in jsdom, with no CSS, Tab from the top reaches the back link, then the save bar, then the jump toggle, then the ten jump buttons in card order (the page start of 2h.197 with the toggle inserted)', async () => {
   const { main } = await form()
   expect(
-    tabNames(main).slice(0, TITLES.length + 2),
-    'H10.10: back link, toggle, the ten entries in card order',
+    tabNames(main).slice(0, TITLES.length + 4),
+    'H10.10: back link, the bar, toggle, the ten entries in card order',
   ).toEqual([
     en('model-profile-back'),
+    // 22 D2.5 moved the bar to the top of the settings section.
+    ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...TITLES,
   ])

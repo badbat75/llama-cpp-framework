@@ -664,24 +664,30 @@ export function fieldTabStops(values: Record<string, string>): string[] {
   return stops
 }
 
-/** The tab stops at the start of the page's main, in the order of 2h.10's 197
- * with H10 inserted (fe/briefs/08-hearth-h10-h11.md, H10.10): the back link,
- * then the jump disclosure named by `model-profile-jump-label`, then the
- * section jump list's buttons, one per card of 83 in page order, each named by
- * its card's title (196), then the Assets card's disclosure (H11b.4: the
- * Engine About toggle and select are gone, the Assets toggle is the stop right
- * after the jumps). The card h3s are not tab stops: only a jump button
- * gives one the focus. */
-export function pageStartTabStops(): string[] {
+/** The tab stops at the top of the page's main: the back link, then the save
+ *  bar's two buttons (22 D2.5 moved the bar to the top of the settings section,
+ *  so its stops left the end of the order), then 2h.10's 197 with H10 inserted
+ *  (fe/briefs/08-hearth-h10-h11.md, H10.10): the jump disclosure named by
+ *  `model-profile-jump-label`, then the section jump list's buttons, one per
+ *  card of 83 in page order, each named by its card's title (196), then the
+ *  Assets card's disclosure (H11b.4: the Engine About toggle and select are
+ *  gone, the Assets toggle is the stop right after the jumps). The card h3s are
+ *  not tab stops: only a jump button gives one the focus. A switched-off model
+ *  profile adds the delete of 22 D2.1 between the back link and the bar, which
+ *  no list here includes: every document these lists are built from is switched
+ *  on. */
+export function pageTopTabStops(): string[] {
   return [
     en('model-profile-back'),
+    ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...cardHeadings(),
     en('model-profile-assets'),
   ]
 }
 
-/** The save bar's two buttons, at the end of the page (2h.1's 141). */
+/** The save bar's two buttons, in the bar's order (2h.1's 141), at the top of
+ *  the settings section since 22 D2.5. */
 export function saveBarTabStops(): string[] {
   return [en('save-discard'), en('save-button')]
 }

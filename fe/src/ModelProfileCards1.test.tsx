@@ -32,8 +32,7 @@ import {
   cardHeadings,
   cardHeadingKeys,
   fieldTabStops,
-  pageStartTabStops,
-  saveBarTabStops,
+  pageTopTabStops,
   isEditableField,
   controlEnabled,
 } from './test/modelProfileCards.ts'
@@ -763,12 +762,11 @@ test.each(FIELDS)(
 
 // ── Keyboard (91) ───────────────────────────────────────────────────────
 
-test('2e.91: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle in card and field order, and no control of a 2e card', async () => {
+test('2e.91: Tab in main reaches the back link, the save bar of 22 D2.5, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle in card and field order, and no control of a 2e card', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
-    ...pageStartTabStops(),
+    ...pageTopTabStops(),
     ...fieldTabStops(docOf(SET).values),
-    ...saveBarTabStops(),
   ])
 })
 

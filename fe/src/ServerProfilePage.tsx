@@ -398,19 +398,55 @@ export default function ServerProfilePage({
         </p>
       ) : (
         <>
+          {/* 22 D2.8: the status row of the model profile page, here under the
+              h1 and above the Value list: the paragraph says who runs the
+              profile, and the row's last item is the − that deletes it, offered
+              only while no instance runs it. The sheet makes the row a wrapping
+              flex row and keeps the − at its box (22 D2.9). */}
           {read !== null && (
-            <dl className="assets">
-              <dt>{t('server-profile-used-by')}</dt>
-              {read.instance === null ? (
-                <dd className="muted">{t('server-profiles-unused')}</dd>
-              ) : (
-                // The name the menu uses, then the id it is the key of (16 17f.4).
-                <dd>
-                  <InstanceLink id={read.instance} nameOf={nameOf} />
-                </dd>
+            <div className="page-status">
+              <p className="page-status">
+                {read.instance === null
+                  ? t('server-profile-unused')
+                  : t('server-profile-used-by', read.instance)}
+              </p>
+              {read.instance === null && (
+                <button
+                  ref={opener}
+                  type="button"
+                  id="server-profile-delete"
+                  className="ot-add"
+                  aria-expanded={confirming}
+                  onClick={() => setConfirming(true)}
+                >
+                  <Icon name="minus" />
+                  {/* 22 D2.8: named by the words a reader needs, and nothing
+                      written on the box (2.5.3). */}
+                  <span className="visually-hidden">
+                    {t('server-profile-delete')}
+                  </span>
+                </button>
               )}
-            </dl>
+            </div>
           )}
+          {/* The confirm in place of the delete (16 17b.7, fe/DESIGN.md 5.2) is
+              the row's next sibling. It is mounted only while the profile runs
+              nowhere: a 409 read again names an instance, and the opener and its
+              group go with it, so the alert below has to outlive them. */}
+          {read !== null && read.instance === null && confirming && (
+            <ConfirmDelete
+              id={id}
+              status={deleteStatus}
+              alert={deleteAlert}
+              running={deleting}
+              onConfirm={() => void doDelete()}
+              onCancel={closeConfirm}
+              onSignIn={() => setAsking(true)}
+            />
+          )}
+          {/* The refusal of a delete whose read again took the opener and its
+              group with it: its words go on living in a paragraph of their own,
+              in the place the group had (17b review D2, 22 D2.8). */}
           {inUse !== null && (
             <p
               id="server-profile-in-use"
@@ -421,32 +457,21 @@ export default function ServerProfilePage({
               {inUse}
             </p>
           )}
-          {/* A profile no instance runs is deleted from its own page, the
-              delete asked in the page (16 17b.6, fe/DESIGN.md 5.2). */}
-          {read !== null && read.instance === null && (
-            <>
-              <button
-                ref={opener}
-                type="button"
-                id="server-profile-delete"
-                className="secondary"
-                aria-expanded={confirming}
-                onClick={() => setConfirming(true)}
-              >
-                {t('server-profile-delete')}
-              </button>
-              {confirming && (
-                <ConfirmDelete
-                  id={id}
-                  status={deleteStatus}
-                  alert={deleteAlert}
-                  running={deleting}
-                  onConfirm={() => void doDelete()}
-                  onCancel={closeConfirm}
-                  onSignIn={() => setAsking(true)}
-                />
+          {read !== null && (
+            <dl className="assets">
+              {/* The row's label is data of the list, so it keeps the list's own
+                  "Used by" (22 D2.10: `server-profile-used-by` now carries the
+                  status row's sentence). */}
+              <dt>{t('server-profiles-column-used-by')}</dt>
+              {read.instance === null ? (
+                <dd className="muted">{t('server-profiles-unused')}</dd>
+              ) : (
+                // The name the menu uses, then the id it is the key of (16 17f.4).
+                <dd>
+                  <InstanceLink id={read.instance} nameOf={nameOf} />
+                </dd>
               )}
-            </>
+            </dl>
           )}
           <section>
             <h2>{t('server-title')}</h2>

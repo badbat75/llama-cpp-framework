@@ -423,21 +423,22 @@ const STATES = [
   {
     // Brief 16, slice 17b (17b.7): the Confirm in place of the delete, on the
     // page of the widest profile of `pool=long`, which runs nowhere
-    // (stub.py answers that id with `instance` null). The marker text is the
-    // key 17b.10 adds: absent from the strings file it names a button of the
-    // text "undefined", so the state fails until the slice lands, as it asks.
+    // (stub.py answers that id with `instance` null). 22 D2.8 makes the opener
+    // a − icon button with no visible text, so the state finds it by the id the
+    // brief gives it: absent from the page until the slice lands, the state
+    // fails until then, as it asks.
     name: 'server-profile-delete',
     set: 'session=admin&pool=long',
     hash: `#/profiles/server/${LONG_POOL_ID}`,
     expect: [
       { selector: '#page-heading', text: LONG_POOL_ID },
       {
-        selector: `main button:has-text("${S['server-profile-delete']}")`,
-        message: 'the delete, offered while the profile runs nowhere',
+        selector: '#server-profile-delete',
+        message: 'the − of 22 D2.8, offered while the profile runs nowhere',
       },
     ],
     open: {
-      click: `main button:has-text("${S['server-profile-delete']}")`,
+      click: '#server-profile-delete',
       then: 'main [role="group"]',
     },
   },
@@ -515,22 +516,23 @@ const STATES = [
   {
     // Brief 22, slice 22D (22 D.1 and 22 D.2, 22 C.10's state): the Confirm in
     // place of the delete, on the page of a switched-off model profile (stub.py
-    // `off=1` reads `enabled` false, and answers the DELETE with 204). The
-    // marker text is the key 22 D.8 adds: absent from the strings file it names
-    // a button of the text "undefined", so the state fails until the slice
-    // lands, as it asks.
+    // `off=1` reads `enabled` false, and answers the DELETE with 204). 22 D2.1
+    // and D2.2 move the opener into the status row under the summary line, as a
+    // − icon button with no visible text, so the state finds it by the id the
+    // brief gives it: absent from the page until the slice lands, the state
+    // fails until then, as it asks.
     name: 'model-profile-delete',
     set: 'session=admin&off=1',
     hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
     expect: [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       {
-        selector: `main button:has-text("${S['model-profile-delete']}")`,
-        message: 'the delete, offered while the profile is switched off',
+        selector: '#model-profile-delete',
+        message: 'the − of 22 D2.2, offered while the profile is switched off',
       },
     ],
     open: {
-      click: `main button:has-text("${S['model-profile-delete']}")`,
+      click: '#model-profile-delete',
       // The Confirm group, named by its question: `main [role="group"]` alone
       // is not the page's only group (every Field is a `fieldset`), so the
       // marker asks for the group holding the question's text.

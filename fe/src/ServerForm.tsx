@@ -628,6 +628,27 @@ export default function ServerForm({
 
   return (
     <>
+      {/* 22 D2.5: the bar is the first thing of the form, before the cards, so
+          Save and Discard are reached without scrolling to the end; the sheet
+          sticks it to the viewport's top (22 D2.6). */}
+      <SaveBar
+        bar={bar}
+        status={status}
+        alert={alerts.alert}
+        dirty={dirty}
+        saving={phase === 'saving'}
+        reloadId={`${fid}-reload`}
+        onReload={
+          alerts.alert?.action === 'reload' ? askReload.press : undefined
+        }
+        signInId={signInId}
+        onSignIn={
+          alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
+        }
+        saveId={saveId}
+        onDiscard={discard}
+        onSave={save}
+      />
       <Card title={t('server-network')}>
         <DefaultBoxField
           id={`${fid}-Port`}
@@ -856,24 +877,6 @@ export default function ServerForm({
           />
         </div>
       </Card>
-      <SaveBar
-        bar={bar}
-        status={status}
-        alert={alerts.alert}
-        dirty={dirty}
-        saving={phase === 'saving'}
-        reloadId={`${fid}-reload`}
-        onReload={
-          alerts.alert?.action === 'reload' ? askReload.press : undefined
-        }
-        signInId={signInId}
-        onSignIn={
-          alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
-        }
-        saveId={saveId}
-        onDiscard={discard}
-        onSave={save}
-      />
       {askReload.asking && (
         <DiscardDialog onKeep={askReload.keep} onDiscard={askReload.confirm} />
       )}

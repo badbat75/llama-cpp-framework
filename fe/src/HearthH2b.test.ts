@@ -342,27 +342,27 @@ test('H2b.3 (N2): the header line and the bar edge measure the 3.91 light and 4.
 
 // ── H2b.4: the save bar ──────────────────────────────────────────────────
 
-test('H2b.4: the save bar is a lifted box with the card radius on its top corners, and its sticky position, bottom, z-index, paddings and short-viewport rule are unchanged', () => {
+test('H2b.4 (22 D2.6): the save bar is a lifted box with the card radius on its bottom corners, and its sticky position, top, z-index, paddings and short-viewport rule are unchanged', () => {
   const bar = topBy('.save-bar', 'the save bar rule')
   expect(
     prop(bar.body, 'background'),
     'the bar is --bg, the same fill as the card it sits over (H1a.8, kept)',
   ).toBe('var(--bg)')
   expect(
-    prop(bar.body, 'border-top'),
-    'the bar edge over that fill stays the coloured 1px --control line (N2), which is what shows in forced colours',
+    prop(bar.body, 'border-bottom'),
+    'the bar edge over that fill stays the coloured 1px --control line (N2), which is what shows in forced colours: 22 D2.6 moved the bar to the viewport top, so the edge is on its bottom',
   ).toBe('1px solid var(--control)')
   expect(
     prop(bar.body, 'border-radius'),
-    'the card corner on the two top corners only: the bar is flush at the bottom',
-  ).toBe('var(--radius-card) var(--radius-card) 0 0')
+    'the card corner on the two bottom corners only: the bar is flush at the top (22 D2.6)',
+  ).toBe('0 0 var(--radius-card) var(--radius-card)')
   expect(prop(bar.body, 'box-shadow'), 'lifted by the shadow token').toBe(
     'var(--shadow)',
   )
   // The focus-not-obscured machinery of 2h.135 is unchanged; the 7rem floor of
   // the scroll padding is pinned in DisabledLook.test.ts.
   expect(prop(bar.body, 'position'), 'the bar stays sticky').toBe('sticky')
-  expect(prop(bar.body, 'bottom'), 'at the bottom edge').toBe('0')
+  expect(prop(bar.body, 'top'), 'at the top edge (22 D2.6)').toBe('0')
   expect(prop(bar.body, 'z-index'), 'above the cards').toBe('1')
   expect(prop(bar.body, 'padding'), 'paddings unchanged').toBe(
     'var(--space-3) var(--space-4)',

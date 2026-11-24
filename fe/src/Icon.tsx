@@ -7,7 +7,8 @@
 import { type ReactNode } from 'react'
 
 /** Every name of the brief's list, the shapes of the later slices included: a
- * slice that adds a placement adds no shape. */
+ * slice that adds a placement adds no shape, beside the shapes a brief gives
+ * (22 D2.2's minus). */
 export type IconName =
   | 'house'
   | 'layers'
@@ -35,6 +36,9 @@ export type IconName =
   | 'lock-open'
   | 'circle-alert'
   | 'plus'
+  // 22 D2.2 (fe/briefs/22-model-sources.md, section 22D2): the delete of a
+  // profile, the horizontal stroke of the plus with its vertical one dropped.
+  | 'minus'
   | 'x'
   | 'check'
   // U17c (fe/briefs/17-ux-pass.md): the arrows of the sortable table's headers,
@@ -176,6 +180,10 @@ const SHAPES: Record<IconName, ReactNode> = {
       <path d="M12 5v14" />
     </>
   ),
+  // 22 D2.2: the delete of a profile, in the status row of its page. The path
+  // data is lucide-static icons/minus.svg: the plus's horizontal stroke, with
+  // no vertical one.
+  minus: <path d="M5 12h14" />,
   x: (
     <>
       <path d="M18 6 6 18" />

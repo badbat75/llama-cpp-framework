@@ -224,7 +224,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Never add keys to `src/strings/en_US.json` and never weaken the strings guard: `App.test.tsx`'s
   `1a strings` compares the test mirror `EN` (`fe/src/test/bff.ts`) with `en_US.json` key by key, so a key
   you add to `EN` is the coder's signal and that one red is the intended one, not collateral damage from
-  touching the fake.
+  touching the fake. A key the brief REMOVES goes out of `EN` and into that test's `removed` list; a test
+  that pins its words are on no page writes the sentence as a literal constant, because `en(key)` throws
+  once the key leaves the map (the red then names your test, not the slice).
 
 ### The web UI (fe/): running and probing
 
@@ -360,6 +362,17 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `{input: key}` a text input, no button), and `EDITABLE_BY_ID` in `ModelProfileSave1.test.tsx` 2h.130,
   which keeps a LOCAL copy of the editable-field map ("a test file imports no other test file"), so a new
   editable control lands in both.
+- A control that MOVES on the model profile page (a bar, a link) reds the whole-page tab-order snapshots in
+  seven places: `2e.91` in each of `ModelProfileCards1..5.test.tsx`, `2d.71` and `2d.78` in
+  `ModelProfileContent.test.tsx`, plus `H9b.4`/`H9b.5` in `HearthJumpRail.test.tsx` (the bar's place among
+  the section's children). Fix the shared list once (`pageTopTabStops()` / `saveBarTabStops()` in
+  `fe/src/test/modelProfileCards.ts`): when the bar moves the coder renames that shared list
+  (`pageStartTabStops` → `pageTopTabStops`) and patches its importers, so the reds are the files carrying
+  a LOCAL copy of the order. Grep the OLD helper name and the moved key literal
+  (`grep -n "save-discard" fe/src/*.test.tsx`) to find them, and import `saveBarTabStops()` into each.
+  Retiring a test moves the suite total by one: state the arithmetic. Run only those tests with
+  `npm --prefix fe test -- <the files> -t '2h.135|2d.71|2d.78|2e.91'`: the five cards files are ~1500 lines
+  each, and a full run of them is minutes of unrelated tests.
 - Land a new nav entry in about a dozen order lists: sweep every standalone `en('nav-...'),` line (and
   the `EN[...]` variants), then check tails (`grep -L` for the new key; `grep -rn "slice(-[0-9]"` for
   windowed lists) and `NodePage`'s list. Then rewrite what the sweep cannot: a `parseRoute` pin of

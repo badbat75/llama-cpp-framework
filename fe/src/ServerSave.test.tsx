@@ -1278,7 +1278,7 @@ test('1b.36a: Cancel is shown only in the dialog, not on the sign-in page', asyn
 
 // "Administrators only" (R2): the save bar and the editable form are every signed-in
 // session's, not the administrator's alone: the same clean form, the same save bar.
-test('1b.28: a signed-in session gets enabled controls (under 5.3) and the save bar at the end, clean', async () => {
+test('1b.28 (22 D2.5): a signed-in session gets enabled controls (under 5.3) and the save bar at the top of the form, clean', async () => {
   const { bff, main } = await loaded()
   const controls = [
     ...main.querySelectorAll<HTMLInputElement>('input, select, textarea'),
@@ -1298,11 +1298,12 @@ test('1b.28: a signed-in session gets enabled controls (under 5.3) and the save 
   const save = saveButton(main)
   const discard = discardButton(main)
   const line = status(main)
-  // At the end of the form: status, then Discard, then Save changes.
-  const lastField = group(main, 'KV rotation').getByRole('checkbox')
-  expect(before(lastField, line)).toBe(true)
-  expect(before(line, discard)).toBe(true)
-  expect(before(discard, save)).toBe(true)
+  // At the top of the form, above the first field (22 D2.5 moved the bar;
+  // 1b.28 had it after the last one): status, then Discard, then Save changes.
+  const firstField = box(main, 'Port')
+  expect(before(line, firstField), 'the bar is above the fields').toBe(true)
+  expect(before(line, discard), 'status, then Discard').toBe(true)
+  expect(before(discard, save), 'Discard, then Save changes').toBe(true)
   expect(line.textContent).toBe('')
   for (const b of [save, discard]) {
     expect(b.getAttribute('aria-disabled'), b.textContent ?? '').toBe('true')
@@ -2361,7 +2362,7 @@ test('1b 6: the save bar status is one live region, present before its text chan
   expect(status(main)).toBe(line)
 })
 
-test('1b 6: Tab reaches the back link, the Used by link, the enabled controls field by field, then Discard and Save changes', async () => {
+test('1b 6 (22 D2.5): Tab reaches the back link, the Used by link, Discard and Save changes at the top of the form, then the enabled controls field by field', async () => {
   const { main } = await loaded()
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'coder' })
@@ -2376,6 +2377,10 @@ test('1b 6: Tab reaches the back link, the Used by link, the enabled controls fi
       within(main).getByRole('link', { name: en('server-profile-back') }),
     ],
     ['Used by link', within(main).getByRole('link', { name: 'default' })],
+    // 22 D2.5 moved the bar to the top of the form, so its stops follow the
+    // Used by link, above the fields (1b 6 had them after the last field).
+    ['Discard', discardButton(main)],
+    ['Save changes', saveButton(main)],
     ['About Port', about('Port')],
     ['Port default', check(main, 'Port', en('field-default'))],
     ['Port', box(main, 'Port')],
@@ -2437,8 +2442,6 @@ test('1b 6: Tab reaches the back link, the Used by link, the enabled controls fi
       'KV rotation',
       check(main, 'KV rotation', en('server-kv-rotation-toggle')),
     ],
-    ['Discard', discardButton(main)],
-    ['Save changes', saveButton(main)],
   ]
   const names = new Map(expected.map(([n, el]) => [el as Element, n]))
   const reached = [

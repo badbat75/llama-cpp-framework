@@ -165,13 +165,15 @@ test('16 17a.5: a link server-profile-back to #/profiles/server sits before the 
   expect(document.title).toBe(en('page-title', 'default'))
 })
 
-test('16 17a.5: after the h1, a dl.assets row server-profile-used-by holds the document’s instance as a link to its page, before the h2', async () => {
+test('16 17a.5: after the h1 and the status row of 22 D2.8, a dl.assets row server-profiles-column-used-by holds the document’s instance as a link to its page, before the h2', async () => {
   const { main } = await loaded()
   const dl = main.querySelector('dl.assets')
   expect(dl, 'the Value list').not.toBeNull()
   const dt = dl!.querySelector('dt')
   const dd = dl!.querySelector('dd')
-  expect(dt?.textContent, 'the row’s name').toBe(en('server-profile-used-by'))
+  expect(dt?.textContent, 'the row’s name').toBe(
+    en('server-profiles-column-used-by'),
+  )
   const link = within(dd as HTMLElement).getByRole('link', {
     name: 'default',
   })

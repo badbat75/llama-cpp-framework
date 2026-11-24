@@ -34,8 +34,7 @@ import {
   cardHeadingKeys,
   expectedInputMode,
   fieldTabStops,
-  pageStartTabStops,
-  saveBarTabStops,
+  pageTopTabStops,
 } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
@@ -1376,12 +1375,11 @@ test('2e.83: the two cards of 2e.3 are D5.2 Cards inside the section of the h2, 
   ).toEqual(cardHeadings())
 })
 
-test("2e.91, 2h.170: Tab in main reaches the back link, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
+test("2e.91, 2h.170: Tab in main reaches the back link, the save bar of 22 D2.5, the ten jump buttons of 2h.10 in card order, the Assets toggle, then every field About toggle of the page in card and field order (the list of test/modelProfileCards.ts), then the Chat / reasoning card's controls; the Vision card offers no control", async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(mainTabbable(main)).toEqual([
-    ...pageStartTabStops(),
+    ...pageTopTabStops(),
     ...fieldTabStops(docOf(SET).values),
-    ...saveBarTabStops(),
   ])
   // A disabled control takes no focus, so the read-only Vision card offers
   // only its fields' About toggles; on the editable Chat / reasoning card

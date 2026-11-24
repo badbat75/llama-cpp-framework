@@ -1238,6 +1238,26 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+/* The status row of a profile page (22 D2.1, 22 D2.8, 22 D2.9): the sentence
+   that says what the profile is, and the − that deletes it at its right. The
+   row is a wrapping flex row, so at 320 px and at 200 % text the − drops under
+   the words and stays in the row (it is no separate block the page has to
+   scroll to). The paragraph takes the line and gives way at 16rem; the − keeps
+   its box in `.ot-add`. The two share one class, and the sheet's cascade reads
+   a rule only when every token of its selector is on the element, so the row
+   and its paragraph each carry it: a descendant selector would reach the
+   paragraph in the page and be invisible to that reader. */
+div.page-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+p.page-status {
+  flex: 1 1 16rem;
+}
+
 /* The model profile page's jump list (196, DESIGN.md D5.1, drawn as an index
  * by 08-hearth-h9-jump.md H9a): the page's TOC, one entry per card in reading
  * order, a column with the decorative --line rule at its left. The entries are
@@ -2009,6 +2029,11 @@ ul.check-list {
   border: var(--border-w) solid var(--control);
   background: var(--bg);
   color: var(--text);
+  /* 22 D2.9: in the status row the box is a flex item, and a flex item shrinks
+     and stretches by default; kept at its box it wraps under the status words
+     instead of being pulled across the line. On a list's add it does nothing:
+     the add is no flex item there. */
+  flex: none;
 }
 
 /* The same + right after a paragraph (the TP1c review's D1, the designer,
@@ -2223,17 +2248,18 @@ input[type='checkbox'][aria-invalid='true'] {
 
 /* ── Save bar (DESIGN.md 5.2) ─────────────────────────────────────────── */
 
-/* A field focused near the bottom is never hidden behind the sticky bar:
+/* A field focused near the top is never hidden behind the sticky bar:
    --save-bar-height is the bar's rendered height, written by SaveBar's
    useSaveBarPadding as the bar resizes. The max() floor is the height a bar
    with a notice needs, so a focused field clears the bar before the height the
    observer writes lands: after a refused save the bar grows with its alert,
-   after the scroll of the marked field. */
+   after the scroll of the marked field. The bar sits at the top of the page
+   since 22 D2.5, so the padding is at the top. */
 html:has(.save-bar) {
   /* The declaration is pinned as written (DESIGN.md 5.2, 2h.135): Prettier
      would break this long calc across lines. */
   /* prettier-ignore */
-  scroll-padding-bottom: calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3));
+  scroll-padding-top: calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3));
 }
 
 /* A control of the bar always lies inside the strip the padding above adds to
@@ -2246,14 +2272,14 @@ html:has(.save-bar) {
   /* The padding above, negated, and pinned as written like that one: Prettier
      would break this long calc across lines. */
   /* prettier-ignore */
-  scroll-margin-bottom: calc(-1 * (max(var(--save-bar-height, 7rem), 7rem) + var(--space-3)));
+  scroll-margin-top: calc(-1 * (max(var(--save-bar-height, 7rem), 7rem) + var(--space-3)));
 }
 
 /* The bar is lifted like the card it sits over, and flush at the viewport's
-   bottom edge: only its top corners are round. */
+   top edge: only its bottom corners are round (22 D2.6). */
 .save-bar {
   position: sticky;
-  bottom: 0;
+  top: 0;
   z-index: 1;
   display: flex;
   flex-wrap: wrap;
@@ -2261,22 +2287,22 @@ html:has(.save-bar) {
   gap: var(--space-2) var(--space-4);
   padding: var(--space-3) var(--space-4);
   background: var(--bg);
-  border-top: 1px solid var(--control);
-  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  border-bottom: 1px solid var(--control);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
   box-shadow: var(--shadow);
 }
 
 /* A short viewport (landscape phone, 400% zoom): the bar is not sticky. */
 @media (max-height: 31.98rem) {
   html:has(.save-bar) {
-    scroll-padding-bottom: 0;
+    scroll-padding-top: 0;
   }
 
   /* The bar is static here and the page has no padding to cancel, so the
-     cancel goes too: a negative margin would let a focused button end below
+     cancel goes too: a negative margin would let a focused button end above
      the viewport (H5c.2). */
   .save-bar button {
-    scroll-margin-bottom: 0;
+    scroll-margin-top: 0;
   }
 
   .save-bar {

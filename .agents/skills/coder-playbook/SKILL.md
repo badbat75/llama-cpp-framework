@@ -231,6 +231,17 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A compound-with-combinator rule (`p + .ot-add`) is free of the cascade pins too: the sheet tests'
   `cascade(classes)` keeps only a selector whose every token is `button` or one of the element's own
   classes, so it never applies, and the element keeps the plain `.ot-add` declaration in those pins.
+  So a declaration a cascade pin READS must sit on a rule naming only that element: write the status
+  row as `div.page-status` and `p.page-status` (two rules), never `.page-status p`.
+- Moving a shared component (the Save bar: one `SaveBar.tsx` used by both form pages) reddens every
+  HEAD test that pins its PLACE, not its behaviour: the tab-stop lists (`2d.67`, `2d.71`, `2d.78`,
+  `2e.91`, `H9b.4`, `H10.10`, `H11b.4`, `2h.197`, `1b 6`, `6`), "the bar is the section's last child"
+  (`2h.135`), "the bar's buttons are the last controls" (`2h.141`), and the bar's own geometry
+  (`H2b.4`: `bottom: 0`, `border-top`, the top corners). The tester retargets the ones the brief
+  names; the rest are test-side. Prove each in a `git archive HEAD` copy with the slice's production
+  files copied in (`ln -s` the real `fe/node_modules`): flip ONE production bit back at a time (bar
+  last, CSS at the bottom, row inside the section), the named test goes green, that is the proof, and
+  no test in the repo is touched.
 
 ### The web UI (fe/): shared helpers and pins
 
@@ -422,6 +433,13 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   probed id. Prove it in a copy by adding the await, never by widening production.
 - Do not leave a duplicate listener (`useWarnOnLeave` takes ONE per dirty section; report dirty from the
   field's `onChange` and the save handler, in the turn that changes it).
+- `fe/ux/check.js` clicks a page's verb by `#id` (`model-profile-delete`, `server-profile-delete`): keep
+  the id on the element the click lands on (the − box), not on a wrapper, and give the check a state per
+  page state it must measure.
+- A test's `shownText` skips `.visually-hidden`: an icon button whose words are a
+  `span.visually-hidden` passes "nothing is written on the box" (WCAG 2.5.3) and keeps its name.
+- One full run in ten reddens `AboutPage.test.tsx` 18 AN.3 and `NodesMenu1.test.tsx` (no timeout line):
+  both are green solo and in five paired runs. Rerun the file solo before reporting them.
 
 ### The UX check
 

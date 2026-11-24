@@ -103,7 +103,11 @@ export const EN: Record<string, string> = {
   'server-profiles-column-used-by': 'Used by',
   'server-profiles-unused': 'No instance',
   'server-profile-back': 'All server profiles',
-  'server-profile-used-by': 'Used by',
+  // 22 D2.8: the status row of the server profile page says who runs the
+  // profile, in the words that replace the bottom Delete button's line.
+  'server-profile-unused': 'No instance uses this server profile.',
+  'server-profile-used-by':
+    'Used by instance {0}. To delete this server profile, give that instance another one first.',
   'server-profile-not-found': 'There is no server profile named {0}.',
   'server-folder-unused-default':
     'unset: the instance that runs this profile uses its own folder',
@@ -434,8 +438,10 @@ export const EN: Record<string, string> = {
   // Slice 22D (fe/briefs/22-model-sources.md, section 2): deleting a model
   // profile from its page. `delete-unknown` is 17f's text, brought by 22D.
   'model-profile-delete': 'Delete model profile',
-  'model-profile-delete-needs-off':
-    'To delete this model profile, switch it off first in the list of model profiles.',
+  // 22 D2.1: the status row says what a switched-on profile is, in place of the
+  // muted line that sat by the bottom Delete button (that key is gone).
+  'model-profile-on':
+    'This model profile is switched on: its engine serves it. To delete it, switch it off first in the list of all model profiles.',
   'model-profile-delete-question':
     'Delete the model profile {0}? Its settings are removed, with any unsaved changes on this page. The model file is not deleted. This cannot be undone.',
   'model-profile-deleted': 'The model profile {0} was deleted.',

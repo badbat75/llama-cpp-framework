@@ -332,11 +332,12 @@ test('2h.163e: a disabled .primary or .secondary is on --surface with a dashed -
 // The save bar's scroll padding (DESIGN.md 5.2 "Sticky save bar", WCAG 2.4.11
 // Focus Not Obscured): the scroll container pads by the bar's rendered height,
 // which the bar measures as it grows (an alert and its button can triple it).
-// Before that measurement lands, a field focused near the bottom must still
-// clear the bar, so the declaration carries a floor of its own. jsdom does no
-// layout, so as 2h.135 and 2e.118 do, this pins the CSS text.
+// Before that measurement lands, a field focused near the top must still
+// clear the bar, so the declaration carries a floor of its own. The bar sits at
+// the top of the page since 22 D2.5, so the padding is at the top. jsdom does
+// no layout, so as 2h.135 and 2e.118 do, this pins the CSS text.
 test('DESIGN.md 5.2: the save-bar scroll padding has a 7rem floor inside max(), and the short-viewport media rule still zeroes it', () => {
-  const PAD = 'scroll-padding-bottom'
+  const PAD = 'scroll-padding-top'
   const bar = one(
     TOP.filter((r) => r.compact.includes('html:has(.save-bar)')),
     'the top-level html:has(.save-bar) rule',

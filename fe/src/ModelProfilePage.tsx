@@ -1816,9 +1816,85 @@ function Content({
           ? t('model-profile-summary-no-model', doc.engine)
           : t('model-profile-summary', doc.engine, fileName)}
       </p>
-      {!doc.enabled && <p>{t('model-profile-off')}</p>}
+      {/* 22 D2.1: the status row, right under the summary line and outside the
+          settings section, so it spans the page's width: the paragraph says what
+          the profile is (switched off, or switched on and where to change that),
+          and the row's last item is the − that deletes it, offered only while
+          the read is switched off. The sheet makes the row a wrapping flex row
+          and keeps the − at its box (22 D2.9), so the − drops under the words
+          at a narrow width without leaving the row. */}
+      <div className="page-status">
+        <p className="page-status">
+          {doc.enabled ? t('model-profile-on') : t('model-profile-off')}
+        </p>
+        {!doc.enabled && (
+          <button
+            ref={deleteOpener}
+            type="button"
+            id="model-profile-delete"
+            className="ot-add"
+            aria-expanded={confirming}
+            onClick={() => setConfirming(true)}
+          >
+            <Icon name="minus" />
+            {/* 22 D2.2: the words a reader needs, and nothing written on the
+                box (2.5.3 asks for text only when there is text). */}
+            <span className="visually-hidden">{t('model-profile-delete')}</span>
+          </button>
+        )}
+      </div>
+      {/* 22 D2.3: the Confirm in place is the row's next sibling, full width,
+          outside the section's 1280 px grid (22D review D1: the button is no
+          grid item, so nothing stretches it). */}
+      {!doc.enabled && confirming && (
+        <ConfirmDelete
+          id={doc.id}
+          status={deleteStatus}
+          alert={deleteAlert}
+          running={deleting}
+          onConfirm={() => void doDelete()}
+          onCancel={closeConfirm}
+          onSignIn={() => setAskingDeleteSignIn(true)}
+        />
+      )}
+      {/* 22 D2.4: the refusal of a delete whose read again took the delete and
+          its group with it: its words go on living in a paragraph of their own,
+          in the place the group had (22 D.4, 17b review D2). It is no live
+          region of the form: it is the answer outliving the control that asked. */}
+      {refusal !== null && (
+        <p
+          id="model-profile-delete-refused"
+          role="alert"
+          tabIndex={-1}
+          className="alert"
+        >
+          {refusal}
+        </p>
+      )}
       <section>
         <h2>{t('model-profile-settings-title')}</h2>
+        {/* 22 D2.5: the Save bar is the first thing in the settings section,
+            right after its heading, so Save and Discard are reached without
+            scrolling to the end of the cards; the sheet sticks it to the
+            viewport's top (22 D2.6). */}
+        <SaveBar
+          bar={bar}
+          status={status}
+          alert={alerts.alert}
+          dirty={dirty}
+          saving={phase === 'saving'}
+          reloadId={reloadId}
+          onReload={
+            alerts.alert?.action === 'reload' ? askReload.press : undefined
+          }
+          signInId={signInId}
+          onSignIn={
+            alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
+          }
+          saveId={saveId}
+          onDiscard={discard}
+          onSave={save}
+        />
         {dropped && (
           <p role="alert" className="alert">
             {t('server-edits-dropped')}
@@ -1939,74 +2015,6 @@ function Content({
           errors={fields.errors}
           gpu={gpu}
           tensor={tensor}
-        />
-        {/* Brief 22, slice 22D: the refusal of a delete whose read again took
-            the group with it, in the place the delete had (22 D.4, 17b review
-            D2). It is no live region of the form: it is the answer outliving
-            the control that asked. */}
-        {refusal !== null && (
-          <p
-            id="model-profile-delete-refused"
-            role="alert"
-            tabIndex={-1}
-            className="alert"
-          >
-            {refusal}
-          </p>
-        )}
-        {/* 22 D.1: a switched-off model profile is deleted from its own page,
-            the delete asked in the page (fe/DESIGN.md 5.2); a switched-on one
-            is only told where to switch it off. The opener and its confirm
-            share one div: from 1280 px the section is the jump rail's grid
-            (`section:has(> .jump)`) and every direct child is a grid item,
-            which stretches, so a bare button there is a pill across the whole
-            content column (22D review D1). The div is the grid item, and the
-            button inside it keeps the width of its words, as it has on the
-            server profile page. */}
-        {doc.enabled ? (
-          <p className="muted">{t('model-profile-delete-needs-off')}</p>
-        ) : (
-          <div>
-            <button
-              ref={deleteOpener}
-              type="button"
-              id="model-profile-delete"
-              className="secondary"
-              aria-expanded={confirming}
-              onClick={() => setConfirming(true)}
-            >
-              {t('model-profile-delete')}
-            </button>
-            {confirming && (
-              <ConfirmDelete
-                id={doc.id}
-                status={deleteStatus}
-                alert={deleteAlert}
-                running={deleting}
-                onConfirm={() => void doDelete()}
-                onCancel={closeConfirm}
-                onSignIn={() => setAskingDeleteSignIn(true)}
-              />
-            )}
-          </div>
-        )}
-        <SaveBar
-          bar={bar}
-          status={status}
-          alert={alerts.alert}
-          dirty={dirty}
-          saving={phase === 'saving'}
-          reloadId={reloadId}
-          onReload={
-            alerts.alert?.action === 'reload' ? askReload.press : undefined
-          }
-          signInId={signInId}
-          onSignIn={
-            alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
-          }
-          saveId={saveId}
-          onDiscard={discard}
-          onSave={save}
         />
       </section>
       {askReload.asking && (

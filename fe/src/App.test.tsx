@@ -461,12 +461,16 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
   // Notice, the API key has no withheld sentence, and the banner names no role.
   // 2h.1's 130 adds one: the model profile page's read-only Notice is replaced by
   // model-profile-partly-editable, so model-profile-read-only is out of the strings file.
+  // 22 D2.10 adds one more: the muted line beside the bottom Delete button is
+  // replaced by the status row's model-profile-on, so
+  // model-profile-delete-needs-off is out too.
   const removed = [
     'server-read-only',
     'server-api-key-withheld',
     'session-role-admin',
     'session-role-user',
     'model-profile-read-only',
+    'model-profile-delete-needs-off',
   ]
   expect(
     Object.keys(table).filter((key) => removed.includes(key)),

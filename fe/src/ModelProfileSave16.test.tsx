@@ -36,7 +36,7 @@ import {
   stubDialog,
   type BffOptions,
 } from './test/bff.ts'
-import { cardHeadings } from './test/modelProfileCards.ts'
+import { cardHeadings, saveBarTabStops } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/profiles/model/${ID}`
@@ -488,14 +488,16 @@ test('2h.196: no card h3 is a tab stop: each carries tabindex -1 and none is in 
 
 // ── 197: the tab order of the page start ──────────────────────────────
 
-test('2h.197: Tab from the top reaches the back link, then the jump toggle of H10.10, then the ten jump buttons in card order, then the Assets toggle (H11b.4: the Engine About toggle and select are gone)', async () => {
+test('2h.197 (22 D2.5): Tab from the top reaches the back link, then the save bar, then the jump toggle of H10.10, then the ten jump buttons in card order, then the Assets toggle (H11b.4: the Engine About toggle and select are gone)', async () => {
   const { main } = await form()
   const tabbed = mainTabbable(main)
   expect(
-    tabbed.slice(0, TITLES.length + 3),
-    '197 with H10.10 and H11b.4: back, the disclosure, the ten jumps in card order, the Assets toggle',
+    tabbed.slice(0, TITLES.length + 5),
+    '197 with H10.10 and H11b.4: back, the bar, the disclosure, the ten jumps in card order, the Assets toggle',
   ).toEqual([
     en('model-profile-back'),
+    // 22 D2.5 moved the bar to the top of the settings section.
+    ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...TITLES,
     ASSETS,
