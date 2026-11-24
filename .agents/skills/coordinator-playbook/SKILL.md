@@ -129,6 +129,8 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 
 ## Pitfalls
 
+- A designer review that names a CSS fix as a guess ("try X", "about 7rem"): ask the designer to measure it first by injecting it with `page.addStyleTag` in its three browsers, then brief the tester with the measured CSS (2026-11-24: 22D4 D5 to D8 took four tester-coder rounds, D7's untried `contain: inline-size` broke the text).
+
 - A slice that adds a server or model profile key: before briefing, list every surface a user sets it from (the web UI form, the GUI configurator, `pai`) and queue each one missing in PLAN (2026-11-24: GT1 built `RocmHostMemoryGtt` without the Server page field; the user had to ask).
 
 - `server@<id>.ini` can hold `OpencodeApiKey`: read it with `grep -vE "Key|Token|Secret"` (or key-scoped), never whole (2026-11-24: a full read showed the key in the session output).
