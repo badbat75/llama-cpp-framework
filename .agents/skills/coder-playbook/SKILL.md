@@ -200,7 +200,7 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   read). `format:check` writes nothing: fix the named files with `npx prettier --write <file>` (it lists
   every file it processes: check `git status --porcelain` after). The full suite under load reddens
   scores of files with `Test timed out in 5000ms` (vitest spawns one worker per file, 116 here): rerun
-  with `npm --prefix fe test -- --maxWorkers=4`, which is green, and rerun a named file solo, before
+  with `npm --prefix fe test -- --maxWorkers=12` (user, 2026-11-24; 4 was the earlier cap), and rerun a named file solo, before
   believing any of it.
 - New CSS is a test edit: `Reflow.test.ts` (`CLASSES`, `overflow-wrap`, `box-shadow`),
   `HearthTokens.test.ts` (`min-height`/`min-width` per rule, an exact ordered list), `HearthFonts.test.ts`
