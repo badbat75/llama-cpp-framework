@@ -1341,6 +1341,27 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
 
 ## Waiting for the user
 
+- **ROCm host memory as GTT, under test** (found by the strata-framework agent, 2026-11-24; the user
+  asked it to be shared and carried into the product, marked under test until confirmed under load).
+  On a discrete AMD GPU, ROCm's "paged" host memory (hipHostMalloc, the system memory pool) is an
+  anonymous shared mapping registered as a KFD userptr (`HSA_USERPTR_FOR_PAGED_MEM`, on by default) or
+  as SVM (`HSA_SVM_FOR_PAGED_MEM`, on by default): both sit on the kernel LRU, so compaction and
+  reclaim move or swap it, and each move evicts all the process's GPU queues (bpftrace stack: kcompactd
+  or kswapd -> mmu_notifier -> amdgpu_hmm_invalidate_hsa -> amdgpu_amdkfd_evict_userptr ->
+  kfd_process_evict_queues). Read in libhsakmt `fmm.c` `fmm_allocate_host_gpu` (ROCm/rocm-systems,
+  `projects/rocr-runtime/libhsakmt/src/fmm.c`, commit b0c0561). With both set to `0` it takes the
+  `KFD_IOC_ALLOC_MEM_FLAGS_GTT` path, driver-owned memory that reclaim and compaction leave alone.
+  Measured on Strata (2x R9700 gfx1201, Linux 7.0.0-44, TheRock 10.2.0): queue suspensions of 1 s to
+  48 s and engine restarts before; after setting both to 0 (19:50), the engine's `/dev/zero` rw-s
+  mappings went from ~2.6 GB to 0 and GTT rose by ~2.7 GB, 0 evictions since the restart. Not yet
+  confirmed under a Playwright run or a build, nor its decode speed. Cost: that memory is no longer
+  swappable and GTT is capped near half the RAM, so a large pinned host allocation can fail where it
+  used to succeed. For the product: llama-server's ROCm instances could carry both variables in their
+  environment (HIP backend only); first check a running instance's `/proc/<pid>/smaps` for large
+  `/dev/zero (deleted)` rw-s mappings and `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms`. Waiting
+  for the Strata result under load, then the user's go-ahead (it changes how every ROCm instance
+  allocates); the architect places it (the instance unit's environment or `launch.rs`).
+
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
     `pai-manager uninstall-services` (a deferred custom action) and recreated by the new manager from
