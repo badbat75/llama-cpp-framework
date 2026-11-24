@@ -1359,7 +1359,8 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   used to succeed. For the product: llama-server's ROCm instances could carry both variables in their
   environment (HIP backend only); first check a running instance's `/proc/<pid>/smaps` for large
   `/dev/zero (deleted)` rw-s mappings and `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms`. Waiting
-  for the Strata result under load. The user confirmed the finding (2026-11-24): the architect places
+  for the Strata result under load. The user confirmed the finding (2026-11-24), for every instance
+  whatever its backend: the architect places
   it (the instance unit's environment or `launch.rs`), then a test-first slice, marked under test in
   the docs until Strata's result under load arrives.
 
