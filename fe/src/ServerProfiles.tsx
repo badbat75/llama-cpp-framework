@@ -8,7 +8,14 @@
 // it is (17a.3). The pool is also where a profile is made: the Create form in
 // place of 17b, disclosed by the list's + at the end of the list (17b2.1,
 // fe/DESIGN.md 5.2 "Icon buttons of a list").
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react'
 import { flushSync } from 'react-dom'
 import {
   apiError,
@@ -23,6 +30,12 @@ import { Icon } from './Icon.tsx'
 import { InstanceLink } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
 import { refusalOf, type RefusalTable } from './refusal.ts'
+import {
+  ConfirmRow,
+  DeleteReasons,
+  RowDelete,
+  useRowDelete,
+} from './RowDelete.tsx'
 import { serverProfileHref } from './route.ts'
 import SignIn from './SignIn.tsx'
 import type { Session, SignedOut } from './session.ts'
@@ -132,6 +145,18 @@ export default function ServerProfiles({
     })
   }, [onSignedOut])
 
+  /** The pool read again by a row delete (22 D4.7): the same read, and the ids
+   * it brought, so the list knows whether the row is there. */
+  const reread = useCallback(async (): Promise<string[] | null> => {
+    const a = await readServerPool()
+    if (a === 'signed-out' || a === 'revoked') {
+      onSignedOut(a === 'revoked' ? 'revoked' : 'ended')
+      return null
+    }
+    setAnswer(a)
+    return Array.isArray(a) ? a.map((p) => p.id) : null
+  }, [onSignedOut])
+
   return (
     <>
       <PageHeading text={t('server-profiles-title')} />
@@ -141,6 +166,7 @@ export default function ServerProfiles({
           answer={answer}
           onRenewed={onRenewed}
           onReload={reload}
+          onReread={reread}
           nameOf={nameOf}
         />
       </section>
@@ -148,19 +174,51 @@ export default function ServerProfiles({
   )
 }
 
-/** The table, then the opener of the create form after it, or the message in
- * the table's place (17b2.1: the + is at the end of the list). */
+/** The list's own line, then the table with a − per row, then the opener of the
+ * create form after it, or the message in the table's place (17b2.1: the + is at
+ * the end of the list). The − and its confirm row are 22 D4: the words of a
+ * delete land on the line above the table, and the pool is read again in place. */
 function Body({
   answer,
   onRenewed,
   onReload,
+  onReread,
   nameOf,
 }: {
   answer: Answer | undefined
   onRenewed: (session: Session) => boolean
   onReload: () => void
+  onReread: () => Promise<string[] | null>
   nameOf: (id: string) => string
 }) {
+  const uid = useId()
+  // The list's own lines, above the table (22 D4.6).
+  const [status, setStatus] = useState('')
+  const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
+    null,
+  )
+  // The sign-in the group's 401 asks for (22 D4.7): the dialog of the create form.
+  const [asking, setAsking] = useState(false)
+  // The rows a delete removed: a 204 takes the row out with no read (22 D4.6),
+  // and the next read of the pool replaces the list.
+  const [removed, setRemoved] = useState<string[]>([])
+  const rows = Array.isArray(answer)
+    ? answer.filter((p) => !removed.includes(p.id))
+    : []
+  const del = useRowDelete({
+    path: (id) => `/api/profiles/server/${encodeURIComponent(id)}`,
+    deleted: (id) => t('server-profiles-deleted', id),
+    remove: (id) => setRemoved((ids) => [...ids, id]),
+    reread: onReread,
+    order: rows.map((p) => p.id),
+    minus: (id) => document.getElementById(`${uid}-delete-${id}`),
+    // The list's own control: the + of the create, after the table (22 D4.6).
+    lastResort: () => document.getElementById('server-profiles-new'),
+    onStatus: setStatus,
+    onAlert: setAlert,
+    onSignIn: () => setAsking(true),
+  })
+
   if (answer === undefined) {
     // The rows' skeleton (17a.3): three lines in the table's place, the read's
     // words in the DOM and out of sight from the first frame. No opener: a
@@ -181,10 +239,45 @@ function Body({
       </p>
     )
   }
-  const rows = answer
+  /** The pool the read gave empty: the message in the table's place (17a.3). A
+   * pool emptied by the reader's own deletes keeps the table, whose rows the
+   * list is answering for (22 D4.6). */
+  const empty = rows.length === 0 && removed.length === 0
+
+  function closeAsking() {
+    flushSync(() => setAsking(false))
+    document.getElementById('session-sign-in')?.focus()
+  }
+
+  /** A sign-in in the dialog: the list keeps its rows, the words of the refusal
+   * go with the dialog, and the focus returns to the Sign in (22 D4.7). */
+  function signedIn(session: Session) {
+    const kept = onRenewed(session)
+    flushSync(() => {
+      setAsking(false)
+      if (kept) setAlert(null)
+    })
+    if (!kept) return
+    document.getElementById('session-sign-in')?.focus()
+  }
+
   return (
     <>
-      {rows.length === 0 ? (
+      <p role="status" className="save-status" aria-live="polite">
+        {status}
+      </p>
+      {alert !== null && <p role="alert">{alert.text}</p>}
+      {alert?.signIn && (
+        <button
+          type="button"
+          id="session-sign-in"
+          className="secondary"
+          onClick={() => setAsking(true)}
+        >
+          {t('session-sign-in')}
+        </button>
+      )}
+      {empty ? (
         <p>{t('server-profiles-empty')}</p>
       ) : (
         <div className="table-scroll">
@@ -199,33 +292,89 @@ function Body({
             </thead>
             <tbody>
               {rows.map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    <a href={serverProfileHref(p.id)}>{p.id}</a>
-                  </td>
-                  {/* The port as text: 0 is the file that names none, and an
-                      empty cell says that better than a zero; a port that is
-                      not a number shows 0 (17a.4). */}
-                  <td>
-                    {p.port === null ? '0' : p.port === 0 ? '' : String(p.port)}
-                  </td>
-                  <td>{p.tags.join(', ')}</td>
-                  {p.instance === null ? (
-                    <td className="muted">{t('server-profiles-unused')}</td>
-                  ) : (
-                    // The name the menu uses, then the id it is the key of
-                    // (16 17f.4): two instances named alike are told apart.
+                <Fragment key={p.id}>
+                  <tr>
                     <td>
-                      <InstanceLink id={p.instance} nameOf={nameOf} />
+                      <a href={serverProfileHref(p.id)}>{p.id}</a>
                     </td>
+                    {/* The port as text: 0 is the file that names none, and an
+                        empty cell says that better than a zero; a port that is
+                        not a number shows 0 (17a.4). */}
+                    <td>
+                      {p.port === null
+                        ? '0'
+                        : p.port === 0
+                          ? ''
+                          : String(p.port)}
+                    </td>
+                    <td>{p.tags.join(', ')}</td>
+                    <td className="status-cell">
+                      {p.instance === null ? (
+                        <span className="muted">
+                          {t('server-profiles-unused')}
+                        </span>
+                      ) : (
+                        // The name the menu uses, then the id it is the key of
+                        // (16 17f.4): two instances named alike are told apart.
+                        <span>
+                          <InstanceLink id={p.instance} nameOf={nameOf} />
+                        </span>
+                      )}
+                      <RowDelete
+                        domId={`${uid}-delete-${p.id}`}
+                        name={t('server-profiles-delete-row', p.id)}
+                        reason={
+                          p.instance === null
+                            ? null
+                            : t('server-profiles-delete-in-use')
+                        }
+                        disabled={p.instance !== null}
+                        busy={del.deleting}
+                        open={del.confirming === p.id}
+                        onPress={() => del.open(p.id)}
+                      />
+                    </td>
+                  </tr>
+                  {del.confirming === p.id && (
+                    <ConfirmRow
+                      columns={4}
+                      question={t('server-profiles-delete-question', p.id)}
+                      status={del.status}
+                      alert={del.alert}
+                      running={del.deleting}
+                      onConfirm={del.confirm}
+                      onCancel={del.close}
+                      onSignIn={() => setAsking(true)}
+                    />
                   )}
-                </tr>
+                </Fragment>
               ))}
             </tbody>
           </table>
         </div>
       )}
       <Create rows={rows} onRenewed={onRenewed} onReload={onReload} />
+      {/* The reasons the disabled − describe (22 D4.2): out of the cells, and
+          after the list's own controls, so the line is all that stands above
+          the table and the + keeps its place after the box. */}
+      <DeleteReasons
+        items={rows
+          .filter((p) => p.instance !== null)
+          .map((p) => ({
+            id: `${uid}-delete-${p.id}`,
+            reason: t('server-profiles-delete-in-use'),
+          }))}
+      />
+      {asking && (
+        <Dialog title={t('signin-title')} onClose={closeAsking}>
+          <SignIn
+            required={false}
+            inDialog
+            onSignedIn={signedIn}
+            onCancel={closeAsking}
+          />
+        </Dialog>
+      )}
     </>
   )
 }

@@ -24,6 +24,7 @@ import {
   isHidden,
   navigate,
   reply,
+  shownText,
   startAt,
   type BffOptions,
   type ModelProfile,
@@ -86,7 +87,8 @@ function shownIds(main: HTMLElement): string[] {
     .map((row) => (row.querySelector('td, th')?.textContent ?? '').trim())
 }
 
-/** The data rows' cells' text. */
+/** The data rows' cells' text, the row's − of 22 D4.1 left out (its words are
+ *  its accessible name, in a `.visually-hidden` span). */
 function rows(main: HTMLElement): string[][] {
   const t = within(main).getByRole('table', {
     name: en('model-profiles-title'),
@@ -94,11 +96,7 @@ function rows(main: HTMLElement): string[][] {
   return within(t)
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
-    .map((row) =>
-      [...row.querySelectorAll('td, th')].map((c) =>
-        (c.textContent ?? '').trim(),
-      ),
-    )
+    .map((row) => [...row.querySelectorAll('td, th')].map((c) => shownText(c)))
 }
 
 function type(input: HTMLInputElement, value: string) {
@@ -503,7 +501,7 @@ test('2b.34, 2d.62: the text is in no URL and no storage, and the page reopens w
 
 // ── Keyboard and screen reader (35, 36) ─────────────────────────────────
 
-test('2b.35, 2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops): with text, Tab reaches the field, Clear filter, the Model profile and Engine header buttons, then the shown row link and switch; focus on arrival stays on the h1', async () => {
+test('2b.35, 2c.53, 2d.60, 22 D4.1 (as 17c.2 amends it: the two sortable headers are tab stops): with text, Tab reaches the field, Clear filter, the Model profile and Engine header buttons, then the shown row link, switch and minus; focus on arrival stays on the h1', async () => {
   // 2c.53 replaces 2b.35: the administrator's switches follow Clear filter.
   // Focus moves to the h1 only after a route change, never on a first load.
   startAt('#/')
@@ -520,8 +518,9 @@ test('2b.35, 2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab 
   // 2d.60: each shown row's name is a link; it precedes the row's switch.
   // 17c.2: the header buttons sit in the table's thead, so after the filter's
   // Clear and before the first row's link.
+  // 22 D4.1: the row's minus follows its switch.
   const order = tabbable().map(nameOf)
-  expect(order.slice(-10)).toEqual([
+  expect(order.slice(-11)).toEqual([
     // 20 N.10: Node info rides the host list so it comes with the instances,
     // then, brief 16 (17a.2), Server profiles and Model profiles, then About,
     // all before the filter.
@@ -535,12 +534,18 @@ test('2b.35, 2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab 
     en('model-profiles-column-engine'),
     'Qwen3-27B',
     'Qwen3-27B',
+    en('model-profiles-delete-row', 'Qwen3-27B'),
   ])
   const t = await table(main)
+  // 22 D4.1: the row's minus is a button in the row, so the table's stops are
+  // the head's two buttons, then each row's link, switch and minus.
+  const head = [...t.querySelectorAll('thead button')]
+  const rowStops = [...t.querySelectorAll('tbody a, tbody input, tbody button')]
+  expect(head, '17c.2: the two sortable header buttons').toHaveLength(2)
+  expect(rowStops, '22 D4.1: three stops per shown row').toHaveLength(3)
   expect(tabbable().filter((el) => t.contains(el))).toEqual([
-    ...within(t).getAllByRole('button'),
-    ...within(t).getAllByRole('link'),
-    ...within(t).getAllByRole('switch'),
+    ...head,
+    ...rowStops,
   ])
 })
 

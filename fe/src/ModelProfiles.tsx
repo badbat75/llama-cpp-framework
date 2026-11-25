@@ -12,6 +12,7 @@ import {
   useMemo,
   useRef,
   useState,
+  Fragment,
 } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -24,6 +25,12 @@ import {
 import Dialog from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
+import {
+  ConfirmRow,
+  DeleteReasons,
+  RowDelete,
+  useRowDelete,
+} from './RowDelete.tsx'
 import { modelProfileHref, modelProfileIdUnreadable } from './route.ts'
 import type { Session, SignedOut } from './session.ts'
 import SignIn from './SignIn.tsx'
@@ -455,10 +462,42 @@ function Filtered({
     [change],
   )
 
+  /** The row delete (22 D4): the − of a row, its confirm row, and the answers.
+   *  The list is read again in place, never through the skeleton, so the words
+   *  of a refusal outlive the read that brings them (22 D4.7). */
+  const del = useRowDelete({
+    path: (id) => `/api/profiles/model/${encodeURIComponent(id)}`,
+    deleted: (id) => t('model-profiles-deleted', id),
+    remove: (id) => setModelProfiles((ps) => ps.filter((p) => p.id !== id)),
+    reread: async () => {
+      const again = await readModelProfiles()
+      if (!Array.isArray(again)) return null
+      setModelProfiles(again)
+      return again.map((p) => p.id)
+    },
+    order: shown.map(({ p }) => p.id),
+    minus: (id) => document.getElementById(`${uid}-delete-${id}`),
+    // The manager refused because the profile is switched on: the row's switch
+    // says so, over the file the read brought back (22 D4.7).
+    onInUse: (id) =>
+      setModelProfiles((ps) =>
+        ps.map((p) => (p.id === id ? { ...p, enabled: true } : p)),
+      ),
+    // The list has no control of its own after the rows: with no row left the
+    // focus stays where the browser puts it.
+    lastResort: () => null,
+    onStatus: setStatus,
+    onAlert: setAlert,
+    onSignIn: () => setAsking(true),
+  })
+
   function closeAsking() {
     flushSync(() => setAsking(false))
     document.getElementById(`${uid}-sign-in`)?.focus()
   }
+
+  // The group's Sign in (22 D4.7): the same dialog the switch's alert opens.
+  const askSignIn = useCallback(() => setAsking(true), [])
 
   function signedIn(session: Session) {
     const kept = onRenewed(session)
@@ -559,11 +598,29 @@ function Filtered({
           uid={uid}
           rows={shown}
           busy={busy}
+          deleting={del.deleting}
+          confirming={del.confirming}
           sort={sort}
           onSort={sortBy}
           onChange={onChange}
+          onDelete={del.open}
+          onConfirm={del.confirm}
+          onCancel={del.close}
+          onSignIn={askSignIn}
+          confirmStatus={del.status}
+          confirmAlert={del.alert}
         />
       )}
+      {/* The reasons the disabled − describe (22 D4.2): out of the cells, and
+          after the table, so the list's lines are all that stands above it. */}
+      <DeleteReasons
+        items={shown
+          .filter(({ p }) => p.enabled)
+          .map(({ p }) => ({
+            id: `${uid}-delete-${p.id}`,
+            reason: t('model-profiles-delete-needs-off'),
+          }))}
+      />
       {asking && (
         <Dialog title={t('signin-title')} onClose={closeAsking}>
           <SignIn
@@ -595,17 +652,35 @@ const Table = memo(function Table({
   uid,
   rows,
   busy,
+  deleting,
+  confirming,
   sort,
   onSort,
   onChange,
+  onDelete,
+  onConfirm,
+  onCancel,
+  onSignIn,
+  confirmStatus,
+  confirmAlert,
 }: {
   uid: string
   rows: { p: ModelProfile; i: number }[]
   /** A write runs: every switch aria-disabled, its changes ignored (2c.45). */
   busy: boolean
+  /** A delete runs: every row's − and switch aria-disabled (22 D4.5). */
+  deleting: boolean
+  /** The row whose confirm row is open, null when none is (22 D4.4). */
+  confirming: string | null
   sort: Sort | null
   onSort: (column: Column) => void
   onChange: (i: number, enabled: boolean) => void
+  onDelete: (id: string) => void
+  onConfirm: () => void
+  onCancel: () => void
+  onSignIn: () => void
+  confirmStatus: string
+  confirmAlert: { text: string; signIn: boolean } | null
 }) {
   /** One sortable header cell: the column's text in a button, its arrow. */
   const header = (column: Column, label: string) => {
@@ -644,42 +719,67 @@ const Table = memo(function Table({
         </thead>
         <tbody>
           {rows.map(({ p, i }) => (
-            <tr key={p.id} className={p.enabled ? undefined : 'off'}>
-              <td>
-                <span id={`${uid}-name-${i}`}>
-                  {modelProfileIdUnreadable(p.id) ? (
-                    p.id
-                  ) : (
-                    <a href={modelProfileHref(p.id)}>{p.id}</a>
-                  )}
-                </span>
-              </td>
-              <td>
-                {p.engineAvailable
-                  ? p.engine
-                  : t('model-profiles-engine-not-available', p.engine)}
-              </td>
-              <td>
-                <label className="model-profiles-switch">
-                  <input
-                    id={`${uid}-switch-${i}`}
-                    type="checkbox"
-                    role="switch"
-                    checked={p.enabled}
-                    aria-labelledby={`${uid}-name-${i}`}
-                    aria-disabled={busy || undefined}
-                    onChange={(e) => {
-                      if (!busy) onChange(i, e.target.checked)
-                    }}
+            <Fragment key={p.id}>
+              <tr className={p.enabled ? undefined : 'off'}>
+                <td>
+                  <span id={`${uid}-name-${i}`}>
+                    {modelProfileIdUnreadable(p.id) ? (
+                      p.id
+                    ) : (
+                      <a href={modelProfileHref(p.id)}>{p.id}</a>
+                    )}
+                  </span>
+                </td>
+                <td>
+                  {p.engineAvailable
+                    ? p.engine
+                    : t('model-profiles-engine-not-available', p.engine)}
+                </td>
+                <td className="status-cell">
+                  <label className="model-profiles-switch">
+                    <input
+                      id={`${uid}-switch-${i}`}
+                      type="checkbox"
+                      role="switch"
+                      checked={p.enabled}
+                      aria-labelledby={`${uid}-name-${i}`}
+                      aria-disabled={busy || deleting || undefined}
+                      onChange={(e) => {
+                        if (!busy) onChange(i, e.target.checked)
+                      }}
+                    />
+                  </label>
+                  <span aria-hidden="true">
+                    {p.enabled
+                      ? t('model-profiles-status-on')
+                      : t('model-profiles-status-off')}
+                  </span>
+                  <RowDelete
+                    domId={`${uid}-delete-${p.id}`}
+                    name={t('model-profiles-delete-row', p.id)}
+                    reason={
+                      p.enabled ? t('model-profiles-delete-needs-off') : null
+                    }
+                    disabled={p.enabled}
+                    busy={deleting}
+                    open={confirming === p.id}
+                    onPress={() => onDelete(p.id)}
                   />
-                </label>
-                <span aria-hidden="true">
-                  {p.enabled
-                    ? t('model-profiles-status-on')
-                    : t('model-profiles-status-off')}
-                </span>
-              </td>
-            </tr>
+                </td>
+              </tr>
+              {confirming === p.id && (
+                <ConfirmRow
+                  columns={3}
+                  question={t('model-profiles-delete-question', p.id)}
+                  status={confirmStatus}
+                  alert={confirmAlert}
+                  running={deleting}
+                  onConfirm={onConfirm}
+                  onCancel={onCancel}
+                  onSignIn={onSignIn}
+                />
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

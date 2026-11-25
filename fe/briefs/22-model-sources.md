@@ -990,3 +990,111 @@ Tests to change: `fe/src/ModelProfilesDelete1.test.tsx` and `fe/src/ServerProfil
 `mouseout` of the − alone does not hide it), and `fe/src/ModelProfileDelete3.test.tsx` and
 `fe/src/ServerProfilePage3.test.tsx` (22 D4.14: the always-shown `p#...-reason` replaces the hover and
 focus tip assertions).
+
+### 22D4 D1 decision review (designer, 2026-11-24)
+
+Driven in Chromium, Firefox and WebKit at 1280 and 320 px, light, dark, 200 % text and (Chromium)
+forced colours (`build/ux-review/22d4t.js`).
+
+Met:
+- 22 D4.13: the reason is in the flow, directly under the − (dx 0, dy 0). It stays while the pointer
+  moves onto it, goes when the pointer leaves the box, and Escape hides it.
+- 22 D4.14: the used server page's Delete is `aria-disabled` and described by
+  `server-profile-delete-reason`, a `p` in the bar under its buttons, always shown, with no tip. A
+  free profile's page has no such `p`.
+- D2: the disabled − is `--muted` (GrayText under forced colours). D4: the region's alert is cleared
+  when the next confirm opens.
+- 1280 px in every engine: the reason fits inside the table's box.
+
+Not met:
+- **D5 (22 D4.15, [1.4.10](https://www.w3.org/TR/WCAG22/#reflow)): the list reason does not wrap
+  at 320 px or 200 %.** The status cell of the Models list (`fe/src/index.css` 795-797,
+  `.model-profiles td:last-child`) and the Used by cell of the server list (816-819) are
+  `white-space: nowrap`, and `.hint-tip` (2143-2150) inherits it. The reason stays on one line up to
+  16rem, wider than the cell: it runs past the table's box, and the page scrolls sideways (311 px on
+  the server list at 320 px, 809 px at 200 %; 189 px on the Models list at 200 %). Fix:
+  `white-space: normal` on `.hint-tip`, as `.confirm-row td` does for the question.
+
+### 22D4 D5 re-check (designer, 2026-11-24)
+
+Checked in Chromium, Firefox and WebKit at 320 px and at 200 % text (`build/ux-review/22d5.js`,
+`22d5p.js`).
+- D5 met: the reason now wraps inside its cell, directly under the −, on both lists.
+- **D6 (22 D4.8, [1.4.10](https://www.w3.org/TR/WCAG22/#reflow)): the page scrolls sideways
+  whether or not a reason shows.** On the server list (`pool=long`) the page scrolls 208 px at
+  320 px; on the Models list it scrolls 29 px at 200 %. `window.scrollTo(500, 0)` moves it, so the
+  scroll is real. The cause is each row −'s visually hidden name: `.visually-hidden` is
+  `position: absolute` (`fe/src/index.css` 332-333), and `.table-scroll` (714) is not positioned, so
+  those spans are not clipped by the scroll box. They sit where the − sits in the wide table (right
+  edge at 528 px) and widen the document. Fix: `position: relative` on `.table-scroll`.
+
+### 22D4 D6 re-check (designer, 2026-11-24)
+
+Checked in Chromium, Firefox and WebKit at 320 px and at 200 % text (`build/ux-review/22d5.js`,
+`22d6p.js`).
+- D6 met: no sideways scroll on either list, reason shown or not (document scroll 0 everywhere). On
+  the server list at 200 % the reason sits inside the table's own sideways scroll, with the long
+  rows. That is the table's scroll box doing its job, not the page.
+- **D7 (22 D4.15: "moves nothing above it"): on the Models list at 320 px, showing the reason
+  moves the − itself.** It moves 13 px left in Chromium, and 27 px left and 17 px up in WebKit, so
+  the pointer can lose the −, and the reason comes and goes (Chromium: moving onto the reason
+  hid it). The reason's narrowest width (about 74 px, its longest word in the `.hint-box` column,
+  `fe/src/index.css` 2130-2150) is wider than the −, so the status column grows and the table
+  shares its width out again. The server list does not move (its Used by column is already wider).
+  Requirement: showing the reason changes no column's width. Candidate fix, for the coder to try:
+  `contain: inline-size` on `.hint-tip`, so its words no longer size the cell, with the tip as wide
+  as the cell's free room. Then check that the − stays put in the three engines.
+
+Full UX check: held until D7 is fixed, as the slice's last pass.
+
+### 22D4 D7 re-check (designer, 2026-11-25)
+
+Checked in Chromium, Firefox and WebKit at 320 px (`build/ux-review/22d6p.js`).
+- The − no longer moves (dx 0, dy 0 on both lists).
+- **D8 (22 D4.13, 22 D4.15): `contain: inline-size` collapses the reason.** In all three engines the
+  tip is 18 px wide, which is its padding alone. Its text breaks one letter per line, 590 px tall on
+  the Models list and 379 px on the server list, and the pointer cannot stay on it. With inline-size
+  containment the box has no content width of its own, so the flex column (`.hint-box`) gives it
+  none. Fix: drop `contain: inline-size`. Instead give `.hint-box` a `min-width` that holds the
+  reason's longest word plus the tip's padding (7rem fits "instance" and "Switch" at any text size,
+  since rem follows the text size). The column is then as wide with the reason shown as hidden, so
+  the − stays put, and the tip wraps inside that width or the cell's, whichever is wider.
+
+Full UX check: still held for the last pass after D8.
+
+D8 fix, measured on 2026-11-25 by injecting it into the built page (`build/ux-review/22d8.js`) in
+Chromium, Firefox and WebKit at 320 px and at 200 % text, on both lists:
+`.hint-tip { contain: none; }` (that is, drop `contain: inline-size`) and
+`.hint-box { min-width: 7rem; }`. The − stays put (0, 0). The reason is 112 px wide over 2 lines on
+the Models list (224 px at 200 %) and 117 px over 7 lines on the server list (235 px at 200 %),
+with no overflow inside the tip and no sideways scroll. 8rem also holds; 7rem is the smaller one.
+
+### 22D4 last pass (designer, 2026-11-25)
+
+- D8 met as built, in Chromium, Firefox and WebKit at 320 px and 200 % text on both lists (the
+  `built` rows of `build/ux-review/22d8b.js`). The − stays put (0, 0). The reason measures
+  112 px × 2 lines and 117 px × 7 lines, 224 and 235 px at 200 %, with no overflow and no sideways
+  scroll.
+- UX check (`npm --prefix fe/ux run check`, load average 14): 20 failing.
+  - 16 are one stale state. `server-profile-delete-disabled` (`fe/ux/check.js` 471-473) focuses
+    Delete and waits for `main .save-bar .hint-tip`. Under 22 D4.14 the page has no tip: the reason
+    is the always-shown `p#server-profile-delete-reason`. Fix: expect that `p` in the bar on load,
+    with no focus step.
+  - 4 are load timing: `sign-in-at-home` and `model-profile` were not rendered in time. Firefox's
+    page also crashed, so its last states did not run. The check needs a clean rerun after the
+    state fix.
+
+### 22D4 UX check rerun (designer, 2026-11-25)
+
+- After the `server-profile-delete-disabled` fix: Chromium and WebKit pass all 198 states each. The
+  four load-timing failures of the last run did not recur.
+- **Firefox does not finish.** Its content process dies on signal 11 (SIGSEGV, from Playwright's
+  `pw:browser` log). It crashed three times out of three, at load averages of 7 down to 4, so load
+  is not the cause. Narrowed with a copy of the check (`build/ux-review/check-ff3.js`), it crashes
+  only on this sequence, at 320 px light: the state `model-profiles-delete` opens a confirm row, then
+  `model-profiles-delete-tip` loads the list again, focuses a disabled − (its reason showing), and
+  runs axe. Without that open, or without the focus, the same pair passes, and every state passes on
+  its own. A plain script that replays the sequence step by step did not crash.
+- A page cannot cause a segfault by design, so this is a fault in the engine. The bundled Firefox is
+  Playwright's patched build, so stock Firefox may not crash at all. Still, only 22D4's layout
+  triggers it (the coder's pass before the D1 decision was green in Firefox).

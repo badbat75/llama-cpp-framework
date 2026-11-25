@@ -1227,7 +1227,13 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     a 40 px minus on each row of the Models and server profile lists, disabled with a hint while the
     profile is on or used; on both profile pages Delete as a text button at the start of the top Save
     bar, disabled with the same hint when it cannot act; 22D2's status row and minus and all of 22D3
-    superseded. The user confirmed the layout from a preview before the build.
+    superseded. The user confirmed the layout from a preview before the build. 22D4 built 2026-11-25
+    (D4.1 to D4.15, review fixes D1 to D8). Open: the UX check's Firefox run segfaults (content
+    process, signal 11, 3 of 3) at 320 px light during axe on `model-profiles-delete-tip` right after
+    `model-profiles-delete`; each state passes alone and Chromium and WebKit are clean (198/198), so
+    accepted as an engine fault of Playwright's Firefox (1.65.1, firefox-1572), decided by the
+    coordinator with the user away (2026-11-25, for review). Next: try stock Firefox or a newer
+    Playwright, or a fresh page per state in Firefox (fe/ux/check.js).
     Then GT2 (user, 2026-11-24): `RocmHostMemoryGtt` (GT1's server profile key, on when unset) as a
     field in the Server page's SDK tuning card beside `RocblasUseHipblaslt` (designer brief, then
     tester and coder), after 22D4 (brief `fe/briefs/25-rocm-host-memory.md`, GT2.1 to GT2.5: a checkbox

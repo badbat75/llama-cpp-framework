@@ -113,9 +113,17 @@ function tableOf(main: HTMLElement): Promise<HTMLElement> {
 }
 
 /** The data rows of `t`, as the cells' text. */
+/** The rows of the table: the cells' text per row. 22 D4.1 puts a control in
+ *  the Used by cell: an icon button carries no text of its own, and its reason
+ *  (22 D4.2) is out of sight, so the text of the buttons in a cell is not part
+ *  of what the row reads. */
 function rowsOf(t: HTMLElement): string[][] {
   return [...t.querySelectorAll('tbody tr')].map((row) =>
-    [...row.querySelectorAll('td')].map((c) => (c.textContent ?? '').trim()),
+    [...row.querySelectorAll('td')].map((c) => {
+      const clone = c.cloneNode(true) as HTMLElement
+      for (const b of clone.querySelectorAll('button')) b.remove()
+      return (clone.textContent ?? '').trim()
+    }),
   )
 }
 
@@ -343,7 +351,7 @@ test('16 17a.2: the Menu button opens the nav, and a click on Server profiles cl
 
 // ── 17a.3: the read and the table ───────────────────────────────────────
 
-test('16 17a.3: the table has the four columns in order, one row per item in the reply order, the id a link to its page, the port as text, the tags joined by ", ", the instance a link, and a free profile says No instance muted', async () => {
+test('16 17a.3, 22 D4.1: the table has the four columns in order, one row per item in the reply order, the id a link to its page, the port as text, the tags joined by ", ", the instance a link, and a free profile says No instance muted', async () => {
   const { main } = open({ serverProfiles: ROWS })
   const t = await tableOf(main)
   expect(
@@ -379,6 +387,14 @@ test('16 17a.3: the table has the four columns in order, one row per item in the
     within(free[3]!).getByText(en('server-profiles-unused')).className,
     'the word sits in the muted style, as a tile with no tag',
   ).toContain('muted')
+  // 22 D4.1: the row's minus follows the value in the same Used by cell, on
+  // the in-use row too (there it is switched off, 22 D4.2).
+  const inUse = cellsOf(main, 'default')
+  const minus = within(inUse[3]!).getByRole('button', {
+    name: en('server-profiles-delete-row', 'default'),
+  })
+  expect(minus.closest('td'), 'the minus is in the Used by cell').toBe(inUse[3])
+  expect(before(used, minus), 'and after the value, never before it').toBe(true)
 })
 
 test('16 17a.3: the columns do not sort: no header holds a control', async () => {
@@ -443,7 +459,11 @@ test('16 17a.3: while the read is open the loading text is a role=status kept ou
     level: 1,
     name: en('server-profiles-title'),
   })
-  const status = main.querySelector('[role="status"]')
+  // 22 D4.6 adds the delete region's line above the table, so the page holds
+  // more than one status: this one is the one that says what the read is doing.
+  const status = [...main.querySelectorAll('[role="status"]')].find((el) =>
+    (el.textContent ?? '').includes(en('server-profiles-loading')),
+  )
   expect(status, 'the read says what it is doing at once').not.toBeNull()
   expect(status!.textContent, "the pool's own words").toContain(
     en('server-profiles-loading'),

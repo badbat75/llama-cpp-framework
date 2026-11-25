@@ -23,6 +23,7 @@ import {
   en,
   fakeBff,
   reply,
+  shownText,
   startAt,
   type BffOptions,
   type ModelProfile,
@@ -143,12 +144,11 @@ function dataRows(main: HTMLElement): HTMLElement[] {
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
 }
 
-/** The rows' cells' text: id, engine, On/Off. */
+/** The rows' cells' text: id, engine, On/Off, the row's − of 22 D4.1 left out
+ *  (its words are its accessible name, in a `.visually-hidden` span). */
 function rows(main: HTMLElement): string[][] {
   return dataRows(main).map((row) =>
-    [...row.querySelectorAll('td, th')].map((c) =>
-      (c.textContent ?? '').trim(),
-    ),
+    [...row.querySelectorAll('td, th')].map((c) => shownText(c)),
   )
 }
 

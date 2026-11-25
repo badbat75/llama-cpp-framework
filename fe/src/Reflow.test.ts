@@ -250,7 +250,7 @@ test('10 R1.2: the .notice rule declares overflow-wrap: anywhere, its box is unc
 
 // ── R1.4: the scroll box ──────────────────────────────────────────────────
 
-test('10 R1.4: .table-scroll is one new top-level rule: overflow-x auto, the scroll padding, --bg, the card radius, the shadow and the transparent 1px border, and nothing else', () => {
+test('10 R1.4 (as brief 22 22D4 D6 adds its position): .table-scroll is one new top-level rule: overflow-x auto, the scroll padding, --bg, the card radius, the shadow, the transparent 1px border and position: relative, and nothing else', () => {
   const box = topBy('.table-scroll', 'the scroll box of R1.3')
   declares(
     box,
@@ -262,8 +262,11 @@ test('10 R1.4: .table-scroll is one new top-level rule: overflow-x auto, the scr
       ['border-radius', 'var(--radius-card)'],
       ['box-shadow', 'var(--shadow)'],
       ['border', '1px solid transparent'],
+      // Brief 22 22D4 D6: the box is the positioned ancestor the rows'
+      // `.visually-hidden` names are placed against and clipped by (1.4.10).
+      ['position', 'relative'],
     ],
-    'no overflow-y, no height, no width: the box is as tall as the table and takes the width the page gives it (R1.4)',
+    'no overflow-y, no height, no width: the box is as tall as the table and takes the width the page gives it (R1.4); the position is the anchor of 22 D6, declared last, the sheet’s way for a box that only gains an anchor',
   )
   expect(
     box.depth,
@@ -421,14 +424,22 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // outside these and the frozen list is a look no brief asked for. Brief 16
 // slice 17f (17f.8) adds the fourteenth: instance-id, the quiet id line beside a
 // name that is not the id, on the page header, a tile and a Used by link. Brief
-// 22 slice 22D2 (the status row under the summary line, 22 D2.1) adds the
-// fifteenth: page-status, the row of the status paragraph and the delete.
+// 22 slice 22D2 (the status row under the summary line, 22 D2.1) added the
+// fifteenth: page-status, the row of the status paragraph and the delete. Brief
+// 22 slice 22D4 (22 D4.9) takes it out again, the row leaving both profile
+// pages, and adds the sixteenth, seventeenth and eighteenth: confirm-row (22
+// D4.4, the row of the confirm a list row's − opens), hint-tip (22 D4.3, the
+// reason a disabled − shows on hover and focus) and status-cell (22 D4.1, the
+// cell of a list row that wraps its − under the value). Its 22D4 review
+// (2026-11-24, D1 and D2) adds the nineteenth and twentieth: hint-box (the box
+// of a − and its tip, the anchor the tip is placed by) and inactive (the − of a
+// row that cannot act, drawn as the aria-disabled buttons are).
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed confirm-group dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight icon instance-header instance-id intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open page-status port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary server-profiles session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed confirm-group confirm-row dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight hint-box hint-tip icon inactive instance-header instance-id intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert save-actions save-alert save-bar save-messages save-status saved saved-restart secondary server-profiles session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked status-cell subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8 and brief 21 TP1 review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there, and the page-status of brief 22 22D2 (22 D2.1)', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8, brief 21 TP1 review D1 and brief 22 22D4 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there, and the confirm-row, hint-tip and status-cell of brief 22 22D4 (22 D4.4, 22 D4.3, 22 D4.1) with the hint-box and inactive its 22D4 review adds (D1, D2), page-status gone with the status row (22 D4.9)', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -447,7 +458,7 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
   const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
     [...used].filter((c) => !ofCard(c) && !ofRename(c)).sort(),
-    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the page-status of brief 22 22D2, tags-save gone, and nothing else outside the Tensor placement namespace and the rename form of brief 16 17f review D3 (R1.8: a class the designer did not brief is a look nothing asked for)',
+    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the confirm-row and hint-tip of brief 22 22D4 with the hint-box and inactive of its 22D4 review, page-status gone with the status row of 22D2 (22 D4.9), tags-save gone, and nothing else outside the Tensor placement namespace and the rename form of brief 16 17f review D3 (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(
     [...used].filter(ofRename).sort(),

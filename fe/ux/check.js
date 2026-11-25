@@ -412,22 +412,27 @@ const STATES = [
     expect: [
       { selector: '#page-heading', text: S['server-profiles-title'] },
       {
-        selector: 'main button:has(svg path[d="M5 12h14"])',
+        // The plus of Icon.tsx has two strokes, and its horizontal one is the
+        // whole of the minus, which every row of the widest pool carries. The
+        // vertical stroke is the plus's own, so this is the only button it
+        // finds (22 D4 review D3).
+        selector: 'main button:has(svg path[d="M12 5v14"])',
         message: 'the opener of the create form: the button with the plus',
       },
     ],
     open: {
-      click: 'main button:has(svg path[d="M5 12h14"])',
+      click: 'main button:has(svg path[d="M12 5v14"])',
       then: 'main form',
     },
   },
   {
-    // Brief 16, slice 17b (17b.7): the Confirm in place of the delete, on the
-    // page of the widest profile of `pool=long`, which runs nowhere
-    // (stub.py answers that id with `instance` null). 22 D2.8 makes the opener
-    // a − icon button with no visible text, so the state finds it by the id the
-    // brief gives it: absent from the page until the slice lands, the state
-    // fails until then, as it asks.
+    // Brief 16, slice 17b (17b.7) as 22D4 amends it (22 D4.9, 22 D4.10): the
+    // Confirm in place of the delete, opened from the Save bar's Delete, on the
+    // page of the widest profile of `pool=long`, which runs nowhere (stub.py
+    // answers that id with `instance` null). 22 D2.8 put the opener in a status
+    // row under the heading; 22 D4.9 takes that row away and 22 D4.10 makes the
+    // opener the bar's first button, a text button keeping the id the brief
+    // gives it.
     name: 'server-profile-delete',
     set: 'session=admin&pool=long',
     hash: `#/profiles/server/${LONG_POOL_ID}`,
@@ -435,13 +440,39 @@ const STATES = [
       { selector: '#page-heading', text: LONG_POOL_ID },
       {
         selector: '#server-profile-delete',
-        message: 'the − of 22 D2.8, offered while the profile runs nowhere',
+        message:
+          "the Save bar's Delete, offered while the profile runs nowhere",
       },
     ],
     open: {
       click: '#server-profile-delete',
       then: 'main [role="group"]',
     },
+  },
+  {
+    // Brief 22, 22 D4.10 and 22 D4.3, as the 22D4 review's D3 asks, as 22 D4.14
+    // amends it: the Save bar's Delete of a profile an instance runs, switched
+    // off, with its reason shown. The page of `default` is the one where the verb
+    // cannot act (stub.py answers its read with `instance` "default", under
+    // `pool=long` as under every pool). 22 D4.14 takes the focus tip away: the
+    // reason is a `p` in the bar after its buttons, shown all the time, so the
+    // check reads it on load, at 320 px and at 200 % text, where it must not push
+    // the page sideways.
+    name: 'server-profile-delete-disabled',
+    set: 'session=admin&pool=long',
+    hash: '#/profiles/server/default',
+    expect: [
+      { selector: '#page-heading', text: 'default' },
+      {
+        selector: '#server-profile-delete[aria-disabled="true"]',
+        message:
+          "the Save bar's Delete, switched off: an instance runs the profile",
+      },
+      {
+        selector: '#server-profile-delete-reason',
+        text: S['server-profiles-delete-in-use'],
+      },
+    ],
   },
   {
     name: 'model-profiles',
@@ -451,6 +482,50 @@ const STATES = [
       { selector: '#page-heading', text: S['model-profiles-title'] },
       { selector: '#model-profiles-filter' },
     ],
+  },
+  {
+    // Brief 22, slice 22D4 (22 D4.1, 22 D4.4): the Models list with the confirm
+    // row of a switched-off profile open. The pool at rest has one profile
+    // reading `enabled` false (stub.py `MODEL_PROFILES`), so its − can act with
+    // no set beyond the session. The row's − has an id the page draws from
+    // React's own counter (no id of the brief), so the state names it by the
+    // cell's box: the − that can act carries no `aria-disabled`. Its confirm is
+    // a `tr` of the table, its group named by the list's question.
+    name: 'model-profiles-delete',
+    set: 'session=admin',
+    hash: '#/profiles/model',
+    expect: [
+      { selector: '#page-heading', text: S['model-profiles-title'] },
+      {
+        selector: 'main .ot-add:not([aria-disabled="true"])',
+        message: 'the − of a switched-off row (22 D4.1)',
+      },
+    ],
+    open: {
+      click: 'main .ot-add:not([aria-disabled="true"])',
+      then: 'main tr.confirm-row [role="group"]',
+    },
+  },
+  {
+    // Brief 22, slice 22D4 (22 D4.2, 22 D4.3): the − that cannot act, with its
+    // reason open. The pool at rest has switched-on profiles, so their − are
+    // `aria-disabled` and keep the focus; the keyboard reaches one and the
+    // reason shows under it. The tip is what the check reads: at 320 px and at
+    // 200 % text it must not push the page sideways.
+    name: 'model-profiles-delete-tip',
+    set: 'session=admin',
+    hash: '#/profiles/model',
+    expect: [
+      { selector: '#page-heading', text: S['model-profiles-title'] },
+      {
+        selector: 'main .ot-add[aria-disabled="true"]',
+        message: 'the − of a switched-on row, switched off but focusable',
+      },
+    ],
+    focus: {
+      on: 'main .ot-add[aria-disabled="true"]',
+      then: 'main .hint-tip',
+    },
   },
   {
     name: 'model-profile',
@@ -515,13 +590,13 @@ const STATES = [
     click: ['#model-profile-jump-toggle', '#model-profile-assets-toggle'],
   },
   {
-    // Brief 22, slice 22D (22 D.1 and 22 D.2, 22 C.10's state): the Confirm in
-    // place of the delete, on the page of a switched-off model profile (stub.py
-    // `off=1` reads `enabled` false, and answers the DELETE with 204). 22 D2.1
-    // and D2.2 move the opener into the status row under the summary line, as a
-    // − icon button with no visible text, so the state finds it by the id the
-    // brief gives it: absent from the page until the slice lands, the state
-    // fails until then, as it asks.
+    // Brief 22, slice 22D (22 D.1 and 22 D.2) as 22D4 amends it (22 D4.10): the
+    // Confirm in place of the delete, opened from the Save bar's Delete, on the
+    // page of a switched-off model profile (stub.py `off=1` reads `enabled`
+    // false, and answers the DELETE with 204). 22 D2.2 put the opener in the
+    // status row under the summary line; 22 D4.9 takes that row away and 22
+    // D4.10 makes the opener the bar's first button, a text button keeping the
+    // id the brief gives it.
     name: 'model-profile-delete',
     set: 'session=admin&off=1',
     hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
@@ -529,7 +604,7 @@ const STATES = [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       {
         selector: '#model-profile-delete',
-        message: 'the − of 22 D2.2, offered while the profile is switched off',
+        message: "the Save bar's Delete, offered while the profile is off",
       },
     ],
     open: {
@@ -778,6 +853,25 @@ async function hovered(page, state) {
   return []
 }
 
+/** The state's `focus`: the keyboard focus moves to `on` and `then` is awaited.
+ *  The reason a − that cannot act shows on focus (22 D4.3) is the moment this
+ *  reads: `aria-disabled` keeps the control focusable (22 D4.2), so the keyboard
+ *  reaches it and the tip opens. A control that is not visible at this width is
+ *  left alone; one that is visible and brings nothing is a finding. */
+async function focused(page, state) {
+  if (state.focus === undefined) return []
+  const { on, then } = state.focus
+  const loc = page.locator(on).first()
+  if (!(await loc.isVisible())) return []
+  try {
+    await loc.focus()
+    await page.locator(then).waitFor({ timeout: RENDER_MS })
+  } catch {
+    return [`focus: "${on}" visible, "${then}" never appeared`]
+  }
+  return []
+}
+
 /** The state on the page: the stub's set, then the route. The stub keeps every
  *  key a /__set did not carry, so the state's own set goes after a reset to
  *  the default list of instances, the default tags, the fast reads and the
@@ -897,6 +991,7 @@ async function textPass(browser, name, base, lines) {
           found.push(...(await clicked(page, state)))
           found.push(...(await opened(page, state)))
           found.push(...(await hovered(page, state)))
+          found.push(...(await focused(page, state)))
           await sleep(SETTLE_MS)
           await page.addStyleTag({ content: css })
           await sleep(TEXT_SETTLE_MS)
@@ -966,6 +1061,7 @@ async function check(browser, name, base, lines) {
               found.push(...(await clicked(page, state)))
               found.push(...(await opened(page, state)))
               found.push(...(await hovered(page, state)))
+              found.push(...(await focused(page, state)))
               await sleep(SETTLE_MS)
               found.push(...(await problems(page, width)))
               if (stored) {

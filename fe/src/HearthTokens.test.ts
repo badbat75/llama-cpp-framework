@@ -764,7 +764,7 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
   )
   expect(
     rest,
-    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9), and the fact row of a tile and its value cell shrink below their content (17b), and the tag suggestion list shrinks to the field (15 section 11 D2)',
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9), and the fact row of a tile and its value cell shrink below their content (17b), and the tag suggestion list shrinks to the field (15 section 11 D2), and the confirm group of a list row shrinks in its cell (22 D4.8)',
   ).toEqual([
     '#root: min-height: 100vh',
     'button: min-height: var(--control-h)',
@@ -824,6 +824,11 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     // one range input at most.
     ".field-control input[type='range']: min-height: 24px",
     ".field-control input[type='range']: min-width: 0",
+    // Brief 22, 22 D4.8 (fe/briefs/22-model-sources.md): the confirm group of a
+    // list row is in a table cell, so it shrinks below its content and a long
+    // id wraps instead of widening the scroll box (1.4.10).
+    '.confirm-group: min-width: 0',
+    '.hint-box: min-width: 7rem',
     // H7.6 (brief 08): the sign-in panel is a grid child, min-width 0 lets it shrink.
     '.signin-panel: min-width: 0',
     '.save-messages: min-width: 0',

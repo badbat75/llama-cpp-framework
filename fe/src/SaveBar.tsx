@@ -3,7 +3,13 @@
 // bar's rendered height. ServerForm (the Server page) and the model profile
 // page share it, so a save answers the same way on both.
 // The text is in en_US.json.
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { flushSync } from 'react-dom'
 import { t } from './strings.ts'
 
@@ -186,7 +192,17 @@ export function useSaveBarPadding(): RefObject<HTMLDivElement | null> {
  * `sign-in` alert, by id so the banner of the page behind never answers
  * first; `saveId` names the Save button. Discard and Save are never
  * `disabled` while on screen, so focus never drops out from under the
- * keyboard: a press with nothing to do does nothing (the caller guards it). */
+ * keyboard: a press with nothing to do does nothing (the caller guards it).
+ *
+ * A profile page adds its Delete (22 D4.10): `deleteId`, `deleteLabel` and
+ * `onDelete` put the verb first in the bar's group, before Discard and Save,
+ * `deleteDisabled` keeps it there switched off, and `deleteHint` is the reason
+ * it cannot act: while the verb is switched off the bar shows that reason as a
+ * line under its buttons, with the id `<deleteId>-reason`, and names it with
+ * the verb's description (22 D4.14). The page owns what the verb says and
+ * does, the bar only places it. `children` is what the page puts under the
+ * bar's buttons (22 D4.11): the delete's confirm, and the paragraph a refused
+ * delete leaves. */
 export function SaveBar({
   bar,
   status,
@@ -200,6 +216,13 @@ export function SaveBar({
   saveId,
   onDiscard,
   onSave,
+  deleteId,
+  deleteLabel,
+  onDelete,
+  deleteDisabled,
+  deleteExpanded,
+  deleteHint,
+  children,
 }: {
   bar: RefObject<HTMLDivElement | null>
   status: SaveStatus
@@ -213,6 +236,14 @@ export function SaveBar({
   saveId: string
   onDiscard: () => void
   onSave: () => void
+  deleteId?: string
+  deleteLabel?: string
+  onDelete?: () => void
+  deleteDisabled?: boolean
+  deleteExpanded?: boolean
+  /** The reason it cannot act, the line the bar shows under its buttons. */
+  deleteHint?: string
+  children?: ReactNode
 }) {
   const disabled = !dirty || saving || undefined
   return (
@@ -255,6 +286,19 @@ export function SaveBar({
         )}
       </div>
       <div className="save-actions">
+        {onDelete === undefined ? null : (
+          <button
+            id={deleteId}
+            type="button"
+            className="secondary"
+            onClick={onDelete}
+            aria-disabled={deleteDisabled ? 'true' : undefined}
+            aria-expanded={deleteExpanded ? 'true' : 'false'}
+            aria-describedby={deleteDisabled ? `${deleteId}-reason` : undefined}
+          >
+            {deleteLabel}
+          </button>
+        )}
         <button
           type="button"
           className="secondary"
@@ -273,6 +317,16 @@ export function SaveBar({
           {saving ? t('save-saving') : t('save-button')}
         </button>
       </div>
+      {/* The reason the Delete cannot act (22 D4.14): a line of the bar, after
+          its buttons where the confirm opens, shown all the time while the
+          verb is switched off, and named by its description. No tip: the words
+          are seen without pointing, so the page has no hover state. */}
+      {onDelete === undefined ||
+      deleteDisabled !== true ||
+      deleteHint === undefined ? null : (
+        <p id={`${deleteId}-reason`}>{deleteHint}</p>
+      )}
+      {children}
     </div>
   )
 }

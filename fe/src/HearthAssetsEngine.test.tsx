@@ -283,22 +283,24 @@ describe('H11b.3: the strings', () => {
 })
 
 describe('H11b.4: the tab order', () => {
-  test("H11b.4 (22 D2.5): Tab in main goes the back link, the save bar, the jump toggle, the ten jumps, the Assets toggle, then the first field's About toggle of 91: the Engine About toggle and select are out", async () => {
+  test("H11b.4 (22 D2.5, 22 D4.10): Tab in main goes the back link, the save bar with its Delete, the jump toggle, the ten jumps, the Assets toggle, then the first field's About toggle of 91: the Engine About toggle and select are out", async () => {
     const { main } = await form()
     const names = tabbableElements(main).map(nameOf)
-    expect(names.slice(0, TITLES.length + 6), 'the page start, H11b.4').toEqual(
-      [
-        en('model-profile-back'),
-        // 22 D2.5 moved the bar to the top of the settings section, so its
-        // stops sit right after the back link, before the jump list.
-        ...saveBarTabStops(),
-        en('model-profile-jump-label'),
-        ...TITLES,
-        ASSETS,
-        // The first field's About toggle of 91: the first card of 83 after
-        // Assets is the Hardware card, so its first field.
-        fieldAboutToggles()[0],
-      ],
+    const start = [
+      en('model-profile-back'),
+      // 22 D2.5 moved the bar to the top of the settings section, so its stops
+      // sit right after the back link, before the jump list. 22 D4.10 puts the
+      // bar's Delete first in it.
+      ...saveBarTabStops(),
+      en('model-profile-jump-label'),
+      ...TITLES,
+      ASSETS,
+      // The first field's About toggle of 91: the first card of 83 after
+      // Assets is the Hardware card, so its first field.
+      fieldAboutToggles()[0],
+    ]
+    expect(names.slice(0, start.length), 'the page start, H11b.4').toEqual(
+      start,
     )
     expect(
       names.filter(

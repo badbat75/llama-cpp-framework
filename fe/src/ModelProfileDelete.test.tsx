@@ -16,11 +16,16 @@
 // Slice 22D2 (the same brief, section 22D2) moves the opener into the status
 // row under the summary line, moves the save bar to the top of the settings
 // section, and replaces the muted "switch it off first" line with the row's
-// model-profile-on. The answers of D.1 to D.7 stand; what changes here is the
-// place of the opener, of the line and of the bar, so D.1, D.2 and D.4 name
-// the new place, and the switched-on state reads model-profile-on. The minus
-// itself, the row, the bar at the top and the server page's row are
-// ModelProfileDelete2.test.tsx.
+// model-profile-on.
+//
+// Slice 22D4 (the same brief, section 22D4) moves the opener again, into the
+// save bar as its first button, and takes the status row away: the switched-on
+// state reads model-profile-on in a plain paragraph under the summary line, and
+// a switched-on profile keeps the button, switched off with the list's reason.
+// The answers of D.1 to D.7 stand; what changes here is the place of the opener
+// and of the group, and where a refusal's text lands, so D.1, D.2 and D.4 name
+// the new place. The − on the list rows, the bar's Delete and the page's
+// paragraph are ModelProfileDelete3.test.tsx.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -139,9 +144,11 @@ function makeDirty(main: HTMLElement) {
   fireEvent.change(select, { target: { value: 'false' } })
 }
 
-/** The status row of 22 D2.1, the place of the delete since 22D2. */
-function statusRow(main: HTMLElement): Element | null {
-  return main.querySelector('div.page-status')
+/** The save bar's button group: 22 D4.10 puts the page's Delete first in it. */
+function barActions(main: HTMLElement): HTMLElement {
+  const actions = main.querySelector('.save-actions')
+  expect(actions, 'the bar’s button group of 2h.1').not.toBeNull()
+  return actions as HTMLElement
 }
 
 /** The save bar (22 D.1: the row comes before it; 22D2 moved it to the top). */
@@ -226,49 +233,64 @@ async function signInInDialog(user: string) {
 
 // ── 22 D.1: offered while switched off ──────────────────────────────────
 
-test('22 D.1: a switched-off profile offers the model-profile-delete delete in the status row under the summary line, outside every fieldset and above the save bar; a switched-on one offers nothing and the row says model-profile-on in that place', async () => {
+test('22 D.1 (as 22 D4.10 moves its place): a switched-off profile offers the model-profile-delete delete as the first button of the save bar’s group, before Discard and Save changes and outside every fieldset; a switched-on profile keeps it, aria-disabled with the list’s reason; the status row of 22 D2.1 is gone', async () => {
   const { main } = await loaded()
   const summary = main.querySelector('p.model-profile-summary')
   expect(summary, 'the summary line is there').not.toBeNull()
-  const row = statusRow(main)
-  expect(row, 'the status row of 22 D2.1').not.toBeNull()
-  expect(summary!.nextElementSibling, 'it is right under it').toBe(row)
+  expect(
+    main.querySelector('div.page-status'),
+    '22 D4.9: the status row of 22 D2.1 is gone',
+  ).toBeNull()
   const bar = saveBar(main)
   expect(bar, 'the save bar is there').not.toBeNull()
   const button = deleteButton(main)
-  expect(button.parentElement, 'the delete is in the row').toBe(row)
+  const actions = barActions(main)
+  expect(
+    button.closest('.save-actions'),
+    'the delete is in the bar’s group',
+  ).toBe(actions)
   expect(button.closest('fieldset'), 'outside the form').toBeNull()
-  expect(button.closest('.save-bar'), 'and outside the save bar').toBeNull()
-  expect(before(row!, bar!), 'the row is above the bar of 22 D2.5').toBe(true)
+  expect(
+    [...actions.children].indexOf(button),
+    '22 D4.10: it is the group’s first button, apart from Save',
+  ).toBe(0)
+  expect(
+    within(actions)
+      .getAllByRole('button')
+      .map((b) => (b.textContent ?? '').trim()),
+    '22 D4.10: Delete, then Discard and Save changes',
+  ).toEqual([en('model-profile-delete'), en('save-discard'), en('save-button')])
+  expect(
+    button.getAttribute('aria-disabled'),
+    'a switched-off profile: the delete can act',
+  ).not.toBe('true')
   expect(
     within(main).queryByText(en('model-profile-on')),
     'a switched-off profile says nothing about being on',
   ).toBeNull()
   cleanup()
   vi.unstubAllGlobals()
-  // A switched-on profile: no delete, the row says the state in its place.
+  // A switched-on profile: the same button, switched off with the reason.
   const on = await loaded({ modelProfile: () => onDoc() })
+  const kept = within(on.main).getByRole('button', {
+    name: en('model-profile-delete'),
+  })
   expect(
-    within(on.main).queryByRole('button', {
-      name: en('model-profile-delete'),
-    }),
-    'no delete for a switched-on profile',
-  ).toBeNull()
-  const onRow = statusRow(on.main)
-  expect(onRow, 'the row is there too').not.toBeNull()
-  const line = onRow!.querySelector('p')
-  expect(line, 'the row says the state in a paragraph').not.toBeNull()
+    kept.getAttribute('aria-disabled'),
+    '22 D4.10: a switched-on profile cannot be deleted',
+  ).toBe('true')
+  expect(kept.closest('.save-actions'), 'and it stays in the bar').toBe(
+    barActions(on.main),
+  )
   expect(
-    (line!.textContent ?? '').replace(/\s+/g, ' ').trim(),
-    '22 D2.1: the words of the switched-on state',
+    (within(on.main).getByText(en('model-profile-on')).textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    '22 D4.9: the state reads in a paragraph, with the sentence that points at the switch',
   ).toBe(en('model-profile-on'))
-  expect(
-    onRow!.nextElementSibling,
-    'nothing of the delete is left under the row',
-  ).toBe(on.main.querySelector('section'))
 })
 
-test('22 D.1: the offer follows the document read: nothing while the read is open, the delete when a read answers switched off, the row saying model-profile-on when it answers switched on', async () => {
+test('22 D.1 (as 22 D4.10 amends it): the offer follows the document read: nothing while the read is open, an active delete when a read answers switched off, a delete switched off with the reason when it answers switched on', async () => {
   const gate = deferred()
   fakeBff({ modelProfile: () => gate.promise })
   render(<App />)
@@ -280,13 +302,18 @@ test('22 D.1: the offer follows the document read: nothing while the read is ope
   ).toBeNull()
   expect(
     within(main).queryByText(en('model-profile-on')),
-    'nor the row that replaces it',
+    'nor the state line that replaces it',
   ).toBeNull()
   gate.resolve(offDoc())
-  await within(main).findByRole('button', {
+  const off = await within(main).findByRole('button', {
     name: en('model-profile-delete'),
   })
-  // The next read of the same page answers switched on: the row says the state.
+  expect(
+    off.getAttribute('aria-disabled'),
+    '22 D4.10: switched off, so the delete can act',
+  ).not.toBe('true')
+  // The next read of the same page answers switched on: the delete stays,
+  // switched off (22 D4.10: a Delete that cannot act is never hidden).
   cleanup()
   vi.unstubAllGlobals()
   const gate2 = deferred()
@@ -295,26 +322,41 @@ test('22 D.1: the offer follows the document read: nothing while the read is ope
   const m = screen.getByRole('main')
   await within(m).findByRole('heading', { level: 1, name: ID })
   gate2.resolve(onDoc())
-  await within(m).findByText(en('model-profile-on'))
+  const on = await within(m).findByRole('button', {
+    name: en('model-profile-delete'),
+  })
   expect(
-    within(m).queryByRole('button', { name: en('model-profile-delete') }),
-    'the delete is gone with the switch',
-  ).toBeNull()
+    on.getAttribute('aria-disabled'),
+    'the delete follows the switch: it stays, switched off',
+  ).toBe('true')
+  expect(
+    within(m).getByText(en('model-profile-on')),
+    'and the state reads on the page',
+  ).toBeTruthy()
 })
 
 // ── 22 D.2: confirm in place ────────────────────────────────────────────
 
-test('22 D.2: pressing it shows right after it a div role="group" named by its paragraph model-profile-delete-question with the id, then confirm-delete then confirm-cancel, one empty status line and no alert, with the focus on confirm-cancel; Cancel, and Escape, close it on the opener; nothing is sent', async () => {
+test('22 D.2 (as 22 D4.11 moves its place): pressing it opens a div role="group" inside the save bar, under its buttons, named by its paragraph model-profile-delete-question with the id, then confirm-delete then confirm-cancel, one empty status line and no alert, with the focus on confirm-cancel; Cancel, and Escape, close it on the opener; nothing is sent', async () => {
   const { bff, main } = await loaded()
   const opener = deleteButton(main)
   const group = await confirmGroup(main)
   expect(group.tagName, 'a div of role="group"').toBe('DIV')
-  const row = statusRow(main)
-  expect(row, 'the status row of 22 D2.1').not.toBeNull()
+  const bar = saveBar(main)
+  expect(bar, 'the save bar of 22 D2.5').not.toBeNull()
   expect(
-    row!.nextElementSibling,
-    '22 D2.3: the group is right after the row, not after the opener',
-  ).toBe(group)
+    group.closest('.save-bar'),
+    '22 D4.11: the group is in the bar, where the bar grows for it',
+  ).toBe(bar)
+  const actions = barActions(main)
+  expect(
+    before(actions, group),
+    '22 D4.11: and under the bar’s buttons, not above them',
+  ).toBe(true)
+  expect(
+    group.closest('.save-actions'),
+    '22 D4.11: not inside the button group, which is a row of buttons',
+  ).toBeNull()
   const label = group.getAttribute('aria-labelledby')
   expect(label, 'the group is named by an element').toBeTruthy()
   const question = document.getElementById(label!)
@@ -555,7 +597,7 @@ test('22 D.3: a profile whose id needs encoding is deleted at a percent-encoded 
 
 // ── 22 D.4: switched on meanwhile ───────────────────────────────────────
 
-test('22 D.4: a 409 model-profile-enabled reads the document again: the group and the delete go, the row says model-profile-on, and api-model-profile-enabled stays in a p[role="alert"][tabindex="-1"] right after the row, with the focus, until the next read', async () => {
+test('22 D.4 (as 22 D4.11 amends it): a 409 model-profile-enabled reads the document again: the group goes, the delete stays switched off, its text lands in the bar’s alert with the focus on the delete, and the page says model-profile-on', async () => {
   let reads_ = 0
   const { bff, main } = await loaded({
     modelProfile: (id) => (++reads_ === 1 ? offDoc(id) : onDoc(id)),
@@ -565,32 +607,33 @@ test('22 D.4: a 409 model-profile-enabled reads the document again: the group an
   const text = en('api-model-profile-enabled', ID)
   const group = await confirmGroup(main)
   press(confirmIn(group, 'confirm-delete'))
-  const alert = await within(group).findByText(text)
+  const alert = await within(main).findByText(text)
   expect(
     alert.closest('[role="alert"]'),
-    'the text is in the group’s alert',
+    'the text is in an alert',
   ).not.toBeNull()
-  // The read again lands: the switch shows, the row says it, and the delete and
-  // its group go: the alert must outlive them.
+  // The read again lands: the switch shows, the group goes, and the text is
+  // the bar's: the bar outlives the group.
   await within(main).findByText(en('model-profile-on'))
-  expect(
-    within(main).queryByRole('button', { name: en('model-profile-delete') }),
-    'the button is gone',
-  ).toBeNull()
-  expect(queryConfirm(main), 'and so is the confirm').toBeNull()
+  expect(queryConfirm(main), 'the confirm is gone').toBeNull()
   expect(reads(bff), 'the document was read again').toBe(2)
   expect(bff.to('GET', ROUTE), 'one read, then the re-read').toHaveLength(2)
   const kept = within(main).getByText(text)
   expect(kept.tagName, 'the text is in a paragraph').toBe('P')
   expect(kept.getAttribute('role'), 'an alert').toBe('alert')
   expect(kept.getAttribute('tabindex'), 'a place the focus can take').toBe('-1')
-  const row = statusRow(main)
-  expect(row, 'the status row is still there').not.toBeNull()
   expect(
-    row!.nextElementSibling,
-    '22 D2.4: it stands right after the row, where the group was',
-  ).toBe(kept)
-  expect(document.activeElement, 'and it has the focus').toBe(kept)
+    kept.closest('.save-bar'),
+    '22 D4.11: it is the bar’s alert, the place the bar keeps for a refusal',
+  ).toBe(saveBar(main))
+  const del = deleteButton(main)
+  expect(
+    del.getAttribute('aria-disabled'),
+    '22 D4.11: the delete stays switched off, the page says why',
+  ).toBe('true')
+  expect(document.activeElement, '22 D4.11: the focus moves to Delete').toBe(
+    del,
+  )
   expect(document.activeElement, 'the focus did not drop to body').not.toBe(
     document.body,
   )

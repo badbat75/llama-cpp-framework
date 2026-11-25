@@ -6,7 +6,7 @@
 // sends them typed (5.4) and shows the answer by its key. The answer is read in
 // save.ts, shared with the model profile page; this file keeps the keys of its own
 // (section 3) and the tables of its check keys.
-import { useId, useRef, useState } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { call, isRecord } from './api.ts'
 import { boxText, tickBox, type Boxed } from './boxed.ts'
@@ -407,11 +407,33 @@ async function sendSave(
  */
 export type Runs = { started: number; settled: number }
 
+/** The page's Delete, the first button of the Save bar's group (22 D4.10),
+ *  with what the bar holds under its buttons (22 D4.11): the page owns the
+ *  verb, its reason and its confirm, the bar only places them. */
+export type PageDelete = {
+  id: string
+  label: string
+  /** A profile an instance runs keeps the Delete on the bar, switched off
+   *  (22 D4.10: never hidden). */
+  disabled: boolean
+  /** Its confirm is open. */
+  expanded: boolean
+  /** The reason it cannot act (22 D4.2, D4.14): the bar shows it as a visible
+   *  `<p id="${id}-reason">` under its buttons, all the time while the verb is
+   *  switched off, and the Delete names it as its description. No tip, no
+   *  hidden span. */
+  reason: string
+  onOpen: () => void
+  /** The confirm, and the paragraph a refused delete leaves. */
+  children?: ReactNode
+}
+
 export default function ServerForm({
   id,
   doc,
   renewals,
   runs,
+  pageDelete,
   onDirty,
   onReload,
   onRenewed,
@@ -422,6 +444,8 @@ export default function ServerForm({
   renewals: number
   /** A settled action started after a save-saved-restart ends it (44a). */
   runs: Runs
+  /** The page's Delete, in the bar's group (22 D4.10). */
+  pageDelete?: PageDelete
   /** Told whether the form holds unsaved changes; false when it goes. */
   onDirty: (dirty: boolean) => void
   /** Reads the file again, the edits discarded. */
@@ -648,7 +672,15 @@ export default function ServerForm({
         saveId={saveId}
         onDiscard={discard}
         onSave={save}
-      />
+        deleteId={pageDelete?.id}
+        deleteLabel={pageDelete?.label}
+        onDelete={pageDelete?.onOpen}
+        deleteDisabled={pageDelete?.disabled}
+        deleteExpanded={pageDelete?.expanded}
+        deleteHint={pageDelete?.reason}
+      >
+        {pageDelete?.children}
+      </SaveBar>
       <Card title={t('server-network')}>
         <DefaultBoxField
           id={`${fid}-Port`}

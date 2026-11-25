@@ -7,6 +7,13 @@
 // changes there is the place of the opener, of the muted line, of the button
 // after the Value list and of the bar in the sheet, as 22 D2.10 lists.
 //
+// Slice 22D4 (the same brief, section 22D4) takes the status row away on both
+// pages: the − moves to the list rows and the page's Delete to the Save bar,
+// which 22D2 put at the top and kept. So D2.1 to D2.4 and D2.8 to D2.10 name
+// the bar and the plain status paragraph here, and the row's flex row is the
+// list cell's (ModelProfilesDelete1.test.tsx and ServerProfilesDelete1.test.tsx).
+// D2.5 to D2.7 are the bar, which 22D4 keeps.
+//
 // 22 D2.9's widths (320 px, 200 % text, 1280 and 1600 px, both themes, no
 // sideways scroll, the minus wrapping under the status text, the bar never
 // covering a focused control) are measurements: the UX check's states
@@ -37,7 +44,6 @@ import {
   modelProfileDoc,
   reply,
   serverProfileDoc,
-  shownText,
   startAt,
   stubDialog,
   type BffOptions,
@@ -51,11 +57,6 @@ const SERVER_HASH = `#/profiles/server/${SERVER_ID}`
 const SERVER_ROUTE = `/api/profiles/server/${SERVER_ID}`
 /** The instance that takes the server profile in 22 D2.8's 409. */
 const TAKEN = 'coder'
-/** The minus of `Icon.tsx`: the horizontal stroke of the `plus` family, with
- *  no vertical stroke. Lucide's icons/minus.svg, the same 24 unit stroke family
- *  the brief asks for (22 D2.2). */
-const MINUS = 'M5 12h14'
-const PLUS_VERTICAL = 'M12 5v14'
 /** The muted line 22 D.1 put beside the bottom Delete button, whose key 22 D2.10
  *  takes out of the strings file. Written out, because `en()` reads the map the
  *  key leaves: the pin is that these words are on no page any more. */
@@ -127,9 +128,11 @@ function settingsTitle(main: HTMLElement): HTMLElement {
   })
 }
 
-/** The status row of 22 D2.1. */
-function statusRow(main: HTMLElement): Element | null {
-  return main.querySelector('div.page-status')
+/** The save bar's button group: 22 D4.10 puts the page's Delete first in it. */
+function barActions(main: HTMLElement): HTMLElement {
+  const actions = main.querySelector('.save-actions')
+  expect(actions, 'the bar’s button group of 2h.1').not.toBeNull()
+  return actions as HTMLElement
 }
 
 function deleteButton(main: HTMLElement): HTMLElement {
@@ -221,6 +224,10 @@ function serverDeleteButton(main: HTMLElement): HTMLElement {
 
 const SERVER_QUESTION = en('server-profile-delete-question', SERVER_ID)
 
+function queryServerConfirm(main: HTMLElement): HTMLElement | null {
+  return within(main).queryByRole('group', { name: SERVER_QUESTION })
+}
+
 // ── The stylesheet reader (22 D2.2, D2.6, D2.9) ─────────────────────────
 
 const CSS = readFileSync(
@@ -228,7 +235,13 @@ const CSS = readFileSync(
   'utf8',
 ).replace(/\/\*[\s\S]*?\*\//g, '')
 
-type Rule = { compact: string; body: string; at: number; depth: number }
+type Rule = {
+  compact: string
+  sel: string
+  body: string
+  at: number
+  depth: number
+}
 
 // Rules opened before this offset: the nesting level of the rule that starts
 // there, 0 at the top level.
@@ -238,6 +251,9 @@ const opened = (upto: number): number =>
 
 const RULES: Rule[] = [...CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
   compact: m[1].replace(/\s+/g, ''),
+  // The selector as written: 22 D4.10 pins a gap the sheet gives the bar's
+  // Delete, which needs the descendant and child combinators `compact` drops.
+  sel: m[1].trim(),
   body: m[2],
   at: m.index ?? 0,
   depth: opened(m.index ?? 0),
@@ -272,6 +288,33 @@ const topBy = (compact: string, what: string): Rule =>
   single(
     TOP.filter((r) => r.compact === compact),
     `the top-level rule whose selector is exactly ${compact} (${what})`,
+  )
+
+/** Does the rule's selector name `el`, as written (the combinators kept)? */
+const names = (rule: Rule, el: HTMLElement): boolean =>
+  rule.sel
+    .split(',')
+    .map((s) => s.trim())
+    .some((s) => {
+      try {
+        return el.matches(s)
+      } catch {
+        // A selector jsdom's engine does not know (a :has() the sheet uses):
+        // it cannot name this element, so it is not the rule the pin looks for.
+        return false
+      }
+    })
+
+/** The top-level rules that give `el` a `--space-5` gap on its right, the
+ *  properties that put space after a thing in a row (22 D4.10). The selector is
+ *  the coder's: the pin is that one rule names this button on the page and
+ *  declares the gap, and that the gap is the Delete's own. */
+const GAP_RIGHT = ['margin-right', 'margin-inline-end']
+const gapRules = (el: HTMLElement): Rule[] =>
+  TOP.filter(
+    (r) =>
+      GAP_RIGHT.some((p) => norm(prop(r.body, p)) === 'var(--space-5)') &&
+      names(r, el),
   )
 
 // The rules inside the @media (max-height: 31.98rem) block, by its own matched
@@ -324,67 +367,73 @@ function cascade(el: HTMLElement): {
 
 // ── 22 D2.1: the status row ─────────────────────────────────────────────
 
-test('22 D2.1: right after the summary line a div.page-status holds the status paragraph, and the minus only while the read is switched off; switched on the row says model-profile-on, and the bottom button, the muted line and the off line before the section are gone', async () => {
+test('22 D2.1 (as 22 D4.9 amends it): the status row is gone; a plain p right after the summary line says the state, above the settings section, and the Save bar’s Delete is its first button in both states, switched off when the profile is switched on', async () => {
   const { main } = await loaded()
   const summary = main.querySelector('p.model-profile-summary')
   expect(summary, 'the summary line is there').not.toBeNull()
-  const row = statusRow(main)
-  expect(row, 'the status row').not.toBeNull()
   expect(
-    summary!.nextElementSibling,
-    '22 D2.1: the row is right after the summary line',
-  ).toBe(row)
-  const h2 = settingsTitle(main)
-  expect(before(row!, h2), 'and sits above the settings section').toBe(true)
-  expect(row!.closest('section'), 'above the section, so full width').toBeNull()
-  const para = row!.querySelector('p')
-  expect(para, 'the row holds a paragraph').not.toBeNull()
+    main.querySelector('div.page-status'),
+    '22 D4.9: the status row of 22 D2.1 is gone',
+  ).toBeNull()
+  const para = summary!.nextElementSibling as HTMLElement | null
+  expect(para, '22 D4.9: a paragraph follows the summary line').not.toBeNull()
+  expect(para!.tagName, 'a plain paragraph, not a row of controls').toBe('P')
+  expect(
+    para!.classList.contains('page-status'),
+    'and it carries no row class of its own',
+  ).toBe(false)
   expect(
     text(para),
     'a switched-off profile says it is off, the words of 22D',
   ).toBe(en('model-profile-off'))
-  const button = deleteButton(main)
-  expect(button.parentElement, 'the minus is in the row').toBe(row)
-  expect(button, 'and last in it, at the paragraph’s right').toBe(
-    row!.lastElementChild,
-  )
+  const h2 = settingsTitle(main)
+  expect(before(para!, h2), 'and it sits above the settings section').toBe(true)
+  expect(
+    para!.closest('section'),
+    'above the section, so full width',
+  ).toBeNull()
   const bar = saveBar(main)
   expect(bar, 'the save bar is there').not.toBeNull()
-  expect(before(row!, bar!), 'the row is above the bar').toBe(true)
+  const button = deleteButton(main)
+  expect(
+    button.closest('.save-actions'),
+    '22 D4.10: the delete is in the bar, not on the page',
+  ).toBe(barActions(main))
+  expect(
+    button.getAttribute('aria-disabled'),
+    'a switched-off profile: the delete can act',
+  ).not.toBe('true')
   expect(
     within(main).queryByText(NEEDS_OFF),
     'a switched-off profile says nothing about switching it off',
   ).toBeNull()
   cleanup()
   vi.unstubAllGlobals()
-  // A switched-on profile: no minus, and the row says what the state is and
-  // where to change it (the words replace the muted line of 22 D.1).
+  // A switched-on profile: the paragraph says what the state is and where to
+  // change it (the words replace the muted line of 22 D.1), and the bar's
+  // Delete stays, switched off (22 D4.10: never hidden).
   const on = await loaded({ modelProfile: () => onDoc() })
-  const onRow = statusRow(on.main)
-  expect(onRow, 'the row is there for a switched-on profile').not.toBeNull()
+  const onPara = on.main.querySelector('p.model-profile-summary')!
+    .nextElementSibling as HTMLElement | null
+  expect(text(onPara), '22 D4.9: the paragraph says model-profile-on').toBe(
+    en('model-profile-on'),
+  )
+  const kept = within(on.main).getByRole('button', {
+    name: en('model-profile-delete'),
+  })
   expect(
-    text(onRow!.querySelector('p')),
-    '22 D2.1: the row says model-profile-on',
-  ).toBe(en('model-profile-on'))
-  expect(
-    within(on.main).queryByRole('button', {
-      name: en('model-profile-delete'),
-    }),
-    'no minus for a switched-on profile',
-  ).toBeNull()
+    kept.getAttribute('aria-disabled'),
+    '22 D4.10: a switched-on profile keeps the Delete, switched off',
+  ).toBe('true')
   expect(
     within(on.main).queryByText(NEEDS_OFF),
     '22 D2.1: the muted line is gone, its key leaves the strings file',
   ).toBeNull()
-  expect(
-    onRow!.nextElementSibling,
-    'nothing of the delete is left below the row',
-  ).toBe(on.main.querySelector('section'))
 })
 
 // ── 22 D2.2: the minus button ───────────────────────────────────────────
 
-test('22 D2.2: the minus is a type="button" with id model-profile-delete and aria-expanded, holding a minus icon aria-hidden and a span.visually-hidden that names it exactly, in the 40 px outlined square the list add shares (.ot-add) with flex: none', async () => {
+test('22 D2.2 (as 22 D4.10 amends it): the page’s Delete is a text button type="button" with id model-profile-delete, its words written on it and no icon, a secondary button of the bar’s group, and the sheet gives it a --space-5 gap after it and not to Discard or Save changes', async () => {
   const { main } = await loaded()
   const button = deleteButton(main)
   expect(button.tagName, 'a native button').toBe('BUTTON')
@@ -392,73 +441,65 @@ test('22 D2.2: the minus is a type="button" with id model-profile-delete and ari
   expect(button.id, '22 D2.2: the id the UX check finds it by').toBe(
     'model-profile-delete',
   )
-  expect(button.getAttribute('aria-expanded'), 'closed').toBe('false')
-  const svg = button.querySelector('svg')
-  expect(svg, 'the icon').not.toBeNull()
-  expect(svg!.getAttribute('aria-hidden'), 'decorative').toBe('true')
-  const paths = [...svg!.querySelectorAll('path')].map((p) =>
-    p.getAttribute('d'),
-  )
   expect(
-    paths,
-    '22 D2.2: the minus of the plus stroke family: the horizontal line, and no vertical one',
-  ).toEqual([MINUS])
-  expect(
-    paths,
-    'and not the plus of the list add: no vertical stroke',
-  ).not.toContain(PLUS_VERTICAL)
-  const hidden = button.querySelector('span.visually-hidden')
-  expect(hidden, 'the words, for a reader').not.toBeNull()
-  expect(
-    text(hidden),
-    '4.1.2: the accessible name stays exactly the words of 22D',
+    text(button),
+    '22 D4.10: a text button: the words are on it, so no hidden name is needed',
   ).toBe(en('model-profile-delete'))
-  expect(shownText(button), '2.5.3: nothing is written on the button').toBe('')
-  const { decls, rules } = cascade(button)
-  expect(norm(decls['width'] ?? ''), 'the 40 px square').toBe('40px')
-  expect(norm(decls['min-height'] ?? ''), 'and never shorter').toBe('40px')
-  expect(norm(decls['padding'] ?? ''), 'no padding').toBe('0')
   expect(
-    norm(decls['border'] ?? ''),
-    'the --control outline of a control',
-  ).toBe('var(--border-w) solid var(--control)')
+    button.querySelector('svg'),
+    '22 D4.10: the glyph is the list’s, not the page’s',
+  ).toBeNull()
   expect(
-    norm(decls['flex'] ?? ''),
-    '22 D2.9: kept at its box, so it wraps under the text and never stretches',
-  ).toBe('none')
-  const square = rules.filter((r) => prop(r.body, 'width') === '40px')
-  expect(square.length, 'one rule gives the box its width').toBe(1)
+    button.querySelector('span.visually-hidden'),
+    'and there is no hidden name',
+  ).toBeNull()
   expect(
-    square[0]!.compact.split(','),
-    '22 D2.2: it is the rule of the list add, shared and not copied',
-  ).toContain('.ot-add')
+    button.className,
+    '22 D4.10: a secondary text button, so Save changes stays the bar’s primary',
+  ).toContain('secondary')
+  const actions = barActions(main)
+  expect(button.closest('.save-actions'), 'in the bar’s group').toBe(actions)
+  expect(
+    [...actions.children].indexOf(button),
+    '22 D4.10: first, before Discard and Save changes',
+  ).toBe(0)
+  // The gap: one rule, naming this button, putting --space-5 after it.
+  const gaps = gapRules(button)
+  expect(
+    gaps.length,
+    '22 D4.10: exactly one rule gives the bar’s Delete a --space-5 gap on its right',
+  ).toBe(1)
+  for (const key of ['save-discard', 'save-button']) {
+    const other = within(actions).getByRole('button', { name: en(key) })
+    expect(
+      gapRules(other).length,
+      `22 D4.10: the gap is the Delete's own, so ${key} carries no --space-5 of its own`,
+    ).toBe(0)
+  }
 })
 
 // ── 22 D2.3: the confirm opens under the row ────────────────────────────
 
-test('22 D2.3: pressing the minus opens the confirm group right after the status row, full width, with margin-top var(--space-3); the focus moves to Cancel, Cancel and Escape put it back on the minus, and nothing is sent', async () => {
+test('22 D2.3 (as 22 D4.11 amends it): pressing the bar’s Delete opens the confirm group inside the bar, under its buttons; the focus moves to Cancel, Cancel and Escape put it back on the Delete, and nothing is sent', async () => {
   const { bff, main } = await loaded()
-  const row = statusRow(main)
-  expect(row, 'the status row').not.toBeNull()
   const opener = deleteButton(main)
   const group = await confirmGroup(main)
   expect(group.tagName, 'a div of role="group"').toBe('DIV')
+  const bar = saveBar(main)
+  expect(bar, 'the save bar of 22 D2.5').not.toBeNull()
   expect(
-    row!.nextElementSibling,
-    '22 D2.3: the group comes right after the row, not after the opener',
-  ).toBe(group)
-  expect(group.parentElement, 'the group is the row’s sibling').toBe(
-    row!.parentElement,
-  )
-  expect(group.closest('section'), 'full width, outside the section').toBeNull()
+    group.closest('.save-bar'),
+    '22 D4.11: the group is in the bar, which grows for it',
+  ).toBe(bar)
+  const actions = barActions(main)
   expect(
-    norm(cascade(group).decls['margin-top'] ?? ''),
-    '22 D2.3: the space under the row, the same as the server page’s',
-  ).toBe('var(--space-3)')
+    before(actions, group),
+    '22 D4.11: and under the bar’s buttons, not above them',
+  ).toBe(true)
   expect(
-    opener.getAttribute('aria-expanded'),
-    'the opener says it is open',
-  ).toBe('true')
+    group.closest('.save-actions'),
+    '22 D4.11: not inside the button group, which is a row of buttons',
+  ).toBeNull()
   const cancel = confirmIn(group, 'confirm-cancel')
   expect(document.activeElement, '22 D.2: the focus is on Cancel').toBe(cancel)
   expect(
@@ -467,7 +508,7 @@ test('22 D2.3: pressing the minus opens the confirm group right after the status
   ).toHaveLength(0)
   press(cancel)
   expect(queryConfirm(main), 'Cancel closes it').toBeNull()
-  expect(document.activeElement, 'and the focus is back on the minus').toBe(
+  expect(document.activeElement, 'and the focus is back on the Delete').toBe(
     opener,
   )
   const again = await confirmGroup(main)
@@ -476,13 +517,13 @@ test('22 D2.3: pressing the minus opens the confirm group right after the status
   )
   fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' })
   expect(queryConfirm(main), 'Escape closes it').toBeNull()
-  expect(document.activeElement, 'on the minus').toBe(opener)
+  expect(document.activeElement, 'on the Delete').toBe(opener)
   expect(bff.to('DELETE', ROUTE), 'still nothing sent').toHaveLength(0)
 })
 
 // ── 22 D2.4: switched on meanwhile ──────────────────────────────────────
 
-test('22 D2.4: after the 409 model-profile-enabled and the read again the row says model-profile-on and the minus is gone, and p#model-profile-delete-refused[role="alert"][tabindex="-1"] sits right after the row with the focus', async () => {
+test('22 D2.4 (as 22 D4.11 amends it): after the 409 model-profile-enabled and the read again the paragraph says model-profile-on, the bar’s Delete stays switched off with the focus on it, and p#model-profile-delete-refused[role="alert"][tabindex="-1"] is the bar’s alert', async () => {
   let reads = 0
   const { bff, main } = await loaded({
     modelProfile: () => (++reads === 1 ? offDoc() : onDoc()),
@@ -490,19 +531,13 @@ test('22 D2.4: after the 409 model-profile-enabled and the read again the row sa
       reply(409, { key: 'model-profile-enabled', args: [ID] }),
   })
   const refusal = en('api-model-profile-enabled', ID)
-  const row = statusRow(main)
-  expect(row, 'the status row').not.toBeNull()
   const group = await confirmGroup(main)
   press(confirmIn(group, 'confirm-delete'))
-  await within(group).findByText(refusal)
-  // The read again lands: the row says the profile is on, the minus and its
-  // group go with it, and the alert must outlive them.
+  await within(main).findByText(refusal)
+  // The read again lands: the paragraph says the profile is on, the group goes
+  // with it, and the alert must outlive them: it is the bar's.
   await within(main).findByText(en('model-profile-on'))
-  expect(
-    within(main).queryByRole('button', { name: en('model-profile-delete') }),
-    'the minus is gone',
-  ).toBeNull()
-  expect(queryConfirm(main), 'and so is the confirm').toBeNull()
+  expect(queryConfirm(main), 'the confirm is gone').toBeNull()
   expect(readCount(bff), 'the document was read again').toBe(2)
   const kept = within(main).getByText(refusal)
   expect(kept.tagName, 'the text is in a paragraph').toBe('P')
@@ -512,10 +547,18 @@ test('22 D2.4: after the 409 model-profile-enabled and the read again the row sa
   expect(kept.getAttribute('role'), 'an alert').toBe('alert')
   expect(kept.getAttribute('tabindex'), 'a place the focus can take').toBe('-1')
   expect(
-    row!.nextElementSibling,
-    '22 D2.4: it comes right after the row, where the group was',
-  ).toBe(kept)
-  expect(document.activeElement, 'and it has the focus').toBe(kept)
+    kept.closest('.save-bar'),
+    '22 D4.11: it is the bar’s alert, the place the bar keeps for a refusal',
+  ).toBe(saveBar(main))
+  const del = deleteButton(main)
+  expect(
+    del.getAttribute('aria-disabled'),
+    '22 D4.11: the Delete stays switched off, the page says why',
+  ).toBe('true')
+  expect(
+    document.activeElement,
+    '22 D4.11: the focus moves to the Delete',
+  ).toBe(del)
   expect(document.activeElement, 'the focus did not drop to body').not.toBe(
     document.body,
   )
@@ -651,12 +694,12 @@ test('22 D2.6: the sheet sticks the bar to the top: .save-bar is sticky at top 0
 
 // ── 22 D2.7: the focus order ────────────────────────────────────────────
 
-test('22 D2.7: Tab reaches the back link, the minus, Discard and Save changes, the jump list and then the fields; with the confirm open its two buttons come between the minus and the bar, and the bar’s buttons come before every field of the cards', async () => {
+test('22 D2.7 (as 22 D4.11 amends it): Tab reaches the back link, the bar’s Delete, Discard and Save changes, the jump list and then the fields; with the confirm open its two buttons come after the bar’s three, and the bar’s buttons come before every field of the cards', async () => {
   const { main } = await loaded()
   const stops = mainTabbable(main)
   expect(
     stops.slice(0, 4),
-    '22 D2.7: back link, the status row’s minus, Discard, Save changes',
+    '22 D4.10: back link, then the bar: its Delete, Discard, Save changes',
   ).toEqual([
     en('model-profile-back'),
     en('model-profile-delete'),
@@ -680,21 +723,24 @@ test('22 D2.7: Tab reaches the back link, the minus, Discard and Save changes, t
   ).toBeGreaterThan(stops.indexOf(en('save-button')))
   cleanup()
   vi.unstubAllGlobals()
-  // The confirm, open, is the pair right after the minus (22 D2.7).
+  // The confirm, open, is the pair right after the bar's own buttons, since
+  // 22 D4.11 puts the group inside the bar, under them.
   const off = await loaded()
   const group = await confirmGroup(off.main)
   const open = mainTabbable(off.main)
   expect(
-    open.slice(1, 4),
-    'the minus, then the group’s verb and Cancel, then the bar',
+    open.slice(1, 6),
+    '22 D4.11: the bar’s Delete, Discard, Save changes, then the group’s verb and Cancel',
   ).toEqual([
     en('model-profile-delete'),
+    en('save-discard'),
+    en('save-button'),
     en('confirm-delete'),
     en('confirm-cancel'),
   ])
   expect(
-    open.indexOf(en('save-discard')),
-    'the bar comes after the open group',
+    open.indexOf(en('model-profile-jump-label')),
+    'the jump list comes after the open group',
   ).toBeGreaterThan(open.indexOf(en('confirm-cancel')))
   expect(
     group.contains(document.activeElement as Node),
@@ -704,60 +750,70 @@ test('22 D2.7: Tab reaches the back link, the minus, Discard and Save changes, t
 
 // ── 22 D2.8: the server profile page follows ────────────────────────────
 
-test('22 D2.8: under the h1 a div.page-status holds the status paragraph and, while no instance runs the profile, the minus named by a visually hidden server-profile-delete in the .ot-add square; an instance named says server-profile-used-by and offers nothing, and the Value list’s Used by row stays', async () => {
+test('22 D2.8 (as 22 D4.9 and 22 D4.10 amend it): the server page’s status row is gone and the Value list’s Used by row stays; the Save bar’s Delete is its first button, active when no instance uses the profile, and switched off with the list’s reason when one does', async () => {
   const { main } = await loadedServer()
-  const h1 = within(main).getByRole('heading', { level: 1, name: SERVER_ID })
-  const row = statusRow(main)
-  expect(row, '22 D2.8: the row is under the h1').not.toBeNull()
-  expect(before(h1, row!), 'right after it').toBe(true)
+  expect(
+    main.querySelector('div.page-status'),
+    '22 D4.9: the status row of 22 D2.8 is gone',
+  ).toBeNull()
   const dl = main.querySelector('dl.assets')
   expect(dl, 'the Value list is there').not.toBeNull()
-  expect(before(row!, dl!), 'and the row is above the Value list').toBe(true)
-  expect(
-    text(row!.querySelector('p')),
-    'unused: the row says no instance uses it',
-  ).toBe(en('server-profile-unused'))
-  const button = serverDeleteButton(main)
-  expect(button.id, 'the id the UX check finds it by').toBe(
-    'server-profile-delete',
-  )
-  expect(button.getAttribute('type'), 'it submits nothing').toBe('button')
-  expect(
-    text(button.querySelector('span.visually-hidden')),
-    '4.1.2: named by the words, not by the glyph',
-  ).toBe(en('server-profile-delete'))
-  expect(
-    [...button.querySelectorAll('svg path')].map((p) => p.getAttribute('d')),
-    'the same minus as the model page',
-  ).toEqual([MINUS])
-  expect(
-    norm(cascade(button).decls['width'] ?? ''),
-    'the same 40 px square',
-  ).toBe('40px')
-  expect(button.parentElement, 'the minus is in the row').toBe(row)
   expect(
     text(dl!.querySelector('dt')),
     '22 D2.8: the Value list keeps its Used by row, which is data',
   ).toBe(en('server-profiles-column-used-by'))
+  const button = serverDeleteButton(main)
+  expect(button.id, '22 D4.10: the id the UX check finds it by').toBe(
+    'server-profile-delete',
+  )
+  expect(button.getAttribute('type'), 'it submits nothing').toBe('button')
+  expect(text(button), '22 D4.10: a text button: the words are on it').toBe(
+    en('server-profile-delete'),
+  )
+  expect(button.querySelector('svg'), 'and no glyph').toBeNull()
+  expect(
+    button.className,
+    '22 D4.10: secondary, so Save changes stays the bar’s primary',
+  ).toContain('secondary')
+  const actions = barActions(main)
+  expect(button.closest('.save-actions'), 'in the bar’s group').toBe(actions)
+  expect(
+    [...actions.children].indexOf(button),
+    '22 D4.10: first, before Discard and Save changes',
+  ).toBe(0)
+  expect(
+    button.getAttribute('aria-disabled'),
+    '22 D4.10: no instance uses it, so the Delete can act',
+  ).not.toBe('true')
   cleanup()
   vi.unstubAllGlobals()
-  // A profile an instance runs: the row names the instance, and nothing is
-  // offered.
+  // A profile an instance runs: the same button, switched off with the list's
+  // reason as its description (22 D4.10).
   const used = await loadedServer({ serverProfile: () => usedDoc(TAKEN) })
-  const usedRow = statusRow(used.main)
+  const kept = within(used.main).getByRole('button', {
+    name: en('server-profile-delete'),
+  })
   expect(
-    text(usedRow!.querySelector('p')),
-    '22 D2.8: the row names the instance and where to move it',
-  ).toBe(en('server-profile-used-by', TAKEN))
+    kept.getAttribute('aria-disabled'),
+    '22 D4.10: a profile in use keeps the Delete, switched off',
+  ).toBe('true')
+  const describedBy = kept.getAttribute('aria-describedby')
+  expect(describedBy, 'and it points at its reason').toBeTruthy()
+  const reason = used.main.querySelector(
+    `#${describedBy}`,
+  ) as HTMLElement | null
+  expect(reason, 'the reason is on the page').not.toBeNull()
+  expect(text(reason), '22 D4.10: the list’s reason, shared').toBe(
+    en('server-profiles-delete-in-use'),
+  )
+  press(kept)
   expect(
-    within(used.main).queryByRole('button', {
-      name: en('server-profile-delete'),
-    }),
-    'no minus for a profile in use',
+    within(used.main).queryByRole('group', { name: SERVER_QUESTION }),
+    'a press of the switched-off Delete opens nothing',
   ).toBeNull()
 })
 
-test('22 D2.8: on the server page the confirm opens right after the status row, and after the 409 client-server-profile-in-use and the read again its paragraph sits right after the row, with the focus', async () => {
+test('22 D2.8 (as 22 D4.11 amends it): on the server page the confirm opens inside the Save bar, under its buttons, and after the 409 client-server-profile-in-use and the read again its paragraph is the bar’s alert, with the Delete left switched off and the focus on it', async () => {
   let reads = 0
   const { bff, main } = await loadedServer({
     serverProfile: () => (++reads === 1 ? freeDoc() : usedDoc(TAKEN)),
@@ -767,16 +823,20 @@ test('22 D2.8: on the server page the confirm opens right after the status row, 
         args: [SERVER_ID, TAKEN],
       }),
   })
-  const row = statusRow(main)
-  expect(row, 'the status row').not.toBeNull()
   press(serverDeleteButton(main))
   const group = await within(main).findByRole('group', {
     name: SERVER_QUESTION,
   })
+  const bar = saveBar(main)
+  expect(bar, 'the save bar').not.toBeNull()
   expect(
-    row!.nextElementSibling,
-    '22 D2.8: the confirm opens under the row',
-  ).toBe(group)
+    group.closest('.save-bar'),
+    '22 D4.11: the confirm is in the bar, which grows for it',
+  ).toBe(bar)
+  expect(
+    before(barActions(main), group),
+    '22 D4.11: and under the bar’s buttons',
+  ).toBe(true)
   expect(
     bff.to('DELETE', SERVER_ROUTE),
     'opening the confirm sends nothing',
@@ -784,71 +844,71 @@ test('22 D2.8: on the server page the confirm opens right after the status row, 
   press(confirmIn(group, 'confirm-delete'))
   expect(bff.to('DELETE', SERVER_ROUTE), 'the verb goes once').toHaveLength(1)
   const refusal = en('api-client-server-profile-in-use', SERVER_ID, TAKEN)
-  await within(group).findByText(refusal)
-  // The read again lands: the row names the instance, the minus and its group
-  // go with it, and the alert must outlive them.
-  await within(main).findByText(en('server-profile-used-by', TAKEN))
+  await within(main).findByText(refusal)
+  // The read again lands: the group goes with the in-use state, and the alert
+  // must outlive it: it is the bar's.
+  expect(queryServerConfirm(main), 'the confirm is gone').toBeNull()
   expect(
-    within(main).queryByRole('button', {
-      name: en('server-profile-delete'),
-    }),
-    'the minus is gone',
-  ).toBeNull()
-  expect(
-    within(main).queryByRole('group', { name: SERVER_QUESTION }),
-    'and so is the confirm',
-  ).toBeNull()
+    bff.to('GET', SERVER_ROUTE).length,
+    '22 D4.11: the server page was read again',
+  ).toBe(2)
   const kept = within(main).getByText(refusal)
   expect(kept.tagName, 'the text is in a paragraph').toBe('P')
   expect(kept.getAttribute('role'), 'an alert').toBe('alert')
   expect(kept.getAttribute('tabindex'), 'a place the focus can take').toBe('-1')
   expect(
-    row!.nextElementSibling,
-    '22 D2.8: it comes after the row, not after the Value list',
-  ).toBe(kept)
-  expect(document.activeElement, 'and it has the focus').toBe(kept)
+    kept.closest('.save-bar'),
+    '22 D4.11: it is the bar’s alert, the place the bar keeps for a refusal',
+  ).toBe(bar)
+  const del = serverDeleteButton(main)
+  expect(
+    del.getAttribute('aria-disabled'),
+    '22 D4.11: the Delete stays switched off, the page says why',
+  ).toBe('true')
+  expect(
+    document.activeElement,
+    '22 D4.11: the focus moves to the Delete',
+  ).toBe(del)
+  expect(document.activeElement, 'the focus did not drop to body').not.toBe(
+    document.body,
+  )
 })
 
 // ── 22 D2.9: the row wraps ──────────────────────────────────────────────
 
-test('22 D2.9: the status row is a flex row that wraps with gap var(--space-3) and align-items center, its paragraph flex: 1 1 16rem and the minus flex: none, so the minus wraps under the status text at 320 px and 200 % text without leaving the row (the widths, both themes, and the bar clearing a focused control are the UX check states)', async () => {
+test('22 D2.9 (as 22 D4.9 moves it): the page’s status row is gone, so nothing of the delete wraps on the page, and the page’s Delete is a text button, not the 40 px square; the wrapping flex row is now the list cell’s, pinned by 22 D4.1 in ModelProfilesDelete1.test.tsx (the widths, both themes, and the bar clearing a focused control are the UX check states)', async () => {
   const { main } = await loaded()
-  const row = statusRow(main)
-  expect(row, 'the status row').not.toBeNull()
-  const box = cascade(row as HTMLElement).decls
-  expect(norm(box['display'] ?? ''), 'a flex row').toBe('flex')
-  expect(norm(box['flex-wrap'] ?? ''), 'that wraps').toBe('wrap')
-  expect(norm(box['gap'] ?? ''), 'with this space between the two').toBe(
-    'var(--space-3)',
-  )
-  expect(norm(box['align-items'] ?? ''), 'centred on the line').toBe('center')
   expect(
-    norm(cascade(row!.querySelector('p') as HTMLElement).decls['flex'] ?? ''),
-    'the paragraph takes the line and gives way at 16rem',
-  ).toBe('1 1 16rem')
+    main.querySelector('div.page-status'),
+    '22 D4.9: the row that wrapped is gone',
+  ).toBeNull()
+  const button = deleteButton(main)
+  expect(button.querySelector('svg'), 'a text button, no glyph').toBeNull()
   expect(
-    norm(cascade(deleteButton(main)).decls['flex'] ?? ''),
-    'the minus keeps its box',
-  ).toBe('none')
+    norm(cascade(button).decls['width'] ?? ''),
+    '22 D4.10: it takes its width from its words, not the list’s 40 px square',
+  ).not.toBe('40px')
 })
 
 // ── 22 D2.10: the strings ───────────────────────────────────────────────
 
-test('22 D2.10: the strings keys of the slice are the words of the brief, and model-profile-delete-needs-off is gone (1a strings in App.test.tsx pins the strings file against this map)', () => {
+test('22 D2.10 (as 22 D4.12 amends it): the strings keys of the slices are the words of the brief: model-profile-on ends with the short sentence, server-profile-unused and server-profile-used-by leave the strings file, and model-profile-delete-needs-off is gone (1a strings in App.test.tsx pins the strings file against this map; the keys 22D4 gains are pinned by 22 D4.12 in ModelProfilesDelete1.test.tsx)', () => {
   expect(
     EN['model-profile-on'],
-    'the switched-on state, and where to change it',
+    '22 D4.9: the switched-on state, and where to change it',
   ).toBe(
-    'This model profile is switched on: its engine serves it. To delete it, switch it off first in the list of all model profiles.',
-  )
-  expect(EN['server-profile-unused'], 'the server row, unused').toBe(
-    'No instance uses this server profile.',
-  )
-  expect(EN['server-profile-used-by'], 'the server row, in use').toBe(
-    'Used by instance {0}. To delete this server profile, give that instance another one first.',
+    'This model profile is switched on: its engine serves it. To delete it, switch it off first.',
   )
   expect(
+    'server-profile-unused' in EN,
+    '22 D4.12: the server row’s unused sentence leaves the strings file',
+  ).toBe(false)
+  expect(
+    'server-profile-used-by' in EN,
+    '22 D4.12: and so does the in-use one',
+  ).toBe(false)
+  expect(
     'model-profile-delete-needs-off' in EN,
-    '22 D2.1: the key leaves the strings file',
+    '22 D2.1: the muted line’s key is gone',
   ).toBe(false)
 })

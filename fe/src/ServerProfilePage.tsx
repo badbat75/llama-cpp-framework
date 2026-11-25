@@ -7,21 +7,16 @@
 // the same route.
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import {
-  apiError,
-  call,
-  isRecord,
-  sessionEnded,
-  sessionRevoked,
-  type Reply,
-} from './api.ts'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Dialog from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
 import { InstanceLink } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
 import { modelProfileIdUnreadable } from './route.ts'
+import { deleteRow } from './RowDelete.tsx'
 import SignIn from './SignIn.tsx'
 import ServerForm, {
+  type PageDelete,
   type Runs,
   type ServerDoc,
   withholdsKey,
@@ -234,11 +229,12 @@ export default function ServerProfilePage({
     if (deleted) document.getElementById('server-profile-deleted')?.focus()
   }, [deleted])
 
-  // The paragraph that takes the group's place when its answer outlives it
-  // takes the focus, so the focus does not end on the body (17b review D2).
+  // The refusal outlives the group: the bar's paragraph keeps its words, and
+  // the focus moves to the Delete the bar leaves switched off, so the focus
+  // does not end on the body (17b review D2, 22 D4.11).
   useEffect(() => {
     if (inUse !== null) {
-      document.getElementById('server-profile-in-use')?.focus()
+      opener.current?.focus()
     } else if (focusMissing) {
       document.getElementById('server-profile-missing')?.focus()
     }
@@ -258,7 +254,9 @@ export default function ServerProfilePage({
   }
 
   /** The delete (16 17b.8): `DELETE` of the profile's file, its answers
-   * 16 17b.9. */
+   * 16 17b.9. The words are the list delete's (`deleteRow`, 22 D4.7): the page
+   * only says where each answer goes on this page, the group and the bar's own
+   * paragraph, as the model profile page does. */
   async function doDelete() {
     if (sendingDelete.current) return
     sendingDelete.current = true
@@ -267,69 +265,38 @@ export default function ServerProfilePage({
     setInUse(null)
     setFocusMissing(false)
     setDeleteStatus(t('confirm-deleting'))
-    let answer: Reply | undefined
-    try {
-      answer = await call(`/api/profiles/server/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      })
-    } catch {
-      answer = undefined
-    }
+    const answer = await deleteRow(
+      `/api/profiles/server/${encodeURIComponent(id)}`,
+    )
     sendingDelete.current = false
     setDeleting(false)
     setDeleteStatus('')
-    if (answer === undefined) {
-      setDeleteAlert({ text: t('request-failed'), signIn: false })
-      return
-    }
-    if (answer.ok) {
+    if (answer.kind === 'done') {
       // The file is gone: the page is the paragraph saying so (16 17b.8).
       setDeleted(true)
       return
     }
-    if (sessionEnded(answer)) {
-      setDeleteAlert({ text: t('session-ended-retry'), signIn: true })
+    if (answer.kind === 'group') {
+      // The group keeps the words and the verb stays active (16 17b.9).
+      setDeleteAlert({ text: answer.text, signIn: answer.signIn })
       return
     }
-    if (sessionRevoked(answer)) {
-      setDeleteAlert({ text: t('session-revoked'), signIn: false })
-      return
-    }
-    const error = apiError(answer.body)
-    if (error !== null && error.key === 'client-server-profile-in-use') {
+    setDeleteAlert({ text: answer.text, signIn: false })
+    if (answer.focus === 'row') {
       // An instance took the profile while the page was open: the alert says
       // so, and the read again names that instance (16 17b.9). The read again
-      // takes the delete and its group with it, so the words go on living in a
-      // paragraph of their own, which takes the focus (17b review D2).
-      const text = t('api-client-server-profile-in-use', ...error.args)
-      setDeleteAlert({ text, signIn: false })
-      setInUse(text)
+      // takes the delete and its group with it, so the words go on living in
+      // the bar's own paragraph, and the focus moves to the Delete the bar
+      // leaves switched off (17b review D2, 22 D4.11).
+      setInUse(answer.text)
       reread()
       return
     }
-    if (error !== null && error.key === 'client-no-server-profile') {
-      // The profile is gone: the read again shows the page that says so, and
-      // that page's paragraph takes the focus (17b review D2).
-      setDeleteAlert({ text: t('api-client-no-server-profile'), signIn: false })
-      setFocusMissing(true)
-      reread()
-      return
-    }
-    if (error !== null && error.key === 'client-timeout') {
-      // The manager got the delete and did not answer in time: it may or may
-      // not have been removed, so the document is read again to show what the
-      // manager holds (16 17f.10).
-      setDeleteAlert({ text: t('delete-unknown'), signIn: false })
-      reread()
-      return
-    }
-    setDeleteAlert({
-      text:
-        error?.key === 'client-unavailable'
-          ? t('api-client-unavailable')
-          : t('request-failed'),
-      signIn: false,
-    })
+    // The profile is gone, or the manager did not answer in time: the read
+    // again shows the page that says so, and that page's paragraph takes the
+    // focus (16 17f.10, 17b review D2).
+    setFocusMissing(true)
+    reread()
   }
 
   /** A sign-in in the confirm's dialog (16 17b.9): the page keeps what it
@@ -385,6 +352,61 @@ export default function ServerProfilePage({
     typeof answer === 'object' &&
     !('doc' in answer) &&
     answer.error === 'client-no-server-profile'
+  // 22 D4.10: the page's Delete, the first button of the Save bar's group. A
+  // profile an instance runs keeps it there, switched off, with the list's
+  // reason: never hidden.
+  const canDelete = read !== null && read.instance === null
+
+  /** The bar's Delete pressed (22 D4.10): it opens the confirm, and is the
+   *  place Cancel and Escape bring the focus back to. The Delete of a profile
+   *  in use opens nothing. */
+  function openDelete() {
+    if (!canDelete) return
+    opener.current = document.getElementById(
+      'server-profile-delete',
+    ) as HTMLButtonElement | null
+    setConfirming(true)
+  }
+
+  /** What the bar holds under its buttons (22 D4.11): the confirm, and the
+   *  paragraph a refused delete leaves. The reason the switched-off Delete
+   *  cannot act is the bar's own line (22 D4.14). The bar outlives them all. */
+  const pageDelete =
+    read === null
+      ? undefined
+      : {
+          id: 'server-profile-delete',
+          label: t('server-profile-delete'),
+          disabled: !canDelete,
+          expanded: confirming,
+          reason: t('server-profiles-delete-in-use'),
+          onOpen: openDelete,
+          children: (
+            <>
+              {canDelete && confirming && (
+                <ConfirmDelete
+                  id={id}
+                  status={deleteStatus}
+                  alert={deleteAlert}
+                  running={deleting}
+                  onConfirm={() => void doDelete()}
+                  onCancel={closeConfirm}
+                  onSignIn={() => setAsking(true)}
+                />
+              )}
+              {inUse !== null && (
+                <p
+                  id="server-profile-in-use"
+                  role="alert"
+                  tabIndex={-1}
+                  className="save-alert"
+                >
+                  {inUse}
+                </p>
+              )}
+            </>
+          ),
+        }
   return (
     <>
       <Back />
@@ -398,70 +420,16 @@ export default function ServerProfilePage({
         </p>
       ) : (
         <>
-          {/* 22 D2.8: the status row of the model profile page, here under the
-              h1 and above the Value list: the paragraph says who runs the
-              profile, and the row's last item is the − that deletes it, offered
-              only while no instance runs it. The sheet makes the row a wrapping
-              flex row and keeps the − at its box (22 D2.9). */}
-          {read !== null && (
-            <div className="page-status">
-              <p className="page-status">
-                {read.instance === null
-                  ? t('server-profile-unused')
-                  : t('server-profile-used-by', read.instance)}
-              </p>
-              {read.instance === null && (
-                <button
-                  ref={opener}
-                  type="button"
-                  id="server-profile-delete"
-                  className="ot-add"
-                  aria-expanded={confirming}
-                  onClick={() => setConfirming(true)}
-                >
-                  <Icon name="minus" />
-                  {/* 22 D2.8: named by the words a reader needs, and nothing
-                      written on the box (2.5.3). */}
-                  <span className="visually-hidden">
-                    {t('server-profile-delete')}
-                  </span>
-                </button>
-              )}
-            </div>
-          )}
-          {/* The confirm in place of the delete (16 17b.7, fe/DESIGN.md 5.2) is
-              the row's next sibling. It is mounted only while the profile runs
-              nowhere: a 409 read again names an instance, and the opener and its
-              group go with it, so the alert below has to outlive them. */}
-          {read !== null && read.instance === null && confirming && (
-            <ConfirmDelete
-              id={id}
-              status={deleteStatus}
-              alert={deleteAlert}
-              running={deleting}
-              onConfirm={() => void doDelete()}
-              onCancel={closeConfirm}
-              onSignIn={() => setAsking(true)}
-            />
-          )}
-          {/* The refusal of a delete whose read again took the opener and its
-              group with it: its words go on living in a paragraph of their own,
-              in the place the group had (17b review D2, 22 D2.8). */}
-          {inUse !== null && (
-            <p
-              id="server-profile-in-use"
-              role="alert"
-              tabIndex={-1}
-              className="alert"
-            >
-              {inUse}
-            </p>
-          )}
+          {/* The confirm in place of the delete (16 17b.7, fe/DESIGN.md 5.2) and
+              the refusal of a delete whose read again took the opener and its
+              group with it (17b review D2, 22 D2.8) are the Save bar's, under
+              its buttons (22 D4.11): a 409 read again names an instance, and
+              the opener and its group go with it, so the bar has to outlive
+              them. */}
           {read !== null && (
             <dl className="assets">
               {/* The row's label is data of the list, so it keeps the list's own
-                  "Used by" (22 D2.10: `server-profile-used-by` now carries the
-                  status row's sentence). */}
+                  "Used by" (22 D2.10). */}
               <dt>{t('server-profiles-column-used-by')}</dt>
               {read.instance === null ? (
                 <dd className="muted">{t('server-profiles-unused')}</dd>
@@ -488,6 +456,7 @@ export default function ServerProfilePage({
               id={id}
               answer={answer}
               renewals={signIns.kept}
+              pageDelete={pageDelete}
               onDirty={trackDirty}
               onReload={reload}
               onRenewed={renewed}
@@ -607,6 +576,7 @@ function Body({
   id,
   answer,
   renewals,
+  pageDelete,
   onDirty,
   onReload,
   onRenewed,
@@ -615,6 +585,8 @@ function Body({
   answer: Answer | undefined
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
   renewals: number
+  /** The page's Delete, in the bar's group (22 D4.10). */
+  pageDelete?: PageDelete
   onDirty: (dirty: boolean) => void
   onReload: () => void
   onRenewed: (session: Session) => boolean
@@ -649,6 +621,7 @@ function Body({
         doc={answer.doc}
         renewals={renewals}
         runs={NO_RUNS}
+        pageDelete={pageDelete}
         onDirty={onDirty}
         onReload={onReload}
         onRenewed={onRenewed}

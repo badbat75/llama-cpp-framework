@@ -155,12 +155,16 @@ function plusOf(button: HTMLElement): Element {
 }
 
 /** Every button in `root` that shows the plus glyph. */
+/** The + buttons of a list. The plus glyph is the horizontal stroke AND the
+ *  vertical one: 22 D2.2 gives the minus the horizontal alone, so one path is
+ *  not enough to tell them apart. */
 function plusButtons(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>('button')].filter((b) =>
-    [...b.querySelectorAll('svg path')].some(
-      (p) => p.getAttribute('d') === PLUS[0],
-    ),
-  )
+  return [...root.querySelectorAll<HTMLElement>('button')].filter((b) => {
+    const d = [...b.querySelectorAll('svg path')].map((p) =>
+      p.getAttribute('d'),
+    )
+    return d.includes(PLUS[0]!) && d.includes(PLUS[1]!)
+  })
 }
 
 /** The elements Tab reaches inside `root`, in order. */
@@ -298,7 +302,7 @@ function mediaRules(what: RegExp): Rule[] {
 
 // ── 17b2.1: the place ──────────────────────────────────────────────────────
 
-test('16 17b2.1: the opener sits after the table and outside its scrolling box, nothing stands between the intro and the table, and the create form opens right after the +, below the list', async () => {
+test('16 17b2.1 (as 22 D4.6 moves the intro’s neighbour): the opener sits after the table and outside its scrolling box, the delete region’s line is the only thing between the intro and the table, and the create form opens right after the +, below the list', async () => {
   // The user: "anche new server profile dovrebbe essere un + in coda alla
   // lista". The opener moves from between the intro and the table to the end
   // of the list; the form it discloses follows it there.
@@ -307,9 +311,22 @@ test('16 17b2.1: the opener sits after the table and outside its scrolling box, 
   const box = t.closest('div.table-scroll')
   expect(box, 'the table is in its scrolling box (17a.3)').not.toBeNull()
   const intro = within(main).getByText(en('server-profiles-intro'))
+  // 22 D4.6: the delete region's line joins the top of the list, so the intro
+  // is no longer right above the table. It is the only thing between them.
+  const line = [...main.querySelectorAll('[role="status"]')].find((el) =>
+    before(el, t),
+  )
+  expect(
+    line,
+    '22 D4.6: the region’s line is above the table',
+  ).not.toBeUndefined()
   expect(
     intro.nextElementSibling,
-    '17b2.1: nothing stands between the intro and the table any more',
+    '22 D4.6: the intro is followed by the region’s line',
+  ).toBe(line)
+  expect(
+    line!.nextElementSibling,
+    '17b2.1: nothing else stands between the line and the table',
   ).toBe(box)
   const opener = newButton(main)
   expect(before(box!, opener), '17b2.1: the opener comes after the table').toBe(
@@ -623,11 +640,16 @@ test('16 17b2.4: the Overview and the Models list hold no add at all today (17c.
 // ── 17b2.5: the ux check state ─────────────────────────────────────────────
 
 test('16 17b2.5: the ux check server-profiles-new state opens the form through the + (its selector names the plus glyph, and the hidden text is in the DOM)', async () => {
-  // The check opens the form with `main button:has(svg path[d="M5 12h14"])`,
+  // The check opens the form with `main button:has(svg path[d="M12 5v14"])`,
   // the plus of Icon.tsx: the selector survives the move and the look, because
   // the glyph stays. The hidden text is what a text selector reads, so the
   // span of 17b2.2 is pinned here too. The 320 px and 200 % reflow of the
   // state is the check's own measurement.
+  //
+  // The stroke named is the plus's vertical one, not its horizontal one: 22D4
+  // review D3. `M5 12h14` is the whole of the minus, which every row's − of
+  // the pool carries, so a state naming it matches two buttons and Playwright
+  // throws a strict-mode violation. The vertical stroke is the plus's own.
   const check = readFileSync(
     join(import.meta.dirname, '..', 'ux', 'check.js'),
     'utf8',
@@ -636,9 +658,13 @@ test('16 17b2.5: the ux check server-profiles-new state opens the form through t
   expect(at, 'the state exists in fe/ux/check.js').toBeGreaterThan(-1)
   const block = check.slice(at, check.indexOf('\n  {', at))
   expect(
-    block.includes('M5 12h14'),
+    block.includes('M12 5v14'),
     '17b2.5: the state opens through the button carrying the plus',
   ).toBe(true)
+  expect(
+    block.includes('M5 12h14'),
+    '17b2.5: the state does not name the stroke the minus shares',
+  ).toBe(false)
   const { main } = await loaded({ serverProfiles: ROWS })
   const opener = newButton(main)
   expect(

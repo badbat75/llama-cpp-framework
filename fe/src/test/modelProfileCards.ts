@@ -672,10 +672,9 @@ export function fieldTabStops(values: Record<string, string>): string[] {
  *  card of 83 in page order, each named by its card's title (196), then the
  *  Assets card's disclosure (H11b.4: the Engine About toggle and select are
  *  gone, the Assets toggle is the stop right after the jumps). The card h3s are
- *  not tab stops: only a jump button gives one the focus. A switched-off model
- *  profile adds the delete of 22 D2.1 between the back link and the bar, which
- *  no list here includes: every document these lists are built from is switched
- *  on. */
+ *  not tab stops: only a jump button gives one the focus. 22 D4.10 moved the
+ *  delete of 22 D2.1 into the bar, as its first button: it is there whether the
+ *  profile is switched on or off, so every list here carries it. */
 export function pageTopTabStops(): string[] {
   return [
     en('model-profile-back'),
@@ -686,8 +685,9 @@ export function pageTopTabStops(): string[] {
   ]
 }
 
-/** The save bar's two buttons, in the bar's order (2h.1's 141), at the top of
- *  the settings section since 22 D2.5. */
+/** The save bar's buttons, in the bar's order (2h.1's 141), at the top of
+ *  the settings section since 22 D2.5. 22 D4.10 puts the page's Delete first,
+ *  and the `--space-5` gap after it leaves Discard and Save changes together. */
 export function saveBarTabStops(): string[] {
-  return [en('save-discard'), en('save-button')]
+  return [en('model-profile-delete'), en('save-discard'), en('save-button')]
 }

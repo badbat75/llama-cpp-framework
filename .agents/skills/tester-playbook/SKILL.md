@@ -253,7 +253,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 ### The web UI (fe/): running and probing
 
 - Run vitest as `npm --prefix fe test -- <file-part> [-t '<title>']`; the type check that sees test files
-  is `npm --prefix fe run typecheck`. Run `format:check` on your files: Prettier is part of the test edit.
+  is `npm --prefix fe run typecheck`. The filter is relative to `fe/`: `src/x.test.tsx` runs the file,
+  `fe/src/x.test.tsx` answers `No test files found, exiting with code 1` (a red that reads as a missing
+  test). Run `format:check` on your files: Prettier is part of the test edit.
   `prettier --write` on a file the coder left clean moves only your own lines: keep a `cp` of the file and
   `diff` it after.
 - Probe a harness fact with a deliberately failing assert carrying the value, in a `.test.tsx` you delete
@@ -271,7 +273,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `Element.prototype.scrollIntoView = () => {}` in the `beforeEach` of a file whose test clicks a jump
   button.
 - When you retarget an old pin onto another field or a moved read, amend the old test to the new rule and
-  say in a comment which slice retired the old one.
+  say in a comment which slice retired the old one. When a review SUPERSEDES a pinned declaration (a
+  browser-measured fix the next defect undoes), the pair is two reds: the absence pin (`no rule names X
+  declares contain:` → `toEqual([])`) is red because the sheet still carries the old declaration, and the
+  replacement's positive pin is red because the sheet lacks the new one.
 - When a slice changes how an accessible NAME is built (a name read off the item, not the id), find the
   files to amend by the FIXTURES, not by the brief's list: the shared `INSTANCES` fixture leaves out the
   field feeding the name (`port`, `label`), so a lookup by id keeps passing there, and only a fixture that
@@ -354,6 +359,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   a ruled size reds `HearthTokens.test.ts` H1a.12 (ordered list, one rule's entries in the test loop's
   order, per-card sets sorted on both sides), and a declaration added to a pinned rule reds that rule's
   "declares nothing else" list and its title. Read an array's own tail to see whether it is sorted.
+`Reflow.test.ts`'s `declares` compares the property list IN the sheet's declaration order, so amending it
+fixes where in the rule the new declaration sits: add it last, and name that in the report.
 - Pin a look the brief gives a control ("40 px, no border, no fill") as the CASCADE for the classes the
   element carries: read `button.classList` off the page, keep the top-level rules whose selector is the
   element's tag or a compound of those classes, order them by class count then sheet order, merge their
@@ -375,6 +382,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   reaching it declares `position: absolute`/`fixed`. A popover that is a child of the same wrapper passes
   every "the text is in the box" pin, so the text pins alone prove nothing (22 D4.13).
 - Prove the teeth of a CSS pin in a scratch css + scratch test pair (`cp` both, one string swap, `-t`).
+  The test reads `index.css` beside itself, so a real-tree mutant of the css, restored with `cp` and
+  proved with `cmp -s`, is enough. A snippet that ends at the rule's `}` puts the added declaration
+  OUTSIDE the rule (the pin stays red on a correct fix): anchor inside, and read the rule back.
 - Send a test that cannot fail in jsdom (real layout, focus movement, `fireEvent.click` moving no focus,
   clipping) to the UX check, or state it as unproven.
 - Pin a `preventDefault()` with the return of `fireEvent.keyDown(box, { key: 'Enter' })` (false when the
@@ -526,6 +536,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `window is not defined`.
 - `--reporter=basic` (vitest 5 dropped it) prints NOTHING, so a grep for the test names answers empty and
   reads as "the tests do not exist": run with the default reporter and read `Test Files` / `Tests`.
+- `vitest run --list` (vitest 5) dies with `CACError: Unknown option --list`, and the default reporter of a
+  green run prints NO per-file line, so a grep for a file's name answers empty: prove a test is registered
+  with `-t '<title part>'` and read the `Tests N passed | M skipped` split.
 - In this environment `npm --prefix fe test` exits 1 with an `EISDIR ... getPackageScopeConfig` and a
   `jsdom` message while every file passed: judge from the `Test Files` / `Tests` lines.
 - `npx --prefix fe prettier --check src/x.test.tsx` matches NO file and still ends "All matched files use

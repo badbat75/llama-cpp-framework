@@ -371,6 +371,11 @@ button {
   border: var(--border-w) solid var(--control);
   border-radius: var(--radius-pill);
   padding: var(--space-1) var(--space-4);
+  /* The reason a disabled control shows on hover is placed by the control
+     (22 D4.3): the lists' − is `.ot-add`, the Save bar's Delete is a secondary
+     button, so every one of them is the tip's containing block. With no
+     offsets of its own nothing moves, the box only gains the anchor. */
+  position: relative;
 }
 
 .secondary[aria-pressed='true'] {
@@ -713,6 +718,8 @@ main > * {
   border-radius: var(--radius-card);
   box-shadow: var(--shadow);
   border: 1px solid transparent;
+  /* 22 D4.8: this box is the containing block of the rows' absolutely positioned `.visually-hidden` names, so they are clipped here and cannot widen the page. */
+  position: relative;
 }
 
 /* The table keeps its borders separate with no spacing, so the cell dividers
@@ -1236,26 +1243,6 @@ tr:last-child td {
   margin: 0 0 var(--space-4);
   color: var(--muted);
   overflow-wrap: anywhere;
-}
-
-/* The status row of a profile page (22 D2.1, 22 D2.8, 22 D2.9): the sentence
-   that says what the profile is, and the − that deletes it at its right. The
-   row is a wrapping flex row, so at 320 px and at 200 % text the − drops under
-   the words and stays in the row (it is no separate block the page has to
-   scroll to). The paragraph takes the line and gives way at 16rem; the − keeps
-   its box in `.ot-add`. The two share one class, and the sheet's cascade reads
-   a rule only when every token of its selector is on the element, so the row
-   and its paragraph each carry it: a descendant selector would reach the
-   paragraph in the page and be invisible to that reader. */
-div.page-status {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  align-items: center;
-}
-
-p.page-status {
-  flex: 1 1 16rem;
 }
 
 /* The model profile page's jump list (196, DESIGN.md D5.1, drawn as an index
@@ -2029,11 +2016,21 @@ ul.check-list {
   border: var(--border-w) solid var(--control);
   background: var(--bg);
   color: var(--text);
-  /* 22 D2.9: in the status row the box is a flex item, and a flex item shrinks
-     and stretches by default; kept at its box it wraps under the status words
-     instead of being pulled across the line. On a list's add it does nothing:
-     the add is no flex item there. */
+  /* 22 D4.1: in a list's Status cell the box is a flex item, and a flex item
+     shrinks and stretches by default; kept at its box it wraps under the
+     switch instead of being pulled across the line. On an add that is no flex
+     item it does nothing. */
   flex: none;
+}
+
+/* The − of a row that cannot act (22 D4 review D2, fe/DESIGN.md "aria-disabled
+   ... drawn inactive"): the glyph is a `currentColor` stroke, so the colour is
+   what says the control is inert. The markup carries the class beside `.ot-add`
+   while the button is `aria-disabled`, the same pair the checkbox of a write in
+   flight is (2h.163d). The fill and the edge are the add's already. */
+.ot-add.inactive {
+  color: var(--muted);
+  cursor: default;
 }
 
 /* The same + right after a paragraph (the TP1c review's D1, the designer,
@@ -2102,6 +2099,64 @@ p + .ot-add {
    button reaches nothing the sheet can see. */
 .confirm-group {
   margin-top: var(--space-3);
+  /* 22 D4.8: the group of a confirm row is in a table cell, and a long
+     unbroken id would keep the cell, and the box with it, wider than the
+     viewport: allowed to shrink below its content, the question wraps and the
+     table's scroll box stays the page's width (1.4.10). */
+  min-width: 0;
+}
+
+/* The confirm of a list's row delete (22 D4.4): a row of the table right after
+   the row it asks about, so its group wraps inside the table's scroll box
+   (22 D4.8). Its one td spans every column, declares no width of its own and
+   wraps: the columns' nowrap rules are for a value of one word, a question is
+   a sentence. */
+.confirm-row td {
+  white-space: normal;
+}
+
+/* The cell of a list row that holds a value and the row's − (22 D4.1, D4.8): a
+   wrapping flex row, so at 320 px and 200 % text the − drops under the value
+   instead of widening the table. */
+.status-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+/* The box of a control and the reason it shows when it cannot act (22 D4.13,
+   22 D4.15): a column, so the reason is a line under the control inside the
+   same cell, and the cell's width is what the reason wraps within. It also
+   keeps the status column at one width, with or without the reason, so the
+   control does not move when the reason shows (22 D4.15). */
+.hint-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  /* 22 D4.15: the column keeps one width with or without the reason, so the minus stays put. */
+  min-width: 7rem;
+}
+
+/* The reason a disabled control cannot act (22 D4.3, 22 D4.13): the words the
+   control's description carries, shown under it on hover and on focus, so a
+   pointer user learns what to change. In the flow, under the control (22
+   D4.15): nothing places it, so the table's scroll box never clips it and the
+   pointer crosses no gap to reach it. At most 16rem wide so it wraps, the
+   surface fill and the control edge of a card. No font-size: the body's text
+   size is the one that must stay readable (1.4.4). The list cells it sits in
+   are `white-space: nowrap`, so the rule that styles the reason undoes the
+   break they pass down (22 D5, 1.4.10), the way `.confirm-row td` does for the
+   confirm question: at 320 px and at 200 % text the reason wraps inside the
+   cell instead of running past the table's box. */
+.hint-tip {
+  white-space: normal;
+  max-width: 16rem;
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface);
+  border: var(--border-w) solid var(--control);
+  border-radius: var(--radius-check);
+  color: var(--text);
 }
 
 /* Sign-in: labels above their fields. */
@@ -2351,6 +2406,19 @@ html:has(.save-bar) {
   justify-content: flex-end;
   gap: var(--space-2);
   margin-left: auto;
+  /* The bar's Delete shows its reason under itself (22 D4 review D1): the tip
+     is the group's child, and the Delete is its first child, so the group's
+     left edge is the Delete's and the reason starts under the Delete. */
+  position: relative;
+}
+
+/* The page's Delete, the group's first button (22 D4.10): the destructive verb
+   sits apart from Discard and Save changes, with the sheet's widest step of
+   room after it. No class marks it, so the rule names the one button of a bar
+   that is a disclosure: the Delete opens the confirm, Discard and Save open
+   nothing. */
+.save-actions > [aria-expanded]:first-child {
+  margin-inline-end: var(--space-5);
 }
 
 /* aria-disabled, not disabled, so focus stays; drawn inactive. */
@@ -2362,10 +2430,21 @@ html:has(.save-bar) {
   cursor: default;
 }
 
-/* So it still reads as inactive in a high-contrast theme. */
+/* The confirm a page's Delete opens, and the paragraph a refused delete leaves,
+   are the bar's (22 D4.11): each takes a row of the wrapping bar under its
+   buttons, so the bar grows for them and outlives them. */
+.save-bar > .confirm-group,
+.save-bar > .save-alert {
+  flex-basis: 100%;
+}
+
+/* So it still reads as inactive in a high-contrast theme. The − of a row that
+   cannot act is one of these (22 D4 review D2): its glyph is the colour, and
+   the theme replaces the author colour, so it needs the system one too. */
 @media (forced-colors: active) {
   .primary[aria-disabled='true'],
-  .secondary[aria-disabled='true'] {
+  .secondary[aria-disabled='true'],
+  .ot-add.inactive {
     color: GrayText;
     border-color: GrayText;
   }

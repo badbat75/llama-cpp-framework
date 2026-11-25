@@ -102,12 +102,19 @@ export const EN: Record<string, string> = {
   'server-profiles-column-tags': 'Tags',
   'server-profiles-column-used-by': 'Used by',
   'server-profiles-unused': 'No instance',
+  // Brief 22 slice 22D4 (22 D4.1, D4.2, D4.4, D4.6): the − in the Used by cell
+  // of each row of the Server profiles list, its reason when it cannot act, the
+  // question of its confirm row, and the line the region says when it is done.
+  'server-profiles-delete-row': 'Delete server profile {0}',
+  'server-profiles-delete-in-use':
+    'An instance uses it: give that instance another server profile to delete this one.',
+  'server-profiles-delete-question':
+    'Delete the server profile {0}? Its settings file is removed. This cannot be undone.',
+  'server-profiles-deleted': 'The server profile {0} was deleted.',
   'server-profile-back': 'All server profiles',
-  // 22 D2.8: the status row of the server profile page says who runs the
-  // profile, in the words that replace the bottom Delete button's line.
-  'server-profile-unused': 'No instance uses this server profile.',
-  'server-profile-used-by':
-    'Used by instance {0}. To delete this server profile, give that instance another one first.',
+  // 22 D4.12: the page's status row and its two sentences leave with 22 D4.9
+  // (`server-profile-unused` and `server-profile-used-by` are gone); the list's
+  // Used by cell keeps `server-profiles-unused` and gains the row's −.
   'server-profile-not-found': 'There is no server profile named {0}.',
   'server-folder-unused-default':
     'unset: the instance that runs this profile uses its own folder',
@@ -407,6 +414,14 @@ export const EN: Record<string, string> = {
   'model-profiles-sorted-file': 'In file order.',
   'model-profiles-status-on': 'On',
   'model-profiles-status-off': 'Off',
+  // Brief 22 slice 22D4 (22 D4.1, D4.2, D4.4, D4.6): the − in the Status cell of
+  // each row of the Model profiles list, its reason when it cannot act, the
+  // question of its confirm row, and the line the region says when it is done.
+  'model-profiles-delete-row': 'Delete model profile {0}',
+  'model-profiles-delete-needs-off': 'Switch it off to delete it.',
+  'model-profiles-delete-question':
+    'Delete the model profile {0}? Its settings are removed; the model file is not deleted. This cannot be undone.',
+  'model-profiles-deleted': 'The model profile {0} was deleted.',
   'model-profiles-engine-not-available': '{0} (not available)',
   'model-profiles-loading': 'Loading the model profiles…',
   'model-profiles-empty': 'No model profiles yet.',
@@ -439,9 +454,11 @@ export const EN: Record<string, string> = {
   // profile from its page. `delete-unknown` is 17f's text, brought by 22D.
   'model-profile-delete': 'Delete model profile',
   // 22 D2.1: the status row says what a switched-on profile is, in place of the
-  // muted line that sat by the bottom Delete button (that key is gone).
+  // muted line that sat by the bottom Delete button (that key is gone). 22 D4.9
+  // takes the row away and keeps the sentence, whose last words shorten now the
+  // Delete sits in the page's own Save bar.
   'model-profile-on':
-    'This model profile is switched on: its engine serves it. To delete it, switch it off first in the list of all model profiles.',
+    'This model profile is switched on: its engine serves it. To delete it, switch it off first.',
   'model-profile-delete-question':
     'Delete the model profile {0}? Its settings are removed, with any unsaved changes on this page. The model file is not deleted. This cannot be undone.',
   'model-profile-deleted': 'The model profile {0} was deleted.',

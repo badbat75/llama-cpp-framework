@@ -464,6 +464,8 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
   // 22 D2.10 adds one more: the muted line beside the bottom Delete button is
   // replaced by the status row's model-profile-on, so
   // model-profile-delete-needs-off is out too.
+  // 22 D4.12 adds two more: the profile pages' status row leaves (22 D4.9), so
+  // its two sentences leave with it.
   const removed = [
     'server-read-only',
     'server-api-key-withheld',
@@ -471,6 +473,8 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
     'session-role-user',
     'model-profile-read-only',
     'model-profile-delete-needs-off',
+    'server-profile-unused',
+    'server-profile-used-by',
   ]
   expect(
     Object.keys(table).filter((key) => removed.includes(key)),

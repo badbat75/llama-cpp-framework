@@ -481,14 +481,16 @@ const tabNames = (root: HTMLElement): string[] =>
 
 test('H10.10 (22 D2.5): in jsdom, with no CSS, Tab from the top reaches the back link, then the save bar, then the jump toggle, then the ten jump buttons in card order (the page start of 2h.197 with the toggle inserted)', async () => {
   const { main } = await form()
-  expect(
-    tabNames(main).slice(0, TITLES.length + 4),
-    'H10.10: back link, the bar, toggle, the ten entries in card order',
-  ).toEqual([
+  // 22 D2.5 moved the bar to the top of the settings section, 22 D4.10 puts
+  // its Delete first in it.
+  const start = [
     en('model-profile-back'),
-    // 22 D2.5 moved the bar to the top of the settings section.
     ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...TITLES,
-  ])
+  ]
+  expect(
+    tabNames(main).slice(0, start.length),
+    'H10.10: back link, the bar with its Delete, toggle, the ten entries in card order',
+  ).toEqual(start)
 })

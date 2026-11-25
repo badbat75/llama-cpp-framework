@@ -36,10 +36,8 @@ import {
   call,
   isRecord,
   readModelInfo,
-  sessionEnded,
   sessionRevoked,
   type ModelInfoRead,
-  type Reply,
 } from './api.ts'
 import { boxText, tickBox, type Boxed } from './boxed.ts'
 import { DiscardDialog } from './Dialog.tsx'
@@ -109,6 +107,7 @@ import {
 } from './TensorPlacement.tsx'
 import { CUSTOM as OT_CUSTOM } from './tensorRules.ts'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
+import { deleteRow } from './RowDelete.tsx'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
 import {
   SaveBar,
@@ -954,13 +953,21 @@ function Content({
   const [askingDeleteSignIn, setAskingDeleteSignIn] = useState(false)
   const deleteOpener = useRef<HTMLButtonElement>(null)
   const sendingDelete = useRef(false)
+  // 22 D4.10: the bar's Delete acts only while the read is switched off. A
+  // switched-on profile keeps it on the bar, switched off, with the list's
+  // reason as its description (22 D4.2): never hidden.
+  const canDelete = !doc.enabled
 
-  // The paragraph that outlives the group takes the focus, so the focus does
-  // not end on the body (22 D.4, 17b review D2).
-  useEffect(() => {
-    if (refusal !== null)
-      document.getElementById('model-profile-delete-refused')?.focus()
-  }, [refusal])
+  /** The bar's Delete pressed (22 D4.10): it opens the confirm, and is the
+   *  place Cancel and Escape bring the focus back to. A pressed Delete that
+   *  cannot act opens nothing. */
+  function openDelete() {
+    if (!canDelete) return
+    deleteOpener.current = document.getElementById(
+      'model-profile-delete',
+    ) as HTMLButtonElement | null
+    setConfirming(true)
+  }
 
   const status = phase === 'saving' ? 'saving' : dirty ? 'unsaved' : phase
 
@@ -1646,7 +1653,9 @@ function Content({
   }
 
   /** The delete (22 D.3): `DELETE` of the model profile, its answers 22 D.4 to
-   * 22 D.7. */
+   * 22 D.7. The words are the list delete's (`deleteRow`, 22 D4.7): the page
+   * only says where each answer goes on this page, the group, the bar's own
+   * paragraph, and the page that says the profile is gone. */
   async function doDelete() {
     if (sendingDelete.current) return
     sendingDelete.current = true
@@ -1654,85 +1663,40 @@ function Content({
     setDeleteAlert(null)
     setRefusal(null)
     setDeleteStatus(t('confirm-deleting'))
-    let answer: Reply | undefined
-    try {
-      answer = await call(`/api/profiles/model/${encodeURIComponent(doc.id)}`, {
-        method: 'DELETE',
-      })
-    } catch {
-      answer = undefined
-    }
+    const answer = await deleteRow(
+      `/api/profiles/model/${encodeURIComponent(doc.id)}`,
+    )
     sendingDelete.current = false
     setDeleting(false)
     setDeleteStatus('')
-    if (answer === undefined) {
-      setDeleteAlert({ text: t('request-failed'), signIn: false })
-      return
-    }
-    if (answer.ok) {
+    if (answer.kind === 'done') {
       // The model profile is gone: the page is the paragraph saying so (22 D.3).
       onDeleted()
       return
     }
-    if (sessionEnded(answer)) {
-      setDeleteAlert({ text: t('session-ended-retry'), signIn: true })
+    if (answer.kind === 'group') {
+      // The group keeps the words and the verb stays active (22 D.5).
+      setDeleteAlert({ text: answer.text, signIn: answer.signIn })
       return
     }
-    if (sessionRevoked(answer)) {
-      setDeleteAlert({ text: t('session-revoked'), signIn: false })
-      return
-    }
-    const error = apiError(answer.body)
-    const key = error?.key
-    const args = error?.args ?? []
-    if (key === 'model-profile-enabled') {
+    if (answer.focus === 'row') {
       // Switched on while the page was open: the read again shows the switch,
       // and takes the delete and its group with it, so the words go on living
-      // in a paragraph of their own, where the delete was (22 D.4, D2).
-      const text = t('api-model-profile-enabled', ...args)
-      setDeleteAlert({ text, signIn: false })
-      setRefusal(text)
+      // in the bar's own paragraph (22 D.4, 22 D4.11). The Delete stays,
+      // switched off, and takes the focus (22 D4.11).
+      setRefusal(answer.text)
+      setConfirming(false)
+      setDeleteAlert(null)
       onReread()
+      deleteOpener.current?.focus()
       return
     }
-    if (key === 'model-profile-assigned') {
-      // Given to instances: the group stays open with the verb active, naming
-      // them, and nothing is read again (22 D.5).
-      setDeleteAlert({
-        text: t('api-model-profile-assigned', ...args),
-        signIn: false,
-      })
-      return
-    }
-    if (key === 'no-model-profile-named') {
-      // The model profile is gone: the read again shows the page that says so,
-      // and that page's paragraph takes the focus (22 D.6, 17b review D2).
-      setDeleteAlert({
-        text: t('api-no-model-profile-named', ...args),
-        signIn: false,
-      })
-      onMissing()
-      onReread()
-      return
-    }
-    if (key === 'client-timeout') {
-      // Not confirmed: the read again says whether it is gone, and the alert
-      // stays either way (22 D.7, 17f.10). Gone, the read again lands on the
-      // paragraph saying so, which takes the focus (17b review D2).
-      setDeleteAlert({ text: t('delete-unknown'), signIn: false })
-      onMissing()
-      onReread()
-      return
-    }
-    setDeleteAlert({
-      text:
-        key === 'client-unavailable'
-          ? t('api-client-unavailable')
-          : answer.status === 422 && key !== undefined
-            ? t('api-other', key)
-            : t('request-failed'),
-      signIn: false,
-    })
+    // The model profile is gone, or the manager did not answer in time: the
+    // read again shows the page that says so, and that page's paragraph takes
+    // the focus (22 D.6, 22 D.7, 17b review D2).
+    setDeleteAlert({ text: answer.text, signIn: false })
+    onMissing()
+    onReread()
   }
 
   /** A sign-in in the delete's dialog (22 D.7): the page keeps what it holds,
@@ -1816,67 +1780,19 @@ function Content({
           ? t('model-profile-summary-no-model', doc.engine)
           : t('model-profile-summary', doc.engine, fileName)}
       </p>
-      {/* 22 D2.1: the status row, right under the summary line and outside the
-          settings section, so it spans the page's width: the paragraph says what
-          the profile is (switched off, or switched on and where to change that),
-          and the row's last item is the − that deletes it, offered only while
-          the read is switched off. The sheet makes the row a wrapping flex row
-          and keeps the − at its box (22 D2.9), so the − drops under the words
-          at a narrow width without leaving the row. */}
-      <div className="page-status">
-        <p className="page-status">
-          {doc.enabled ? t('model-profile-on') : t('model-profile-off')}
-        </p>
-        {!doc.enabled && (
-          <button
-            ref={deleteOpener}
-            type="button"
-            id="model-profile-delete"
-            className="ot-add"
-            aria-expanded={confirming}
-            onClick={() => setConfirming(true)}
-          >
-            <Icon name="minus" />
-            {/* 22 D2.2: the words a reader needs, and nothing written on the
-                box (2.5.3 asks for text only when there is text). */}
-            <span className="visually-hidden">{t('model-profile-delete')}</span>
-          </button>
-        )}
-      </div>
-      {/* 22 D2.3: the Confirm in place is the row's next sibling, full width,
-          outside the section's 1280 px grid (22D review D1: the button is no
-          grid item, so nothing stretches it). */}
-      {!doc.enabled && confirming && (
-        <ConfirmDelete
-          id={doc.id}
-          status={deleteStatus}
-          alert={deleteAlert}
-          running={deleting}
-          onConfirm={() => void doDelete()}
-          onCancel={closeConfirm}
-          onSignIn={() => setAskingDeleteSignIn(true)}
-        />
-      )}
-      {/* 22 D2.4: the refusal of a delete whose read again took the delete and
-          its group with it: its words go on living in a paragraph of their own,
-          in the place the group had (22 D.4, 17b review D2). It is no live
-          region of the form: it is the answer outliving the control that asked. */}
-      {refusal !== null && (
-        <p
-          id="model-profile-delete-refused"
-          role="alert"
-          tabIndex={-1}
-          className="alert"
-        >
-          {refusal}
-        </p>
-      )}
+      {/* 22 D4.9: the state, as a plain paragraph right under the summary line
+          and outside the settings section, so it spans the page's width. The −
+          of 22 D2.1 is gone with it: the delete is the Save bar's first button
+          (22 D4.10), and the list's rows carry their own (22 D4.1). */}
+      <p>{doc.enabled ? t('model-profile-on') : t('model-profile-off')}</p>
       <section>
         <h2>{t('model-profile-settings-title')}</h2>
         {/* 22 D2.5: the Save bar is the first thing in the settings section,
             right after its heading, so Save and Discard are reached without
             scrolling to the end of the cards; the sheet sticks it to the
-            viewport's top (22 D2.6). */}
+            viewport's top (22 D2.6). 22 D4.10 puts the page's Delete first in
+            its group, and 22 D4.11 the confirm and a refusal under its
+            buttons, so both outlive the cards and the bar grows for them. */}
         <SaveBar
           bar={bar}
           status={status}
@@ -1894,7 +1810,39 @@ function Content({
           saveId={saveId}
           onDiscard={discard}
           onSave={save}
-        />
+          deleteId="model-profile-delete"
+          deleteLabel={t('model-profile-delete')}
+          onDelete={openDelete}
+          deleteDisabled={!canDelete}
+          deleteExpanded={confirming}
+          deleteHint={t('model-profiles-delete-needs-off')}
+        >
+          {canDelete && confirming && (
+            <ConfirmDelete
+              id={doc.id}
+              status={deleteStatus}
+              alert={deleteAlert}
+              running={deleting}
+              onConfirm={() => void doDelete()}
+              onCancel={closeConfirm}
+              onSignIn={() => setAskingDeleteSignIn(true)}
+            />
+          )}
+          {/* 22 D2.4: the refusal of a delete whose read again took the Delete
+              and its group with it: its words go on living in the bar's own
+              paragraph (22 D.4, 22 D4.11, 17b review D2). It is no live region
+              of the form: it is the answer outliving the control that asked. */}
+          {refusal !== null && (
+            <p
+              id="model-profile-delete-refused"
+              role="alert"
+              tabIndex={-1}
+              className="save-alert"
+            >
+              {refusal}
+            </p>
+          )}
+        </SaveBar>
         {dropped && (
           <p role="alert" className="alert">
             {t('server-edits-dropped')}

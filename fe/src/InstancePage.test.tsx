@@ -1183,7 +1183,10 @@ const TAB_PATH_FORM = [
   // 17a.5: the one Value row, the instance that runs this profile.
   'default',
   // 22 D2.5 moved the bar to the top of the form, so its stops follow the
-  // Used by link (test 6 had them at the end of the fields).
+  // Used by link (test 6 had them at the end of the fields). 22 D4.10 puts
+  // the page's Delete first in the bar; it is aria-disabled here (an instance
+  // uses this profile) and aria-disabled keeps the stop (22 D4.2).
+  en('server-profile-delete'),
   en('save-discard'),
   en('save-button'),
   ...[

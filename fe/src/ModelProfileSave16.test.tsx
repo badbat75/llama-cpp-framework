@@ -491,17 +491,19 @@ test('2h.196: no card h3 is a tab stop: each carries tabindex -1 and none is in 
 test('2h.197 (22 D2.5): Tab from the top reaches the back link, then the save bar, then the jump toggle of H10.10, then the ten jump buttons in card order, then the Assets toggle (H11b.4: the Engine About toggle and select are gone)', async () => {
   const { main } = await form()
   const tabbed = mainTabbable(main)
-  expect(
-    tabbed.slice(0, TITLES.length + 5),
-    '197 with H10.10 and H11b.4: back, the bar, the disclosure, the ten jumps in card order, the Assets toggle',
-  ).toEqual([
+  // 22 D2.5 moved the bar to the top of the settings section, 22 D4.10 puts
+  // its Delete first in it.
+  const start = [
     en('model-profile-back'),
-    // 22 D2.5 moved the bar to the top of the settings section.
     ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...TITLES,
     ASSETS,
-  ])
+  ]
+  expect(
+    tabbed.slice(0, start.length),
+    '197 with H10.10 and H11b.4: back, the bar with its Delete, the disclosure, the ten jumps in card order, the Assets toggle',
+  ).toEqual(start)
 })
 
 // ── 198: the strings, and the changed one ─────────────────────────────

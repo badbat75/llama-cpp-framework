@@ -191,15 +191,18 @@ test('H9b.4: the disclosure and the entries are the stops right after the save b
   expect(stops[0], 'the back link stays the first stop of the page').toBe(
     screen.getByRole('link', { name: en('model-profile-back') }),
   )
-  expect(
-    stops.slice(1, 3),
-    '22 D2.5: the bar’s Discard and Save changes are the stops right after the back link',
-  ).toEqual([
+  // 22 D2.5 puts the bar right after the back link, 22 D4.10 its Delete first.
+  const barStops = [
+    within(main).getByRole('button', { name: en('model-profile-delete') }),
     within(main).getByRole('button', { name: en('save-discard') }),
     within(main).getByRole('button', { name: en('save-button') }),
-  ])
+  ]
   expect(
-    stops.slice(3, buttons.length + 4),
+    stops.slice(1, barStops.length + 1),
+    '22 D2.5, 22 D4.10: the bar’s Delete, Discard and Save are the stops right after the back link',
+  ).toEqual(barStops)
+  expect(
+    stops.slice(barStops.length + 1, buttons.length + barStops.length + 2),
     'H10.10: the disclosure then the entries are the next stops, in their order',
   ).toEqual([toggle, ...buttons])
 

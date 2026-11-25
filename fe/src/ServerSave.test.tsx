@@ -2362,7 +2362,7 @@ test('1b 6: the save bar status is one live region, present before its text chan
   expect(status(main)).toBe(line)
 })
 
-test('1b 6 (22 D2.5): Tab reaches the back link, the Used by link, Discard and Save changes at the top of the form, then the enabled controls field by field', async () => {
+test('1b 6 (22 D2.5, 22 D4.10): Tab reaches the back link, the Used by link, Delete, Discard and Save changes at the top of the form, then the enabled controls field by field', async () => {
   const { main } = await loaded()
   const nav = screen.getByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'coder' })
@@ -2379,6 +2379,13 @@ test('1b 6 (22 D2.5): Tab reaches the back link, the Used by link, Discard and S
     ['Used by link', within(main).getByRole('link', { name: 'default' })],
     // 22 D2.5 moved the bar to the top of the form, so its stops follow the
     // Used by link, above the fields (1b 6 had them after the last field).
+    // 22 D4.10 puts the bar's Delete first in its group, before Discard; a
+    // profile in use keeps it aria-disabled, so it stays focusable (22 D4.2)
+    // and the tab order carries it.
+    [
+      'Delete server profile',
+      within(main).getByRole('button', { name: en('server-profile-delete') }),
+    ],
     ['Discard', discardButton(main)],
     ['Save changes', saveButton(main)],
     ['About Port', about('Port')],

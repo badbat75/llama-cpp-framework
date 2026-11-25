@@ -865,11 +865,17 @@ test("2h.141 (22 D2.7): the tab order takes each Embeddings About toggle and the
     'H11b.4: the Embeddings card sits after the Assets toggle',
   ).toBeLessThan(at(about(MODE)))
   // 22 D2.5 moved the bar to the top of the settings section, so its stops
-  // lead the page (2h.141 had them last).
+  // lead the page (2h.141 had them last). 22 D4.10 puts the bar's Delete first
+  // in its group.
   expect(
-    focusable.slice(0, 3).map((el) => (el.textContent ?? '').trim()),
-    'the back link, then the bar, lead the page',
-  ).toEqual([en('model-profile-back'), en('save-discard'), en('save-button')])
+    focusable.slice(0, 4).map((el) => (el.textContent ?? '').trim()),
+    'the back link, then the bar with its Delete, lead the page',
+  ).toEqual([
+    en('model-profile-back'),
+    en('model-profile-delete'),
+    en('save-discard'),
+    en('save-button'),
+  ])
 })
 
 test('2h.141: the bar status is one live region that is there before its text changes, and a failure is announced by the alert, not by the status line', async () => {

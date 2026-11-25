@@ -26,6 +26,7 @@ import {
   isHidden,
   navigate,
   reply,
+  shownText,
   startAt,
   stubDialog,
   type BffOptions,
@@ -143,12 +144,12 @@ function dataRows(main: HTMLElement): HTMLElement[] {
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
 }
 
-/** The rows' cells' text: id, engine, On/Off. */
+/** The rows' cells' text: id, engine, On/Off. The eye's read, so the row's −
+ *  of 22 D4.1 is not in it: its words are its accessible name, in a
+ *  `.visually-hidden` span, and the cell shows an icon. */
 function rows(main: HTMLElement): string[][] {
   return dataRows(main).map((row) =>
-    [...row.querySelectorAll('td, th')].map((c) =>
-      (c.textContent ?? '').trim(),
-    ),
+    [...row.querySelectorAll('td, th')].map((c) => shownText(c)),
   )
 }
 
@@ -640,7 +641,7 @@ test('2c.49: another administrator signs in: the banner shows it, the alert goes
 
 // ── The control (37, 38, 39, 42) ────────────────────────────────────────
 
-test('2c.37, 2c.12, 2d.60: each row has a native checkbox with role="switch" in its Status cell, checked when on, never aria-checked; its only other control is the name link', async () => {
+test('2c.37, 2c.12, 2d.60, 22 D4.1: each row has a native checkbox with role="switch" in its Status cell, checked when on, never aria-checked, and after it the row’s minus; the name link is its only other control', async () => {
   const { main } = await open()
   const rs = dataRows(main)
   expect(switches(main)).toHaveLength(3)
@@ -653,16 +654,25 @@ test('2c.37, 2c.12, 2d.60: each row has a native checkbox with role="switch" in 
     expect(input.getAttribute('role'), IDS[i]).toBe('switch')
     expect(input.hasAttribute('aria-checked'), IDS[i]).toBe(false)
     expect(input.checked, IDS[i]).toBe(LIST[i]!.enabled)
-    // 2d.60 replaces the plain name with a link: the row's two controls are
-    // that link, in the name cell, then the switch. Nothing else acts.
+    // 22 D4.1: the minus sits in the same cell, after the switch.
+    const minus = within(row).getByRole('button', {
+      name: en('model-profiles-delete-row', IDS[i]!),
+    })
+    expect(minus.closest('td'), IDS[i]).toBe(cells[2])
+    const controls = [...cells[2]!.querySelectorAll('button, input')]
+    expect(controls, IDS[i]).toEqual([input, minus])
+    // 2d.60 replaces the plain name with a link: the row's controls are that
+    // link, in the name cell, then the switch, then the minus of 22 D4.1.
+    // Nothing else acts.
     const acts = [...row.querySelectorAll('a, input, button, select, textarea')]
-    expect(acts, IDS[i]).toHaveLength(2)
+    expect(acts, IDS[i]).toHaveLength(3)
     expect(acts[0]!.tagName, IDS[i]).toBe('A')
     expect(
       acts[0]!.closest('td, th'),
       `${IDS[i]}: the link is in the name cell`,
     ).toBe(cells[0])
     expect(acts[1], IDS[i]).toBe(input)
+    expect(acts[2], IDS[i]).toBe(minus)
     expect(cells[0]!.querySelectorAll('input'), IDS[i]).toHaveLength(0)
     expect(cells[1]!.querySelectorAll('input'), IDS[i]).toHaveLength(0)
   })
@@ -703,7 +713,7 @@ test('2c.39, 2c.54: the Status cell holds the switch then its On/Off word, the w
         ? 'model-profiles-status-on'
         : 'model-profiles-status-off',
     )
-    expect((cell.textContent ?? '').trim(), IDS[i]).toBe(word)
+    expect(shownText(cell), IDS[i]).toBe(word)
     const holder = [...cell.querySelectorAll('*')].find(
       (el) => el !== input && (el.textContent ?? '').trim() === word,
     )
@@ -971,8 +981,9 @@ test('2c.44, 2c.50: typing in the filter keeps the texts; the next change emptie
 
 // ── Keyboard (52, 53) ───────────────────────────────────────────────────
 
-test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops): Tab goes skip link, banner, nav, the filter, Clear filter, the Model profile and Engine header buttons, the Sign in after a 401, then each row link and switch in row order', async () => {
-  // 2d.60 puts each row's link before its switch.
+test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops), 22 D4.1: Tab goes skip link, banner, nav, the filter, Clear filter, the Model profile and Engine header buttons, the Sign in after a 401, then each row link, switch and minus in row order', async () => {
+  // 2d.60 puts each row's link before its switch; 22 D4.1 adds the minus after
+  // the switch, and it stays a tab stop even when it is switched off.
   const { main } = await open({ modelProfileSwitch: SESSION_ENDED })
   const head = [
     en('skip-to-content'),
@@ -999,24 +1010,33 @@ test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops):
     en('model-profiles-column-name'),
     en('model-profiles-column-engine'),
   ]
-  const rowsTwice = IDS.flatMap((id) => [id, id])
-  expect(tabbable().map(nameOf)).toEqual([...head, ...cols, ...rowsTwice])
+  // 22 D4.1: the minus is icon-only, so its name is its aria-label.
+  const stopName = (el: HTMLElement): string => {
+    const label = el.getAttribute('aria-label')
+    return label && !(el.textContent ?? '').trim() ? label : nameOf(el)
+  }
+  const rowsThrice = IDS.flatMap((id) => [
+    id,
+    id,
+    en('model-profiles-delete-row', id),
+  ])
+  expect(tabbable().map(stopName)).toEqual([...head, ...cols, ...rowsThrice])
   // "e" is in every id, so the filter shows Clear and keeps every row.
   type(filterField(main), 'e')
-  expect(tabbable().map(nameOf)).toEqual([
+  expect(tabbable().map(stopName)).toEqual([
     ...head,
     en('model-profiles-filter-clear'),
     ...cols,
-    ...rowsTwice,
+    ...rowsThrice,
   ])
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
-  expect(tabbable().map(nameOf)).toEqual([
+  expect(tabbable().map(stopName)).toEqual([
     ...head,
     en('model-profiles-filter-clear'),
     en('session-sign-in'),
     ...cols,
-    ...rowsTwice,
+    ...rowsThrice,
   ])
 })
 

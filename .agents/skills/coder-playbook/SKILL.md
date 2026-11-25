@@ -210,6 +210,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (`font-family`) are exhaustive per property; a CSS test pins the SELECTOR as a string and a rule's
   "declares nothing else" list. Append (sorted) and say the title or comment is stale rather than
   rewriting it. A test-side CSS helper must start counting braces after the opening `{` at depth 1.
+  `declares` compares the property ORDER as well, so a declaration added to a rule it pins sits where
+  the tester's list carries it (22 D6: `position: relative` last).
+  A pin of the form `decls.filter((d) => d.startsWith('x:')).toEqual(['x: v'])`
+  (22 D5, D6, D7 in `ModelProfilesDelete1.test.tsx`) reads one property of one rule and pins no order:
+  append the declaration last in the rule, with the one-line comment inside it above the declaration,
+  the way 22 D6 put `position: relative` in `.table-scroll`. `contain` has no sheet-wide list.
   `white-space` and `text-align` have no sheet-wide list. R1.8's id list is a
   `Set` and its class list allows a card's own namespace: a new rule naming an id
   the sheet already selects, or a class of that namespace, is free; a new id

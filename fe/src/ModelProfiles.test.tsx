@@ -106,12 +106,22 @@ function cellsOf(row: HTMLElement): HTMLElement[] {
   )
 }
 
-/** The data rows of the table: the cells' text per row. */
+/** The data rows of the table: the cells' text per row. 22 D4.1 puts a control
+ *  in the Status cell: an icon button carries no text of its own, and its
+ *  reason (22 D4.2) is out of sight, so the text of the buttons in a cell is
+ *  not part of what the row reads. */
 function rows(t: HTMLElement): string[][] {
   return within(t)
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
-    .map((row) => cellsOf(row).map((c) => (c.textContent ?? '').trim()))
+    .map((row) => cellsOf(row).map((c) => cellText(c)))
+}
+
+/** A cell's text, the buttons' own text left out. */
+function cellText(cell: HTMLElement): string {
+  const clone = cell.cloneNode(true) as HTMLElement
+  for (const b of clone.querySelectorAll('button')) b.remove()
+  return (clone.textContent ?? '').trim()
 }
 
 /** Waits until the page shows `text` in main, then returns its element. */
@@ -769,9 +779,13 @@ test('2a.9: one row per model profile in the order received; the fe does not sor
   ])
 })
 
-test('2a.10, 2a.12, 2d.60: each row is the id as a link to the model profile page, the engine, then On or Off', async () => {
+test('2a.10, 2a.12, 2d.60, 22 D4.1: each row is the id as a link to the model profile page, the engine, then On or Off', async () => {
   const { main } = open()
   const t = await table(main)
+  // 22 D4.1 adds the row's minus to the Status cell, after the switch: it is
+  // icon-only and its reason is out of sight, so the cell reads as before
+  // (`rows` leaves the buttons' text out). The minus itself is 22 D4.1 in
+  // ModelProfilesDelete1.test.tsx.
   expect(rows(t)).toEqual([
     ['Qwen3.6-35B-A3B-UD-Q4_K_XL', 'llama.cpp', en('model-profiles-status-on')],
     ['gemma-3-12b-it', 'llama.cpp', en('model-profiles-status-off')],
@@ -815,28 +829,33 @@ test('2a.11: the engine is shown as data, and an engine not available reads "<en
   ])
 })
 
-test('2a.13, 2c.37, 2d.60: a row acts through its link then its switch; nothing else in a row acts (U17c: the table has the two header sort buttons, in its head)', async () => {
+test('2a.13, 2c.37, 2d.60, 22 D4.1: a row acts through its link then its switch then its minus; nothing else in a row acts (U17c: the table has the two header sort buttons, in its head)', async () => {
   // 2c replaces 2a.13: each row gains its on/off switch (administrator only:
   // only administrators sign in, user 2026-11-15). 2d.60 replaces the plain
   // name with a link, so a row has two controls: the link, then the switch.
-  // U17c puts a sort button in the Model profile and Engine headers: buttons are
-  // in the head, never in a data row.
+  // 22 D4.1 adds the row's minus after the switch: three.
+  // U17c puts a sort button in the Model profile and Engine headers: the head's
+  // two are the only buttons outside a row.
   const { main } = open()
   const t = await table(main)
-  for (const row of dataRows(t))
-    for (const role of ['button', 'checkbox'] as const)
-      expect(
-        within(row).queryAllByRole(role),
-        `${role}: a data row holds no ${role}`,
-      ).toHaveLength(0)
+  for (const row of dataRows(t)) {
+    expect(
+      within(row).queryAllByRole('checkbox'),
+      'checkbox: the switch says switch',
+    ).toHaveLength(0)
+    expect(
+      within(row).queryAllByRole('button'),
+      'the row’s minus of 22 D4.1, and no other button in a row',
+    ).toHaveLength(1)
+  }
   expect(
     within(t).queryAllByRole('checkbox'),
     'no checkbox: the switch says switch',
   ).toHaveLength(0)
   expect(
     within(t).getAllByRole('button'),
-    'the two header buttons of U17c, and no other button in the table',
-  ).toHaveLength(2)
+    'the two header buttons of U17c, the two rows’ minus of 22 D4.1, and no other button in the table',
+  ).toHaveLength(4)
   expect(within(t).queryAllByRole('switch')).toHaveLength(2)
   expect(within(t).queryAllByRole('link')).toHaveLength(2)
   expect(t.querySelectorAll('input')).toHaveLength(2)
@@ -847,8 +866,8 @@ test('2a.13, 2c.37, 2d.60: a row acts through its link then its switch; nothing 
     const acts = row.querySelectorAll('a, input, button, select, textarea')
     expect(
       [...acts].map((el) => el.tagName),
-      'the name link first, then the switch',
-    ).toEqual(['A', 'INPUT'])
+      'the name link first, then the switch, then the minus',
+    ).toEqual(['A', 'INPUT', 'BUTTON'])
   }
 })
 
@@ -881,10 +900,11 @@ test('2a.18: leaving #/profiles/model and coming back reads the model profiles a
 
 // ── Keyboard and screen reader (20, 21) ─────────────────────────────────
 
-test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, instances, Model profiles), the filter field, the two header sort buttons, then each row link and switch', async () => {
+test('2a.20, 2b.35, 2c.53, 2d.60, 22 D4.1: Tab goes skip link, banner, nav (Overview, instances, Model profiles), the filter field, the two header sort buttons, then each row link, switch and minus', async () => {
   // 2c.53 replaces 2a.20: the administrator's switches follow the filter.
   // 2d.60 puts each row's link before its switch.
   // U17c puts the sortable headers' buttons after the field, in the table's head.
+  // 22 D4.1 puts the row's minus after its switch, a tab stop when switched off.
   const { main } = open()
   await table(main)
   await within(nav()).findByRole('list', { name: en('nav-this-node') })
@@ -909,8 +929,11 @@ test('2a.20, 2b.35, 2c.53, 2d.60: Tab goes skip link, banner, nav (Overview, ins
     en('model-profiles-column-engine'),
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
+    // 22 D4.1: the row's minus, named by its id.
+    en('model-profiles-delete-row', 'Qwen3.6-35B-A3B-UD-Q4_K_XL'),
     'gemma-3-12b-it',
     'gemma-3-12b-it',
+    en('model-profiles-delete-row', 'gemma-3-12b-it'),
   ])
 })
 
@@ -1027,8 +1050,8 @@ test('10 R1.3: a row whose id opens no page has no link and still holds its swit
     expect(within(row).queryByRole('link'), label).toBeNull()
     expect(
       tabbable().filter((el) => row.contains(el)).length,
-      `${label}: the switch alone carries the row into the Tab order`,
-    ).toBe(1)
+      `${label}: the switch and the minus of 22 D4.1 carry the row into the Tab order`,
+    ).toBe(2)
   }
 })
 
