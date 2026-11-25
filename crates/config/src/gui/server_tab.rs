@@ -259,4 +259,101 @@ pub(super) fn e2e() {
             );
         });
     }
+
+    // ── The "Host memory as GTT" checkbox (GT3) ──────────────────────────
+    //
+    // The Server tab's widget for `RocmHostMemoryGtt`, mirroring the Web UI's
+    // (fe/briefs/25-rocm-host-memory.md) and this tab's own Web UI toggle: a
+    // plain bool CheckBox, so the key's ABSENCE shows it CHECKED (the launch
+    // exports the HSA pair when the key is unset) and the Save writes the bool
+    // the box shows, `true` or `false`. Pinned through the widget and through
+    // the bytes the Save hands the manager: those are the two halves a user
+    // sees, and the pair is what a widget wired to the wrong state breaks.
+    {
+        let log = fake::log();
+        let c = FakeClient::new(&log, pai_core::client::InstanceState::Inactive)
+            .with_file("server@default.ini", "[Server]\nPort = 8099\n");
+        let files = c.files.clone();
+        // The keys the strings file carries (en_US.toml): the row's label, the
+        // box's own text (a CheckBox's accessible name), and the help text.
+        let toggle = strings::t("rocm-gtt-toggle");
+        let label = strings::t("rocm-gtt");
+        fake::scoped(fake::backend(c), || {
+            load_server_into_ui(&app);
+            let box_ = ElementHandle::find_by_accessible_label(&app, &toggle)
+                .next()
+                .unwrap_or_else(|| panic!("no checkbox with accessible-label {toggle:?}"));
+            assert_eq!(
+                box_.accessible_checked(),
+                Some(true),
+                "a file with no RocmHostMemoryGtt line is the on state: the box is checked"
+            );
+            assert!(
+                ElementHandle::find_by_accessible_label(&app, &label)
+                    .next()
+                    .is_some(),
+                "the row shows its label {label:?}"
+            );
+            let hint = strings::t("rocm-gtt-hint");
+            assert_ne!(
+                hint, "rocm-gtt-hint",
+                "the row has a help text in the strings file"
+            );
+            assert!(hint.contains("GTT"), "the help text names GTT: {hint}");
+            box_.invoke_accessible_default_action();
+            assert_eq!(
+                box_.accessible_checked(),
+                Some(false),
+                "the box toggles off, and the form follows it"
+            );
+            let cfg = server_form::form_to_config(&st.get_server_form());
+            server_cfg::save(&cfg).expect("save");
+            let text = files
+                .lock()
+                .unwrap()
+                .get("server@default.ini")
+                .cloned()
+                .expect("the file the fake holds");
+            assert_eq!(
+                server_cfg::from_text(&text).rocm_host_memory_gtt,
+                Some(false),
+                "unchecking must reach the file as false:\n{text}"
+            );
+        });
+    }
+
+    // The box mirrors the file, it does not reset to on: a file that says
+    // `false` shows it unchecked, and a Save that touches nothing keeps false.
+    {
+        let log = fake::log();
+        let c = FakeClient::new(&log, pai_core::client::InstanceState::Inactive).with_file(
+            "server@default.ini",
+            "[Server]\nPort = 8099\nRocmHostMemoryGtt = false\n",
+        );
+        let files = c.files.clone();
+        let toggle = strings::t("rocm-gtt-toggle");
+        fake::scoped(fake::backend(c), || {
+            load_server_into_ui(&app);
+            let box_ = ElementHandle::find_by_accessible_label(&app, &toggle)
+                .next()
+                .unwrap_or_else(|| panic!("no checkbox with accessible-label {toggle:?}"));
+            assert_eq!(
+                box_.accessible_checked(),
+                Some(false),
+                "a file with RocmHostMemoryGtt = false shows the box unchecked"
+            );
+            server_cfg::save(&server_form::form_to_config(&st.get_server_form())).expect("save");
+            let text = files
+                .lock()
+                .unwrap()
+                .get("server@default.ini")
+                .cloned()
+                .expect("the file the fake holds");
+            assert_eq!(
+                server_cfg::from_text(&text).rocm_host_memory_gtt,
+                Some(false),
+                "a Save that does not touch the box keeps false:\n{text}"
+            );
+        });
+    }
 }

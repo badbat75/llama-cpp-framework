@@ -301,6 +301,20 @@ export component ServerPage inherits ScrollView {
             }
             LabeledField {
                 label_width <=> LabelColumn.server;
+                label: Strings.t("rocm-gtt");
+                hint: Strings.t("rocm-gtt-hint");
+                // A plain bool, NOT the dropdown above: here "no line in the
+                // file" and "true" are the same instruction (the launch exports
+                // the HSA pair unless the key says false), so there is nothing
+                // for a third state to mean. Checked when unset, like the Web
+                // UI's box, and the Save writes the bool the box shows.
+                CheckBox {
+                    text: Strings.t("rocm-gtt-toggle");
+                    checked <=> AppState.server_form.rocm_host_memory_gtt;
+                }
+            }
+            LabeledField {
+                label_width <=> LabelColumn.server;
                 label: Strings.t("profiler-attach");
                 hint: Strings.t("profiler-attach-hint");
                 CheckBox {

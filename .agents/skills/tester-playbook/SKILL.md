@@ -152,6 +152,20 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `--lib data_root_e2e` (~7 s incremental), and restoring with `cp` + `cmp -s`.
 - Drive a real save through `config_seam_e2e` (redirect, save through the seam, reload, assert): a unit
   test over a temp dir passes with no seam at all and is not a data-root e2e.
+- The GUI's Server tab has its own e2e home, `crates/config/src/gui/server_tab.rs`'s `#[cfg(test)] fn
+  e2e()` (already called by ui_bindings' one `#[test]` through `gui::server_tab_e2e`), so a new phase
+  there needs no registration. Take `let files = c.files.clone()` BEFORE `fake::scoped` moves the
+  client: the test then reads the bytes the Save handed the manager and parses them with
+  `server_cfg::from_text`.
+- A widget's accessible name is what `find_by_accessible_label` answers: a std `CheckBox`'s is its own
+  `text`, NOT the `LabeledField` label beside it, so a checkbox pin looks up the toggle's key and the
+  label is a separate presence pin. Read both through `strings::t(key)`: a key missing from
+  `en_US.toml` echoes itself, so the red names the key it needs.
+- For an `Option<bool>` server key whose ABSENCE is the on state, the widget is a bool toggle (the
+  `webui` shape), which means a GUI save of an unset key STARTS writing the line: pin that as
+  `form_to_config(config_to_form(unset)) == Some(true)` so the red is a runtime assertion, and leave
+  the form field's spelling (string tri-state vs bool) to the coder, pinning the checked state on the
+  widget instead.
 - Pin the env of `launch::launch_command` (and `instance_command`, which calls it) inside the
   `data_root_e2e` phase: `launch_command` calls `paths::data_root()`, and a unit test of it races the
   phase's process-wide `PRIVATE_AI_DATA_ROOT` redirect.
@@ -372,7 +386,13 @@ fixes where in the rule the new declaration sits: add it last, and name that in 
   element's tag or a compound of those classes, order them by class count then sheet order, merge their
   declarations, and assert the effective value. The pin then follows the class names the coder chose, so
   it needs no assumption; accept the shorthand or its longhand parts (`border: none` or
-  `border-style: none`) where the brief states the effect.
+  `border-style: none`) where the brief states the effect. Match a selector part by its LAST token against
+  the element and its EARLIER tokens against the classes of the element's ancestors (read off the DOM): a
+  rule requiring every token to be the element's own misses the scoped rule the coder writes
+  (`.instance-header .x`), which is a red for a correct fix.
+- Pin a cascade value that today's sheet already carries globally (the `h1`'s `overflow-wrap: anywhere`)
+  as a presence pin on that global rule, not as a value of the scoped merge: the merge sees only the rules
+  scoped to the new box, so a global declaration reads absent and the pin is red on a correct fix.
 - When a review names two sanctioned fixes (a sheet declaration, or a markup shape like a wrapper div),
   pin the DISJUNCTION: the cascade value for the sheet option, the parent chain read off the page for the
   markup option, `a || b` in one assertion. Forcing one shape writes the coder's fix into the contract.
@@ -456,6 +476,11 @@ fixes where in the rule the new declaration sits: add it last, and name that in 
   "undefined" and fails the state today, pinning it the moment the key lands; a `?.`-guarded one degrades
   to a selector-only marker that passes loosely today.
 - Verify the LENGTH of a repeated-character fixture literal with `python3`, not by eye.
+- A `STATES` entry that clicks a control the new slice replaces is a pin in the tester's scope: retarget it
+  on the new key (the raw `S['new-key']` marker names the text "undefined", so the state fails today and
+  passes when the key lands) and retarget its text expectations on the new key too. `node --check
+  fe/ux/check.js` is the cheap proof the edit parses: the full run needs the Playwright browsers, which
+  `npm ci` does not install.
 
 ### Behaviour that cannot run here
 

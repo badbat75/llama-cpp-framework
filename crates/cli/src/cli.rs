@@ -340,6 +340,14 @@ pub struct ServerSet {
     /// unset. A tri-state word rather than a bool, so `default` can clear it back.
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["default", "on", "off"]))]
     pub rocblas_use_hipblaslt: Option<String>,
+    /// ROCm host memory as GTT (envs HSA_USERPTR_FOR_PAGED_MEM=0 and
+    /// HSA_SVM_FOR_PAGED_MEM=0): on = export them, which is what a file with no
+    /// line does too; off = export neither, so ROCm's own defaults apply;
+    /// default = clear the key back to the commented line. A tri-state word like
+    /// the flag above, because the GUI and the web UI both write a bool: the CLI
+    /// is the only way back to "no line in the file".
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(["default", "on", "off"]))]
+    pub rocm_host_memory_gtt: Option<String>,
     /// AllReduce of split-mode tensor (env GGML_CUDA_ALLREDUCE, CUDA and ROCm
     /// alike): nccl = the collective library, internal = ggml's own, none = the
     /// generic reduction (the one a split mixing CUDA and ROCm loads under),
@@ -420,6 +428,12 @@ impl ServerSet {
         // clap's PossibleValuesParser already refused anything else.
         if let Some(hb) = &self.rocblas_use_hipblaslt {
             cfg.rocblas_use_hipblaslt = crate::model_profiles::tri_bool(hb);
+        }
+        // The GTT switch, same rule: `default` leaves the key out of the file,
+        // which the launch reads as the on state. The GUI and the web UI write a
+        // bool, so this is the only way back to no line.
+        if let Some(g) = &self.rocm_host_memory_gtt {
+            cfg.rocm_host_memory_gtt = crate::model_profiles::tri_bool(g);
         }
         // Same clearing rule: `default` normalizes to None, the unset state.
         if let Some(ar) = &self.cuda_allreduce {
@@ -2482,6 +2496,9 @@ mod tests {
             // The tri-state arrives as its WORD (clap refuses anything else) and
             // must land as the matching Option<bool>.
             rocblas_use_hipblaslt: Some("off".into()),
+            // The GTT switch arrives as its word as well: `on` must land as the
+            // explicit true (the state an unset key already means at launch).
+            rocm_host_memory_gtt: Some("on".into()),
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: Some(true),
             attn_rot_disable: Some(true),
@@ -2519,10 +2536,8 @@ mod tests {
             devices: None,
             models_dir: Some("D:\\models".into()),
             rocblas_use_hipblaslt: Some(false),
-            // No flag carries the GTT switch, like the GPUs above and the tags
-            // below: `apply` leaves the state the loaded file had (None here,
-            // which the launch reads as the on state).
-            rocm_host_memory_gtt: None,
+            // The GTT switch: the flag's word `on` lands as the explicit true.
+            rocm_host_memory_gtt: Some(true),
             cuda_allreduce: Some("none".into()),
             cuda_disable_graphs: true,
             attn_rot_disable: true,
@@ -2928,6 +2943,27 @@ mod tests {
             }
             .apply(&mut cfg);
             assert_eq!(cfg.rocblas_use_hipblaslt, expected, "{word}");
+        }
+    }
+
+    // GT3: the GTT switch has the same three CLI states as its neighbour,
+    // because the file's commented default (the on state) is a state the user
+    // reaches: `default` clears the key back to it, which a bool flag cannot
+    // express. The GUI and the web UI both write a bool; the CLI is the only
+    // way back to "no line".
+    #[test]
+    fn server_set_rocm_host_memory_gtt_takes_all_three_states() {
+        for (word, expected) in [("on", Some(true)), ("off", Some(false)), ("default", None)] {
+            let mut cfg = ServerConfig {
+                rocm_host_memory_gtt: Some(false),
+                ..Default::default()
+            };
+            ServerSet {
+                rocm_host_memory_gtt: Some(word.into()),
+                ..Default::default()
+            }
+            .apply(&mut cfg);
+            assert_eq!(cfg.rocm_host_memory_gtt, expected, "{word}");
         }
     }
 

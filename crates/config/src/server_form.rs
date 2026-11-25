@@ -145,10 +145,13 @@ pub fn config_to_form(cfg: &server_cfg::ServerConfig) -> ServerForm {
         // ROCBLAS_USE_HIPBLASLT" is a third instruction and the framework's
         // default. Shown as a dropdown (Options.tri_states).
         rocblas_use_hipblaslt: crate::form::tri_state(cfg.rocblas_use_hipblaslt),
-        // The GTT switch, the same tri-state spelling. No widget yet, so the
-        // form only carries the file's own state through a save (like `tags`):
-        // "default" for a file that sets no line, which is the on state.
-        rocm_host_memory_gtt: crate::form::tri_state(cfg.rocm_host_memory_gtt),
+        // The GTT switch: a plain bool toggle like `webui`, not a tri-state. The
+        // file's absence IS the on state (launch::env_vars exports the HSA pair
+        // unless the key says false), so the box is checked for unset and for
+        // true alike, and the Save writes the bool it shows: a save of a file
+        // that named no key lands as `RocmHostMemoryGtt = true`, the same launch
+        // spelled out (the web's form does the same, brief 25 GT2.3).
+        rocm_host_memory_gtt: cfg.rocm_host_memory_gtt.unwrap_or(true),
         // "default" is the dropdown's entry for "never export
         // GGML_CUDA_ALLREDUCE"; it two-way-binds to this, so the sentinel is
         // stored rather than "".
@@ -289,9 +292,10 @@ pub fn form_to_config(f: &ServerForm) -> server_cfg::ServerConfig {
         // explicit `ROCBLAS_USE_HIPBLASLT=0`, i.e. into the Tensile workaround
         // for everyone who never asked for it.
         rocblas_use_hipblaslt: crate::form::tri_bool(f.rocblas_use_hipblaslt.as_str()),
-        // Carried through untouched: no widget edits it, so a save writes back
-        // the state the file had ("default" and "" both read as unset).
-        rocm_host_memory_gtt: crate::form::tri_bool(f.rocm_host_memory_gtt.as_str()),
+        // Always Some: the checkbox has no "leave the line out" state, so a
+        // Server tab save always writes the key (the CLI's `default` is the only
+        // way back to the commented line).
+        rocm_host_memory_gtt: Some(f.rocm_host_memory_gtt),
         // "default" (and anything that is not a mode) is None: exporting an
         // unknown word would run every tensor split as `none`.
         cuda_allreduce: server_cfg::normalize_allreduce(f.cuda_allreduce.as_str())
@@ -553,6 +557,35 @@ mod tests {
             });
             assert_eq!(form.rocblas_use_hipblaslt.as_str(), word, "{state:?}");
             assert_eq!(form_to_config(&form).rocblas_use_hipblaslt, state, "{word}");
+        }
+    }
+
+    /// GT3: the Server tab's "Host memory as GTT" box is a plain bool toggle,
+    /// the shape of the tab's `webui` (an `Option<bool>` key whose ABSENCE is
+    /// the on state, shown as a checked box), NOT the hipBLASLt tri-state: here
+    /// "no line in the file" and "line says true" are the SAME launch, so the
+    /// box has nothing to distinguish and a Save from a checked box writes the
+    /// line. So an unset key, saved by the GUI, comes back as `Some(true)`,
+    /// exactly as the Web UI's form does (brief 25, GT2.4). The form's own
+    /// spelling of the state (a bool, like `webui`) is the coder's; what is
+    /// pinned here is what reaches the file, and the widget's checked state is
+    /// pinned by the Server-tab e2e.
+    #[test]
+    fn rocm_host_memory_gtt_saves_the_state_the_box_shows() {
+        for (state, shown) in [(None, true), (Some(true), true), (Some(false), false)] {
+            let form = config_to_form(&ServerConfig {
+                rocm_host_memory_gtt: state,
+                // Explicit, like the sibling tests: an unset ModelsDir would
+                // send config_to_form through `paths::` (mod.rs: unit tests
+                // must stay clear of it).
+                models_dir: Some(r"E:\models".into()),
+                ..Default::default()
+            });
+            assert_eq!(
+                form_to_config(&form).rocm_host_memory_gtt,
+                Some(shown),
+                "file says {state:?}: the box shows {shown}, so the Save writes {shown}"
+            );
         }
     }
 

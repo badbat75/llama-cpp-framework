@@ -59,6 +59,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Capture a loop's output before judging it: `out=$(eval "$c" 2>&1); code=$?`, then print `exit=$code`
   and the warning count. Judge from `FAILED`/`panicked`/`error`.
 - Enumerate a crate's test targets with `--no-fail-fast`.
+- On Linux export `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` for every cargo command: the checked-in
+  `.cargo/config.toml` pins `target-dir = "build/windows/cargo-target"`, so a bare `cargo test` rebuilds the
+  whole workspace there.
+- The configurator's e2e phases (`gui::server_tab_e2e`, `settings_tab_e2e`, `log_window_e2e`) run inside the
+  ONE `#[test] editable_widgets_track_model_after_edit` of `src/tests/ui_bindings.rs`: a filter of `e2e`
+  matches 0 tests, filter by that name.
 - Gate a test-only wrapper `#[cfg(test)]` (never `allow(dead_code)`), avoid a `#[cfg(test)]` variant that
   a production `match` names, and gate a `#[cfg(unix)]`-only helper too.
 - Before adding a public field, enumerate the crates that write a full struct literal of that type;
