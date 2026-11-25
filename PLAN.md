@@ -1410,6 +1410,14 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   `load-mode = none`"): GT5a (built 2026-11-25) the manager's render gives a ROCm instance's `models@<id>.ini` `[*] load-mode
   = none` when the pool's `[*]` sets none (an explicit value wins; Linux only); GT5b a hint on the unset
   field (designer first); GT5c the R9700 guide (written 2026-11-25).
+  **RS, instance readiness** (the owner, relayed by the strata-framework agent, 2026-11-25: Strata's
+  system unit orders After=llama.cpp@default): ARCHITECTURE.md "An instance is started once its
+  load-on-startup models are loaded", as decided by the user the same day: `Type=exec` kept,
+  `ExecStartPost=pai-manager wait-ready %i` polls the router's `GET /health` every 2 s; started on 200,
+  the start fails after 10 min (`TimeoutStartSec=11min`); the llama.cpp packages gain `Breaks:`/
+  `Conflicts:` on a framework core older than `wait-ready`. Slices RS1 `wait-ready` (pai-manager), RS2
+  the unit and the package relations (a llama.cpp package build, install and restart: user's go given),
+  RS3 the docs; then tell the strata-framework agent to drop its stopgap.
 
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
