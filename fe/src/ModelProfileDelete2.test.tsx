@@ -367,7 +367,7 @@ function cascade(el: HTMLElement): {
 
 // ── 22 D2.1: the status row ─────────────────────────────────────────────
 
-test('22 D2.1 (as 22 D4.9 amends it): the status row is gone; a plain p right after the summary line says the state, above the settings section, and the Save bar’s Delete is its first button in both states, switched off when the profile is switched on', async () => {
+test('22 D2.1 (as 22 D4.9 and 24 A2.1 amend it): the status row is gone; the state line right after the summary line carries the page’s own switch and says the state in the short words, above the settings section, and the Save bar’s Delete is its first button in both states, switched off when the profile is switched on', async () => {
   const { main } = await loaded()
   const summary = main.querySelector('p.model-profile-summary')
   expect(summary, 'the summary line is there').not.toBeNull()
@@ -375,21 +375,30 @@ test('22 D2.1 (as 22 D4.9 amends it): the status row is gone; a plain p right af
     main.querySelector('div.page-status'),
     '22 D4.9: the status row of 22 D2.1 is gone',
   ).toBeNull()
-  const para = summary!.nextElementSibling as HTMLElement | null
-  expect(para, '22 D4.9: a paragraph follows the summary line').not.toBeNull()
-  expect(para!.tagName, 'a plain paragraph, not a row of controls').toBe('P')
+  const line = summary!.nextElementSibling as HTMLElement | null
   expect(
-    para!.classList.contains('page-status'),
+    line,
+    '24 A2.1: the state line follows the summary line',
+  ).not.toBeNull()
+  expect(line!.tagName, '24 A2.1: a line of controls, not a paragraph').toBe(
+    'DIV',
+  )
+  expect(
+    line!.classList.contains('page-status'),
     'and it carries no row class of its own',
   ).toBe(false)
   expect(
-    text(para),
-    'a switched-off profile says it is off, the words of 22D',
-  ).toBe(en('model-profile-off'))
-  const h2 = settingsTitle(main)
-  expect(before(para!, h2), 'and it sits above the settings section').toBe(true)
+    within(line!).getByRole('switch'),
+    '24 A2.1: the line carries the page’s own switch',
+  ).toBeTruthy()
   expect(
-    para!.closest('section'),
+    text(line),
+    'a switched-off profile says it is off, the short words of 24 A2.1',
+  ).toBe(en('model-profile-off-short'))
+  const h2 = settingsTitle(main)
+  expect(before(line!, h2), 'and it sits above the settings section').toBe(true)
+  expect(
+    line!.closest('section'),
     'above the section, so full width',
   ).toBeNull()
   const bar = saveBar(main)
@@ -409,15 +418,16 @@ test('22 D2.1 (as 22 D4.9 amends it): the status row is gone; a plain p right af
   ).toBeNull()
   cleanup()
   vi.unstubAllGlobals()
-  // A switched-on profile: the paragraph says what the state is and where to
-  // change it (the words replace the muted line of 22 D.1), and the bar's
-  // Delete stays, switched off (22 D4.10: never hidden).
+  // A switched-on profile: the state line says what the state is, beside the
+  // switch that changes it (24 A2.1), and the bar's Delete stays, switched off
+  // (22 D4.10: never hidden).
   const on = await loaded({ modelProfile: () => onDoc() })
-  const onPara = on.main.querySelector('p.model-profile-summary')!
+  const onLine = on.main.querySelector('p.model-profile-summary')!
     .nextElementSibling as HTMLElement | null
-  expect(text(onPara), '22 D4.9: the paragraph says model-profile-on').toBe(
-    en('model-profile-on'),
-  )
+  expect(
+    text(onLine),
+    '24 A2.1: the state line says model-profile-on-short',
+  ).toBe(en('model-profile-on-short'))
   const kept = within(on.main).getByRole('button', {
     name: en('model-profile-delete'),
   })
@@ -523,7 +533,7 @@ test('22 D2.3 (as 22 D4.11 amends it): pressing the bar’s Delete opens the con
 
 // ── 22 D2.4: switched on meanwhile ──────────────────────────────────────
 
-test('22 D2.4 (as 22 D4.11 amends it): after the 409 model-profile-enabled and the read again the paragraph says model-profile-on, the bar’s Delete stays switched off with the focus on it, and p#model-profile-delete-refused[role="alert"][tabindex="-1"] is the bar’s alert', async () => {
+test('22 D2.4 (as 22 D4.11 and 24 A2.1 amend it): after the 409 model-profile-enabled and the read again the state line says model-profile-on-short, the bar’s Delete stays switched off with the focus on it, and p#model-profile-delete-refused[role="alert"][tabindex="-1"] is the bar’s alert', async () => {
   let reads = 0
   const { bff, main } = await loaded({
     modelProfile: () => (++reads === 1 ? offDoc() : onDoc()),
@@ -534,9 +544,9 @@ test('22 D2.4 (as 22 D4.11 amends it): after the 409 model-profile-enabled and t
   const group = await confirmGroup(main)
   press(confirmIn(group, 'confirm-delete'))
   await within(main).findByText(refusal)
-  // The read again lands: the paragraph says the profile is on, the group goes
+  // The read again lands: the state line says the profile is on, the group goes
   // with it, and the alert must outlive them: it is the bar's.
-  await within(main).findByText(en('model-profile-on'))
+  await within(main).findByText(en('model-profile-on-short'))
   expect(queryConfirm(main), 'the confirm is gone').toBeNull()
   expect(readCount(bff), 'the document was read again').toBe(2)
   const kept = within(main).getByText(refusal)
@@ -694,14 +704,15 @@ test('22 D2.6: the sheet sticks the bar to the top: .save-bar is sticky at top 0
 
 // ── 22 D2.7: the focus order ────────────────────────────────────────────
 
-test('22 D2.7 (as 22 D4.11 amends it): Tab reaches the back link, the bar’s Delete, Discard and Save changes, the jump list and then the fields; with the confirm open its two buttons come after the bar’s three, and the bar’s buttons come before every field of the cards', async () => {
+test('22 D2.7 (as 22 D4.11 and 24 A2.1 amend it): Tab reaches the back link, the state line’s switch, the bar’s Delete, Discard and Save changes, the jump list and then the fields; with the confirm open its two buttons come after the bar’s three, and the bar’s buttons come before every field of the cards', async () => {
   const { main } = await loaded()
   const stops = mainTabbable(main)
   expect(
-    stops.slice(0, 4),
-    '22 D4.10: back link, then the bar: its Delete, Discard, Save changes',
+    stops.slice(0, 5),
+    '22 D4.10, 24 A2.1: back link, the state line’s switch (named by the h1, so its name is the id), then the bar: its Delete, Discard, Save changes',
   ).toEqual([
     en('model-profile-back'),
+    ID,
     en('model-profile-delete'),
     en('save-discard'),
     en('save-button'),
@@ -724,12 +735,13 @@ test('22 D2.7 (as 22 D4.11 amends it): Tab reaches the back link, the bar’s De
   cleanup()
   vi.unstubAllGlobals()
   // The confirm, open, is the pair right after the bar's own buttons, since
-  // 22 D4.11 puts the group inside the bar, under them.
+  // 22 D4.11 puts the group inside the bar, under them. 24 A2.1: the state
+  // line's switch is the stop before the bar.
   const off = await loaded()
   const group = await confirmGroup(off.main)
   const open = mainTabbable(off.main)
   expect(
-    open.slice(1, 6),
+    open.slice(2, 7),
     '22 D4.11: the bar’s Delete, Discard, Save changes, then the group’s verb and Cancel',
   ).toEqual([
     en('model-profile-delete'),
@@ -892,13 +904,20 @@ test('22 D2.9 (as 22 D4.9 moves it): the page’s status row is gone, so nothing
 
 // ── 22 D2.10: the strings ───────────────────────────────────────────────
 
-test('22 D2.10 (as 22 D4.12 amends it): the strings keys of the slices are the words of the brief: model-profile-on ends with the short sentence, server-profile-unused and server-profile-used-by leave the strings file, and model-profile-delete-needs-off is gone (1a strings in App.test.tsx pins the strings file against this map; the keys 22D4 gains are pinned by 22 D4.12 in ModelProfilesDelete1.test.tsx)', () => {
+test('22 D2.10 (as 22 D4.12 and 24 A2.1 amend it): the strings keys of the slices are the words of the brief: model-profile-on and model-profile-off leave the strings file with the paragraph 24 A2.1 replaces by the state line, server-profile-unused and server-profile-used-by leave the strings file, and model-profile-delete-needs-off is gone (1a strings in App.test.tsx pins the strings file against this map; the keys 22D4 gains are pinned by 22 D4.12 in ModelProfilesDelete1.test.tsx)', () => {
+  for (const key of ['model-profile-on', 'model-profile-off'])
+    expect(
+      key in EN,
+      '24 A2.1: the state paragraph’s keys leave the strings file with it',
+    ).toBe(false)
   expect(
-    EN['model-profile-on'],
-    '22 D4.9: the switched-on state, and where to change it',
-  ).toBe(
-    'This model profile is switched on: its engine serves it. To delete it, switch it off first.',
-  )
+    EN['model-profile-on-short'],
+    '24 A2.1: the switched-on state, the short words beside the switch',
+  ).toBe('Switched on: its engine serves it.')
+  expect(
+    EN['model-profile-off-short'],
+    '24 A2.1: the switched-off state, the short words beside the switch',
+  ).toBe('Switched off: kept, but not served.')
   expect(
     'server-profile-unused' in EN,
     '22 D4.12: the server row’s unused sentence leaves the strings file',

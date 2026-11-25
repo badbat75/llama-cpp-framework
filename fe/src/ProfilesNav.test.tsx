@@ -918,9 +918,18 @@ test('5b.11: en_US.json has the 05b keys and texts exactly, the two old keys are
   expect(S['api-no-model-profile-named']).toBe(
     'There is no model profile named {0} any more: it was renamed or deleted elsewhere. Open the list of all model profiles again to see them as they are.',
   )
-  expect(S['model-profile-off']).toBe(
-    'This model profile is switched off: it is kept, but its engine does not serve it. To serve it, switch it on in the list of all model profiles.',
-  )
+  expect(
+    S['model-profile-off-short'],
+    '24 A2.1: the state line’s short words replace the paragraph',
+  ).toBe('Switched off: kept, but not served.')
+  expect(
+    S['model-profile-on-short'],
+    '24 A2.1: and so for the switched-on state',
+  ).toBe('Switched on: its engine serves it.')
+  expect(
+    'model-profile-off' in S,
+    '24 A2.1: the paragraph’s key leaves the strings file with it',
+  ).toBe(false)
   expect(S['nav-server-profiles'], '17a.2 added the key').toBe(
     'Server profiles',
   )

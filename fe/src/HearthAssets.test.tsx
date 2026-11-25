@@ -294,15 +294,16 @@ test.each(PATHS)(
   },
 )
 
-test('H11a.1: the line is the first thing under the h1, before the off line, a plain p that is no heading and no live region', async () => {
-  // A switched-off profile: the off line of 69 is the element the line goes
-  // before, so the order of the page top is pinned in one read.
+test('H11a.1: the line is the first thing under the h1, before the state line, a plain p that is no heading and no live region', async () => {
+  // A switched-off profile: the state line of 24 A2.1 (the page's own switch
+  // and the short word of its state) is the element the line goes before, so
+  // the order of the page top is pinned in one read.
   const { main } = await form(assetsDoc({ enabled: false }))
   const h1 = within(main).getByRole('heading', { level: 1, name: ID })
   const line = summaryOf(main)
   expect(h1.nextElementSibling, 'H11a.1: right after the h1').toBe(line)
-  const off = within(main).getByText(en('model-profile-off'))
-  expect(before(line, off), 'H11a.1: before the off line').toBe(true)
+  const off = within(main).getByText(en('model-profile-off-short'))
+  expect(before(line, off), 'H11a.1: before the state line').toBe(true)
   const h2 = within(main).getByRole('heading', {
     level: 2,
     name: en('model-profile-settings-title'),

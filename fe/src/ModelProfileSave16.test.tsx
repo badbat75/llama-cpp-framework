@@ -492,9 +492,11 @@ test('2h.197 (22 D2.5): Tab from the top reaches the back link, then the save ba
   const { main } = await form()
   const tabbed = mainTabbable(main)
   // 22 D2.5 moved the bar to the top of the settings section, 22 D4.10 puts
-  // its Delete first in it.
+  // its Delete first in it. 24 A2.1: the state line's switch, named by the h1
+  // (its text is the id), sits between the back link and the bar.
   const start = [
     en('model-profile-back'),
+    ID,
     ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...TITLES,

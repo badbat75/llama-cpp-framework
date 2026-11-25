@@ -475,12 +475,14 @@ export const EN: Record<string, string> = {
   // Slice 22D (fe/briefs/22-model-sources.md, section 2): deleting a model
   // profile from its page. `delete-unknown` is 17f's text, brought by 22D.
   'model-profile-delete': 'Delete model profile',
-  // 22 D2.1: the status row says what a switched-on profile is, in place of the
-  // muted line that sat by the bottom Delete button (that key is gone). 22 D4.9
-  // takes the row away and keeps the sentence, whose last words shorten now the
-  // Delete sits in the page's own Save bar.
-  'model-profile-on':
-    'This model profile is switched on: its engine serves it. To delete it, switch it off first.',
+  // Brief 24 slice A2 (fe/briefs/24-ux-audit.md, 23 A2.1): the state paragraph
+  // of 22 D4.9 becomes a state line with the page's own switch, so its two long
+  // sentences leave the strings file (they sit in App.test.tsx's `1a strings`
+  // removed list) and these short texts take their place. 23 A2.3 adds the line
+  // that says why the switch cannot act under unsaved edits.
+  'model-profile-on-short': 'Switched on: its engine serves it.',
+  'model-profile-off-short': 'Switched off: kept, but not served.',
+  'model-profile-switch-dirty': 'Save or discard your changes first.',
   'model-profile-delete-question':
     'Delete the model profile {0}? Its settings are removed, with any unsaved changes on this page. The model file is not deleted. This cannot be undone.',
   'model-profile-deleted': 'The model profile {0} was deleted.',
@@ -490,8 +492,6 @@ export const EN: Record<string, string> = {
     "{0} is given to the instances {1}, so it cannot be deleted. Remove it from each of them first, on the instance's page; a row set to Off counts too.",
   'delete-unknown':
     'Not confirmed: the manager did not answer in time, so it may or may not have been removed. The list shows it if it is still there.',
-  'model-profile-off':
-    'This model profile is switched off: it is kept, but its engine does not serve it. To serve it, switch it on in the list of all model profiles.',
   'model-profile-settings-title': 'Model profile settings',
   'model-profile-engine': 'Engine',
   'model-profile-engine-unavailable':
@@ -1416,12 +1416,17 @@ export const SERVER_PROFILES: ServerProfile[] = [{ id: 'default', tags: [] }]
  * `undefined` drops top-level members (of `revision`, of `id`, of anything:
  * the tests of 2d.66 need to answer without a key of the shape).
  */
+/** The id of the model profile `modelProfileDoc` reads by default. The state
+ *  line's switch is named by the h1, whose text is the id (24 A2.1), so a test
+ *  that lists the page's tab stops names the switch by this. */
+export const MODEL_PROFILE_ID = 'Qwen3-27B'
+
 export function modelProfileDoc(
   values: Record<string, string> = {},
   extra: Record<string, unknown> = {},
 ) {
   return {
-    id: 'Qwen3-27B',
+    id: MODEL_PROFILE_ID,
     engine: 'llama.cpp',
     engineAvailable: true,
     enabled: true,

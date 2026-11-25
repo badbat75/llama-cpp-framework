@@ -193,14 +193,19 @@ export function useSaveBarPadding(): RefObject<HTMLDivElement | null> {
  * first; `saveId` names the Save button. Discard and Save are never
  * `disabled` while on screen, so focus never drops out from under the
  * keyboard: a press with nothing to do does nothing (the caller guards it).
+ * `saveDisabled` is a write of the page's own that a save has to wait for: it
+ * holds Save switched off beside the bar's own rules, and the caller's save
+ * refuses too.
  *
  * A profile page adds its Delete (22 D4.10): `deleteId`, `deleteLabel` and
  * `onDelete` put the verb first in the bar's group, before Discard and Save,
  * `deleteDisabled` keeps it there switched off, and `deleteHint` is the reason
  * it cannot act: while the verb is switched off the bar shows that reason as a
  * line under its buttons, with the id `<deleteId>-reason`, and names it with
- * the verb's description (22 D4.14). The page owns what the verb says and
- * does, the bar only places it. `children` is what the page puts under the
+ * the verb's description (22 D4.14). A verb switched off with no `deleteHint`
+ * is held for a reason that is no reason to delete nothing: the bar shows no
+ * line and names nothing. The page owns what the verb says and does, the bar
+ * only places it. `children` is what the page puts under the
  * bar's buttons (22 D4.11): the delete's confirm, and the paragraph a refused
  * delete leaves. */
 export function SaveBar({
@@ -214,6 +219,7 @@ export function SaveBar({
   signInId,
   onSignIn,
   saveId,
+  saveDisabled,
   onDiscard,
   onSave,
   deleteId,
@@ -234,6 +240,8 @@ export function SaveBar({
   signInId?: string
   onSignIn?: () => void
   saveId: string
+  /** A write of the page's own that a save has to wait for (24 A2 review D1). */
+  saveDisabled?: boolean
   onDiscard: () => void
   onSave: () => void
   deleteId?: string
@@ -246,6 +254,9 @@ export function SaveBar({
   children?: ReactNode
 }) {
   const disabled = !dirty || saving || undefined
+  // Save waits for a write of the page's own too (24 A2 review D1); Discard is
+  // local, so it is not held.
+  const saveHeld = !dirty || saving || saveDisabled || undefined
   return (
     <div className="save-bar" ref={bar}>
       <div className="save-messages">
@@ -294,7 +305,11 @@ export function SaveBar({
             onClick={onDelete}
             aria-disabled={deleteDisabled ? 'true' : undefined}
             aria-expanded={deleteExpanded ? 'true' : 'false'}
-            aria-describedby={deleteDisabled ? `${deleteId}-reason` : undefined}
+            aria-describedby={
+              deleteDisabled && deleteHint !== undefined
+                ? `${deleteId}-reason`
+                : undefined
+            }
           >
             {deleteLabel}
           </button>
@@ -311,7 +326,7 @@ export function SaveBar({
           id={saveId}
           type="button"
           className="primary"
-          aria-disabled={disabled}
+          aria-disabled={saveHeld}
           onClick={onSave}
         >
           {saving ? t('save-saving') : t('save-button')}

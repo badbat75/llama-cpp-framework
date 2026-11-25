@@ -469,6 +469,10 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
   // 16 17f2.10 adds seven: 17f's Rename form leaves the page, and its keys
   // leave the strings file with it (the display name form uses instance-name-*
   // and keeps instance-label-cancel).
+  // 24 A2.1 adds two more: the page's state paragraph becomes a state line with
+  // its own switch, so the two sentences that pointed at the list and at the
+  // Delete leave with it (model-profile-on-short and model-profile-off-short
+  // are their short forms).
   const removed = [
     'server-read-only',
     'server-api-key-withheld',
@@ -478,6 +482,8 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
     'model-profile-delete-needs-off',
     'server-profile-unused',
     'server-profile-used-by',
+    'model-profile-on',
+    'model-profile-off',
     'instance-rename',
     'instance-label',
     'instance-label-hint',

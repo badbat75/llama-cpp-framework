@@ -284,6 +284,23 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   ModelProfileCards1 to 5. A card of a new sub-slice that adds a field is that list's job.
 - One new focusable control reddens by one position every document-wide "tab stops are exactly" test
   (a page's, or the banner's): amend the tester's lists, never production.
+- Each of those lists names the controls ITS OWN way: a `nameOf`-based list names an input by its
+  `aria-labelledby` (a switch named by the h1 appears as the profile's id), a textContent-based one gives
+  an input `''`, and HearthJumpRail compares the elements. Amend each list with what ITS mapping yields.
+  `pageTopTabStops()` in `fe/src/test/modelProfileCards.ts` is the shared one; the inline lists sit in
+  HearthAssetsEngine, HearthJumpToggle, ModelProfileSave16, ModelProfileSave2 and ModelProfileDelete2.
+- A control of the model profile page that is no 2e field must be skipped by `2h.130`
+  (ModelProfileSave1): it sweeps every `input, select, textarea` and expects an id it does not know to be
+  natively DISABLED. A `[role="status"]` outside the save bar reddens `2d.79` (ModelProfileContent),
+  which pins the statuses outside the bar as the card move region alone.
+- `SaveBar`: the Delete's reason line AND its `aria-describedby` follow `deleteHint`, not
+  `deleteDisabled`, so a page that holds the verb for a reason with no words passes no hint
+  (24 A2 review D2); Save's extra hold is the `saveDisabled` prop (a write of the page's own,
+  24 A2 review D1), Discard keeps `!dirty || saving`, and the page's `save()` refuses too
+  (an `aria-disabled` button's onClick runs).
+- A strings key is pinned in THREE places: `1a strings` (App.test.tsx), `5b.11` (ProfilesNav) and the
+  slice's own strings test (e.g. `22 D2.10` in ModelProfileDelete2). A key added or removed needs all
+  three.
 - A Save check keyed by a control id must gate on that control being rendered (a Layers text the row
   keeps while its kind hides the field): a mark on an id with no element is invisible and `focusMarked`
   has nothing to focus.
@@ -324,7 +341,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   outlive the FORM (a delete's 204, the focus move a 404 re-read lands on) in the OUTER component: a read
   that answers no doc unmounts the form. State that outlives only a confirm group lives in the form,
   which a re-read beside the form keeps mounted (a `reread()` that bumps `reads` and leaves `answer`
-  set).
+  set). The form's `key` is the sign-in count, NOT `reads`: a re-read keeps the draft, so an edit typed
+  during a write is still there when the read lands. A rule that must adopt what a re-read brought keys
+  on the DOC's identity (a render-time `seen !== doc` check) with a marker raised beside the re-read:
+  the fixtures keep one revision, so a revision check never fires, and the marker stays down for a write
+  that answered, whose own word is the value the page shows (24 A2 review D3).
 - Reading helpers shared across pages point one way (no import cycles between readers).
 
 ### The web UI (fe/): the UX check
@@ -564,6 +585,13 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   `before(row, status)`, put the line INSIDE the row: `compareDocumentPosition` reports FOLLOWING for a
   descendant, and the row stays the last element. A `flex-basis: 100%` child of the wrapping row takes
   a line of its own and no room while empty.
+- `npm --prefix fe run format:check` reds the files you just edited: `npx --prefix fe prettier --write
+  <files>` before reporting (`fe/ux/` is Prettier-ignored, being its own package).
+- A full-suite red that is green solo three times is a load flake, not yours: state it and move on.
+  `ServerSave` `1b.36b` (a nav link clicked after a route change) reds under `--maxWorkers=4`.
+- A test that aborts at its first bad assertion hides every pin that follows it. To prove the rest of the
+  file without touching the tester's, copy it beside itself (`fe/src/ZzProbe.test.tsx`), fix the defect in
+  the copy, run that one filter, delete the copy.
 
 ### The UX check
 

@@ -265,8 +265,8 @@ test('22 D.1 (as 22 D4.10 moves its place): a switched-off profile offers the mo
     'a switched-off profile: the delete can act',
   ).not.toBe('true')
   expect(
-    within(main).queryByText(en('model-profile-on')),
-    'a switched-off profile says nothing about being on',
+    within(main).queryByText(en('model-profile-on-short')),
+    '24 A2.1: a switched-off profile says nothing about being on',
   ).toBeNull()
   cleanup()
   vi.unstubAllGlobals()
@@ -283,11 +283,11 @@ test('22 D.1 (as 22 D4.10 moves its place): a switched-off profile offers the mo
     barActions(on.main),
   )
   expect(
-    (within(on.main).getByText(en('model-profile-on')).textContent ?? '')
+    (within(on.main).getByText(en('model-profile-on-short')).textContent ?? '')
       .replace(/\s+/g, ' ')
       .trim(),
-    '22 D4.9: the state reads in a paragraph, with the sentence that points at the switch',
-  ).toBe(en('model-profile-on'))
+    '24 A2.1: the state line says the state in the short sentence, beside the page’s own switch',
+  ).toBe(en('model-profile-on-short'))
 })
 
 test('22 D.1 (as 22 D4.10 amends it): the offer follows the document read: nothing while the read is open, an active delete when a read answers switched off, a delete switched off with the reason when it answers switched on', async () => {
@@ -301,7 +301,7 @@ test('22 D.1 (as 22 D4.10 amends it): the offer follows the document read: nothi
     'nothing while the document is open',
   ).toBeNull()
   expect(
-    within(main).queryByText(en('model-profile-on')),
+    within(main).queryByText(en('model-profile-on-short')),
     'nor the state line that replaces it',
   ).toBeNull()
   gate.resolve(offDoc())
@@ -330,7 +330,7 @@ test('22 D.1 (as 22 D4.10 amends it): the offer follows the document read: nothi
     'the delete follows the switch: it stays, switched off',
   ).toBe('true')
   expect(
-    within(m).getByText(en('model-profile-on')),
+    within(m).getByText(en('model-profile-on-short')),
     'and the state reads on the page',
   ).toBeTruthy()
 })
@@ -597,7 +597,7 @@ test('22 D.3: a profile whose id needs encoding is deleted at a percent-encoded 
 
 // ── 22 D.4: switched on meanwhile ───────────────────────────────────────
 
-test('22 D.4 (as 22 D4.11 amends it): a 409 model-profile-enabled reads the document again: the group goes, the delete stays switched off, its text lands in the bar’s alert with the focus on the delete, and the page says model-profile-on', async () => {
+test('22 D.4 (as 22 D4.11 amends it): a 409 model-profile-enabled reads the document again: the group goes, the delete stays switched off, its text lands in the bar’s alert with the focus on the delete, and the state line says model-profile-on-short', async () => {
   let reads_ = 0
   const { bff, main } = await loaded({
     modelProfile: (id) => (++reads_ === 1 ? offDoc(id) : onDoc(id)),
@@ -614,7 +614,7 @@ test('22 D.4 (as 22 D4.11 amends it): a 409 model-profile-enabled reads the docu
   ).not.toBeNull()
   // The read again lands: the switch shows, the group goes, and the text is
   // the bar's: the bar outlives the group.
-  await within(main).findByText(en('model-profile-on'))
+  await within(main).findByText(en('model-profile-on-short'))
   expect(queryConfirm(main), 'the confirm is gone').toBeNull()
   expect(reads(bff), 'the document was read again').toBe(2)
   expect(bff.to('GET', ROUTE), 'one read, then the re-read').toHaveLength(2)

@@ -4,7 +4,7 @@
 // tests (the h3 list, the About toggles, the tab path, the heading levels)
 // derives from this one list: a sub-slice that adds cards adds them here, at
 // the place 83 gives them, and nowhere else.
-import { en } from './bff.ts'
+import { en, MODEL_PROFILE_ID } from './bff.ts'
 
 /** A field's label: its strings key, or `shown(...)` where the brief gives
  * the label as literal text and not a string (Top-K, Top-P, Min-P of 97). */
@@ -664,7 +664,9 @@ export function fieldTabStops(values: Record<string, string>): string[] {
   return stops
 }
 
-/** The tab stops at the top of the page's main: the back link, then the save
+/** The tab stops at the top of the page's main: the back link, then the state
+ *  line's switch (24 A2.1: named by the h1, so its name is the fixture's id),
+ *  then the save
  *  bar's two buttons (22 D2.5 moved the bar to the top of the settings section,
  *  so its stops left the end of the order), then 2h.10's 197 with H10 inserted
  *  (fe/briefs/08-hearth-h10-h11.md, H10.10): the jump disclosure named by
@@ -678,6 +680,9 @@ export function fieldTabStops(values: Record<string, string>): string[] {
 export function pageTopTabStops(): string[] {
   return [
     en('model-profile-back'),
+    // 24 A2.1: the state line's switch, named by the h1, so its accessible
+    // name is the id of the profile the fixture reads.
+    MODEL_PROFILE_ID,
     ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...cardHeadings(),

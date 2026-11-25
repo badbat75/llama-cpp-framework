@@ -15,15 +15,14 @@ import {
   Fragment,
 } from 'react'
 import { flushSync } from 'react-dom'
-import {
-  apiError,
-  call,
-  isRecord,
-  sessionRevoked,
-  type ApiError,
-} from './api.ts'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Dialog from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
+import {
+  failureText,
+  switchedText,
+  writeEnabled,
+} from './modelProfileSwitch.ts'
 import PageHeading from './PageHeading.tsx'
 import {
   ConfirmRow,
@@ -133,83 +132,6 @@ async function readModelProfiles(): Promise<Answer> {
   } catch {
     return { error: 'failed' }
   }
-}
-
-/** What a switch write gave: the reply, 'signed-out', the error, or 'failed'. */
-type Written =
-  | { enabled: boolean; running: boolean }
-  | 'signed-out'
-  | 'revoked'
-  | (ApiError & { status: number })
-  | 'failed'
-
-async function writeEnabled(id: string, enabled: boolean): Promise<Written> {
-  try {
-    const reply = await call(
-      `/api/profiles/model/${encodeURIComponent(id)}/enabled`,
-      {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
-      },
-    )
-    if (reply.ok) {
-      const body = reply.body
-      return isRecord(body) &&
-        typeof body.enabled === 'boolean' &&
-        typeof body.running === 'boolean'
-        ? { enabled: body.enabled, running: body.running }
-        : 'failed'
-    }
-    if (reply.status === 401) return 'signed-out'
-    if (sessionRevoked(reply)) return 'revoked'
-    const error = apiError(reply.body)
-    return error === null ? 'failed' : { ...error, status: reply.status }
-  } catch {
-    return 'failed'
-  }
-}
-
-/** The alert of a failed switch write (2c.48). */
-function failureText(
-  id: string,
-  result: Exclude<Written, { running: boolean }>,
-): string {
-  if (result === 'signed-out') return t('session-ended-retry')
-  if (result === 'revoked') return t('session-revoked')
-  if (result === 'failed') return t('request-failed')
-  switch (result.key) {
-    case 'client-not-authorized':
-      return t('api-client-not-authorized')
-    case 'client-unavailable':
-      return t('api-client-unavailable')
-    case 'no-model-profile-named':
-      return t('api-no-model-profile-named', id)
-    case 'load-on-startup-over-max':
-      return t('api-load-on-startup-over-max', ...result.args)
-    case 'load-on-startup-unlimited':
-      return t('api-load-on-startup-unlimited', ...result.args)
-    case 'model-profile-over-memory':
-      return t('api-model-profile-over-memory', ...result.args)
-    case 'model-profile-model-missing':
-      return t('api-model-profile-model-missing', ...result.args)
-    default:
-      return result.status === 422
-        ? t('api-other', result.key)
-        : t('request-failed')
-  }
-}
-
-/** The status of a switch that held (2c.46). */
-function switchedText(p: ModelProfile, running: boolean): string {
-  if (p.enabled) {
-    return running
-      ? t('model-profiles-switched-on-restart', p.id, p.engine)
-      : t('model-profiles-switched-on', p.id, p.engine)
-  }
-  return running
-    ? t('model-profiles-switched-off-restart', p.id, p.engine)
-    : t('model-profiles-switched-off', p.id, p.engine)
 }
 
 /** One row's switch value, kept in place in the list as read (2c.47). */
@@ -428,9 +350,7 @@ function Filtered({
       if (!mounted.current) return
       if (typeof result === 'object' && 'running' in result) {
         setModelProfiles((ps) => rowEnabled(ps, i, result.enabled))
-        setStatus(
-          switchedText({ ...p, enabled: result.enabled }, result.running),
-        )
+        setStatus(switchedText(p.id, p.engine, result.enabled, result.running))
         setBusy(false)
         return
       }

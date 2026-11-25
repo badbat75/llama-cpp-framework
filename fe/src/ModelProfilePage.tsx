@@ -21,7 +21,9 @@
 // (fe/briefs/02h-model-profile-save.md, sub-slice 2h.10, criteria 194 to 198a).
 // A switched-off model profile is deleted from its own page, the delete asked
 // in a confirm in place (fe/briefs/22-model-sources.md, slice 22D, criteria
-// 22 D.1 to 22 D.7), the way 16 17b has it on a server profile.
+// 22 D.1 to 22 D.7), the way 16 17b has it on a server profile. Under the
+// summary line, the state line carries the page's own on/off switch, the list
+// row's (fe/briefs/24-ux-audit.md, slice A2), and drives the Save bar's Delete.
 import {
   Fragment,
   useCallback,
@@ -89,6 +91,11 @@ import {
   type GpuProbe,
 } from './GpuSplit.tsx'
 import { setBlocks, type Layout } from './gpuBlocks.ts'
+import {
+  failureText,
+  switchedText,
+  writeEnabled,
+} from './modelProfileSwitch.ts'
 import {
   ADD_ID,
   OT_TEXT,
@@ -852,6 +859,16 @@ function Content({
     revision: doc.revision,
     values: doc.values,
   })
+  // The document read again beside the form (22 D.4, and 23 A2.3 after a
+  // switch): the revision the next save sends is the one that read gave, so a
+  // page the switch brought saves with the revision the switch's write left
+  // behind, and is never refused as stale. The values stay as the page holds
+  // them: a read again answers a refusal, not an edit.
+  const [read, setRead] = useState({ id: doc.id, revision: doc.revision })
+  if (read.id !== doc.id || read.revision !== doc.revision) {
+    setRead({ id: doc.id, revision: doc.revision })
+    setLoaded((l) => ({ ...l, revision: doc.revision }))
+  }
   const [draft, setDraft] = useState<Record<string, string>>(doc.values)
   // The box state of the number fields the form edits (156): the text a field
   // holds is kept while its box is ticked, so unticking gives it back.
@@ -935,6 +952,34 @@ function Content({
     document.getElementById(reloadId)?.focus(),
   )
 
+  // Brief 24, slice A2 (23 A2.1): the page's own switch, in the state line under
+  // the summary line, so a page reached from a search or a link needs no trip
+  // back to the list. Its value is the page's, kept from the write's answer:
+  // the read the switch asks for brings the file and the revision, and the
+  // switch's word is the write's own (2c.47).
+  const [enabled, setEnabled] = useState(doc.enabled)
+  // The switch's feedback, beside the switch (DESIGN.md principle 10).
+  const [switchStatus, setSwitchStatus] = useState('')
+  const [switchAlert, setSwitchAlert] = useState<string | null>(null)
+  // One write at a time (23 A2.4): while the switch writes, the bar's Delete
+  // and Save wait, and so does the switch.
+  const [switching, setSwitching] = useState(false)
+  const sendingSwitch = useRef(false)
+  // 24 A2 review D3: a switch write that failed may have happened, so the page
+  // reads the document again: that read gives the switch its value, and the
+  // revision the next save carries. The marker is raised with the re-read and
+  // spent when a document arrives. A write that answered keeps the switch at
+  // its own word (23 A2.1), so the marker is not raised there.
+  const [adoptEnabled, setAdoptEnabled] = useState(false)
+  const [seenDoc, setSeenDoc] = useState(doc)
+  if (seenDoc !== doc) {
+    setSeenDoc(doc)
+    if (adoptEnabled) {
+      setAdoptEnabled(false)
+      setEnabled(doc.enabled)
+    }
+  }
+
   // Brief 22, slice 22D: the delete, asked in the page (fe/DESIGN.md 5.2), the
   // way 16 17b has it on a server profile.
   const [confirming, setConfirming] = useState(false)
@@ -953,21 +998,73 @@ function Content({
   const [askingDeleteSignIn, setAskingDeleteSignIn] = useState(false)
   const deleteOpener = useRef<HTMLButtonElement>(null)
   const sendingDelete = useRef(false)
-  // 22 D4.10: the bar's Delete acts only while the read is switched off. A
+  // 22 D4.10: the bar's Delete acts only while the profile is switched off. A
   // switched-on profile keeps it on the bar, switched off, with the list's
-  // reason as its description (22 D4.2): never hidden.
-  const canDelete = !doc.enabled
+  // reason as its description (22 D4.2): never hidden. 23 A2.2: the switch that
+  // decides is the page's own, in the state line.
+  const canDelete = !enabled
 
   /** The bar's Delete pressed (22 D4.10): it opens the confirm, and is the
    *  place Cancel and Escape bring the focus back to. A pressed Delete that
-   *  cannot act opens nothing. */
+   *  cannot act opens nothing, and 23 A2.4: a Delete pressed while the switch
+   *  writes opens nothing either. */
   function openDelete() {
-    if (!canDelete) return
+    if (!canDelete || switching) return
     deleteOpener.current = document.getElementById(
       'model-profile-delete',
     ) as HTMLButtonElement | null
     setConfirming(true)
   }
+
+  /** The state line's switch pressed (23 A2.1 to A2.4): the list row's write,
+   *  its word and its refusal, then the document read again, so the next save
+   *  carries the revision the write brought (23 A2.3). The switch does not act
+   *  while the page holds edits, while its own write runs, or while a save or a
+   *  delete runs: the settings, the switch and the delete are writes of one
+   *  file. A switch-on takes an open confirm with the Delete that opened it,
+   *  and the focus stays on the switch through every answer. */
+  async function doSwitch(next: boolean) {
+    if (
+      sendingSwitch.current ||
+      sendingDelete.current ||
+      dirty ||
+      deleting ||
+      phase === 'saving'
+    )
+      return
+    const previous = enabled
+    sendingSwitch.current = true
+    setSwitching(true)
+    setEnabled(next)
+    setSwitchStatus('')
+    setSwitchAlert(null)
+    if (next) setConfirming(false)
+    const answer = await writeEnabled(doc.id, next)
+    sendingSwitch.current = false
+    setSwitching(false)
+    if (typeof answer === 'object' && 'running' in answer) {
+      setEnabled(answer.enabled)
+      setSwitchStatus(
+        switchedText(doc.id, doc.engine, answer.enabled, answer.running),
+      )
+      onReread()
+      return
+    }
+    setSwitchAlert(failureText(doc.id, answer))
+    if (answer === 'signed-out' || answer === 'revoked') {
+      setEnabled(previous)
+      return
+    }
+    // The write may have happened: the document is read again beside the form,
+    // and the switch takes its value from that read (2c.48), so the page shows
+    // and saves what the file holds.
+    setAdoptEnabled(true)
+    onReread()
+  }
+
+  /** Every state that keeps the switch from acting (23 A2.3, 23 A2.4). */
+  const switchDisabled =
+    switching || deleting || dirty || phase === 'saving' || undefined
 
   const status = phase === 'saving' ? 'saving' : dirty ? 'unsaved' : phase
 
@@ -1461,9 +1558,11 @@ function Content({
     return values
   }
 
-  /** Save changes: the bar of 135 to 149. */
+  /** Save changes: the bar of 135 to 149. 24 A2 review D1: a switch write of
+   *  this page's own is a write of the same file, so a Save pressed while it
+   *  runs sends nothing. */
   async function save() {
-    if (saving.current) return
+    if (saving.current || switching) return
     // 157, 166, 185: every enabled number field whose box is unticked, every
     // text field with a text that is not empty, and every editable checkbox
     // holding a value the engine refuses, is checked, changed or not (the
@@ -1687,6 +1786,10 @@ function Content({
       setRefusal(answer.text)
       setConfirming(false)
       setDeleteAlert(null)
+      // The manager refused because the profile is switched on: the page's
+      // switch says so, over the document the read brings back (23 A2.2, as the
+      // list's row does, 22 D4.7).
+      setEnabled(true)
       onReread()
       deleteOpener.current?.focus()
       return
@@ -1780,11 +1883,45 @@ function Content({
           ? t('model-profile-summary-no-model', doc.engine)
           : t('model-profile-summary', doc.engine, fileName)}
       </p>
-      {/* 22 D4.9: the state, as a plain paragraph right under the summary line
-          and outside the settings section, so it spans the page's width. The −
-          of 22 D2.1 is gone with it: the delete is the Save bar's first button
-          (22 D4.10), and the list's rows carry their own (22 D4.1). */}
-      <p>{doc.enabled ? t('model-profile-on') : t('model-profile-off')}</p>
+      {/* 24 A2.1: the state line, under the summary line and outside the
+          settings section, so it spans the page's width: the page's own switch,
+          the list row's (2c.39), the short words of its state, and the
+          switch's own status, reason and alert beside it (DESIGN.md
+          principle 10). The line carries no class of its own: the stylesheet's
+          switch classes carry the look of its parts. The − of 22 D2.1 is gone
+          with the paragraph of 22 D4.9: the delete is the Save bar's first
+          button (22 D4.10), and the list's rows carry their own (22 D4.1). */}
+      <div>
+        <label className="model-profiles-switch">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={enabled}
+            aria-labelledby="page-heading"
+            aria-disabled={switchDisabled}
+            aria-describedby={dirty ? 'model-profile-switch-dirty' : undefined}
+            onChange={(e) => void doSwitch(e.target.checked)}
+          />
+        </label>
+        <span>
+          {enabled ? t('model-profile-on-short') : t('model-profile-off-short')}
+        </span>
+        <p role="status" className="model-profiles-switch-status">
+          {switchStatus}
+        </p>
+        {/* 23 A2.3: why the switch cannot act while the page holds edits, the
+            line the switch describes itself with. */}
+        {dirty && (
+          <p id="model-profile-switch-dirty">
+            {t('model-profile-switch-dirty')}
+          </p>
+        )}
+        {switchAlert !== null && (
+          <p role="alert" className="model-profiles-switch-alert">
+            {switchAlert}
+          </p>
+        )}
+      </div>
       <section>
         <h2>{t('model-profile-settings-title')}</h2>
         {/* 22 D2.5: the Save bar is the first thing in the settings section,
@@ -1808,14 +1945,17 @@ function Content({
             alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
           }
           saveId={saveId}
+          saveDisabled={switching}
           onDiscard={discard}
           onSave={save}
           deleteId="model-profile-delete"
           deleteLabel={t('model-profile-delete')}
           onDelete={openDelete}
-          deleteDisabled={!canDelete}
+          deleteDisabled={!canDelete || switching}
           deleteExpanded={confirming}
-          deleteHint={t('model-profiles-delete-needs-off')}
+          deleteHint={
+            canDelete ? undefined : t('model-profiles-delete-needs-off')
+          }
         >
           {canDelete && confirming && (
             <ConfirmDelete

@@ -288,6 +288,8 @@ describe('H11b.4: the tab order', () => {
     const names = tabbableElements(main).map(nameOf)
     const start = [
       en('model-profile-back'),
+      // 24 A2.1: the state line's switch, named by the h1 (its text is the id).
+      ID,
       // 22 D2.5 moved the bar to the top of the settings section, so its stops
       // sit right after the back link, before the jump list. 22 D4.10 puts the
       // bar's Delete first in it.

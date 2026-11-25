@@ -228,3 +228,48 @@ D1 and D2 met in Chromium, Firefox and WebKit (`build/ux-review/a1b.js`).
 
 UX check: Chromium and WebKit pass all 198 states each; Firefox has only its known 22D4 segfault.
 A1 accepted.
+
+### A2 review
+
+Built in `fe/src/ModelProfilePage.tsx` (state line 1880-1910, `doSwitch` 1012-1052) and
+`fe/src/modelProfileSwitch.ts`, measured in Chromium, Firefox and WebKit at 1280 and 320 px, 320 px
+at 200 % text, dark, and Chromium forced colours (`build/ux-review/a2.js`, the PUT answered after
+1.5 s through `page.route`).
+
+- A2.1 met. The line sits under the summary and above the settings section in every view. The
+  switch is named by the profile (`aria-labelledby="page-heading"`), 44 x 24 px (2.5.8), and the
+  short texts are `model-profile-on-short` and `model-profile-off-short`. Its status reads
+  "Switched Qwen3-27B off." No sideways scroll at 320 px or 200 % text (1.4.10).
+- A2.2 met. Switching off drops Delete's `aria-disabled` and its reason line, and switching on
+  brings them back. Switching on with the confirm open closes it (`canDelete && confirming`, 1943).
+  The focus stays on the switch after every answer (2.4.3).
+- A2.3 met. Once a field is edited the switch is `aria-disabled`, described by
+  `model-profile-switch-dirty`, whose line shows. A press sends no PUT.
+- A2.4 not met (D1). While the switch writes, Delete is held, but Save is not. Edit a field during
+  the write and Save turns active (`aria-disabled` absent), and `save()` (1551) has no `switching`
+  guard. The SaveBar gets `saving={phase === 'saving'}` (1925) and nothing about the switch.
+  Save must stay `aria-disabled`, and `save()` must refuse, while `switching` holds.
+- D2 (minor, wording). During the switch-off write Delete stays held, which is right, but its
+  reason line reads "Switch it off to delete it." while the switch already shows off: the line
+  passes `deleteHint` whenever `deleteDisabled` (1940-1941). Show the reason only while `!canDelete`.
+  During the write, Delete stays `aria-disabled` with no description (1.3.1: the description must
+  match the state).
+
+Dark and forced colours: the line's text takes the page tokens. The forced-colours switch keeps a
+visible border, the same as the list's.
+
+UX check (204 states per browser): Chromium and WebKit pass. The one failure is Firefox's known 22D4 page crash. A2 not accepted until D1 is fixed; D2 is minor.
+
+### A2 re-check (designer, 2026-11-25)
+
+Measured with `build/ux-review/a2.js` in Chromium, Firefox and WebKit, after `npm --prefix fe run build`.
+
+- D1 met. If a field is edited while the switch writes, Save stays `aria-disabled`, and
+  `save()` refuses while `switching` holds (`ModelProfilePage.tsx` 1565, `saveDisabled` 1948).
+  After the write the edit is kept and Save is active again. Discard stays active, which is right:
+  it sends nothing.
+- D2 met. During the switch-off write, Delete is `aria-disabled` and has no reason line (1956-1958).
+  A switched-on profile still shows `model-profiles-delete-needs-off`.
+
+The DOM of the UX check's states is unchanged (the difference shows only during a write), so the
+full check was not rerun. A2 accepted.

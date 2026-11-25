@@ -868,10 +868,12 @@ test("2h.141 (22 D2.7): the tab order takes each Embeddings About toggle and the
   // lead the page (2h.141 had them last). 22 D4.10 puts the bar's Delete first
   // in its group.
   expect(
-    focusable.slice(0, 4).map((el) => (el.textContent ?? '').trim()),
-    'the back link, then the bar with its Delete, lead the page',
+    focusable.slice(0, 5).map((el) => (el.textContent ?? '').trim()),
+    'the back link, then the state line’s switch of 24 A2.1, then the bar with its Delete, lead the page',
   ).toEqual([
     en('model-profile-back'),
+    // 24 A2.1: the switch is an input, so it carries no text of its own.
+    '',
     en('model-profile-delete'),
     en('save-discard'),
     en('save-button'),

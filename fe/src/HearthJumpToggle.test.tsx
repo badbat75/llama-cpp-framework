@@ -482,9 +482,12 @@ const tabNames = (root: HTMLElement): string[] =>
 test('H10.10 (22 D2.5): in jsdom, with no CSS, Tab from the top reaches the back link, then the save bar, then the jump toggle, then the ten jump buttons in card order (the page start of 2h.197 with the toggle inserted)', async () => {
   const { main } = await form()
   // 22 D2.5 moved the bar to the top of the settings section, 22 D4.10 puts
-  // its Delete first in it.
+  // its Delete first in it. 24 A2.1: the state line’s switch is the stop
+  // between the back link and the bar; the names here are the elements’ text,
+  // and an input has none.
   const start = [
     en('model-profile-back'),
+    '',
     ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...TITLES,

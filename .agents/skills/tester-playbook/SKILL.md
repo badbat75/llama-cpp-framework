@@ -608,6 +608,11 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
   a fixture handing ONE `Response` to every call starves the second reader.
 - A red assertion in the middle of a test hides every assertion AFTER it (they never run): put the
   day-one guards of a multi-page test in their own test and run it, before reporting the split.
+- A helper that answers a BOOLEAN (`el.getAttribute('aria-disabled') === 'true'`) pinned `.toBe('true')`
+  is a test-side red: the suite's `.toBe('true')` idiom is for a raw `getAttribute` string. Compare like
+  with like, and sweep the helper's CALL SITES, not only the reported one (a red hides its twins below).
+- A pin of a percent-encoded id asserts the FULL route the contract names (`.../enabled`), not the bare
+  resource route: the component writes the sub-route, so the shorter expectation never matches.
 - `fakeBff()` returns the fake, not `main`: a test that renders a second page needs
   `screen.getByRole('main')` after `render(<App />)`. Vitest runs it red as `Property 'main' does not
   exist`; `npm --prefix fe run typecheck` is what names it before the run.
@@ -658,6 +663,11 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
 - A new icon button with a visually-hidden label (and a hidden reason span) inside a table cell lands in
   every existing cell-text pin of that cell: strip the buttons in those pins (clone the cell, remove
   `button`, read `textContent`), and the same for the row's own text.
+- Dropping a key from the test's `EN` mirror reds EVERY test that calls `en(key)` for it: that full run's
+  `FAIL` list IS the census of the pins to report. A pin that reads `en_US.json` directly (a file's own
+  `S['key']`) stays green until the coder removes the key from the file, so it is missing from that census.
+- A full-suite run reds the heaviest page tests with `Test timed out in 5000ms` under the load (they pass
+  in isolation, at baseline and with the change): rerun those files alone before reporting a timeout.
 - vitest's `toBe` takes ONE argument: a failure message passed to it is a typecheck red, not a test red.
   The message is the second argument of `expect(x, 'msg')`.
 - An ENABLED save or Discard button carries no `aria-disabled` attribute at all (`getAttribute` answers

@@ -298,7 +298,7 @@ test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes an
 
 // ── The order and the off line (68, 69) ─────────────────────────────────
 
-test("2d.68: below the h1, in order: the summary line of H11a.1, the off line (a switched-off model profile), the h2 Model profile settings, the jump list of 2h.10, the engine Notice (an engine not available), the Assets card (H11b.1 moved the Engine row into it), and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
+test("2d.68 (as 24 A2.1 amends it): below the h1, in order: the summary line of H11a.1, the state line of 24 A2.1, the h2 Model profile settings, the jump list of 2h.10, the engine Notice (an engine not available), the Assets card (H11b.1 moved the Engine row into it), and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
   for (const [what, extra, off, unavailable] of [
     ['a switched-on model profile', {}, false, false],
     ['a switched-off model profile', { enabled: false }, true, false],
@@ -318,18 +318,20 @@ test("2d.68: below the h1, in order: the summary line of H11a.1, the off line (a
     const { main, h1, h3 } = await loaded({
       modelProfile: () => reply(200, fullDoc(extra)),
     })
-    // H11a.1: the summary line is the first thing under the h1, before the off
-    // line when the profile is switched off.
+    // H11a.1: the summary line is the first thing under the h1, before the
+    // state line of 24 A2.1.
     const line = summaryLine(main)
     expect(before(h1, line), 'H11a.1: the summary is under the h1').toBe(true)
     const nodes: [string, Node][] = [['the summary line', line]]
-    if (off)
-      nodes.push(['the off line', await message(main, en('model-profile-off'))])
-    else
-      expect(
-        within(main).queryByText(en('model-profile-off')),
-        `${what}: no off line`,
-      ).toBeNull()
+    // 24 A2.1: the state line, the page's own switch and the short word of the
+    // state, follows the summary line whether the profile is on or off.
+    nodes.push([
+      'the state line',
+      await message(
+        main,
+        en(off ? 'model-profile-off-short' : 'model-profile-on-short'),
+      ),
+    ])
     nodes.push(['the h2', settingsTitle(main)], ['the jump list', navOf(main)])
     if (unavailable) nodes.push(['the engine Notice', engineNotice(main)])
     // H11b.1: the Engine field is gone, so the card follows the Notice (72).
@@ -365,15 +367,17 @@ test("2d.68: below the h1, in order: the summary line of H11a.1, the off line (a
   }
 })
 
-test('2d.69: a switched-off model profile shows model-profile-off as a plain paragraph under the h1 and the page is not drawn muted; a switched-on model profile has no such line', async () => {
+test('2d.69 (as 24 A2.1 amends it): the state line under the h1 says the state in words, the short sentence of the switch, a plain span that is no live region and no Notice, and the page is not drawn muted; the line is there for a switched-on model profile too', async () => {
   const { main, h1 } = await loaded({
     modelProfile: () => reply(200, fullDoc({ enabled: false })),
   })
-  const line = await message(main, en('model-profile-off'))
-  expect(line.tagName).toBe('P')
+  const line = await message(main, en('model-profile-off-short'))
+  expect(line.tagName, '24 A2.1: a span, the words beside the switch').toBe(
+    'SPAN',
+  )
   expect(line.getAttribute('role'), 'not a status, not an alert').toBeNull()
   expect(line.closest('.notice'), 'not a Notice').toBeNull()
-  expect(text(line)).toBe(en('model-profile-off'))
+  expect(text(line)).toBe(en('model-profile-off-short'))
   expect(before(h1, line), 'the line is under the h1').toBe(true)
   for (const el of [main, h1, line])
     expect(
@@ -383,7 +387,10 @@ test('2d.69: a switched-off model profile shows model-profile-off as a plain par
   cleanup()
   vi.unstubAllGlobals()
   const { main: on } = await loaded()
-  expect(within(on).queryByText(en('model-profile-off'))).toBeNull()
+  expect(
+    text(await message(on, en('model-profile-on-short'))),
+    '24 A2.1: a switched-on profile says so too',
+  ).toBe(en('model-profile-on-short'))
 })
 
 // ── The Engine row of Assets (70, 72, 80) ───────────────────────────────
@@ -713,8 +720,8 @@ test('2d.79: a screen reader: the h1 is the id at level 1, the Engine row of the
       .queryAllByRole('status')
       .filter((s) => s.closest('.save-bar') === null)
       .map(text),
-    'the card move region of GD1.9 is there and empty on arrival too',
-  ).toEqual([''])
+    'the card move region of GD1.9 is there and empty on arrival too, with the state line’s switch status of 24 A2.1',
+  ).toEqual(['', ''])
   expect(
     [...main.querySelectorAll('[role="alert"], [role="log"], [aria-live]')],
     'no alert, no log, no explicit live region on arrival (a NodeList is not deep-equal to [])',

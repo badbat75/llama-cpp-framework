@@ -361,7 +361,7 @@ function expectAbsentSelect(main: HTMLElement, f: Row): void {
 
 // ── The page structure (83, 84) ─────────────────────────────────────────
 
-test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.10, then every card of 83 in the page order (the list of test/modelProfileCards.ts), and the off line stays above the h2', async () => {
+test('2e.83 (as 24 A2.1 amends it): the section of the h2 holds, in order, the h2, the jump list of 2h.10, then every card of 83 in the page order (the list of test/modelProfileCards.ts), and the state line stays above the h2', async () => {
   for (const [what, extra, off] of [
     ['a switched-on model profile', {}, false],
     ['a switched-off model profile', { enabled: false }, true],
@@ -373,16 +373,14 @@ test('2e.83: the section of the h2 holds, in order, the h2, the jump list of 2h.
     const section = h2.closest('section')
     expect(section, `${what}: the h2 sits in a section`).toBeTruthy()
     const nodes: [string, Node][] = [['the h1', h1]]
-    if (off)
-      nodes.push([
-        'the off line',
-        within(main).getByText(en('model-profile-off')),
-      ])
-    else
-      expect(
-        within(main).queryByText(en('model-profile-off')),
-        `${what}: no off line`,
-      ).toBeNull()
+    // 24 A2.1: the state line, the page's own switch and the short word of the
+    // state, is above the h2 whether the profile is switched on or off.
+    nodes.push([
+      'the state line',
+      within(main).getByText(
+        en(off ? 'model-profile-off-short' : 'model-profile-on-short'),
+      ),
+    ])
     nodes.push(['the h2', h2], ['the jump list', navOf(main)])
     for (const title of cardHeadingKeys()) {
       const card = cardOf(main, title)

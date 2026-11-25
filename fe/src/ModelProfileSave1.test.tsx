@@ -377,6 +377,10 @@ test('2h.130, 19 G.14 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h
     20,
   )
   for (const el of controls) {
+    // 24 A2.1: the state line's switch is no 2e field: it is the page's own
+    // control, enabled on its own terms (23 A2.3, A2.4), so 130 says nothing
+    // about it.
+    if (el.matches('[role="switch"]')) continue
     const id = el.getAttribute('id') ?? el.tagName
     // The 2h.4 card's fields by their ids: `model-profile-<key>`, its default box
     // `<id>-box`, its input `<id>-control`.

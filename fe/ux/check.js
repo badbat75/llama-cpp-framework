@@ -557,6 +557,32 @@ const STATES = [
     ],
   },
   {
+    // Brief 24, slice A2 (23 A2.1, 23 A2.2): the model profile page's own
+    // switch, in the state line under the summary line. The stub reads this
+    // profile switched on, so the line says so in the short words beside the
+    // switch, and the Save bar's Delete is switched off with the list's reason
+    // under it (22 D4.2). The line, the switch, the words and the reason are
+    // what the check reads at 320 px and at 200 % text.
+    name: 'model-profile-switch',
+    set: 'session=admin',
+    hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
+    expect: [
+      { selector: '#page-heading', text: MODEL_PROFILE_ID },
+      {
+        selector: 'main [role="switch"]',
+        message: "the page's own switch (23 A2.1)",
+      },
+      {
+        selector: 'main label.model-profiles-switch + span',
+        text: S['model-profile-on-short'],
+      },
+      {
+        selector: '#model-profile-delete-reason',
+        message: "the Save bar's reason, kept by 23 A2.2",
+      },
+    ],
+  },
+  {
     name: 'model-profile-blocks',
     // Brief 19, 19 G.4 and 19 G.5: the same page with the split in the file's
     // mode and a ratio the facts read projects to block counts (stub.py
