@@ -836,6 +836,11 @@ scroll ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)). The 40 px target holds
 - **Model profile page:** `div.page-status` and its − leave. The status paragraph stays, a plain
   `p` under the summary line: `model-profile-off`, or `model-profile-on`, whose last sentence now
   reads `To delete it, switch it off first.`
+  *Amended 2026-11-25 (brief 24, 23 A2.1, built in b3b1446):* the paragraph is now the state line,
+  with the page's own switch and the short texts `model-profile-on-short` and
+  `model-profile-off-short`. `model-profile-on` and `model-profile-off` are gone, and so is the
+  sentence "To delete it, switch it off first.": the switch is right there, and the Save bar's
+  reason line (D4.14) says why Delete cannot act.
 - **Server profile page:** the status row and its sentence leave (`server-profile-unused` and
   `server-profile-used-by` leave the strings file). The Value list's Used by row stays as 17a has it,
   and 22D3 is not built.
@@ -1266,6 +1271,16 @@ Tests to amend:
 - `fe/src/TensorPlacement*.test.tsx` and `fe/src/InstanceNameEdit17f2.test.tsx` only if they pin
   `.ot-add`'s radius (none found by grep).
 
+**22 D4.22 The refusal of a switched-on delete (2026-11-25).** The page has its own switch since
+brief 24 A2, so "switch it off in the list" is wrong there.
+- `api-model-profile-enabled` (`RowDelete.tsx` 49, and the page's delete) becomes:
+  `{0} is switched on, so it cannot be deleted. Switch it off first.`
+- It is the same text on the list and on the page. The list row's switch sits beside its trash
+  can, and the page's switch is in the state line, so "first" is enough in both places
+  ([3.3.3](https://www.w3.org/TR/WCAG22/#error-suggestion): the refusal says what to do).
+- Tests to amend: the old text appears only in `fe/src/test/bff.ts` (grep, 2026-11-25), besides
+  the strings file. Tests that read the text through `t()` need no change.
+
 ## 22P check against the current UI (designer, 2026-11-25)
 
 I checked 22P against the served routes (`fe/briefs/api-contract.md` 228-245 and 735-755,
@@ -1316,8 +1331,7 @@ Already stale for 22C and 22E, not 22P (recorded here so their runs do not pick 
   and A2 (the page's own switch). `model-profile-delete-needs-off` is gone from the strings file.
   `api-model-profile-enabled` (used by `RowDelete.tsx` 49 and the page's delete) still says
   "Switch it off in the list of model profiles first", which is wrong on the page, where the switch
-  is right there. Its text becomes, in any run that touches it:
-  `{0} is switched on, so it cannot be deleted. Switch it off first.`
+  is right there. Its new text is 22 D4.22, built with D4.16 to D4.21.
 - Section 0's "The page today" now also has A2's state line between the summary and the settings.
   The model file is still a read-only row of the Assets card (`ModelProfilePage.tsx` `assetRows`,
   223).
