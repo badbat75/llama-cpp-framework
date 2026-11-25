@@ -1391,7 +1391,7 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   hsaKmtRegisterMemoryWithFlags, not yet verified on llama-server): memory a process registers or pins
   (hsa_amd_memory_lock, hipHostRegister, ROCclr's pin-in-place for pageable copies) always goes through
   the SVM API when the driver has it, whatever the two variables say. Levers to test (GT4, after a
-  read-only trace of svm_range_add in the embedder, which needs the user's go): ROCclr's
+  read-only trace of svm_range_add in the embedder, user's go given 2026-11-25 07:45, running): ROCclr's
   `GPU_PINNED_MIN_XFER_SIZE=1000000` (copies of 1 MiB or more through a pre-pinned staging buffer; Strata
   runs with it), and, if ggml calls hipHostRegister itself, a patch so that memory comes from
   hipHostMalloc (GTT under GT1) instead.
