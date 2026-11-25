@@ -767,6 +767,12 @@ skill: every OS's packages, the release commit, the tag `v2.99.1` and a GitHub p
 the release still get the user's go-ahead at that moment, "Actions with real effects"); then bump the
 framework to 2.99.2 and carry on toward it.
 
+**The release's goal (user, 2026-11-25):** every profile, model and server, assignable and editable from
+the web UI. Order: after GT5b (running), 17e (an instance's model profiles), 17d (its server profile
+switch and the restart offer), 17c (create and remove an instance), then 22P and 22C (create a model
+profile from a file, a Hugging Face repository or a copy); then the rest of step 10, all before the
+release (user, same day): L2, brief 24's A3 to A10, K1 and K2, TP3, 22E.
+
 Decided with the user on 2026-11-14: one local service on the machine, installed beside the manager by
 the same packages, listening on localhost and, when configured, on the LAN with authentication. It
 serves three things: the configurator's web UI (what `pai-config` does: server, presets, start and
