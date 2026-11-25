@@ -1384,3 +1384,88 @@ UX check (210 states per browser, `instance-models` among them): 0 failing in Ch
 run's 2 failures were load timeouts (Firefox's page load threw, WebKit's first state not yet
 rendered); rerun one browser at a time, Firefox 210 states and WebKit's `overview-tiles` and
 `instance-models` states: 0 failing.
+
+## 17e amendment: polish (designer, 2026-11-25)
+
+From the 17e review's notes 2, 3 and 5; none needs a user decision. They ride with 17c.
+
+**17e.12 The status after the table.** The section's status line, its alert and its Sign in move
+from above the table to right after the `.table-scroll` box (`margin-top: var(--space-2)`), with no
+`min-height` (`index.css` 3011-3014 today). Text landing there moves nothing above it, so the
+switch under the pointer and the focus never jump, which was the reason for the reserved line. This
+differs on purpose from `fe/DESIGN.md` Action feedback ("just above it"); that entry is amended to
+"just after it" for every table, since a line above a table pushes the rows when it fills.
+The Models list's switch status (`ModelProfiles.tsx`) follows in its next slice, not here.
+
+**17e.13 State columns together.** "In the list" gets `width: 1%; white-space: nowrap`, as the
+status cell, so the two state columns sit together at the right and the Name column takes the rest.
+
+**17e.14 The checkbox's group label.** `instance-models-all-label` becomes `Served profiles`, which
+fits the field's label column on one line at 1280 px; the checkbox's own text
+(`instance-models-all`) is unchanged and still says what it does.
+
+Tests: `InstanceModels17e.test.tsx` 620 (the status line now follows the table) and 17e.11's
+strings test (the label's text); a CSS test for the column.
+
+## 17c check (2026-11-25)
+
+Checked 17c.1 to 17c.12 against main at ff6c4cb: the Overview (tiles in a `section` whose `h2` is
+the host, `Instances.tsx` 410-464, each tile ending with its run buttons, A1), the instance page
+(the `h1` with the display name and 17f2's pencil, the run buttons, Start at boot, tags, Server
+profile, 17e's Model profiles), L1's lists, 17b2's + and `fe/DESIGN.md` principles 6 and 8. Where
+this section differs from 17c, it wins.
+
+Still true: 17c.2, 17c.3, 17c.5, 17c.8 and 17c.12.
+
+**17c.9 is already built** (A1, ffa71ac): `run.ts` 107 maps 409 `instance-no-model-profiles` to
+`api-instance-no-model-profiles` ("{0} has no model profile to serve: assign one on its page
+first."), on the tile and on the page, the tile linking to the page. The slice keeps its test
+only; 17c counts 11 new criteria. The row in section 2 for that key, which says "on this page", is
+superseded by the built text, which reads right on both the tile and the page.
+
+**17c.1a The + (replaces 17c.1's place and look).** The opener is the list's + after the
+`ul.tiles` (or `instances-empty`), inside the Overview's instances `section`, drawn and named as
+17b2.2 (`.ot-add`, `plus`, visually hidden `instances-new`, `aria-expanded`). The form opens below
+it, its `h3` `instances-new-title`. The rest of 17c.1 stands. The form has no display name field:
+the new instance shows as the auto name (`instance-name-auto`, engine and port) until the page's
+pencil sets one, one click from where the create lands (preference: one field fewer; 17f's out of
+scope said the same).
+
+**17c.4a Where the create lands.** 17c.4 stands, except: the nav and the tile show the new
+instance as `InstanceLink` does (22 D4.37: the display name, the auto name when there is none),
+not `<id> · <server profile>` (20 N.5 is superseded). The `h1` that takes the focus is the auto
+name with the pencil after it.
+
+**17c.6a Remove in the head (replaces 17c.6's place).** Principle 6 puts a page's commands at
+its top, beside the status they change, and D4.30 puts the destructive one last, in `--danger`.
+The instance page has no Save bar, so Remove goes in the head:
+- a text button `instance-remove` at the end of the run buttons' row (Start, Stop, Restart, then
+  Remove), `--space-5` before it, drawn as the Save bar's Delete (`--danger` text);
+- only when the list item's `removable` is `true`;
+- `aria-disabled` unless the state is `inactive` or `failed`; then `instance-remove-stop-first` is
+  a line under the row, always shown while it cannot act, and the button's description
+  (`aria-describedby`), as the Save bar's reason line ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships));
+- it follows the polled state, so after a Stop it becomes active with no reload.
+The user's flow is then one place: Stop, then Remove, with no scroll past 17e's table. Not on the
+tiles: removing is rare, and the tile already ends with three run buttons (principle 7 is for the
+common tasks).
+
+**17c.7a Confirm.** The Confirm in place group opens on its own line under the head's row (not
+after every section), as the Save bar's confirm does; 17c.7's texts, focus and requests stand.
+Done: everything after the `h1` goes, the pencil and the run row included, and the paragraph
+`instance-removed` (focused) and the link `not-found-home` follow it.
+
+**17c.10a Keyboard (replaces 17c.10).** Overview: the tiles' links and run buttons, then the +,
+then (open) ID, Server profile, Create, Cancel. Instance page: the pencil, Start, Stop, Restart,
+Remove, then (open) `confirm-remove`, `confirm-cancel` (focus lands on Cancel), then Start at boot
+and the sections ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)).
+
+**17c.11a The select at 320 px.** 17c.11 stands. The option text puts the id first, so a closed
+select too narrow for a long `id (port N)` cuts the port, never the id; the open list shows each
+option whole. Accepted (preference): the port is also on the profile's own page, linked from the
+form's `instance-new-profiles-link`.
+
+Tests that change from 17c's list: `InstancePage` (Remove at the end of the run row, its reason
+line, the confirm under the row; not after the sections), `Instances` (the + after the tiles),
+`RunControls` loses the 409 test (built); a check.js state for the open create form and one for
+the open confirm.
