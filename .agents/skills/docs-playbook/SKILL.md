@@ -618,6 +618,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (`crates/bff/src/lib.rs`), which the fe reads as its generic "could not be read".
 - A brief can name a nav entry the code does not have yet, and a JSON body quoted in a brief may be
   shortened: check the route's fields in the code before quoting them.
+- A `](#slug)` into a BOLDED bullet of a README resolves nowhere: only headings get a slug. Link the
+  heading that holds the bullet (`[Code conventions](#code-conventions)`) and name the bullet in words.
+- A hand-read figure sitting in an UNCOMMITTED page line can be from another engine and process than
+  the one the page is about (the R9700 page's `evicted_ms` 0 was read on Strata, not `llama-server`).
+  Before keeping it, settle which process it names, and cite the engine, the process, the model and
+  the date of the trace; label it an observation, not a campaign.
 - The 5 s read and 15 s write of the save are counted from the request (`save` takes
   `write_timeout.saturating_sub(elapsed)`).
 - `cargo test -p pai-bff`'s coarse `^async fn` and `^#[test]` pattern over-counts helper fns and doc

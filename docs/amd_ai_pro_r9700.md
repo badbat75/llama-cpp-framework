@@ -6,7 +6,7 @@ gpus: [AMD Radeon AI PRO R9700]
 models: []
 platforms: [windows, linux]
 llama-cpp: v0.5.0 to v0.8.0
-updated: 2026-11-04
+updated: 2026-11-25
 ---
 
 # AMD Radeon AI PRO R9700: configuration reference
@@ -20,7 +20,9 @@ so a difference between them is not the OS alone. Model-specific detail is in th
 **In short.** Use the ROCm backend with `f16` KV at the context you need and `ubatch-size 1024`. For two
 R9700s, use the tensor split with an even `tensor-split`: on Linux it decodes 48 to 65% faster than the
 layer split for 16 to 22% less cold prefill. Windows runs the same model profile with one request's decode level
-with Linux and prefill 11 to 18% slower; the gain over the layer split is unmeasured there.
+with Linux and prefill 11 to 18% slower; the gain over the layer split is unmeasured there. On *Linux*, leave
+`RocmHostMemoryGtt` unset: the launch exports the pair that puts paged host memory on GTT, and the GPU queue
+suspensions that memory pressure causes stop ([section 3](#3-settings)).
 
 **The build behind these figures.** The framework bundles llama.cpp v1.0.0, and no figure here was measured on it.
 Every figure from v0.8.0, and every recorded one from v0.7.0 except campaign `27b-kv-f16-20261016`, comes from a
@@ -39,6 +41,7 @@ steps on upstream's tile kernel. How far the figures move is open ([section 7](#
 | GPU targets | `gfx1201` plus the arch of any visible Ryzen iGPU | one visible device without code objects makes every device fail |
 | `LLVM_PATH`, `HIP_DEVICE_LIB_PATH` | never machine-wide | the driver's HIP runtime reads `LLVM_PATH`: devices report 0 MiB and children crash |
 | `ROCBLAS_USE_HIPBLASLT` | unset | needed only without the staged runtime |
+| `HSA_USERPTR_FOR_PAGED_MEM` + `HSA_SVM_FOR_PAGED_MEM` (Linux) | both `0`: the launch exports them, from `RocmHostMemoryGtt` unset | paged host memory as a userptr or SVM mapping sits on the kernel LRU, so compaction and reclaim move it, and each move suspends every GPU queue of the process |
 | llama.cpp | v0.4.1 or later | carries [upstream's gfx1201 FlashAttention tuning](https://github.com/ggml-org/llama.cpp/pull/28102): prefill 805 t/s at 93.6k, 442 without |
 | driver | 26.9.2 or later, once released | from 26.5.1 on, a card driving no display has its VRAM purged after ~10 s idle, followed by a TDR |
 
@@ -84,7 +87,10 @@ visible to HIP does with `device` left blank: hence `mmap`, set explicitly. *Lin
 
 | key | value | evidence |
 | --- | --- | --- |
+| `RocmHostMemoryGtt` (envs `HSA_USERPTR_FOR_PAGED_MEM=0` + `HSA_SVM_FOR_PAGED_MEM=0`) | on (unset): the launch exports both `0` | on *Linux*, under memory pressure (9 GB of swap, IO pressure to 75%), the server's `evicted_ms` stops growing after one eviction at load, against 45 s per GPU over 3.5 hours without the pair (live trace 2026-11-25, not recorded) |
 | `RocprofAttach` (env `ROCP_TOOL_ATTACH=1`) | off; on while diagnosing | lets `rocprofv3 --attach <pid>` trace the running server |
+
+Paged host memory (hipHostMalloc, the system memory pool) is registered as a KFD userptr (`HSA_USERPTR_FOR_PAGED_MEM`, on by default) or as SVM (`HSA_SVM_FOR_PAGED_MEM`, on by default), and both sit on the kernel LRU: compaction or reclaim moves it, and the driver suspends every GPU queue of the process to do it. With both at `0` the allocation takes the driver's GTT path (`KFD_IOC_ALLOC_MEM_FLAGS_GTT`) instead, which reclaim and compaction leave alone: read in libhsakmt `fmm.c` `fmm_allocate_host_gpu` (ROCm/rocm-systems `projects/rocr-runtime/libhsakmt/src/fmm.c`, commit b0c0561). `USERPTR=0` alone falls back to SVM, which evicts the same way, so the pair travels together. Measured on *Linux* on one R9700, `llama.cpp@default` with Qwen3-Embedding-0.6B-Q8_0 (a live trace on 2026-11-25, read from `/proc`, `/sys/class/kfd` and bpftrace, not recorded): without the pair the paged host memory is a 58 MiB `/dev/zero` shared (SVM) mapping, and compaction and reclaim (`svm_range_cpu_invalidate_pagetables`) suspend the process's GPU queues about 6 s per GPU in the first 3 minutes and 45 s per GPU over 3.5 hours. With both at `0` there is no `/dev/zero` mapping and `RssShmem` is 0: `evicted_ms` reads 18/17/17 ms over its KFD nodes, all of it one eviction at load (the process's own `munmap` crossing a small SVM range the runtime registers itself), and nothing further in 45 minutes of real traffic with 9 GB of swap in use and IO pressure up to 75%; the router process reads 0. The launch exports it for every backend; only ROCm reads the two variables. The cost: GTT memory is not swappable and is capped near half the RAM, so a large pinned host allocation can fail where it used to succeed. Its speed is unmeasured ([section 7](#7-not-yet-measured-placeholders)).
 
 ### Quantization on RDNA4
 
@@ -232,7 +238,12 @@ backend-sampling = true
   shared memory; a spill is real only above ~512 MiB beyond the pinned `*_Host` buffers. A benchmark run records the
   memory free after its first prefill per adapter, under its PCI address (for example `pci-14:00.0`): system-wide,
   read from the Windows GPU counters. Use this script where a run holds no such row.
-- *Linux*: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill.
+- *Linux*: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill. To see the host memory
+  switch of [section 3](#3-settings) work, read `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms` of the
+  running server: a load that leaves it where it was means no queue suspension (one eviction at load
+  leaves a few tens of ms, and the router process reads 0). The host memory it maps shows as
+  `/dev/zero (deleted)` `rw-s` lines in `/proc/<pid>/smaps`: with the pair exported they are gone, and
+  `mem_info_gtt_used` carries the bytes.
 - `tools\pcie-bench\`: the card's real host link. On two cards on *Linux*, also read the boot log's link width;
   *Windows* shows no width on the bridges, so there a card reading about half its bandwidth is the sign.
 - Benchmark tab or `pai bench run`: measure at 2.6k and ~90k context, with temp 0 and 3
@@ -250,6 +261,6 @@ backend-sampling = true
 | `split-mode` on two R9700s on *Windows* | `tensor` | what do the tensor split's decode gain and prefill cost come to against `layer` there? | TBD |
 | the prefill gap to *Linux* on two R9700s on *Windows* | n/a | what causes it: the driver and HIP runtime, transfers and submissions under `split-mode tensor`, the hypervisor? | partly: Memory Integrity gives 2 to 3%, `ThreadsBatch` and PCIe ASPM nothing ([section 5](#5-choices-that-look-better-than-they-measure)); the candidates are unmeasured |
 | `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` on two R9700 | default | the internal AllReduce's staging sizes (seeds: 1-2 MiB, 2 MiB) against the default | TBD |
-| Linux: memory beyond the card | n/a | what moving buffers to GTT costs in speed | partly: with two 115k contexts on a full card, requests ran out of memory in the HIP graph update, once after 14 GB had moved to GTT (campaign `swift27b-concurrency-2xr9700-linux-20261031`); the speed under GTT is unmeasured |
+| `RocmHostMemoryGtt` | on (unset) | what the GTT mapping costs in speed, and how much host memory it takes before an allocation fails | partly: with two 115k contexts on a full card, requests ran out of memory in the HIP graph update, once after 14 GB had moved to GTT (campaign `swift27b-concurrency-2xr9700-linux-20261031`); the speed under GTT is unmeasured |
 | the settings on the bundled llama.cpp v1.0.0 | as in [section 3](#3-settings) | how far do these figures move without the band and the other patches they ran with? | TBD |
 | Q8_0 GEMV ceiling | n/a | `llama-bench` on this card alone at depth 0 and 131072, against the 58% of bandwidth seen in a trace | TBD |
