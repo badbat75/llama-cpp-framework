@@ -168,3 +168,4 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 - A run from outside the repo root left a stray `node_modules/` at the repo root twice.
 - A coder was reaped for memory when two cargo builds ran at once.
 - A tester proving a flake fix may start CPU burners (16 `while :; do :; done` loops, its playbook's load harness) and leave them spinning beside Strata: say "no synthetic load" in follow-up briefs, and on a liveness check stop leftover burners by PID.
+- An agent may launch `find /` and leave it hanging in D state for many minutes: check `pgrep -x find` on liveness checks and stop it by PID; brief docs runs with the source URL so they need not search the disk.

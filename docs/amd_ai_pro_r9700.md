@@ -22,7 +22,9 @@ R9700s, use the tensor split with an even `tensor-split`: on Linux it decodes 48
 layer split for 16 to 22% less cold prefill. Windows runs the same model profile with one request's decode level
 with Linux and prefill 11 to 18% slower; the gain over the layer split is unmeasured there. On *Linux*, leave
 `RocmHostMemoryGtt` unset: the launch exports the pair that puts paged host memory on GTT, which cuts the GPU
-queue suspensions memory pressure causes sharply, without ending them ([section 3](#3-settings)).
+queue suspensions memory pressure causes sharply, without ending them. What the pair does not reach is an mmapped
+model's weights, so a ROCm instance loads with `load-mode = none` and a profile that wants `mmap` sets it on its
+page ([section 3](#3-settings)).
 
 **The build behind these figures.** The framework bundles llama.cpp v1.0.0, and no figure here was measured on it.
 Every figure from v0.8.0, and every recorded one from v0.7.0 except campaign `27b-kv-f16-20261016`, comes from a
@@ -69,7 +71,7 @@ steps on upstream's tile kernel. How far the figures move is open ([section 7](#
 
 | key | value | evidence |
 | --- | --- | --- |
-| `load-mode` | `none`; on *Windows*, `mmap`, set explicitly, on a MoE model with part of the experts on the card | `mmap` otherwise leaves ~1 GiB of weights crossing PCIe per batch: prefill 98 against 571 t/s at 43.7k |
+| `load-mode` | `none`: on *Linux* a ROCm instance gives it to every model profile unless the profile sets one; on *Windows*, `mmap`, set explicitly, on a MoE model with part of the experts on the card | *Linux*: with `mmap` the 0.6B embedder registered 722 MiB in 406 SVM sets at load and lost ~1.5 s per GPU in the first hour, with `none` 147 MiB in 5 sets and 0 ms after 3 h (live traces 2026-11-25, not recorded) |
 | `flash-attn` | omit (`auto` resolves to on) | selects the FlashAttention kernel this card needs |
 | `cache-type-k/-v` | `f16` at the context you need; `q8_0` only to fit a longer one | *Linux*, layer split across two backends: decode 35 t/s against 31.5 at 43.7k, prefill the same; `f16` fits ~66% of the `q8_0` context (campaign `27b-kv-f16-20261016`) |
 | `ubatch-size` | `1024` | *Linux*, the same split: prefill 902 t/s at 115k, against 895 at `768`, 837 at `1536`, 809 at `2048`; free VRAM 1232, 659 and 75 MiB from `1024` up (campaign `coder390-ubatch-20261020`) |
@@ -77,9 +79,35 @@ steps on upstream's tile kernel. How far the figures move is open ([section 7](#
 | `spec-draft-n-max` (DFlash2) | `7` on *Windows*, `5` on two R9700s on *Linux* | *Windows*, v0.5.0: `7` best at 2.6k and 93.6k, `1` slower than no drafter. Two R9700s, *Linux*, v0.8.0, 43.7k: 34.1 ±2.0 at `5` against 32.2 ±1.4 at `7` (campaign `qwen27b-dflash-2xr9700-linux-draft-n-max-20261028`) |
 | `spec-draft-type-k/-v` | `f16` | a DFlash draft KV is a small window (50 MiB in `f16`), no speed difference |
 
+**On *Linux*, a ROCm instance loads every model with `load-mode = none`** unless the profile sets one: the
+manager's render of the instance's `models@<id>.ini` puts `load-mode = none` in its `[*]` for a ROCm instance whose
+pool `[*]` sets none (GT5a, f545865; [ARCHITECTURE.md](../ARCHITECTURE.md) "ROCm instances load models with
+`load-mode = none`"). The pool files are never written: the pages show the value someone chose, and a profile that
+sets its own keeps it, by llama.cpp's own precedence (a model section above `[*]`, the command line above both, read
+in llama.cpp v1.0.0's server README), and the launch passes no `--load-mode`.
+
+Why: on ROCm an mmapped model's weight upload is pinned by ROCclr and registered as SVM memory, whatever
+`HSA_USERPTR_FOR_PAGED_MEM` and `HSA_SVM_FOR_PAGED_MEM` say (the registration goes through libhsakmt `fmm.c`
+`hsaKmtRegisterMemoryWithFlags`, the file of the GTT note under the server table), and compaction or reclaim then
+moves those pages, suspending every GPU queue of the process while it does: the stall lands on every request that
+process serves, not only on the mmapped model. That ROCclr pins the upload is inference from the timing and the sizes:
+the trace stacks stop in `libhsa-runtime64`, built without frame pointers. The figures were read on this machine on
+2026-11-25 from read-only kernel traces (`/proc`, `/sys/class/kfd`, bpftrace), not from bench.db campaigns, so they
+carry no campaign name: the Qwen3-Embedding-0.6B-Q8_0 profile registered 722 MiB in 406 SVM sets within a second of
+its load with `mmap`, against 147 MiB in 5 sets with `none` (the runtime's own, which every llama-server
+registers); its queues were evicted about 1.5 s per GPU in the first hour with `mmap`, and 0 ms after 3 h with
+`none`, that last through an hour of builds, Vitest and browsers at IO pressure up to 88%.
+
+The trade-off: with `none` the weights are read into the process's own memory, not the page cache, so the layers a
+profile keeps on the CPU (`n-cpu-moe`, `override-tensor` to `CPU`) are no longer shared with the other processes
+mapping the same file, and under memory pressure they are swapped out rather than dropped; the load reads the whole
+file too. A profile that wants `mmap` anyway sets it on its page (Load mode) and takes the evictions with it.
+
 On *Windows*, with part of a MoE model's experts on the card, `load-mode none` aborts right after the weight
 upload, and `auto` resolves to `none` when a device of the model reports no mmap support, as a Ryzen iGPU
-visible to HIP does with `device` left blank: hence `mmap`, set explicitly. *Linux* runs `none` there.
+visible to HIP does with `device` left blank: hence `mmap`, set explicitly. There `mmap` is also the speed
+setting: without it ~1 GiB of weights cross PCIe per batch, prefill 98 against 571 t/s at 43.7k. *Linux* runs
+`none` there.
 
 `q5_1` saves ~30% of the KV against `q8_0` but decodes 6% slower; `iq4_nl` has no HIP FlashAttention kernel.
 
@@ -90,7 +118,22 @@ visible to HIP does with `device` left blank: hence `mmap`, set explicitly. *Lin
 | `RocmHostMemoryGtt` (envs `HSA_USERPTR_FOR_PAGED_MEM=0` + `HSA_SVM_FOR_PAGED_MEM=0`) | on (unset): the launch exports both `0` | on *Linux*, under memory pressure (9 GB of swap, IO pressure to 75%), the server's `evicted_ms` grows about 1.2 s per GPU in 1 h 45 min, against 45 s per GPU over 3.5 hours without the pair: a sharp cut, not an end (live trace 2026-11-25, not recorded) |
 | `RocprofAttach` (env `ROCP_TOOL_ATTACH=1`) | off; on while diagnosing | lets `rocprofv3 --attach <pid>` trace the running server |
 
-Paged host memory (hipHostMalloc, the system memory pool) is registered as a KFD userptr (`HSA_USERPTR_FOR_PAGED_MEM`, on by default) or as SVM (`HSA_SVM_FOR_PAGED_MEM`, on by default), and both sit on the kernel LRU: compaction or reclaim moves it, and the driver suspends every GPU queue of the process to do it. With both at `0` the allocation takes the driver's GTT path (`KFD_IOC_ALLOC_MEM_FLAGS_GTT`) instead, which reclaim and compaction leave alone: read in libhsakmt `fmm.c` `fmm_allocate_host_gpu` (ROCm/rocm-systems `projects/rocr-runtime/libhsakmt/src/fmm.c`, commit b0c0561). `USERPTR=0` alone falls back to SVM, which evicts the same way, so the pair travels together. Measured on *Linux* on one R9700, `llama.cpp@default` with Qwen3-Embedding-0.6B-Q8_0 (a live trace on 2026-11-25, read from `/proc`, `/sys/class/kfd` and bpftrace, not recorded): without the pair the paged host memory is a 58 MiB `/dev/zero` shared (SVM) mapping, and compaction and reclaim (`svm_range_cpu_invalidate_pagetables`) suspend the process's GPU queues about 6 s per GPU in the first 3 minutes and 45 s per GPU over 3.5 hours. With both at `0` there is no `/dev/zero` mapping and `RssShmem` is 0: the load leaves `evicted_ms` at 18/17/17 ms over its KFD nodes (the process's own `munmap` crossing a small SVM range the runtime registers itself). 1 h 45 min after the load, with 9 GB of swap in use and IO pressure up to 75%, it reads 1375/1195/1157 ms, from two episodes of kernel compaction (02:46: a direct compaction in another process faulting a huge page; 03:10: `kcompactd` on demand). Both go through the SVM path: the paged host allocations are off the LRU, but some of the process's ordinary memory is still registered as an SVM range compaction can move (which allocation is not known). The router process reads 0. So the pair cuts the suspensions, about 1.2 s per GPU in 1 h 45 min against 45 s per GPU over 3.5 hours, it does not end them. The launch exports it for every backend; only ROCm reads the two variables. The cost: GTT memory is not swappable and is capped near half the RAM, so a large pinned host allocation can fail where it used to succeed. Its speed is unmeasured ([section 7](#7-not-yet-measured-placeholders)).
+Paged host memory (hipHostMalloc, the system memory pool) is registered as a KFD userptr (`HSA_USERPTR_FOR_PAGED_MEM`, on by default) or as SVM (`HSA_SVM_FOR_PAGED_MEM`, on by default), and both sit on the kernel LRU: compaction or reclaim moves it, and the driver suspends every GPU queue of the process to do it. With both at `0` the allocation takes the driver's GTT path (`KFD_IOC_ALLOC_MEM_FLAGS_GTT`) instead, which reclaim and compaction leave alone: read in libhsakmt `fmm.c` `fmm_allocate_host_gpu` (ROCm/rocm-systems `projects/rocr-runtime/libhsakmt/src/fmm.c`, commit b0c0561). `USERPTR=0` alone falls back to SVM, which evicts the same way, so the pair travels together. The launch exports it for every backend; only ROCm reads the two variables.
+
+**The pair cuts the suspensions and does not end them: what is left is the model's own weights, and `load-mode = none`
+is what ends that.** With both at `0` the paged host allocations are off the LRU, but the process still has an SVM
+range that compaction moves, and a trace across a restart on 2026-11-25 showed what it is: the mmapped weights,
+pinned by ROCclr and registered at load (the `load-mode` row above), which the two variables do not reach. The same
+embedder, with the pair exported, read 0 ms of evictions 3 h after a load with `none`. The router process reads 0.
+The cost: GTT memory is not swappable and is capped near half the RAM, so a large pinned host allocation can fail
+where it used to succeed. Its speed is unmeasured ([section 7](#7-not-yet-measured-placeholders)).
+
+<details>
+<summary>The 2026-11-25 traces on one R9700: Qwen3-Embedding-0.6B-Q8_0 on `llama.cpp@default`</summary>
+
+Read from `/proc`, `/sys/class/kfd` and bpftrace, not recorded. Without the pair the paged host memory is a 58 MiB `/dev/zero` shared (SVM) mapping, and compaction and reclaim (`svm_range_cpu_invalidate_pagetables`) suspend the process's GPU queues about 6 s per GPU in the first 3 minutes and 45 s per GPU over 3.5 hours. With both at `0` there is no `/dev/zero` mapping and `RssShmem` is 0: the load leaves `evicted_ms` at 18/17/17 ms over its KFD nodes (the process's own `munmap` crossing a small SVM range the runtime registers itself). 1 h 45 min after that load, with 9 GB of swap in use and IO pressure up to 75%, it reads 1375/1195/1157 ms, from two episodes of kernel compaction (02:46: a direct compaction in another process faulting a huge page; 03:10: `kcompactd` on demand): about 1.2 s per GPU in 1 h 45 min, against 45 s per GPU over 3.5 hours.
+
+</details>
 
 ### Quantization on RDNA4
 
@@ -239,11 +282,12 @@ backend-sampling = true
   memory free after its first prefill per adapter, under its PCI address (for example `pci-14:00.0`): system-wide,
   read from the Windows GPU counters. Use this script where a run holds no such row.
 - *Linux*: read `mem_info_vram_used` and `mem_info_gtt_used` after a prefill. To see the host memory
-  switch of [section 3](#3-settings) work, read `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms` of the
-  running server: a load that leaves it close to where it was means the paged host allocations are off the
-  LRU (the load itself leaves a few tens of ms, and kernel compaction adds more over the hours, so a small
-  rise is not the pair failing; the router process reads 0). The host memory it maps shows as
-  `/dev/zero (deleted)` `rw-s` lines in `/proc/<pid>/smaps`: with the pair exported they are gone, and
+  switch and the `load-mode` of [section 3](#3-settings) work, read `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms`
+  of the running server: a load that leaves it close to where it was means the paged host allocations are off the
+  LRU and the model is not mmapped (the embedder with `load-mode = none` read 0 ms after 3 h, live trace
+  2026-11-25, not recorded; with `mmap` the load itself leaves a few tens of ms, and kernel compaction adds more
+  over the hours, so a small rise is not the pair failing; the router process reads 0). The host memory it maps
+  shows as `/dev/zero (deleted)` `rw-s` lines in `/proc/<pid>/smaps`: with the pair exported they are gone, and
   `mem_info_gtt_used` carries the bytes.
 - `tools\pcie-bench\`: the card's real host link. On two cards on *Linux*, also read the boot log's link width;
   *Windows* shows no width on the bridges, so there a card reading about half its bandwidth is the sign.
@@ -263,5 +307,6 @@ backend-sampling = true
 | the prefill gap to *Linux* on two R9700s on *Windows* | n/a | what causes it: the driver and HIP runtime, transfers and submissions under `split-mode tensor`, the hypervisor? | partly: Memory Integrity gives 2 to 3%, `ThreadsBatch` and PCIe ASPM nothing ([section 5](#5-choices-that-look-better-than-they-measure)); the candidates are unmeasured |
 | `GGML_CUDA_AR_COPY_THRESHOLD` / `_CHUNK_BYTES` on two R9700 | default | the internal AllReduce's staging sizes (seeds: 1-2 MiB, 2 MiB) against the default | TBD |
 | `RocmHostMemoryGtt` | on (unset) | what the GTT mapping costs in speed, and how much host memory it takes before an allocation fails | partly: with two 115k contexts on a full card, requests ran out of memory in the HIP graph update, once after 14 GB had moved to GTT (campaign `swift27b-concurrency-2xr9700-linux-20261031`); the speed under GTT is unmeasured |
+| `load-mode` on a *Linux* ROCm instance | `none` (the framework's default) | what `none` costs: the load reading the whole file, and the CPU-resident tensors swapped rather than dropped, against the evictions it ends | TBD |
 | the settings on the bundled llama.cpp v1.0.0 | as in [section 3](#3-settings) | how far do these figures move without the band and the other patches they ran with? | TBD |
 | Q8_0 GEMV ceiling | n/a | `llama-bench` on this card alone at depth 0 and 131072, against the 58% of bandwidth seen in a trace | TBD |

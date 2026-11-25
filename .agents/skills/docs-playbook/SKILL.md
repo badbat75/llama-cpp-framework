@@ -20,6 +20,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `pai` enabled and not deny-only, or LocalSystem), `ADMIN_GROUP = "pai"` in
   `crates/manager/src/manager/service.rs`, and the polkit rule in `xtask/src/linux/system_files.rs`.
   Check per-call authorization in `manager/service.rs` itself.
+- A llama.cpp rule is readable offline in the build's clone (`build/linux/llama.cpp`, its release from
+  `git describe`): the preset precedence (command line, then a model section, then `[*]`) is in v1.0.0's
+  `tools/server/README.md`, not `server/README.md`, and `docs/preset.md` holds the `[*]` example.
+- Before writing that a manager default is live on this machine, read the render against the commit
+  (`ls -l /etc/llama.cpp/models@default.ini`): GT5a's `[*] load-mode = none` was not in the render of 12:45,
+  an hour before f545865, and the pool's model sections already carried `load-mode = none` from GT4's hand
+  lever. The render is what the deployed manager writes; the pool's values can predate a slice.
 - Read the client module headers (`crates/core/src/client/pipe.rs`, `crates/core/src/client/dbus.rs`:
   the `As` forms, `Version`, `acting_for`, what an older manager answers) before planning a comment
   edit: they usually need none, and the manager's own rules (who is checked, when, what is recorded)
@@ -643,3 +650,4 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A fixed `height: 297mm` with `overflow: hidden` hides overflow from the page count: compare the sheet's
   `scrollHeight` and `clientHeight` under `emulateMedia({media: 'print'})` at 794x1123 px.
 - The print flag is `--no-pdf-header-footer`; `--print-to-pdf-no-header` leaves the date and URL in.
+- Never run `find /` (or any search from the root) to locate a source file: it scans every disk, hangs in D state on the busy data disk and stays behind the run. Cite the upstream repository's URL (for ROCm sources, github.com/ROCm/rocm-systems at the commit named) instead.

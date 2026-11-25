@@ -1409,7 +1409,7 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   2026-11-25): a default on ROCm plus a guide, GT5 (ARCHITECTURE.md "ROCm instances load models with
   `load-mode = none`"): GT5a (built 2026-11-25) the manager's render gives a ROCm instance's `models@<id>.ini` `[*] load-mode
   = none` when the pool's `[*]` sets none (an explicit value wins; Linux only); GT5b a hint on the unset
-  field (designer first); GT5c the R9700 guide.
+  field (designer first); GT5c the R9700 guide (written 2026-11-25).
 
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
