@@ -1098,3 +1098,166 @@ with no overflow inside the tip and no sideways scroll. 8rem also holds; 7rem is
 - A page cannot cause a segfault by design, so this is a fault in the engine. The bundled Firefox is
   Playwright's patched build, so stock Firefox may not crash at all. Still, only 22D4's layout
   triggers it (the coder's pass before the D1 decision was green in Firefox).
+
+### 22D4 amendment: the list's reason floats (user, 2026-11-25)
+
+The user tested the deployed lists (Models and server profiles). Hovering a disabled − shows its
+reason in the cell's flow (22 D4.13, D4.15), and that makes the row taller and shifts the table. They
+want a small floating box over the table instead, on hover and on focus. D4.16 to D4.20 replace
+D4.15 and the "next sibling, in the flow" placement of D4.13. The rest of D4.13 stands: the hint
+box owns the pointer handlers, and the tip is `aria-hidden` and the −'s next sibling inside the
+`span.hint-box`. The pages' Save bar line (D4.14) is unchanged.
+
+Why `position: fixed`, not `absolute` against the cell: `.table-scroll` has `overflow-x: auto`, so
+it clips both axes ([CSS Overflow 3](https://www.w3.org/TR/css-overflow-3/#overflow-properties):
+`visible` computes to `auto` when the other axis is not `visible`). An absolute box would be cut at
+the scroll box's edge, or would add to its scroll area. A fixed box takes the viewport as its
+containing block ([CSS Position 3](https://www.w3.org/TR/css-position-3/#fixed-pos)), as long as no
+ancestor has a `transform`, `filter` or `contain` (none of the table's ancestors does in `index.css`
+today). So it is neither clipped by nor counted in the scroll box, and it adds no page scroll. The
+top layer (`popover`) would also work. I chose fixed (my preference) because it needs no API that
+jsdom lacks. Unverified: whether jsdom implements `showPopover`.
+
+**22 D4.16 Out of the flow.** `.hint-tip` has `position: fixed` and a `z-index` above the sticky
+Save bar and table head (both `z-index: 1`). Showing it changes no layout. These are measured by the
+designer in the three browsers, before and after the tip shows (unit: px, tolerance 0.5):
+- the −'s row height;
+- every column's width (each `th` of the table);
+- the −'s own `getBoundingClientRect()`;
+- the `.table-scroll`'s `scrollWidth` and `scrollHeight`;
+- the document's `scrollWidth - clientWidth`, which stays 0 at 320 px and at 1280 px.
+
+`.hint-box` may drop its `min-width: 7rem`, which existed only to make room for the reason in the
+flow. Pin in jsdom: the sheet's `.hint-tip` rule has `position: fixed` and a numeric `z-index` of 2
+or more, and the tip is still the −'s next sibling in `.hint-box`.
+
+**22 D4.17 Where it opens and how it flips.** A script sets `top` and `left` inline from the −'s
+`getBoundingClientRect()` (`r`), the viewport size (`innerWidth`, `innerHeight`) and the tip's own
+size, with an 8 px gutter:
+- Default: under the −, touching it (no gap, so the pointer crosses nothing: 1.4.13 hoverable).
+  `top = r.bottom`, `left = r.left`.
+- Right edge: when `left + tipWidth > innerWidth - 8`, it aligns its right edge to the −'s right
+  edge (`left = r.right - tipWidth`), then clamps `left >= 8`.
+- Bottom edge: when `r.bottom + tipHeight > innerHeight - 8`, it opens above, touching it
+  (`top = r.top - tipHeight`).
+- Width: `max-width: min(16rem, 100vw - 16px)`, wrapping, so at 320 px it fits between the gutters.
+- While it shows, a scroll anywhere (a capturing `scroll` listener on `window`, which covers
+  `.table-scroll`) or a `resize` places it again. It never covers the − itself, so the focused −
+  stays in view ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)).
+
+Pin in jsdom with a stubbed `getBoundingClientRect` and window size:
+- a − at the top left gives `top = r.bottom` and `left = r.left`;
+- a − near the right edge gives `left = r.right - width`;
+- a − near the bottom gives `top = r.top - height`;
+- a `scroll` event re-places it.
+
+**22 D4.18 Showing, keeping, dismissing ([1.4.13](https://www.w3.org/TR/WCAG22/#content-on-hover-or-focus)).**
+- It shows only while the − cannot act, on `mouseover` and on focus of the −.
+- It stays while the pointer is over the − or the tip. The tip is a DOM child of the hint box, so
+  `mouseleave` of the box does not fire on the way to it.
+- It goes on `mouseleave` of the hint box, on blur, and on Escape. Escape keeps the focus on the −.
+- Touch: a tap on the inactive − (its click does nothing else) shows it, and a `pointerdown`
+  outside the hint box hides it.
+- An active − never shows it.
+
+**22 D4.19 Look.**
+- The tip keeps D4.13's look: a `--surface` fill, a `--border-w` solid `--control` border,
+  `--radius-check`, and `--text` on `--surface` (contrast already met by the tokens,
+  [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)).
+- It adds `box-shadow: var(--shadow)`, so it reads as above the rows it covers.
+- Forced colours: `forced-color-adjust` stays `auto`. The shadow drops and the border stays, as
+  `CanvasText`, so the box keeps a visible edge. The designer checks this in Chromium forced colours.
+- Dark mode works through the tokens.
+
+**22 D4.20 Screen readers, unchanged.** The tip stays `aria-hidden="true"` and is never a live
+region. The −'s `aria-describedby` names the hidden `${id}-reason` span (22 D4.2), so the reason is
+read once with the button.
+
+Tests to change: `fe/src/ModelProfilesDelete1.test.tsx` and `fe/src/ServerProfilesDelete1.test.tsx`.
+- The tests at 406 and 360: "a line under the −, in the same cell" becomes "a fixed box placed by
+  D4.17". Escape, touch and pointerdown outside are added.
+- The tests at 496 and 449: the "no rule takes it out of the flow" assertion becomes D4.16's
+  `position: fixed`.
+- The test at 582 (D7, no `contain`) stays.
+
+The pages' tests (`ModelProfileDelete3`, `ServerProfilePage3`, D4.14) stay. Out of scope: the
+pages' Delete reason, which stays a line in the bar.
+
+**22 D4.21 The icons: a plus and a trash can, in round outlined buttons (user, 2026-11-25, option B
+of `build/ux-review/icons-preview.html`).**
+
+The user found the bare + and − buttons poor. A trash can is the common sign for deleting a stored
+thing, and a profile is a file. A bare minus reads as "remove from this list".
+
+Where it applies:
+- The row − of the Models list and of the server profile list (`RowDelete.tsx` 170-178) changes
+  its icon from `minus` to `trash-2`.
+- The server profile list's + (`ServerProfiles.tsx` 461-465) keeps `plus`. The Models list has no
+  + today: create has no page.
+- The Save bar's Delete on both profile pages is a text button with no icon (`SaveBar.tsx` about
+  96), and stays so.
+- The round shape goes on the shared `.ot-add` class, so the tensor rule's + (`TensorPlacement.tsx`
+  335) and the instance name pencil (`InstancePage.tsx` 845) turn round too. This is on purpose:
+  one look for every icon button, and one rule, not a copy (brief 16, 17b2.2).
+- `.tag-add` is not `.ot-add`, and is out of scope.
+
+The icon:
+- `trash-2` joins `Icon.tsx`'s list, with lucide-static 1.74.0's path data (ISC, the version the
+  file already copies). Its five paths, in order:
+  `M10 11v6`, `M14 11v6`, `M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6`, `M3 6h18`,
+  `M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2`.
+  Source: https://cdn.jsdelivr.net/npm/lucide-static@1.74.0/icons/trash-2.svg
+- `minus` leaves the list once nothing uses it.
+- The svg keeps `Icon.tsx`'s attributes: 24 grid, stroke 2, round caps and joins, `currentColor`,
+  `aria-hidden`.
+
+The button:
+- Box: 40 x 40 px (`width: 40px; min-height: 40px`, as now) with `border-radius:
+  var(--radius-pill)`, which replaces the button default's `--radius`.
+- Edge and fill as now: a `--border-w` solid `--control` edge on `--bg`, the icon `--text` at the
+  `.icon` size (1.25em), centred. The target is 40 px, above
+  [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)'s 24 px.
+- The row delete carries a second class, `ot-delete`, beside `ot-add`.
+
+Hover, only while the button can act:
+- every `.ot-add` takes a `--surface` fill;
+- `.ot-add.ot-delete` also takes `--danger` for its icon and its edge;
+- an `.inactive` button changes nothing on hover.
+  This is my preference: colour on hover only, so the table is not a column of red.
+
+Inactive: as now (`.ot-add.inactive`): the icon is `--muted`, `cursor: default`, and the tip of
+D4.16 to D4.20 shows.
+
+Focus: the shared focus ring, unchanged; the outline follows the round edge
+([2.4.7](https://www.w3.org/TR/WCAG22/#focus-visible)).
+
+Dark: through the tokens. `--danger` in dark is `#ff9a8a` on `--bg` `#231d19`. Non-text contrast
+of the icon and the edge against `--bg` is met by `--text` and `--control` as today
+([1.4.11](https://www.w3.org/TR/WCAG22/#non-text-contrast)).
+
+Forced colours: the existing block stands (`ButtonText` for the icon, `GrayText` for an inactive
+one and its edge). The `--danger` hover is replaced by the system colours, so a hover there shows
+no red. That is acceptable: the icon and the name say "delete". The designer checks in Chromium
+that the round edge stays visible.
+
+Accessible names: unchanged ("Delete model profile x", "Delete server profile x", the add's hidden
+text), the same keys.
+
+The designer measures in the three browsers:
+- the button is 40 x 40 and round;
+- the row height of the Models list and of the server profile list is unchanged by the new icon,
+  measured before and after the change (tolerance 0.5 px);
+- no sideways scroll at 320 px and 200 % text.
+
+Tests to amend:
+- `fe/src/ModelProfilesDelete1.test.tsx` and `fe/src/ServerProfilesDelete1.test.tsx`: their
+  `MINUS = 'M5 12h14'` becomes the trash's paths, and the row delete carries `ot-delete`.
+- `fe/src/ServerProfiles2.test.tsx` 201: the + still has `M5 12h14` and `M12 5v14`, so it stays.
+  Any assertion there that a row delete is a minus changes.
+- `fe/src/ServerProfiles3.test.tsx` about 650: its comment about the minus's `M5 12h14` changes.
+  The `M12 5v14` selector of `fe/ux/check.js` 433 and 438 still matches only the +, so it stays.
+- New pins in the sheet: `.ot-add` has `border-radius: var(--radius-pill)`; there is an
+  `.ot-add:not(.inactive):hover` rule with `--surface`; and an `.ot-add.ot-delete:not(.inactive):hover`
+  rule with `--danger` for `color` and `border-color`.
+- `fe/src/TensorPlacement*.test.tsx` and `fe/src/InstanceNameEdit17f2.test.tsx` only if they pin
+  `.ot-add`'s radius (none found by grep).

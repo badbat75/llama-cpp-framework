@@ -649,11 +649,17 @@ Each is one React component, reused by every page.
     so the one way to grow the list reads as a control even after an empty-list line.
   - The focus ring is the shared one. Under forced colours the icon is `ButtonText` and the outline
     `ButtonBorder`.
-  - Delete of a real thing (a model or server profile) is, on its list, a `minus` icon button on
-    each row in the status cell, named with the row ("Delete model profile x"), outlined like Add;
+  - Icon buttons (`.ot-add`: a list's add, a row's delete, the tensor rule add, the name pencil)
+    are round (`--radius-pill`), 40 px, outlined `--control` on `--bg`, `--surface` on hover
+    (brief 22, 22 D4.21).
+  - Delete of a real thing (a model or server profile) is, on its list, a `trash-2` icon button on
+    each row in the status cell, named with the row ("Delete model profile x"), outlined like Add,
+    its icon and edge `--danger` on hover only;
     when it cannot act it stays, `aria-disabled` and drawn `--muted`, with its reason as description
-    and, on hover and focus, a `.hint-tip` in the flow under it in the same cell, never floating (a
-    table's scroll box clips a floating tip), kept while the pointer is over it (1.4.13). Its Confirm
+    and, on hover and focus, a `.hint-tip`: a small box with `position: fixed`, placed by script
+    under the − (or above it near the bottom, right-aligned near the right edge), so it changes no
+    row or column size and the table's scroll box does not clip it. It is kept while the pointer is
+    over it and closed by Escape (1.4.13; brief 22, "22D4 amendment", 2026-11-25). Its Confirm
     in place opens in a row of its own under the profile's row. On the thing's own page, Delete is a
     text button at the start of the Save bar's buttons, `--space-5` before Discard; when it cannot
     act, its reason is a line always shown in the bar under the buttons (user, 2026-11-24, brief 22

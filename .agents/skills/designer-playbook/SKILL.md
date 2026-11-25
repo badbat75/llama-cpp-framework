@@ -112,7 +112,8 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
   sheet would lose: prepend it to `head` (or raise its specificity) before naming it as measured.
 
 - A floating tip or popup inside a table's `.table-scroll` (overflow-x auto, so it clips both axes)
-  is cut off; brief such a tip in the top layer (`popover`) or in the flow, and in a review measure
+  is cut off if `absolute`; brief it `position: fixed` placed by script (or `popover`): in the flow
+  it resizes the row and shifts the table (user, 2026-11-25). In a review, measure
   its right edge against the scroll box and move the pointer from the control onto it (1.4.13).
 - The stub's default `key=withheld` makes the `default` server profile page show
   `server-load-failed`; set `key=set` to render it.
