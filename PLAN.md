@@ -762,7 +762,7 @@ From the Windows work of 2026-10-21, `docs/qwen3.8_27b.md` section 9.
 
 Covers: R11. Started once the steps the coordinator can do alone are done (user, 2026-11-14).
 
-**When step 10 is done (user, 2026-11-21):** cut the first pre-release, 2.99.1 (W14), with the `release`
+**When the release's goal below is met (user, 2026-11-25; was: when step 10 is done, 2026-11-21):** cut the first pre-release, 2.99.1 (W14), with the `release`
 skill: every OS's packages, the release commit, the tag `v2.99.1` and a GitHub pre-release (the tag and
 the release still get the user's go-ahead at that moment, "Actions with real effects"); then bump the
 framework to 2.99.2 and carry on toward it.
@@ -770,8 +770,9 @@ framework to 2.99.2 and carry on toward it.
 **The release's goal (user, 2026-11-25):** every profile, model and server, assignable and editable from
 the web UI. Order: after GT5b (running), 17e (an instance's model profiles), 17d (its server profile
 switch and the restart offer), 17c (create and remove an instance), then 22P and 22C (create a model
-profile from a file, a Hugging Face repository or a copy); then the rest of step 10, all before the
-release (user, same day): L2, brief 24's A3 to A10, K1 and K2, TP3, 22E.
+profile from a file, a Hugging Face repository or a copy). The release is cut once these are done, not
+at the end of step 10 (user, same day, replacing the line above it): the rest of step 10 (L2, brief 24's
+A3 to A10, K1 and K2, TP3, 22E and the items after them) comes after 2.99.1.
 
 Decided with the user on 2026-11-14: one local service on the machine, installed beside the manager by
 the same packages, listening on localhost and, when configured, on the LAN with authentication. It
