@@ -426,10 +426,10 @@ const STATES = [
     expect: [
       { selector: '#page-heading', text: S['server-profiles-title'] },
       {
-        // The plus of Icon.tsx has two strokes, and its horizontal one is the
-        // whole of the minus, which every row of the widest pool carries. The
-        // vertical stroke is the plus's own, so this is the only button it
-        // finds (22 D4 review D3).
+        // The plus of Icon.tsx has two strokes, and the vertical one is the
+        // plus's own, so this is the only button it finds: since 22 D4.21 the
+        // rows' delete is the trash can, so no row of the widest pool carries
+        // the horizontal stroke any more (22 D4 review D3, 22 D4.21).
         selector: 'main button:has(svg path[d="M12 5v14"])',
         message: 'the opener of the create form: the button with the plus',
       },

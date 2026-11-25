@@ -119,15 +119,15 @@ export async function deleteRow(path: string): Promise<DeleteAnswer> {
   }
 }
 
-/** The − of a row (22 D4.1): the shared 40 px square of a list's add, the minus
- *  icon, and the row's own words in a visually hidden span, so every row's −
- *  has a name of its own (2.4.6). A row that cannot be deleted keeps it
+/** The − of a row (22 D4.1): the shared 40 px round square of a list's add, the
+ *  trash can, and the row's own words in a visually hidden span, so every row's
+ *  − has a name of its own (2.4.6). A row that cannot be deleted keeps it
  *  focusable and `aria-disabled`, described by the reason (22 D4.2), drawn
- *  inactive (22 D4 review D2), and shows that reason as a line under it on
- *  hover and on focus (22 D4.3, 22 D4.13). The box holds the button and the
- *  reason as its two children and owns the pointer and focus handlers (22
- *  D4.13): the reason is a line of the cell under the −, so the table's scroll
- *  box never clips it and the pointer reaches it without crossing a gap. */
+ *  inactive (22 D4 review D2), and shows that reason as a box floating over the
+ *  table on hover and on focus (22 D4.3, 22 D4.13, 22 D4.16). The box holds the
+ *  button and the tip as its two children and owns the pointer and focus
+ *  handlers (22 D4.13): the tip is the button's next sibling, so the pointer
+ *  reaches it without crossing a gap, and it floats, so it takes no room. */
 export function RowDelete({
   domId,
   name,
@@ -149,11 +149,14 @@ export function RowDelete({
   open: boolean
   onPress: () => void
 }) {
-  const hint = useHint(disabled)
+  const box = useRef<HTMLSpanElement>(null)
+  const anchor = useRef<HTMLButtonElement>(null)
   const tip = useRef<HTMLSpanElement>(null)
+  const hint = useHint(disabled, box)
   const inert = disabled || busy
   return (
     <span
+      ref={box}
       className="hint-box"
       onMouseOver={hint.show}
       onMouseOut={(e) => hint.leave(e, tip)}
@@ -167,19 +170,23 @@ export function RowDelete({
       <button
         type="button"
         id={domId}
-        className={inert ? 'ot-add inactive' : 'ot-add'}
+        ref={anchor}
+        className={inert ? 'ot-add ot-delete inactive' : 'ot-add ot-delete'}
         aria-expanded={open}
         aria-disabled={inert || undefined}
         aria-describedby={disabled ? `${domId}-reason` : undefined}
         onClick={() => {
-          if (!inert) onPress()
+          // A tap on the − that cannot act shows its reason (22 D4.18): a touch
+          // has no hover, and the click of a tap does nothing else.
+          if (inert) hint.show()
+          else onPress()
         }}
       >
-        <Icon name="minus" />
+        <Icon name="trash-2" />
         <span className="visually-hidden">{name}</span>
       </button>
       {reason !== null && hint.shown && (
-        <HintTip tipRef={tip} reason={reason} />
+        <HintTip tipRef={tip} anchorRef={anchor} reason={reason} />
       )}
     </span>
   )

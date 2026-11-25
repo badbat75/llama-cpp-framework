@@ -356,11 +356,12 @@ test('10 R1.6: no forced-colours block is added, none of them names the scroll b
     .sort()
   expect(
     lifted,
-    'the shadow token draws exactly these boxes: table is gone, .table-scroll took the lift (R1.4, R1.6)',
+    'the shadow token draws exactly these boxes: table is gone, .table-scroll took the lift (R1.4, R1.6), and the floating tip joins them (22 D4.19)',
   ).toEqual([
-    // The brief's six, in the sorted order of the list above.
+    // The brief's six plus the tip of 22 D4.19, in the sorted order of the list above.
     '.card',
     '.dialog',
+    '.hint-tip',
     '.save-bar',
     '.signin-panel',
     '.table-scroll',

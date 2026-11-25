@@ -488,7 +488,7 @@ export const EN: Record<string, string> = {
     'Delete the model profile {0}? Its settings are removed, with any unsaved changes on this page. The model file is not deleted. This cannot be undone.',
   'model-profile-deleted': 'The model profile {0} was deleted.',
   'api-model-profile-enabled':
-    '{0} is switched on, so it cannot be deleted. Switch it off in the list of model profiles first.',
+    '{0} is switched on, so it cannot be deleted. Switch it off first.',
   'api-model-profile-assigned':
     "{0} is given to the instances {1}, so it cannot be deleted. Remove it from each of them first, on the instance's page; a row set to Off counts too.",
   'delete-unknown':

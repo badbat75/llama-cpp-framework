@@ -432,7 +432,7 @@ test('section 0, 10 R1.6: the boxes lifted by a shadow alone carry the 1px trans
 
 // ── H2b.6: nothing else moves ────────────────────────────────────────────
 
-test('H2b.6: the notice and the alert keep their border and --radius, the banner and the nav sit on the paper (H5a.2, H5b.1), only the four containers take --shadow, and no container gains a state rule', () => {
+test('H2b.6: the notice and the alert keep their border and --radius, the banner and the nav sit on the paper (H5a.2, H5b.1), only the four containers take --shadow (and the floating tip, 22 D4.19), and no container gains a state rule', () => {
   for (const [sel, border] of [
     ['.notice', '1px solid var(--control)'],
     ['.alert', '1px solid var(--danger)'],
@@ -477,11 +477,12 @@ test('H2b.6: the notice and the alert keep their border and --radius, the banner
     .sort()
   expect(
     lifted,
-    'the boxes drawn with the shadow token are exactly the containers of H2b (.card, .table-scroll, .save-bar, .dialog), the tile H6a.6 and the sign-in panel H7.6 lift with the same token: table is gone, the box took the lift (10 R1.4, R1.5)',
+    'the boxes drawn with the shadow token are exactly the containers of H2b (.card, .table-scroll, .save-bar, .dialog), the tile H6a.6 and the sign-in panel H7.6 lift with the same token, and the floating tip 22 D4.19: table is gone, the box took the lift (10 R1.4, R1.5)',
   ).toEqual(
     [
       '.card',
       '.dialog',
+      '.hint-tip',
       '.save-bar',
       '.signin-panel',
       '.tile',
@@ -507,8 +508,13 @@ test('H2b.6: the notice and the alert keep their border and --radius, the banner
   expect(stateful, 'no state rule on a container').toEqual([])
   expect(
     RULES.filter((r) => r.flat.includes(':hover')).map((r) => r.flat),
-    'the sheet keeps the nav link of 2h and the id link H6a.7 underlines under the pointer, and nothing else: H2b adds no hover look (section 0)',
-  ).toEqual(['.nav a:hover', '.tile-id:hover'])
+    'the sheet keeps the nav link of 2h and the id link H6a.7 underlines under the pointer, and the round icon button of 22 D4.21 (its fill, and the --danger of a delete), and nothing else: H2b adds no hover look (section 0)',
+  ).toEqual([
+    '.nav a:hover',
+    '.tile-id:hover',
+    '.ot-add:not(.inactive):hover',
+    '.ot-add.ot-delete:not(.inactive):hover',
+  ])
 })
 
 // ── Section 4: text spacing ──────────────────────────────────────────────

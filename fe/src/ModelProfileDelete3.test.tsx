@@ -120,7 +120,7 @@ function text(el: Element | null): string {
   return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
-// ── The stylesheet reader (22 D4.15 pins, the local copy) ─────────────
+// ── The stylesheet reader (22 D4.14 pins, the local copy) ─────────────
 
 const CSS = readFileSync(
   join(import.meta.dirname, 'index.css'),
@@ -143,6 +143,33 @@ const RULES: Rule[] = [...CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
 const TOP = RULES.filter((r) => r.depth === 0)
 
 const norm = (v: string): string => v.replace(/\s+/g, ' ').trim()
+
+/** The declarations of every top-level rule that reaches `el`, in the sheet's
+ *  order: a selector part whose last token is the element's tag, class or id,
+ *  and whose earlier tokens are among its ancestors' (the cascade reader of
+ *  22 D4.16, read for the bar's classless `p`). A pseudo-class on the element
+ *  (`p:hover`) is not a rule that places it, so this matches none. */
+function reaches(el: Element): string[] {
+  const own = new Set([el.tagName.toLowerCase()])
+  for (const c of el.classList) own.add(`.${c}`)
+  if (el.id) own.add(`#${el.id}`)
+  const anc = new Set<string>()
+  for (let n = el.parentElement; n; n = n.parentElement) {
+    anc.add(n.tagName.toLowerCase())
+    for (const c of n.classList) anc.add(`.${c}`)
+    if (n.id) anc.add(`#${n.id}`)
+  }
+  return TOP.filter((r) =>
+    r.compact.split(',').some((part) => {
+      const tokens = part.match(/[#.]?[-a-z0-9_]+/g) ?? []
+      if (tokens.length === 0) return false
+      return (
+        own.has(tokens[tokens.length - 1]) &&
+        tokens.slice(0, -1).every((t) => anc.has(t))
+      )
+    }),
+  ).flatMap((r) => r.body.split(';').map((d) => norm(d)))
+}
 
 // ── 22 D4.10, D4.14: the disabled Delete and its reason ─────────────────
 
@@ -245,7 +272,7 @@ test('22 D4.10, D4.14: a switched-on profile’s bar Delete is aria-disabled and
 
 // ── 22 D4.14: the reason is a line of the bar (22D4 review D1) ──────────
 
-test('22 D4.14 (22 D4 review D1): the reason is a line of the Save bar, a child of the bar after its buttons where the confirm opens, not a box wrapped around the Delete, and the sheet gives .hint-tip no position: absolute or fixed', async () => {
+test('22 D4.14 (22 D4 review D1): the reason is a line of the Save bar, a child of the bar after its buttons where the confirm opens, not a box wrapped around the Delete, and no rule that reaches the reason takes it out of the flow', async () => {
   const { main } = await loaded({ modelProfile: () => onDoc() })
   const del = deleteButton(main)
   const bar = main.querySelector('.save-bar')
@@ -264,16 +291,20 @@ test('22 D4.14 (22 D4 review D1): the reason is a line of the Save bar, a child 
     '22 D4.14: after the buttons, where the confirm opens',
   ).toBe(true)
   expect(before(del, reason!), 'and after the Delete').toBe(true)
-  // 22 D4.15 as far as jsdom reaches, the sheet text: a `position: absolute`
-  // or `fixed` takes the box out of the flow, which is what the decision
-  // removed, so no rule that reaches the reason declares one.
-  const decls = TOP.filter((r) =>
-    r.compact.split(',').includes('.hint-tip'),
-  ).flatMap((r) => r.body.split(';').map((d) => norm(d)))
-  expect(decls.length, 'the sheet has a .hint-tip rule').toBeGreaterThan(0)
+  // 22 D4.14 as far as jsdom reaches, the sheet text: the reason is a line of
+  // the bar, so it stays in the bar's flow, and no rule that reaches it takes
+  // it out (a `position: absolute` or `fixed` would). The 22D4 amendment's
+  // 22 D4.16 retired the old 22 D4.15 read of `.hint-tip`: the list's tip is
+  // `position: fixed` now (ListDeleteTip.test.tsx pins it), and the page's
+  // reason is not a tip.
+  const decls = reaches(reason!)
   expect(
-    decls.filter((d) => /^position:(absolute|fixed)$/.test(d)),
-    '22 D4.15: no absolute, no fixed, nothing on a layer of its own',
+    decls.length,
+    'the sheet has rules reaching the reason (the `p` rule)',
+  ).toBeGreaterThan(0)
+  expect(
+    decls.filter((d) => /^position:\s*(absolute|fixed)$/.test(d)),
+    '22 D4.14: no absolute, no fixed, nothing on a layer of its own',
   ).toEqual([])
 })
 

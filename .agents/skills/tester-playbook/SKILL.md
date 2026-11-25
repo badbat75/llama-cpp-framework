@@ -410,6 +410,16 @@ fixes where in the rule the new declaration sits: add it last, and name that in 
 before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-width` or
 `grid-template-columns` fix reds nothing there), and `CLASSES` keeps a slice namespace
 (`instance-(rename|label|name)*`, `ot*`) outside the frozen list, so a class inside one needs no entry.
+- A helper that reads a declaration's VALUE (`values(decls, 'position')` returns `fixed`) must be
+  compared with a value literal: an expected `'position: fixed'` is a test-side red whose output reads
+  "received 'fixed'", which is right. Compare like with like, and sweep every call site of the helper.
+- A declaration filter must allow the space after the colon: the reader's `norm` leaves
+  `position: fixed`, so `/^position:(absolute|fixed)$/` matches NOTHING and the pin passes vacuously.
+  Write `/^position:\s*(absolute|fixed)$/` and prove the teeth with a css mutant that ADDS the
+  declaration (a pin of an absence that stays green under that mutant is a pin of nothing).
+- A frozen `:hover` (or any `toEqual`) allowlist sits after another in one test: the first red masks
+  it, so fixing one list reveals the next (H2b.6's shadow list hid its hover list, which 22 D4.21's
+  `.ot-add` hovers move). Run the whole test after each amendment, not just the assertion you came for.
 - Pin a look the brief gives a control ("40 px, no border, no fill") as the CASCADE for the classes the
   element carries: read `button.classList` off the page, keep the top-level rules whose selector is the
   element's tag or a compound of those classes, order them by class count then sheet order, merge their
@@ -447,6 +457,13 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
   OUTSIDE the rule (the pin stays red on a correct fix): anchor inside, and read the rule back.
 - Send a test that cannot fail in jsdom (real layout, focus movement, `fireEvent.click` moving no focus,
   clipping) to the UX check, or state it as unproven.
+- Pin a script's PLACEMENT (a floating tip's `top`/`left`) in jsdom by stubbing the geometry it reads:
+  `vi.spyOn(window, 'innerWidth', 'get')` works (probed: it is an accessor), assign
+  `el.getBoundingClientRect = () => rect` per instance, give the box `offsetWidth`/`offsetHeight` with
+  `Object.defineProperty` when the brief says "its own size" without naming a reading, then
+  `fireEvent.scroll(<the scroll box>)` (a capturing window listener catches it) and
+  `fireEvent(window, new Event('resize'))`, and parse `el.style.top`/`el.style.left`. Absent inline
+  placement reads `NaN`, which is the right red before the script exists (22 D4.17).
 - Pin a `preventDefault()` with the return of `fireEvent.keyDown(box, { key: 'Enter' })` (false when the
   handler prevented it): jsdom never runs the key's default action, so the implicit submit, and the Enter
   that presses the control the handler just focused, are invisible here and only the prevention is

@@ -36,9 +36,10 @@ export type IconName =
   | 'lock-open'
   | 'circle-alert'
   | 'plus'
-  // 22 D2.2 (fe/briefs/22-model-sources.md, section 22D2): the delete of a
-  // profile, the horizontal stroke of the plus with its vertical one dropped.
-  | 'minus'
+  // 22 D4.21 (fe/briefs/22-model-sources.md, "22D4 amendment"): the delete of a
+  // list row. It takes the place of 22 D2.2's `minus`, which nothing uses once
+  // the rows' − is a can.
+  | 'trash-2'
   | 'x'
   | 'check'
   // U17c (fe/briefs/17-ux-pass.md): the arrows of the sortable table's headers,
@@ -183,10 +184,18 @@ const SHAPES: Record<IconName, ReactNode> = {
       <path d="M12 5v14" />
     </>
   ),
-  // 22 D2.2: the delete of a profile, in the status row of its page. The path
-  // data is lucide-static icons/minus.svg: the plus's horizontal stroke, with
-  // no vertical one.
-  minus: <path d="M5 12h14" />,
+  // 22 D4.21: the delete of a list row. The path data is lucide-static 1.74.0
+  // icons/trash-2.svg (ISC), the five paths in the order the package writes
+  // them: the two strokes inside the can, the can, the lid's line, the handle.
+  'trash-2': (
+    <>
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </>
+  ),
   x: (
     <>
       <path d="M18 6 6 18" />

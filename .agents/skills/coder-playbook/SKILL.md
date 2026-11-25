@@ -226,6 +226,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `Set` and its class list allows a card's own namespace: a new rule naming an id
   the sheet already selects, or a class of that namespace, is free; a new id
   outside it is red.
+- The sheet readers come in two shapes and each has a trap: `values(decls, 'x')` STRIPS the property
+  (`d.slice(prop.length + 1)`), so its expectation is `['v']`, and an expectation written
+  `['x: v']` is unsatisfiable by any CSS (22D4 amendment: `ListDeleteTip.test.tsx` 333, 601). A
+  `decls.filter((d) => /^x:(a|b)$/.test(d))` must spell the space the sheet writes: `/^position:
+  (absolute|fixed)$/` never matches `position: fixed`, so the filter is empty and the assertion passes
+  vacuously (`ModelProfileDelete3.test.tsx` 275, `ServerProfilePage3.test.tsx`).
+- `box-shadow: var(--shadow)` is pinned as an EXHAUSTIVE list in two places at once
+  (`HearthH2b.test.ts` H2b.6, `Reflow.test.ts` 10 R1.6): a new lifted box needs its selector added to
+  both lists, so a brief that lifts a new box leaves those two reds for the tester.
 - `topStyling(sel)` (exactly one top-level rule per selector) and `Reflow.test.ts`'s
   `declaring([...])` ("declares exactly these properties and nothing else") read the SAME rule: a
   selector pinned by both cannot gain a declaration, and the pair is a test-side conflict to report.
@@ -557,7 +566,11 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   Status cell reddened 26 tests across four files. The cell-text pins and the hidden-name-in-the-cell
   rule are a pair to report, not to satisfy by moving the name to `aria-label` (the brief forbids it).
 - A test helper that finds a `+` by the plus icon's horizontal stroke (`PLUS[0]` is `M5 12h14`, the same
-  path as the `minus` icon) counts every − as a list add.
+  path as the `minus` icon) counts every − as a list add; the rows' − is `trash-2` since 22 D4.21, so
+  the stroke names only the adds, and a comment saying a row carries the minus is stale.
+- A test that spies on `HTMLElement.prototype`'s `offsetWidth`/`offsetHeight` (22 D4.17 D1) gives EVERY
+  element the stub size and records the inline style at each read: a placement script must reset its own
+  inline `top`/`left` before measuring, and it cannot read any other element's real size in that file.
 - The react-hooks `refs` lint reddens `ref.current = props` written in the render body ("Cannot update ref
   during render"): keep the latest props object in a ref from a plain `useEffect`, whose callbacks run
   after mount.

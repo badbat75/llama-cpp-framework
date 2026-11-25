@@ -2055,7 +2055,10 @@ ul.check-list {
    last rule's bottom edge. One token, less than the `--space-4` between two
    rules, so the + reads as the list's own control and not as another rule. This
    is the rule of every list's add (brief 16, 17b2.2: share the class, not a
-   copy of these declarations). */
+   copy of these declarations). 22 D4.21 makes it round: the pill replaces the
+   button default's --radius, one look for every icon button, the row's delete
+   and the instance's pencil included, and the focus ring follows the round edge
+   (2.4.7). */
 .ot-add {
   display: inline-flex;
   align-items: center;
@@ -2065,6 +2068,7 @@ ul.check-list {
   margin-top: var(--space-3);
   padding: 0;
   border: var(--border-w) solid var(--control);
+  border-radius: var(--radius-pill);
   background: var(--bg);
   color: var(--text);
   /* 22 D4.1: in a list's Status cell the box is a flex item, and a flex item
@@ -2072,6 +2076,23 @@ ul.check-list {
      switch instead of being pulled across the line. On an add that is no flex
      item it does nothing. */
   flex: none;
+}
+
+/* The hover of an icon button that can act (22 D4.21): the fill of a card, the
+   cue that the button is under the pointer. An `.inactive` one changes nothing:
+   colour on hover is the active button's, so a table of rows that cannot act is
+   not a column of boxes moving. */
+.ot-add:not(.inactive):hover {
+  background: var(--surface);
+}
+
+/* The same, for a delete (22 D4.21): the trash and its edge take --danger, so
+   the button that removes a stored profile says so at the moment it is
+   pointed at. Only on hover: the table stays one colour (the designer's
+   preference, brief 22 "22D4 amendment"). */
+.ot-add.ot-delete:not(.inactive):hover {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 /* The − of a row that cannot act (22 D4 review D2, fe/DESIGN.md "aria-disabled
@@ -2185,38 +2206,50 @@ p + .ot-add {
   align-items: center;
 }
 
-/* The box of a control and the reason it shows when it cannot act (22 D4.13,
-   22 D4.15): a column, so the reason is a line under the control inside the
-   same cell, and the cell's width is what the reason wraps within. It also
-   keeps the status column at one width, with or without the reason, so the
-   control does not move when the reason shows (22 D4.15). */
+/* The box of a control and the reason it shows when it cannot act (22 D4.13): a
+   column, so the control and the reason are its two children and the reason is
+   the control's next sibling, which is what keeps the pointer on the box on the
+   way to the reason (1.4.13). The reason floats since 22 D4.16, so the column
+   holds no room for it: the min-width is 22 D8's, the width the Status column
+   keeps with the reason shown and hidden, so the control never moves. */
 .hint-box {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  /* 22 D4.15: the column keeps one width with or without the reason, so the minus stays put. */
+  /* 22 D8: the column keeps one width with or without the reason, so the − stays put. */
   min-width: 7rem;
 }
 
 /* The reason a disabled control cannot act (22 D4.3, 22 D4.13): the words the
-   control's description carries, shown under it on hover and on focus, so a
-   pointer user learns what to change. In the flow, under the control (22
-   D4.15): nothing places it, so the table's scroll box never clips it and the
-   pointer crosses no gap to reach it. At most 16rem wide so it wraps, the
-   surface fill and the control edge of a card. No font-size: the body's text
-   size is the one that must stay readable (1.4.4). The list cells it sits in
-   are `white-space: nowrap`, so the rule that styles the reason undoes the
-   break they pass down (22 D5, 1.4.10), the way `.confirm-row td` does for the
-   confirm question: at 320 px and at 200 % text the reason wraps inside the
-   cell instead of running past the table's box. */
+   control's description carries, shown on hover and on focus, so a pointer user
+   learns what to change. It floats (22 D4.16): `position: fixed` takes it out of
+   the cell's flow, so showing it changes no row's height, no column's width and
+   no scroll box, and `z-index` 2 puts it above the sticky Save bar and the table
+   head, both on layer 1. Fixed and not absolute against the cell: `.table-scroll`
+   has `overflow-x: auto`, which clips both axes, so an absolute box would be cut
+   at its edge or counted in its scroll area (CSS Overflow 3); a fixed box takes
+   the viewport as its containing block (CSS Position 3). A script sets its `top`
+   and `left` (22 D4.17): under the −, touching it, so the pointer crosses no gap
+   (1.4.13), flipping to the −'s right edge and above it at the viewport's edges.
+   At most 16rem, and at most the viewport less an 8 px gutter on each side, so
+   it never runs past the edges of a 320 px screen (1.4.10), wrapping. The
+   surface fill, the control edge and the shadow of a lifted box, so it reads as
+   above the rows it covers (22 D4.19); the edge is the cue that survives forced
+   colours, where the shadow drops and `forced-color-adjust` stays auto. No
+   font-size: the body's text size is the one that must stay readable (1.4.4). The
+   list cells it floats over are `white-space: nowrap`, so the rule that styles
+   the reason undoes the break they pass down (22 D5). */
 .hint-tip {
+  position: fixed;
+  z-index: 2;
   white-space: normal;
-  max-width: 16rem;
+  max-width: min(16rem, 100vw - 16px);
   padding: var(--space-1) var(--space-2);
   background: var(--surface);
   border: var(--border-w) solid var(--control);
   border-radius: var(--radius-check);
   color: var(--text);
+  box-shadow: var(--shadow);
 }
 
 /* Sign-in: labels above their fields. */

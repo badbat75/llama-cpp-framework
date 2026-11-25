@@ -647,9 +647,11 @@ test('16 17b2.5: the ux check server-profiles-new state opens the form through t
   // state is the check's own measurement.
   //
   // The stroke named is the plus's vertical one, not its horizontal one: 22D4
-  // review D3. `M5 12h14` is the whole of the minus, which every row's − of
-  // the pool carries, so a state naming it matches two buttons and Playwright
-  // throws a strict-mode violation. The vertical stroke is the plus's own.
+  // review D3. `M5 12h14` was the whole of the minus every row's − of the pool
+  // carried, so a state naming it matched two buttons and Playwright threw a
+  // strict-mode violation. 22 D4.21 makes the row's − a trash can, so the
+  // horizontal stroke is the plus's alone today; the state keeps naming the
+  // vertical one, the plus's own in either look.
   const check = readFileSync(
     join(import.meta.dirname, '..', 'ux', 'check.js'),
     'utf8',

@@ -10,10 +10,12 @@
 // under the value, the group wrapping inside the table's scroll box) are the
 // `fe/ux` check's; what the cell, the − and the reason must declare is pinned
 // here as the sheet text, the way 17b2.2 does. 22 D4.13, the review's D1
-// decision, is pinned here too: the reason sits in the normal flow of the cell
-// that holds the −, so it is not placed by a script and no rule takes it out of
-// the flow. The helpers and the stylesheet reader are local copies: a test file
-// imports no other test file.
+// decision, is pinned here too as the 22D4 amendment leaves it: the hint box
+// owns the pointer handlers and the tip is the −'s next sibling inside it. The
+// tip floats since that amendment (22 D4.16 to D4.20), placed by a script
+// against the viewport: 22 D4.16 to D4.22 are ListDeleteTip.test.tsx. The
+// helpers and the stylesheet reader are local copies: a test file imports no
+// other test file.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -39,8 +41,15 @@ import {
   type ServerProfile,
 } from './test/bff.ts'
 
-/** The minus of `Icon.tsx` (22 D2.2). */
-const MINUS = 'M5 12h14'
+/** `trash-2` of `Icon.tsx`: lucide-static 1.74.0's icons/trash-2.svg, the five
+ *  paths in the order the package writes them (22 D4.21). */
+const TRASH = [
+  'M10 11v6',
+  'M14 11v6',
+  'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6',
+  'M3 6h18',
+  'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
+]
 const PLUS_VERTICAL = 'M12 5v14'
 
 /** One row of GET /api/profiles/server. */
@@ -241,7 +250,7 @@ function cascade(el: HTMLElement): {
 
 // ── 22 D4.1: the − on every row ─────────────────────────────────────────
 
-test('22 D4.1: every row has a − in its Used by cell after the value, in the shared 40 px .ot-add square with flex: none, the aria-hidden minus icon and a visually hidden server-profiles-delete-row naming it with the row id, in a cell that is a wrapping flex row with gap var(--space-3) and align-items center', async () => {
+test('22 D4.1 (as 22 D4.21 changes its icon): every row has a − in its Used by cell after the value, in the shared 40 px .ot-add square with flex: none and the ot-delete class, the aria-hidden trash-2 icon and a visually hidden server-profiles-delete-row naming it with the row id, in a cell that is a wrapping flex row with gap var(--space-3) and align-items center', async () => {
   const { main } = await loaded()
   const rs = dataRows(main)
   expect(rs, 'one row per profile').toHaveLength(ROWS.length)
@@ -283,8 +292,17 @@ test('22 D4.1: every row has a − in its Used by cell after the value, in the s
     const paths = [...svg!.querySelectorAll('path')].map((p) =>
       p.getAttribute('d'),
     )
-    expect(paths, 'the minus: the horizontal stroke').toEqual([MINUS])
-    expect(paths, 'and no vertical stroke').not.toContain(PLUS_VERTICAL)
+    expect(paths, '22 D4.21: the trash can, in order').toEqual(TRASH)
+    expect(paths, 'and no vertical stroke: the − is no plus').not.toContain(
+      PLUS_VERTICAL,
+    )
+    expect(minus.classList.contains('ot-add'), 'the shared icon button').toBe(
+      true,
+    )
+    expect(
+      minus.classList.contains('ot-delete'),
+      '22 D4.21: a delete carries its own class beside it',
+    ).toBe(true)
     expect(
       text(minus.querySelector('span.visually-hidden')),
       '4.1.2, 2.4.6: the name is the row’s own',
@@ -357,7 +375,7 @@ test('22 D4.2: the − of a row no instance uses is active; a row an instance us
 
 // ── 22 D4.3, D4.13: the reason beside the − ─────────────────────────────
 
-test('22 D4.3, D4.13: hovering the − of a profile an instance uses, and focusing it, shows its reason as a .hint-tip line under the − in the same cell (a --surface fill, a --control border, at most 16rem wide, wrapping, never over the button); it stays while the pointer is over it, the pointer leaving the box hides it, and an active − shows nothing', async () => {
+test('22 D4.3, D4.13, D4.18 (as 22 D4.16 to D4.18 amend them): hovering the − of a profile an instance uses, and focusing it, shows its reason as a .hint-tip box floating over the table (a --surface fill, a --control border, at most min(16rem, 100vw - 16px) wide, wrapping, never over the button, placed by 22 D4.17); it stays while the pointer is over it, the pointer leaving the box hides it, Escape hides it and keeps the focus on the −, a tap on the inactive − shows it and a pointerdown outside the box hides it, and an active − shows nothing', async () => {
   const { main } = await loaded()
   const box = boxOf(main, 'default')
   const minus = minusOf(main, 'default')
@@ -389,7 +407,10 @@ test('22 D4.3, D4.13: hovering the − of a profile an instance uses, and focusi
     `${norm(look['border'] ?? '')} ${norm(look['border-color'] ?? '')}`,
     'a --control border',
   ).toContain('var(--control)')
-  expect(norm(look['max-width'] ?? ''), 'at most 16rem wide').toBe('16rem')
+  expect(
+    (look['max-width'] ?? '').replace(/\s+/g, ''),
+    '22 D4.17: at most 16rem, and never past the gutters at 320 px (1.4.10)',
+  ).toBe('min(16rem,100vw-16px)')
   expect(norm(look['white-space'] ?? 'normal'), 'and it wraps').not.toBe(
     'nowrap',
   )
@@ -422,6 +443,10 @@ test('22 D4.3, D4.13: hovering the − of a profile an instance uses, and focusi
   fireEvent.keyDown(minus, { key: 'Escape' })
   await flushTasks()
   expect(shown(), '22 D4.13: Escape hides it').toHaveLength(0)
+  expect(
+    document.activeElement,
+    '22 D4.18: Escape keeps the focus on the −, it sends the user nowhere',
+  ).toBe(minus)
   // Escape leaves the focus on the −, and a focus() on an element that already
   // has it fires no focus event (probed): the focus has to leave and come back
   // for the reason to show again (22 D4.13: shown on focus, hidden on blur).
@@ -433,6 +458,18 @@ test('22 D4.3, D4.13: hovering the − of a profile an instance uses, and focusi
   minus.blur()
   await flushTasks()
   expect(shown(), 'and it goes with the focus').toHaveLength(0)
+  // 22 D4.18: touch. A tap on the inactive − shows the reason (its click does
+  // nothing else), and a pointerdown outside the box hides it.
+  fireEvent.pointerDown(minus, { pointerType: 'touch' })
+  fireEvent.click(minus)
+  await flushTasks()
+  expect(shown(), '22 D4.18: a tap on the inactive − shows it').toHaveLength(1)
+  fireEvent.pointerDown(document.body)
+  await flushTasks()
+  expect(
+    shown(),
+    '22 D4.18: a pointerdown outside the box hides it',
+  ).toHaveLength(0)
   // An active − shows nothing: its name says what it does.
   const active = minusOf(main, 'qwen-27b')
   fireEvent.mouseOver(active)
@@ -444,9 +481,9 @@ test('22 D4.3, D4.13: hovering the − of a profile an instance uses, and focusi
   ).toHaveLength(1)
 })
 
-// ── 22 D4.13: the reason is in the flow (22D4 review D1) ────────────────
+// ── 22 D4.13, D4.16: the reason floats (22D4 review D1, amended) ────────
 
-test('22 D4.13 (22 D4 review D1): the − and its reason are siblings in the .hint-box of the cell, the − first so the reason starts under it, and no rule that reaches the reason takes it out of the flow', async () => {
+test('22 D4.13, D4.16 (22 D4 review D1, as the 22D4 amendment amends it): the − and its reason are siblings in the .hint-box of the cell, the − first, and the rule that styles the reason places it against the viewport (position: fixed), so showing it changes no layout', async () => {
   const { main } = await loaded()
   const cell = usedByCell(main, 'default')
   const box = boxOf(main, 'default')
@@ -469,21 +506,22 @@ test('22 D4.13 (22 D4 review D1): the − and its reason are siblings in the .hi
     box.firstElementChild,
     '22 D4.13: the − comes first, so the reason starts under it',
   ).toBe(minus)
-  // 22 D4.13: the reason is in the normal flow, so nothing places it. A
-  // `position: absolute` or `fixed` takes the box out of the flow, which is
-  // what the decision removed, and no rule that reaches the reason declares it.
+  // 22 D4.16: the reason floats. `position: fixed` takes it out of the cell's
+  // flow, so showing it changes no row height, no column width and no scroll
+  // box: the amendment's replacement for the review's "in the flow". The
+  // measurements are the designer's, the declaration is pinned here.
   const decls = TOP.filter((r) =>
     r.compact.split(',').includes('.hint-tip'),
   ).flatMap((r) => r.body.split(';').map((d) => norm(d)))
   expect(decls.length, 'the reason has rules in the sheet').toBeGreaterThan(0)
   expect(
-    decls.filter((d) => /^position:(absolute|fixed)$/.test(d)),
-    '22 D4.13: no absolute, no fixed, nothing on a layer of its own',
-  ).toEqual([])
+    decls.filter((d) => d.startsWith('position:')),
+    '22 D4.16: the reason is placed against the viewport and not against the cell, so the table’s scroll box neither clips it nor counts it',
+  ).toEqual(['position: fixed'])
   expect(
     cascade(line!).decls['position'],
-    '22 D4.13: the reason is in the flow: no position reaches it',
-  ).toBeUndefined()
+    '22 D4.16: the rule that reaches the shown reason says fixed',
+  ).toBe('fixed')
 })
 
 // ── 22 D4.4: the confirm row ────────────────────────────────────────────

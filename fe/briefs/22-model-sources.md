@@ -1343,3 +1343,86 @@ The tester pins these first, in this order:
 4. P.8 and P.9: Show quants and the quants.
 5. P.10 with P.9a and P.10a: the refusals.
 6. Then P.4, P.7, P.11 and P.12.
+
+### 22D4 amendment review (designer, 2026-11-25, partial)
+
+Measured in Chromium with `build/ux-review/d4amend.js`. The Firefox and WebKit runs were stopped
+before they finished.
+
+- D4.16 met. When the tip shows, the row height, the `th` widths, the −'s position, the scroll
+  box's `scrollWidth` and `scrollHeight`, and the page's sideways scroll are all unchanged: in both
+  lists, at 1280 and 320 px, light, dark and forced colours.
+- D4.18 met at 1280 and 320 px:
+  - hover shows the tip, and moving onto it keeps it;
+  - leaving the box hides it;
+  - focus shows it, and Escape hides it with the focus kept on the button.
+  - Touch was not measured: the tap timed out in the script.
+- D4.19 to D4.22 met for the look and the icons:
+  - the tip has a `--surface` fill and a `--control` border, which turns black in forced colours;
+  - every `.ot-add` button is 40 x 40 and round: the server profile +, the row trash can (5 paths),
+    the tensor rule + and the pencil;
+  - the delete turns `--danger` on hover and an inactive one does not change.
+- D4.17 not met near the edges at 320 px (D1). `place()` (`fe/src/Hint.tsx` 97-104) reads the tip's
+  `offsetWidth` and `offsetHeight` before giving it a position. The tip is then measured where it
+  sits in the flow, narrowed by the space left to the viewport's right edge.
+  - The models list at the bottom edge: the tip opens above with a 27 px gap to the − (the height
+    measured while narrow), which breaks "touching" (1.4.13 hoverable).
+  - The server profile list at the right edge: the tip is squeezed to 104 px wide and 273 px tall,
+    its right edge on the viewport edge, with no 8 px gutter.
+  - Fix: set `left: 0; top: 0` before measuring, either in `place()` or as `.hint-tip { top: 0;
+    left: 0; }` in the sheet. Not yet measured as a candidate: `build/ux-review/d4fix.js` is written
+    for it.
+
+**D1 fix measured (Chromium, `build/ux-review/d4fix.js`, 2026-11-25).** The candidate is `top: 0;
+left: 0` set on the sheet's own `.hint-tip` rule, at its real place (CSSOM `setProperty`), at 320 and
+1280 px with the viewport 500 px tall, in both lists, at the right and bottom edges.
+- Built, at 320 px:
+  - models list, bottom edge: a 26 px gap above the − (tip 414, − 440);
+  - server profile list: the tip is 100 x 273 px, its right edge at 320 (no gutter), with gaps of
+    78 px and more.
+- With the fix, every case touches the − (above or below), aligned to its end at 320 px and to its
+  start at 1280 px. The sizes are 197 x 36 (models) and 256 x 89 (servers), inside the 8 px
+  gutters, with no sideways scroll. 1280 px was already right.
+- The form the coder should use: the reset in `place()`, setting `tip.style.top` and
+  `tip.style.left` to `0px` before reading `offsetWidth` and `offsetHeight`. The sheet form fixes
+  only the first placement, while inline styles are absent. A re-placement on scroll or resize
+  would still measure the tip at its previous place. The two are identical for the first placement,
+  which is what was measured.
+- Same round (from the reviewer):
+  - Escape hides a hover-shown tip even when the focus is elsewhere (a document `keydown` listener
+    while the tip shows);
+  - after a flip above, `top` is clamped to the 8 px gutter.
+
+**D1 re-measured on the built code (Chromium, 2026-11-25).** At 320 and 1280 px, in both lists, at
+the right and bottom edges, the tip touches the − (below, or above after a flip). It is aligned to
+the −'s end at 320 px and its start at 1280 px, 197 x 36 or 256 x 89 inside the 8 px gutters, with
+no sideways scroll. D1 met. Firefox, WebKit, touch and the full UX check are still to run.
+
+### 22D4 amendment full pass (designer, 2026-11-25)
+
+Built code; `build/ux-review/d4amend.js`, `dbg.js` and `dbg2.js` in Chromium, Firefox and WebKit.
+- D4.16 met in all three browsers. When the tip shows, the row height, the column widths, the −'s
+  position, the scroll box's size and the page's sideways scroll are unchanged: in both lists, at
+  1280 and 320 px, light, dark (and Chromium forced colours), and at the right and bottom edges.
+- D4.17 met. The tip touches the − below it, or above it after a flip, aligned to its start (1280 px)
+  or its end (320 px), inside the gutters.
+- D4.18 met.
+  - Hover shows the tip. Moving the pointer straight down onto it keeps it. (A diagonal toward the
+    centre of an end-aligned tip crosses the status cell first, a path the criterion does not ask
+    for.) Leaving hides it.
+  - Focus shows it, and Escape hides it with the focus kept on the −.
+  - Touch in WebKit: a tap shows it, and a tap elsewhere hides it.
+  - Chromium's touch emulation sends the mouse back to its earlier point after the tap (a
+    `mouseleave`), so the tip closes there. This is my reading of the event log, not checked on a
+    real Android phone.
+- D4.19 to D4.22 met in all three browsers. The server profile +, the trash can (5 paths), the
+  tensor rule + and the pencil are all 40 x 40 and round. An active delete turns `--danger` on hover
+  (`#b3261e`, dark `#ff9a8a`); an inactive one stays `--muted`.
+- UX check: 5 failing on the first run.
+  - `sign-in-at-home` failed in all three browsers and `overview-tiles` in WebKit, as "not
+    rendered", with the machine's load average near 10. Both pass when rerun alone in all three
+    browsers (filtered copy `build/ux-review/check-only.js`).
+  - Firefox has its known 22D4 page crash.
+  - No state of the amendment failed.
+
+22D4 amendment accepted.
