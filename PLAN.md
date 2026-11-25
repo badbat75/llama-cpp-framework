@@ -259,6 +259,10 @@ Points of design, and what is still open:
   do_swap_page -> folio_wait_bit_common, paging its swapped-out memory back in during cleanup
   (414 MB swap peak) on a busy disk. So under memory pressure a stop can take minutes and
   `save-slots` may not finish; the fix has to cover a router whose pages are in swap.
+  A third time 2026-11-25 08:06:56 to 08:11:57 (411 MB swap peak): the embedder child was
+  force-killed at 08:07:12, the router held on to the SIGKILL. The start after it took 9 minutes
+  before the backends had loaded (08:12:14 init to 08:21:14, the same 9 minutes at 01:38), then
+  init ended at 08:23:13; find where those 9 minutes go (backend probing, the disk).
 
 - Done when: on Linux, after installing the packages, the instance in `server@default.ini` starts at
   boot, `systemctl start/stop llama.cpp@default` and the GUI agree on its state, and a user without
@@ -1396,7 +1400,14 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   lever alone is unlikely to help). In llama.cpp v1.0.0 the only explicit host registrations are
   `ggml_backend_cuda_register_host_buffer` (off unless `GGML_CUDA_REGISTER_HOST` is set) and
   batch-get's per-call mapping (`batch-get.cu`), neither a one-time one; the next check is the same
-  probe across a fresh start of the instance, which needs a restart and the user's go): ROCclr's
+  probe across a fresh start of the instance, which needs a restart and the user's go; run 08:22-08:47
+  across a restart: the embedder that serves (pid 407488) made 406 SVM sets on 205 ranges, 722 MiB, nearly
+  all within one second of its load, and no USERPTR allocation; it had about 70 ms of evictions per GPU
+  within a minute. The sizes match the mmapped weights plus 32 MiB chunks: most likely ROCclr pinning the
+  source of the weight upload, which stays registered (inferred from timing and sizes: the stacks stop in
+  libhsa-runtime64, built without frame pointers). Levers to test, one at a time, each with a restart, the
+  same probe and the user's go: `GPU_PINNED_MIN_XFER_SIZE=1000000` for the instance, or `--no-mmap` for
+  the embedder's model profile): ROCclr's
   `GPU_PINNED_MIN_XFER_SIZE=1000000` (copies of 1 MiB or more through a pre-pinned staging buffer; Strata
   runs with it), and, if ggml calls hipHostRegister itself, a patch so that memory comes from
   hipHostMalloc (GTT under GT1) instead.
