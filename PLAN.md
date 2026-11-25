@@ -254,6 +254,11 @@ Points of design, and what is still open:
   was force-killed and exited within 11 s, but the router process itself never exited (journal of
   `llama.cpp@default`, 17:45:45 to 17:50:45). Find out whether llama-server's router mode, the
   manager's `run-instance` or `save-slots` holds the stop, and make a stop end without the kill.
+  Seen again 2026-11-25 01:33 to 01:38 (the restart after GT1's deploy; strata-framework agent's
+  trace): the router (no child loaded) sat in D state the whole time, its kernel stack
+  do_swap_page -> folio_wait_bit_common, paging its swapped-out memory back in during cleanup
+  (414 MB swap peak) on a busy disk. So under memory pressure a stop can take minutes and
+  `save-slots` may not finish; the fix has to cover a router whose pages are in swap.
 
 - Done when: on Linux, after installing the packages, the instance in `server@default.ini` starts at
   boot, `systemctl start/stop llama.cpp@default` and the GUI agree on its state, and a user without
