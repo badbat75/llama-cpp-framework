@@ -30,6 +30,10 @@ mod vulkan_chain;
 // and its document, every figure from a fake seam. No `paths::`, so these plain
 // `#[test]`s run beside the e2e below.
 mod node_info;
+// GT5a's Windows rule (ARCHITECTURE.md "ROCm instances load models with
+// `load-mode = none`"): a text check of the production sources, so it runs on
+// every OS and touches no `paths::`.
+mod gt5a_windows_gate;
 
 #[test]
 fn data_root_e2e() {
@@ -122,6 +126,13 @@ fn data_root_e2e() {
 
     // ── Manager core: a render that cannot be written, and its report ─────
     crate::manager::service::manager_render_failure_e2e();
+
+    // ── Manager core: a ROCm instance's render loads with `load-mode = none` ─
+    // (GT5a, ARCHITECTURE.md "ROCm instances load models with `load-mode =
+    // none`".) Linux only: the render's rule is Linux, and the Windows rule is
+    // the cfg lint of `gt5a_windows_gate` below.
+    #[cfg(not(windows))]
+    crate::manager::service::manager_gt5a_rocm_load_mode_e2e();
 
     // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
     // Served peer to peer on a socket pair, no bus.

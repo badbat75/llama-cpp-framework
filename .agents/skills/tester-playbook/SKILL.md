@@ -153,6 +153,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Prove each later red of a test that masks its own reds by cutting the earlier block out of the real
   source (a python line-range delete that asserts its two anchor lines first), running
   `--lib data_root_e2e` (~7 s incremental), and restoring with `cp` + `cmp -s`.
+- Prove the several reds of ONE phase one at a time by wrapping each assert in `if false { // X-PIN-BEGIN`
+  and `} // X-PIN-END` (a script that finds the message, walks up to its `assert`, down to its `);`, and
+  asserts each walk is short): run, gate the red, run again, repeat. Then gate the feature's asserts ALL:
+  the phase going green there proves the fixtures are sound and the reds are exactly the missing feature,
+  not a typo. Restore by deleting the two marker lines and prove with `grep -c` answering 0.
+- Pin a render rule through the public seam (`Manager::render_failures()` re-renders every instance from
+  the files on disk and answers the failures), so a fixture the client write refuses arrives by
+  `std::fs::write` of the pool plus one `render_failures()` call. A client `write_file` of `models.ini`
+  refuses a `[*]` section (`invalid-model-profile-id`), so the pool's global section is a hand edit.
+- Read the pure render first (`pai_core::assign::render`): it already copies the pool's `[*]` section
+  verbatim, so "an explicit pool `[*]` value is copied as is, nothing added" is a day-one green pin, and
+  the slice's red is only the line the render ADDS.
 - Drive a real save through `config_seam_e2e` (redirect, save through the seam, reload, assert): a unit
   test over a temp dir passes with no seam at all and is not a data-root e2e.
 - The GUI's Server tab has its own e2e home, `crates/config/src/gui/server_tab.rs`'s `#[cfg(test)] fn
@@ -569,6 +581,10 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
 ### Mutants and scratch copies
 
 - `cp -p` in a restore leaves the old mtime, and the next run reuses the MUTANT binary.
+- A restore written `cp <file> <backup>` (direction reversed) overwrites the clean backup, and the
+  `cmp -s <file> <backup>` after it compares the file with itself: the script prints `cmp ok` while the
+  MUTANT survives into every later run. Prove a restore of a file clean at HEAD with `git diff -- <file>`
+  answering empty, not with the script's own cmp.
 - A script that dies between write and restore leaves the file mutated: restore from the backup and
   `grep -n` before running anything else.
 - A gate copied verbatim into every guarded verb matches N times, so it cannot be mutated in place.
@@ -593,6 +609,13 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
   red upstream the panic you print is the fixture, not the gate.
 - A bound a client checks (frame size) reds in the client, not the manager.
 - An uncalled e2e phase is invisible: its solo run looks green.
+- `pai_core::bff_cfg::versions_dir()` answers `None` under a test redirect (it resolves only when the
+  config dir is exactly `/etc/llama.cpp`), so the engine's installed backends (`versions::installed`,
+  the `llama.cpp` and `llama.cpp-<backend>` package files) cannot be pinned through a real path in an
+  e2e phase: the rule needs a seam the test can point at a fixture dir, and a fixture that writes every
+  plausible dir to cover the coder's choice is an assumption to name in the report.
+- A tree with the earlier phase call lines gated prints ~33 `dead_code` warnings (each gated phase is now
+  uncalled): run clippy only on the restored tree, and read those warnings as the gate.
 
 ### The bff (Rust)
 

@@ -1407,7 +1407,7 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   up to 88%), against ~1.5 s per GPU in the first hour with mmap. ggml's own hipHostRegister calls (off by
   default, or per call) are not involved; `GPU_PINNED_MIN_XFER_SIZE` was not needed. Decided (user,
   2026-11-25): a default on ROCm plus a guide, GT5 (ARCHITECTURE.md "ROCm instances load models with
-  `load-mode = none`"): GT5a the manager's render gives a ROCm instance's `models@<id>.ini` `[*] load-mode
+  `load-mode = none`"): GT5a (built 2026-11-25) the manager's render gives a ROCm instance's `models@<id>.ini` `[*] load-mode
   = none` when the pool's `[*]` sets none (an explicit value wins; Linux only); GT5b a hint on the unset
   field (designer first); GT5c the R9700 guide.
 

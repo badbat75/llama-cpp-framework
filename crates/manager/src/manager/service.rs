@@ -3337,13 +3337,108 @@ fn check_contents(
 
 /// The text of instance `id`'s render `models@<id>.ini`, from the pool pair
 /// and the `assignments.ini` on disk: what the checks judge and what
-/// [`Manager::render_failures`] writes.
+/// [`Manager::render_failures`] writes. The render of a ROCm instance carries
+/// the load rule of `ARCHITECTURE.md` "ROCm instances load models with
+/// `load-mode = none`" (GT5a), added by [`with_rocm_load_mode`].
 fn render_of(id: &str, enabled: &str, disabled: &str) -> String {
     let assignment =
         std::fs::read_to_string(crate::paths::engine_config_dir().join(ASSIGNMENTS_FILE))
             .ok()
             .and_then(|text| pai_core::ini::text::section_text(&text, id));
-    pai_core::assign::render(enabled, disabled, assignment.as_deref())
+    with_rocm_load_mode(
+        id,
+        pai_core::assign::render(enabled, disabled, assignment.as_deref()),
+    )
+}
+
+/// The render `text` of instance `id`, with `load-mode = none` in its `[*]`
+/// section when that section carries no `load-mode` of its own
+/// (`ARCHITECTURE.md` "ROCm instances load models with `load-mode = none`",
+/// slice GT5a): on ROCm an mmapped model's weights are pinned by the runtime,
+/// and `none` loads them without that. The line lives in the render alone: the
+/// pool files are never written, so a profile moved to a non-ROCm instance
+/// loses it and the pages keep showing the pool's own value. An explicit pool
+/// `[*]` value is copied as it is, and a model section's own key is left
+/// alone: llama-server puts a model section over `[*]`, and the launch passes
+/// no `--load-mode` (`launch.rs` keeps the key per preset, so the command line
+/// never overrides a profile's choice). Linux only: every other system's
+/// render is unchanged.
+#[cfg(target_os = "linux")]
+fn with_rocm_load_mode(id: &str, text: String) -> String {
+    if !instance_is_rocm(id) || render_has_load_mode(&text) {
+        return text;
+    }
+    if pai_core::ini::text::section_text(&text, "*").is_some() {
+        return pai_core::ini::text::set_key(&text, "*", "load-mode", "none");
+    }
+    // The pool has no `[*]`: the render opens one after its header line, where
+    // the pool's own `[*]` sits when it has one, in the render's line ending
+    // and with the blank line that separates two sections.
+    let eol = pai_core::ini::detect_eol(&text);
+    let head = text.find('\n').map(|i| i + 1).unwrap_or(text.len());
+    format!(
+        "{}[*]{eol}load-mode = none{eol}{eol}{}",
+        &text[..head],
+        &text[head..]
+    )
+}
+
+/// The same render on the other systems, unchanged
+/// (`ARCHITECTURE.md`, the section above): the rule is Linux's.
+#[cfg(not(target_os = "linux"))]
+fn with_rocm_load_mode(_id: &str, text: String) -> String {
+    text
+}
+
+/// Whether the render `text` carries a `load-mode` in its `[*]` section: the
+/// pool's own value, copied byte for byte by `pai_core::assign::render`, is
+/// kept as it stands. A key in any letter case, the way the reader reads one.
+#[cfg(target_os = "linux")]
+fn render_has_load_mode(text: &str) -> bool {
+    pai_core::ini::parse_sections(text)
+        .into_iter()
+        .find(|section| section.id == "*")
+        .map(|section| {
+            section
+                .keys
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("load-mode"))
+        })
+        .unwrap_or(false)
+}
+
+/// Whether instance `id` is a ROCm instance (`ARCHITECTURE.md`, the section
+/// above): its server profile's `Devices` names a device whose backend is
+/// `rocm`, or leaves `Devices` unset (every card of the node, the reading of
+/// [`instance_devices`]) while the engine's installed backends hold `rocm`.
+/// `Devices = none` (a CPU-only profile) and a list of only Vulkan or CUDA
+/// cards are not. The engine's own device probe is not asked: it spawns the
+/// engine at every render, for an answer these two files already give.
+#[cfg(target_os = "linux")]
+fn instance_is_rocm(id: &str) -> bool {
+    let devices = instance_devices(id);
+    if devices.is_empty() {
+        return engine_has_rocm();
+    }
+    devices
+        .split(',')
+        .any(|device| pai_core::devices::backend_of(device) == "rocm")
+}
+
+/// Whether the engine installed on this node has a `rocm` runtime: the version
+/// files of its package (`pai_core::versions::installed`, one `llama.cpp-<name>`
+/// file per runtime), the same read the web UI's node page makes
+/// ([`pai_core::bff_cfg::versions_dir`]). Where the install ships no such
+/// folder (a tree build, and a test redirecting the data root) the files are
+/// read beside the pool files.
+#[cfg(target_os = "linux")]
+fn engine_has_rocm() -> bool {
+    let dir = pai_core::bff_cfg::versions_dir()
+        .unwrap_or_else(|| crate::paths::engine_config_dir().join("versions"));
+    pai_core::versions::installed(&dir)
+        .into_iter()
+        .flat_map(|engine| engine.backends)
+        .any(|backend| backend.name == "rocm")
 }
 
 /// The record `seed` with the key of model profile `profile` in the section of
@@ -22414,4 +22509,372 @@ pub(crate) fn manager_model_files_walk_bound_e2e() {
         );
         assert_eq!(got.files.len(), 151, "the default bound lists the tree");
     }
+}
+
+// ── GT5a: a ROCm instance's render loads models with `load-mode = none` ──────
+//
+// `ARCHITECTURE.md` "ROCm instances load models with `load-mode = none`", slice
+// GT5a. The render of `models@<id>.ini` puts `load-mode = none` in its `[*]`
+// section when the instance is ROCm (its server profile's `Devices` names a
+// `rocm` device, or leaves `Devices` unset while the engine's installed backends
+// hold `rocm`) and the pool's `[*]` carries no `load-mode` of its own. The pool
+// files are never written; an explicit pool value is copied as it is; a model
+// section's own `load-mode` is left alone (llama-server's own precedence puts
+// the model section first); the launch passes no `--load-mode`. Linux only: the
+// Windows rule is the cfg lint of `src/tests/gt5a_windows_gate.rs`.
+#[cfg(all(test, not(windows)))]
+pub(crate) fn manager_gt5a_rocm_load_mode_e2e() {
+    use fakes::{FakeActionLog, FakeAuthority, FakeGroup, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let alice = Caller(":1.42".into());
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(FakeGroup::new())
+    .with_log(FakeActionLog::new());
+
+    let render = |id: &str| std::fs::read_to_string(sys.join(format!("models@{id}.ini")));
+    let render_text = |id: &str| -> String {
+        render(id).unwrap_or_else(|e| panic!("GT5a: {id} has a render to read: {e}"))
+    };
+    let bytes_of = |name: &str| -> Vec<u8> { std::fs::read(sys.join(name)).unwrap_or_default() };
+    // One key of one section of a render, read the way llama-server reads it,
+    // so the line's spacing is the coder's and the key and its value are not.
+    let key_of = |text: &str, section: &str, key: &str| -> Option<String> {
+        pai_core::ini::parse_sections(text)
+            .into_iter()
+            .find(|s| s.id == section)
+            .and_then(|s| {
+                s.keys
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(key))
+                    .map(|(_, v)| v.trim().to_string())
+            })
+    };
+    // Every key of one section, as `key = value`: the section's whole content,
+    // so "nothing was added" is pinned, not just the key.
+    let keys_of = |text: &str, section: &str| -> Vec<String> {
+        pai_core::ini::parse_sections(text)
+            .into_iter()
+            .find(|s| s.id == section)
+            .map(|s| {
+                s.keys
+                    .iter()
+                    .map(|(k, v)| format!("{k} = {}", v.trim()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    // The engine's installed backends, as its package files name them
+    // (`versions::installed`: the engine's own `llama.cpp` file and one
+    // `llama.cpp-<backend>` per runtime). Which directory the manager reads is
+    // the coder's, so the fixture writes every place a redirect-aware
+    // resolution of the engine's share folder sits: beside the pool files, and
+    // the redirect root's siblings of `engine-config`.
+    let versions_dirs = || -> Vec<std::path::PathBuf> {
+        vec![
+            sys.join("versions"),
+            dir.path().join("engine-versions"),
+            dir.path().join("engine-share").join("versions"),
+            dir.path().join("share").join("versions"),
+        ]
+    };
+    let installed_backends = |backends: &[&str]| {
+        for d in versions_dirs() {
+            std::fs::create_dir_all(&d).expect("versions dir");
+            std::fs::write(d.join("llama.cpp"), "b1000\n").expect("engine version file");
+            for b in ["cuda", "rocm", "vulkan"] {
+                let path = d.join(format!("llama.cpp-{b}"));
+                if backends.contains(&b) {
+                    std::fs::write(&path, "1.0\n").expect("backend version file");
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    };
+    // The instances, each naming the server profile of the same name, and each
+    // told the one model profile of the pool: the render carries its section, so
+    // the pins read both the `[*]` and the model section.
+    write_record(&sys, &["cpu", "default", "plain", "vk"]);
+    std::fs::write(
+        sys.join("assignments.ini"),
+        "[cpu]\na = inherit\n\n[default]\na = inherit\n\n[plain]\na = inherit\n\n[vk]\na = inherit\n",
+    )
+    .expect("assignments.ini");
+    let profile = |id: &str, port: u16, devices: Option<&str>| {
+        let ini = match devices {
+            Some(d) => format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\nDevices = {d}\n",),
+            None => format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+        };
+        assert_eq!(
+            m.write_file(&alice, &format!("server@{id}.ini"), &ini, false),
+            Ok(()),
+            "GT5a: the server profile of {id} lands"
+        );
+    };
+    profile("default", 8081, Some("ROCm0"));
+    profile("vk", 8082, Some("Vulkan0,Vulkan1"));
+    profile("cpu", 8083, Some("none"));
+    profile("plain", 8084, None);
+
+    // ── GT5a 1: `Devices = ROCm0` renders `load-mode = none` in `[*]` ───────
+    let pool = real_model_files(dir.path(), "[a]\nmodel = /models/a.gguf\n");
+    assert_eq!(
+        m.write_file(&alice, "models.ini", &pool, false),
+        Ok(()),
+        "GT5a: the pool lands"
+    );
+    let r = render_text("default");
+    assert!(
+        r.starts_with("; Generated by pai-manager"),
+        "GT5a 1: the render keeps the generated file's header line: {r}"
+    );
+    assert!(
+        pai_core::ini::text::section_text(&r, "*").is_some(),
+        "GT5a 1: the render's `[*]` section is created when the pool has none: {r}"
+    );
+    assert_eq!(
+        key_of(&r, "*", "load-mode").as_deref(),
+        Some("none"),
+        "GT5a 1: an instance whose server profile names `ROCm0` renders \
+         `load-mode = none` in `[*]`: {r}"
+    );
+
+    // ── GT5a 2: Vulkan-only, CPU and unset Devices render nothing ───────────
+    // (The unset case with no engine package files: the installed backends are
+    // read below, where the fixture puts them.)
+    for id in ["vk", "cpu", "plain"] {
+        let r = render_text(id);
+        assert!(
+            !r.contains("load-mode"),
+            "GT5a 2: the instance {id} is not ROCm, so its render names no \
+             `load-mode` anywhere: {r}"
+        );
+    }
+
+    // ── GT5a 3: the pool's own `[*] load-mode` is copied as it is ───────────
+    // The pool's global section arrives by a hand edit: a client write of the
+    // pool is refused a `[*]` section (`invalid-model-profile-id`), so the
+    // render is re-run over the file on disk.
+    for value in crate::server_cfg::LOAD_MODES {
+        let with_star = real_model_files(
+            dir.path(),
+            &format!("[*]\nload-mode = {value}\n\n[a]\nmodel = /models/a.gguf\n"),
+        );
+        std::fs::write(sys.join("models.ini"), &with_star).expect("hand-edited pool");
+        assert!(
+            m.render_failures().is_empty(),
+            "GT5a 3: the render of the pool with `[*] load-mode = {value}` lands"
+        );
+        let r = render_text("default");
+        assert_eq!(
+            key_of(&r, "*", "load-mode").as_deref(),
+            Some(value),
+            "GT5a 3: the pool's `[*] load-mode = {value}` is copied as it is: {r}"
+        );
+        assert_eq!(
+            keys_of(&r, "*"),
+            vec![format!("load-mode = {value}")],
+            "GT5a 3: an explicit pool `[*]` value is kept and nothing is added: {r}"
+        );
+    }
+
+    // ── GT5a 9: a pool `[*]` with other keys and no `load-mode` gains the line
+    // The `set_key` branch: the pool's `[*]` is copied verbatim and the line is
+    // appended to it; the model section is not touched.
+    let with_other = real_model_files(
+        dir.path(),
+        "[*]\nctx-size = 4096\n\n[a]\nmodel = /models/a.gguf\n",
+    );
+    std::fs::write(sys.join("models.ini"), &with_other).expect("hand-edited pool");
+    assert!(
+        m.render_failures().is_empty(),
+        "GT5a 9: the render of the pool with `[*] ctx-size = 4096` lands"
+    );
+    let r = render_text("default");
+    assert_eq!(
+        keys_of(&r, "*"),
+        vec![
+            "ctx-size = 4096".to_string(),
+            "load-mode = none".to_string()
+        ],
+        "GT5a 9: the pool's `[*]` key is kept and `load-mode = none` is added to it: {r}"
+    );
+    assert_eq!(
+        pai_core::ini::text::section_text(&r, "a"),
+        pai_core::ini::text::section_text(&with_other, "a"),
+        "GT5a 9: the render's model section `[a]` is the pool's byte for byte"
+    );
+
+    // ── GT5a 10: the added line follows the pool's CRLF ────────────────────
+    // The same pool with CRLF endings: the line lands with CRLF and the render
+    // carries no LF-only line ending.
+    let crlf = with_other.replace('\n', "\r\n");
+    std::fs::write(sys.join("models.ini"), &crlf).expect("CRLF pool");
+    assert!(
+        m.render_failures().is_empty(),
+        "GT5a 10: the render of the CRLF pool lands"
+    );
+    let r = render_text("default");
+    let line = r
+        .split_inclusive('\n')
+        .find(|l| l.contains("load-mode"))
+        .expect("GT5a 10: the render of the CRLF pool carries the line");
+    assert!(
+        line.ends_with("\r\n"),
+        "GT5a 10: the added line ends with the pool's CRLF: {line:?}"
+    );
+    let b = r.as_bytes();
+    let lf_only = (0..b.len())
+        .filter(|i| b[*i] == b'\n' && (*i == 0 || b[i - 1] != b'\r'))
+        .count();
+    assert_eq!(
+        lf_only, 0,
+        "GT5a 10: the render of a CRLF pool carries no LF-only line ending: {r:?}"
+    );
+
+    // ── GT5a 4: a model section's own `load-mode` is untouched ──────────────
+    let model_own = real_model_files(
+        dir.path(),
+        "[a]\nmodel = /models/a.gguf\nload-mode = mmap\n",
+    );
+    assert_eq!(
+        m.write_file(&alice, "models.ini", &model_own, false),
+        Ok(()),
+        "GT5a 4: the pool whose model profile sets `load-mode = mmap` lands"
+    );
+    let r = render_text("default");
+    assert_eq!(
+        key_of(&r, "a", "load-mode").as_deref(),
+        Some("mmap"),
+        "GT5a 4: the model section keeps its own `load-mode = mmap`: {r}"
+    );
+    assert_eq!(
+        key_of(&r, "*", "load-mode").as_deref(),
+        Some("none"),
+        "GT5a 4: the `[*]` line is added beside the model section's own (the \
+         precedence is llama-server's, the render changes neither): {r}"
+    );
+
+    // ── GT5a 5: a server profile save that adds `ROCm0` re-renders ──────────
+    // The pool back to a plain one, and the engine installed with Vulkan only:
+    // `plain` (no `Devices`) is not ROCm, and becomes one by the save alone.
+    assert_eq!(
+        m.write_file(&alice, "models.ini", &pool, false),
+        Ok(()),
+        "GT5a 5: the plain pool lands"
+    );
+    installed_backends(&["vulkan"]);
+    assert!(
+        m.render_failures().is_empty(),
+        "GT5a 5: the re-render lands"
+    );
+    assert!(
+        !render_text("plain").contains("load-mode"),
+        "GT5a 5: `plain` with no `Devices` and a Vulkan-only engine renders \
+         no `load-mode`, before the save"
+    );
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@plain.ini",
+            "[Server]\nPort = 8084\nHostname = 127.0.0.1\nDevices = ROCm0\n",
+            false
+        ),
+        Ok(()),
+        "GT5a 5: the save that adds `ROCm0` lands"
+    );
+    assert_eq!(
+        key_of(&render_text("plain"), "*", "load-mode").as_deref(),
+        Some("none"),
+        "GT5a 5: a server profile save that adds `ROCm0` re-renders with the line"
+    );
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "server@plain.ini",
+            "[Server]\nPort = 8084\nHostname = 127.0.0.1\n",
+            false
+        ),
+        Ok(()),
+        "GT5a 5: the save that drops `Devices` lands"
+    );
+    assert!(
+        !render_text("plain").contains("load-mode"),
+        "GT5a 5: the save that drops `Devices` re-renders without the line \
+         (a Vulkan-only engine is not ROCm)"
+    );
+
+    // ── GT5a 6: unset Devices with a rocm backend installed renders it ──────
+    installed_backends(&["vulkan", "rocm"]);
+    assert!(
+        m.render_failures().is_empty(),
+        "GT5a 6: the re-render lands"
+    );
+    assert_eq!(
+        key_of(&render_text("plain"), "*", "load-mode").as_deref(),
+        Some("none"),
+        "GT5a 6: `Devices` unset with a rocm backend file installed renders \
+         `load-mode = none` in `[*]`"
+    );
+    for id in ["vk", "cpu"] {
+        let r = render_text(id);
+        assert!(
+            !r.contains("load-mode"),
+            "GT5a 6: {id} names its own non-rocm cards, so a rocm backend \
+             installed changes nothing: {r}"
+        );
+    }
+    installed_backends(&["vulkan"]);
+    assert!(
+        m.render_failures().is_empty(),
+        "GT5a 6: the re-render lands"
+    );
+    assert!(
+        !render_text("plain").contains("load-mode"),
+        "GT5a 6: `Devices` unset with no rocm backend file renders no `load-mode`"
+    );
+
+    // ── GT5a 7: the launch passes no `--load-mode` ──────────────────────────
+    let exe = dir
+        .path()
+        .join("bin")
+        .join(crate::paths::binary_name("llama-server"));
+    let cmd = crate::launch::instance_command("default", &exe)
+        .expect("GT5a 7: the ROCm instance has a render to launch");
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        !args
+            .iter()
+            .any(|a| a == "--load-mode" || a.starts_with("--load-mode=")),
+        "GT5a 7: the launch carries no `--load-mode` (a command line beats every \
+         preset value, so the per-profile choice would be lost): {args:?}"
+    );
+
+    // ── GT5a 8: the pool files are never written ────────────────────────────
+    // The bytes the last pool write left, read back before the renders above:
+    // every render of this phase must leave them byte for byte where they are.
+    let pool_bytes = bytes_of("models.ini");
+    let disabled_bytes = bytes_of("models.ini.disabled");
+    assert!(m.render_failures().is_empty(), "GT5a 8: the renders land");
+    assert_eq!(
+        bytes_of("models.ini"),
+        pool_bytes,
+        "GT5a 8: a render never writes the pool"
+    );
+    assert_eq!(
+        bytes_of("models.ini.disabled"),
+        disabled_bytes,
+        "GT5a 8: a render never writes the switched-off pool"
+    );
 }

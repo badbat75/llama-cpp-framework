@@ -131,6 +131,19 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   &ConfigFile::Models, ..)`: mode 0644, temp file renamed over. A render written after a record change
   turns its failure into the call's answer. `assign::render` takes both pool files, so a profile in
   `models.ini.disabled` is in effect. An instance IS a section of `instances.ini`.
+- A per-instance render rule goes in `manager/service.rs`'s `render_of` (the one place that knows the
+  instance: `instance_devices` reads its server profile's `Devices`, `paths::instance_server_profile`
+  the profile file). A Linux-only rule needs a `#[cfg(not(target_os = "linux"))]` twin of the same name
+  so `render_of` calls it on Windows with no `cfg` at the call site. `ini::text::set_key` answers the
+  text UNCHANGED when the section is missing: a rule that creates a section writes the header itself.
+- `versions::installed` lists backends ONLY when the engine's own `llama.cpp` file sits in the folder,
+  and `bff_cfg::versions_dir()` is `None` under the test redirect (its Linux arm wants
+  `/etc/llama.cpp`): a manager read of the installed backends needs a redirect-aware fallback, and a
+  fixture writes the engine file beside every backend file.
+- A manager source-text lint (`tests/gt5a_windows_gate.rs`) reads each `src/manager*.rs` production
+  region up to its FIRST `#[cfg(test)]` line, so code added after that (the e2e phases) is out of its
+  scope, and the gate it reads is the `#[...]` block directly above the item (doc comments are dropped,
+  so an attribute under a doc comment is seen, one under a `let` is not).
 - Manager verbs, refusals and records: e2e phases are `pub(crate) fn` called in sequence by ONE `#[test]`
   (the GUI's `save_flow::run` likewise); create/remove verbs have no test of their own. A value check the
   manager answers needs an arm in the bff's 422 field map. A shard-count bound is name math
