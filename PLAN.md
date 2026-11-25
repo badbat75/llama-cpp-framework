@@ -262,7 +262,9 @@ Points of design, and what is still open:
   A third time 2026-11-25 08:06:56 to 08:11:57 (411 MB swap peak): the embedder child was
   force-killed at 08:07:12, the router held on to the SIGKILL. The start after it took 9 minutes
   before the backends had loaded (08:12:14 init to 08:21:14, the same 9 minutes at 01:38), then
-  init ended at 08:23:13; find where those 9 minutes go (backend probing, the disk).
+  init ended at 08:23:13; find where those 9 minutes go (backend probing, the disk). The restart at 09:30:12, with
+  memory pressure lower, stopped in 1 s and was healthy at 09:30:16: the slow stop and start follow
+  the swap and disk load, not the instance itself.
 
 - Done when: on Linux, after installing the packages, the instance in `server@default.ini` starts at
   boot, `systemctl start/stop llama.cpp@default` and the GUI agree on its state, and a user without
