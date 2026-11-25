@@ -3923,6 +3923,55 @@ machine after the deploy and the user's next instance start (starting llama-serv
 `/proc/<pid>/environ` holds both; `/proc/<pid>/smaps` shows no large `/dev/zero (deleted)` rw-s
 mappings; `/sys/class/kfd/kfd/proc/<pid>/stats_*/evicted_ms` stays flat under load.
 
+## ROCm instances load models with `load-mode = none` (GT5, accepted 2026-11-25)
+
+Why (`PLAN.md` "ROCm host memory as GTT", GT4): on the R9700s an mmapped model's weights are pinned
+by ROCclr and registered as SVM ranges whatever GT1's variables say (722 MiB for a 0.6B Q8_0
+embedder), and compaction and reclaim evict them (about 1.5 s per GPU per hour). With `load-mode =
+none` the same embedder registered 147 MiB and had 0 ms of evictions over 3 h. The user's decision
+(2026-11-25): `none` is the default on ROCm, changeable per model profile, plus a guide.
+
+- **What is ROCm** (Linux only; Windows and every other node unchanged): the instance's server profile
+  `Devices` names a device whose backend is `rocm` (`devices::backend_of`), or leaves `Devices` unset
+  (every card) and the engine's installed backends (`versions::installed`, the package files) hold
+  `rocm`. `Devices = none` (CPU) or a list of only Vulkan or CUDA devices is not ROCm. Rejected: the
+  engine's `--list-devices` probe, which spawns the engine at every render, the manager's start among
+  them, for an answer the two files already give.
+- **Where**: the manager's render of `models@<id>.ini` (`render_all_locked`, `render_of`), the one
+  place that already knows the instance. For a ROCm instance whose pool `[*]` carries no `load-mode`,
+  the render's `[*]` carries `load-mode = none` (the `[*]` section is created when the pool has none).
+  The pool files are never written. An explicit value wins by llama-server's own precedence: a model
+  section over `[*]`, and the launch passes no `--load-mode` (`launch.rs` keeps it per preset).
+  Rejected: an env `LLAMA_ARG_LOAD_MODE` or a router flag in `launch.rs` (a command line beats every
+  preset value, so the per-profile choice would be lost); writing the key into the pool (the pages
+  would then show a value nobody chose, and a profile moved to a Vulkan instance would keep it). Every
+  served-file write re-renders, a server profile save and an instance's profile switch included, so a
+  change of `Devices` takes effect at the instance's next start.
+- **The trade-off**: with `none` the weights are read into anonymous memory, not the page cache, so
+  tensors a profile keeps on the CPU (`n-cpu-moe`, `override-tensor` to `CPU`) are no longer shared
+  or dropped under pressure, and the load reads the whole file. Applied on every ROCm instance anyway:
+  the evictions stall every model, and the profile that wants `mmap` sets it on its page. Rejected:
+  applying it only when every weight is on the GPU (the render would have to judge the tensor rules).
+- **What the pages show**: the pool's value, as now; an unset `load-mode` is shown with a hint saying
+  it means `none` on a ROCm instance and `auto` elsewhere (static wording, no new API field; the
+  designer words it, GUI and web).
+
+**Slice GT5a** (test first; `pai-manager`, Linux; Windows type-checked). The render adds `load-mode =
+none` to `[*]` for a ROCm instance as defined above. Done when: an instance whose profile names
+`ROCm0` renders it; unset `Devices` with a `rocm` backend file renders it, without one does not;
+`Devices = none` and `Vulkan0,Vulkan1` do not; a pool `[*]` with its own `load-mode` is copied as it is
+and nothing is added; a model section's `load-mode = mmap` is kept; the pool files are byte-for-byte
+unchanged; a server profile save that adds `ROCm0` re-renders with the line; on Windows nothing is
+added; clippy and fmt green. Check after the deploy and the user's next instance start (starting
+llama-server is the user's): `models@default.ini` holds the line; the embedder's KFD `evicted_ms`
+stays flat under load.
+
+**Slice GT5b** (designer brief first; web UI, then the GUI's model profile tab): the unset hint on the
+`load-mode` field; strings only.
+
+**Slice GT5c** (docs agent): the R9700 guide states the default, the GT4 measurement with its date and
+when to set `mmap` instead.
+
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,

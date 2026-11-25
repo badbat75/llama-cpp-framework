@@ -1395,33 +1395,21 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   queues were suspended ~6 s per KFD node within 3 minutes of start, mostly while Strata allocated its
   GTT. The user confirmed the finding (2026-11-24), for every instance
   whatever its backend: the architect places
-  it (the instance unit's environment or `launch.rs`), then a test-first slice (GT1, built 2026-11-24, deployed 2026-11-25 01:27; checked live on llama.cpp@default after its restart: both variables in the router and the embedder, no `/dev/zero` SVM mapping, evicted_ms 18 ms per GPU from one eviction at load and none in the next 45 min under traffic, against about 45 s per GPU in 3.5 h before; strata-framework agent's trace; by 03:34 two compaction episodes had added about 1.2 s per GPU through an SVM range the process still registers (which allocation is unknown): a large cut, not zero; tracing it is open). Likely cause (strata-framework agent, from libhsakmt fmm.c
-  hsaKmtRegisterMemoryWithFlags, not yet verified on llama-server): memory a process registers or pins
-  (hsa_amd_memory_lock, hipHostRegister, ROCclr's pin-in-place for pageable copies) always goes through
-  the SVM API when the driver has it, whatever the two variables say. Levers to test (GT4, after a
-  read-only trace of svm_range_add in the embedder, user's go given 2026-11-25 07:45; run 08:00-08:15: 0 svm_range_set_attr calls by the embedder while
-  evictions kept growing, so the range hit was registered once at load, not per request, and the XFER
-  lever alone is unlikely to help). In llama.cpp v1.0.0 the only explicit host registrations are
-  `ggml_backend_cuda_register_host_buffer` (off unless `GGML_CUDA_REGISTER_HOST` is set) and
-  batch-get's per-call mapping (`batch-get.cu`), neither a one-time one; the next check is the same
-  probe across a fresh start of the instance, which needs a restart and the user's go; run 08:22-08:47
-  across a restart: the embedder that serves (pid 407488) made 406 SVM sets on 205 ranges, 722 MiB, nearly
-  all within one second of its load, and no USERPTR allocation; it had about 70 ms of evictions per GPU
-  within a minute. The sizes match the mmapped weights plus 32 MiB chunks: most likely ROCclr pinning the
-  source of the weight upload, which stays registered (inferred from timing and sizes: the stacks stop in
-  libhsa-runtime64, built without frame pointers). Levers to test, one at a time, each with a restart, the
-  same probe and the user's go: `GPU_PINNED_MIN_XFER_SIZE=1000000` for the instance, or `--no-mmap` for
-  the embedder's model profile). First lever tried 2026-11-25 09:30 with the user's go: `load-mode =
-  none` written into the embedder's section by hand (models.ini and models@default.ini, backup in
-  /var/tmp/gt4-backup-0856). At load: 5 SVM sets, 147 MiB (5 x 30,044 KiB, the same size every
-  llama-server registers at init, likely the runtime's), against 406 sets and 722 MiB with mmap; no
-  /dev/zero mapping; evictions 0 at 15 s. After 53 minutes 0/0/0 ms (against ~1.5 s per GPU in an hour with
-  mmap), on a quiet box, and still 0/0/0 about 3 h after load, through an hour of builds, Vitest and
-  browsers (IO pressure up to 88%, 11.3 GB free); Strata 0 in the same window. Left: then decide whether the framework sets load-mode none for small models on ROCm by
-  default or documents it, and whether GPU_PINNED_MIN_XFER_SIZE is still needed): ROCclr's
-  `GPU_PINNED_MIN_XFER_SIZE=1000000` (copies of 1 MiB or more through a pre-pinned staging buffer; Strata
-  runs with it), and, if ggml calls hipHostRegister itself, a patch so that memory comes from
-  hipHostMalloc (GTT under GT1) instead.
+  it (the instance unit's environment or `launch.rs`), then a test-first slice (GT1, built 2026-11-24, deployed 2026-11-25 01:27; checked live on llama.cpp@default after its restart: both variables in the router and the embedder, no `/dev/zero` SVM mapping, evicted_ms 18 ms per GPU from one eviction at load and none in the next 45 min under traffic, against about 45 s per GPU in 3.5 h before; strata-framework agent's trace; by 03:34 two compaction episodes had added about 1.2 s per GPU through an SVM range the process still registers (which allocation is unknown): a large cut, not zero; tracing it is open). GT4, the residual cause (2026-11-25, the strata-framework agent's read-only traces with the user's go):
+  memory a process registers or pins goes through the SVM API whatever the two variables say (libhsakmt
+  fmm.c, hsaKmtRegisterMemoryWithFlags). A 15-minute trace saw no SVM registration during requests; a
+  trace across a restart saw the serving embedder register 722 MiB in 406 sets within one second of its
+  load, no USERPTR: ROCclr pinning the mmapped weights during upload (inferred from timing and sizes; the
+  stacks stop in libhsa-runtime64, built without frame pointers). Lever tried at 09:30: `load-mode = none`
+  written by hand into the embedder's section (models.ini and models@default.ini, backup in
+  /var/tmp/gt4-backup-0856): 5 sets, 147 MiB at load (the runtime's own, every llama-server registers
+  them), and 0/0/0 ms of evictions after 3 h, through an hour of builds, Vitest and browsers (IO pressure
+  up to 88%), against ~1.5 s per GPU in the first hour with mmap. ggml's own hipHostRegister calls (off by
+  default, or per call) are not involved; `GPU_PINNED_MIN_XFER_SIZE` was not needed. Decided (user,
+  2026-11-25): a default on ROCm plus a guide, GT5 (ARCHITECTURE.md "ROCm instances load models with
+  `load-mode = none`"): GT5a the manager's render gives a ROCm instance's `models@<id>.ini` `[*] load-mode
+  = none` when the pool's `[*]` sets none (an explicit value wins; Linux only); GT5b a hint on the unset
+  field (designer first); GT5c the R9700 guide.
 
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
