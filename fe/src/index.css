@@ -3008,6 +3008,20 @@ html:has(.save-bar) {
   margin-top: var(--space-2);
 }
 
+/* The instance page's Model profiles section (brief 16 slice 17e): its one
+   status line keeps the height of a line while it is empty, so the table under
+   it does not jump when a write's answer lands, as the model profile list's
+   switch status does; its alert is drawn as every other alert is. */
+.instance-models-status {
+  margin: 0;
+  min-height: 1lh;
+}
+
+.instance-models-alert {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 /* Its checkbox while the write runs: focusable, drawn as the disabled
    checkbox above; no opacity, which would dim the focus ring too. */
 .check input[aria-disabled='true'] {

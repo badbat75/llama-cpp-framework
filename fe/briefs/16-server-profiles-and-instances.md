@@ -1338,3 +1338,49 @@ Tests to amend or add:
   `effective`; the PUTs' `{effective, running}` and `{running}`).
 - A new `InstanceModels*.test.tsx` for 17e.1 to 17e.11.
 - `fe/ux/check.js` gains an `instance-models` state (the tester adds it; the designer runs it).
+
+## 17e review (designer, 2026-11-25)
+
+Built code (`fe/src/InstanceModels.tsx`, `InstancePage.tsx` 445-457, `index.css` 3011-3023, tests
+`InstanceModels17e.test.tsx` and `InstancePage.test.tsx`), measured with `build/ux-review/e17.js` in
+Chromium, Firefox and WebKit at 1280 and 320 px, light and dark, one browser at a time.
+
+- 17e.1 met: one GET, the loading `role="status"` (`InstanceModels.tsx` 400-404), never on the poll
+  (test 327). 17e.2 met: `readText` 81-92, the 401 and 403 hand-off 295-296, the row parse 54-62.
+- 17e.3 met: a checkbox in a `fieldset` named by `instance-models-all-label` (410-428); the status
+  after the write and the re-read (363-393).
+- 17e.4a met: three columns, no Actions column, the id link in a `span` with an id (466-468), the
+  switch named by `aria-labelledby` that span (486), the word `aria-hidden` (493), `.status-cell`
+  with an inner span (478-479). Every control within 0.7 px of its row's centre in all three
+  engines, both widths; the table fits its box (878 px at 1280, 286 px at 320), no sideways scroll.
+- 17e.5 met (322-335, 365-371). 17e.6 met (`wordFor` 217-220). 17e.7a met: the reply's `effective`
+  is taken (337-345), the restart texts and no Restart button of its own (225-231, test 529, 810).
+- 17e.8a met: `writeText` 100-130, the re-read after every failure (355), the focus on the switch
+  used through the page's dialog (`InstancePage.tsx` 322-324, 346-348). 17e.9 met.
+- 17e.10a met: measured, Space on a focused switch writes and the focus stays on it; Shift+Tab goes
+  to its row's link; the checkbox keeps the focus and its 3 px ring after its write. 17e.11 met.
+
+Adviser notes, ranked by how much they help the user (numbered for a next slice):
+1. The override case is not named. In the stub, Old-Coder reads "In the list: Off" and "Served
+   here: On"; a reader has to compare two columns to see that this instance overrides the list.
+   A muted word `override` after the switch's On/Off when `effective` differs from `enabled`
+   (a new key, `instance-models-override`) would say it (preference; the intro explains it today).
+2. Dead space between the checkbox and the table: the empty status line keeps `min-height: 1lh`
+   (`index.css` 3011-3014) on top of the field's bottom margin, about 40 px of nothing at 1280 px.
+   The status could sit right under the table (no jump either: the table does not move), or
+   reserve its line inside the field's margin (preference).
+3. At 1280 px the Name column takes 599 of 878 px and "In the list" sits far from its id; a
+   `width: 1%` on the In the list column too, as on the status cell, would pull the two state
+   columns together at the right (preference).
+4. A count in the heading ("2 of 3 served") would let a user check the page without reading the
+   table (a new key; from the 17e check's notes, still open).
+5. At 1280 px the label "All switched-on model profiles" wraps on two lines in the field's label
+   column; the shorter `Served profiles` would keep it on one (preference; the key's text changes).
+
+Screenshots: `build/ux-review/shots/17e-1280-light.png`, `17e-320-light.png`, and the full page
+`17e-1280-page.png`, `17e-320-page.png`.
+
+UX check (210 states per browser, `instance-models` among them): 0 failing in Chromium. The full
+run's 2 failures were load timeouts (Firefox's page load threw, WebKit's first state not yet
+rendered); rerun one browser at a time, Firefox 210 states and WebKit's `overview-tiles` and
+`instance-models` states: 0 failing.

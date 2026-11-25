@@ -237,7 +237,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 ### The web UI (fe/): running and CSS
 
 - Run a filtered file as `npm --prefix fe test -- <file> -t '<title>'` (cwd `fe/`, so the jsdom config is
-  read). `format:check` writes nothing: fix the named files with `npx prettier --write <file>` run from
+  read). The filter is matched against the path RELATIVE TO `fe/`: `-- fe/src/X.test.tsx` matches
+  nothing and exits 1 `No test files found`, write `-- src/X.test.tsx`. `format:check` writes nothing: fix the named files with `npx prettier --write <file>` run from
   `fe/` (from the repo root `npx --prefix fe prettier --write src/x.tsx` answers "No files matching the
   pattern": the paths resolve against the cwd, not the prefix; it lists
   every file it processes: check `git status --porcelain` after). The full suite under load reddens
@@ -354,6 +355,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A strings key is pinned in THREE places: `1a strings` (App.test.tsx), `5b.11` (ProfilesNav) and the
   slice's own strings test (e.g. `22 D2.10` in ModelProfileDelete2). A key added or removed needs all
   three.
+- `strings.test.ts`'s "every value is used" scans the code for `t(` IMMEDIATELY followed by a `'literal'`:
+  a key picked by a ternary INSIDE the call (`t(on ? 'a' : 'b', id)`) is invisible to it, so the key is a
+  "value no code uses" and the test is red. Write `on ? t('a', id) : t('b', id)`, the repo's style
+  (`InstancePage.tsx`'s `run-timeout` pair).
+- A 401 on a page read while the app believes it is signed in signs out with `signin-session-ended`;
+  `signin-required` is ONLY a first load signed out (pinned by `InstancePage.test.tsx` 2.2's comment and
+  assertion). A slice's own 401 test that expects `signin-required` mid-session is a witness pair with it.
 - A Save check keyed by a control id must gate on that control being rendered (a Layers text the row
   keeps while its kind hides the field): a mark on an id with no element is invisible and `focusMarked`
   has nothing to focus.
@@ -374,6 +382,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   against an impossible value, `expect(rows.join(' / '), 'PROOF').toBe('X')`, and read the received
   string.
 - Write a comment about a `switch` group ABOVE the group's first `case` label.
+- A control that moves optimistically and is written must be put back to the value it SHOWED, in the
+  same handler, when the write is refused: a re-read that fails brings no value back, so the optimistic
+  state sits on screen. And a re-read that fails must not replace the write's alert: use the functional
+  updater (`setAlert((a) => a === null ? {…} : { ...a, signIn: … })`), which sees the alert the same
+  handler batch set, and raise `signIn` off the RE-READ's kind (401/403), not the write's.
 - `flushSync` is the only way a committed state is readable in the next statement; an
   `aria-activedescendant` index over a DERIVED list must carry the list it was walked onto; a text field
   that may not read keeps its LAST READABLE value in the row state.
@@ -596,6 +609,11 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   `openPage` awaiting the heading of a labelled fixture reddens every test that passes `label: null`.
   Prove each in a scratch copy (delete the click, pass the heading, add the `cleanup()` between two
   `openPage()` calls in one loop turn) and report each as its own defect.
+- A new slice file's own opener helper that asserts the loaded state (`expect(queryByRole('table')).not
+  .toBeNull()`, "the table is loaded") reddens EVERY test in the file that calls it with a fixture that
+  has no such state (a failed read, `[]` rows): the test asserts the opposite two lines later. 14 of 16
+  reds in 17e were that one assertion; the helper needs a tolerant twin and no production shape serves
+  both. Prove it by deleting the assertion in a copy: the file goes green.
 - A tab-order test that names a control `aria-label ?? textContent` names NO checkbox and NO text box
   (both have an empty `textContent`): its `indexOf` is `-1` and no production shape names them. A test
   that compares `at.every((i) => i >= 0)` with `order.map(() => true)` compares a boolean with an array

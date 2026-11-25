@@ -1180,6 +1180,16 @@ const TAB_PATH_INSTANCE = [
   // profile, so the row is the muted text, with no link.
   about(en('instance-tags-own')),
   en('instance-tag-add'),
+  // 17e.10a: the Model profiles section is the page's last: the `*` checkbox,
+  // then each row's id link and its switch, in the reply's order. The fixture
+  // answers the fake's default rows.
+  en('instance-models-all'),
+  'Qwen3-27B',
+  'Qwen3-27B',
+  'Coder-30B',
+  'Coder-30B',
+  'Old-Coder',
+  'Old-Coder',
 ]
 
 /** The server profile page's path (17a.5): the shell, Back, the Used by link,
@@ -1232,7 +1242,7 @@ const TAB_PATH_FORM = [
   ].flat(),
 ]
 
-test('6 (17a.10): Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the display name pencil, the run buttons, Start at boot and Instance tags, and no control of a Server form', async () => {
+test('6 (17a.10, 17e.10a): Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the display name pencil, the run buttons, Start at boot and Instance tags, then the Model profiles checkbox and each row’s link and switch, and no control of a Server form', async () => {
   const main = await loadedInstance()
   // Start at boot is read on its own after the page opens (1c.45): the field
   // renders nothing until that answer lands (`value === undefined`), so the
@@ -1240,6 +1250,11 @@ test('6 (17a.10): Tab goes skip link, product link, Menu, theme switch, Sign out
   // does. A snapshot taken at the run buttons is of a page still loading the
   // field, and reads 2 stops short.
   await within(main).findByRole('checkbox', { name: en('boot-toggle') })
+  // 17e.1: the Model profiles read is its own call, so the snapshot is taken
+  // once its table is there too.
+  await within(main).findByRole('table', {
+    name: en('instance-models-title'),
+  })
   expect(tabbable().map(nameOf)).toEqual(TAB_PATH_INSTANCE)
   expect(
     screen
@@ -1301,6 +1316,15 @@ async function profileSection(main: HTMLElement): Promise<HTMLElement> {
     name: en('instance-server-title'),
   })
   return h2.parentElement!
+}
+
+/** The instance page's Model profiles section, once its read answered. */
+async function modelsSection(main: HTMLElement): Promise<HTMLElement> {
+  const h2 = await within(main).findByRole('heading', {
+    level: 2,
+    name: en('instance-models-title'),
+  })
+  return h2.closest('section') ?? h2.parentElement!
 }
 
 /** The Value list of a section. */
@@ -1375,6 +1399,35 @@ test('16 17a.10: after the tags field, a section with h2 instance-server-title h
     before(tagsField(main), section),
     'the section follows the tags field',
   ).toBe(true)
+})
+
+test('16 17e.1 (the 17e check, decision 2): the Model profiles section is a section with its h2 and intro, after the Server profile section, and 17e.7a: the page offers no Restart of the section’s own, only the header’s', async () => {
+  const main = await loadedInstance()
+  const models = await modelsSection(main)
+  const server = await profileSection(main)
+  expect(
+    within(models).getByRole('heading', {
+      level: 2,
+      name: en('instance-models-title'),
+    }),
+    'the h2',
+  ).toBeTruthy()
+  expect(
+    within(models).getByText(en('instance-models-intro')),
+    'the intro',
+  ).toBeTruthy()
+  expect(
+    before(server, models),
+    'the section follows the Server profile section',
+  ).toBe(true)
+  const restarts = within(main).queryAllByRole('button', {
+    name: en('run-restart'),
+  })
+  expect(
+    restarts,
+    '17e.7a: the header’s RunButtons carry the page’s one Restart',
+  ).toHaveLength(1)
+  expect(models.contains(restarts[0]!), 'not in the section').toBe(false)
 })
 
 test('16 17a.10: an instance naming no server profile shows instance-server-none, muted, with no link', async () => {

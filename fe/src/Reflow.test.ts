@@ -467,9 +467,14 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
   // (`instance-name-*`, `instance-label-cancel`).
   const ofRename = (c: string) =>
     /^instance-(rename|label|name)[-a-z0-9]*$/.test(c)
+  // Brief 16, slice 17e (its 17e check of 2026-11-25): the section's status
+  // row, its alert and its table are styled by classes the brief describes and
+  // does not name, so they are kept in the namespace of the slice's strings
+  // keys (`instance-models-*`), as 17f review D3 keeps the rename form.
+  const ofModels = (c: string) => /^instance-models[-a-z0-9]*$/.test(c)
   const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
-    [...used].filter((c) => !ofCard(c) && !ofRename(c)).sort(),
+    [...used].filter((c) => !ofCard(c) && !ofRename(c) && !ofModels(c)).sort(),
     'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the confirm-row and hint-tip of brief 22 22D4 with the hint-box and inactive of its 22D4 review, page-status gone with the status row of 22D2 (22 D4.9), tags-save gone, and nothing else outside the Tensor placement namespace and the rename form of brief 16 17f review D3 (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(

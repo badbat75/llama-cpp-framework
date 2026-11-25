@@ -136,6 +136,33 @@ export const EN: Record<string, string> = {
     'unset: the instance that runs this profile uses its own folder',
   'instance-server-title': 'Server profile',
   'instance-server-none': 'None',
+  // Brief 16 slice 17e: the instance page's Model profiles section. Every English
+  // is the brief's section 2 table; `1a strings` in App.test.tsx pins these
+  // against strings/en_US.json, so the sheet gains exactly 17e.11.
+  'instance-models-title': 'Model profiles',
+  'instance-models-intro':
+    'The model profiles this instance serves from its next start. A model profile switched off in the list of all model profiles is still served where you switch it on here.',
+  'instance-models-loading': 'Loading the model profiles…',
+  'instance-models-failed':
+    'The model profiles of this instance could not be read.',
+  'instance-models-empty': 'There are no model profiles yet.',
+  'instance-models-all':
+    'serve every model profile switched on in the list, including new ones',
+  'instance-models-all-label': 'All switched-on model profiles',
+  'instance-models-column-pool': 'In the list',
+  'instance-models-column-here': 'Served here',
+  'instance-models-saving': 'Saving…',
+  'instance-models-on': '{0} is served here from the next start.',
+  'instance-models-off': '{0} is no longer served here from the next start.',
+  'instance-models-on-restart':
+    '{0} is served here: restart the instance to apply.',
+  'instance-models-off-restart':
+    '{0} is no longer served here: restart the instance to apply.',
+  'instance-models-all-on':
+    'Every switched-on model profile is served here from the next start.',
+  'instance-models-all-off':
+    'Only the model profiles switched on below are served here from the next start.',
+  'instance-models-all-restart': 'Saved: restart the instance to apply.',
   // Brief 16 slice 17b: the create form on the pool list, and the delete of a
   // profile no instance runs on its page. `1a strings` in App.test.tsx pins
   // these against strings/en_US.json, so the sheet gains exactly 17b.10.
@@ -1417,6 +1444,111 @@ export type ServerProfile = {
 export const SERVER_PROFILES: ServerProfile[] = [{ id: 'default', tags: [] }]
 
 /**
+ * One row of GET /api/instances/{id}/profiles/model (fe/briefs/api-contract.md
+ * 868, brief 16 slice 17e): the pool row's fields without `assignments`, plus
+ * `value` (the explicit key only, `none` when only `*` covers it), `viaAll`
+ * (the row is served through `*`) and `effective` (served by this instance
+ * after its next start).
+ */
+export type InstanceModelRow = ModelProfile & {
+  value: 'none' | 'inherit' | 'on' | 'off'
+  viaAll: boolean
+  effective: boolean
+}
+
+/** What GET /api/instances/{id}/profiles/model answers: `all` the section's
+ * `*` as the page shows it, and the rows in the pool's order. */
+export type InstanceModels = {
+  all: 'inherit' | 'none'
+  profiles: InstanceModelRow[]
+}
+
+/**
+ * What `pai_core::assign` makes a row: `on` is served, `off` is not, `inherit`
+ * follows the profile's own switch, and `none` (no key of its own) follows the
+ * section's `*` and the switch. The fake's default write reply uses it, so a
+ * test that names no reply gets a row that reads as the record would.
+ */
+export const assignEffective = (
+  value: InstanceModelRow['value'],
+  enabled: boolean,
+  all: InstanceModels['all'],
+): boolean =>
+  value === 'on'
+    ? true
+    : value === 'off'
+      ? false
+      : value === 'inherit'
+        ? enabled
+        : all === 'inherit' && enabled
+
+/**
+ * The default answer of the three association routes: `*` is `inherit`, and
+ * three rows, one served through `*` (on in the list, no key of its own), one
+ * served by an explicit `on` while off in the list (the override), one refused
+ * by an explicit `off`.
+ */
+export const INSTANCE_MODELS: InstanceModels = {
+  all: 'inherit',
+  profiles: [
+    {
+      id: 'Qwen3-27B',
+      engine: 'llama.cpp',
+      engineAvailable: true,
+      enabled: true,
+      model: '/m/qwen/Qwen3-27B-Q8_0.gguf',
+      value: 'none',
+      viaAll: true,
+      effective: true,
+    },
+    {
+      id: 'Coder-30B',
+      engine: 'llama.cpp',
+      engineAvailable: true,
+      enabled: false,
+      model: '/m/coder/Coder-30B.gguf',
+      value: 'on',
+      viaAll: false,
+      effective: true,
+    },
+    {
+      id: 'Old-Coder',
+      engine: 'llama.cpp',
+      engineAvailable: true,
+      enabled: false,
+      model: '',
+      value: 'off',
+      viaAll: false,
+      effective: false,
+    },
+  ],
+}
+
+/**
+ * The row the fake's default write reply answers with: `id` of the pool the
+ * test served (`INSTANCE_MODELS` when the test named no rows), so the reply's
+ * `effective` follows the record the test is playing.
+ */
+function instanceModelRow(
+  pool: InstanceModelRow[],
+  id: string,
+): InstanceModelRow {
+  const found = pool.find((p) => p.id === id)
+  return (
+    found ?? {
+      id,
+      engine: 'llama.cpp',
+      engineAvailable: true,
+      enabled: true,
+      model: '',
+      value: 'none',
+      viaAll: true,
+      effective: true,
+    }
+  )
+}
+
+/**
  * One model profile as GET /api/profiles/model/{id} reads it (fe/briefs/api-contract.md,
  * the proposed section, the shape of criterion 81). `values` adds to or
  * replaces the keys of the section; `extra` adds, replaces, and with
@@ -1708,6 +1840,36 @@ export type BffOptions = {
     n: number,
     init?: RequestInit,
   ) => Response | Promise<Response>
+  /**
+   * GET /api/instances/{id}/profiles/model (brief 16, 17e.1): the document to
+   * answer 200 with, or the reply. Default `INSTANCE_MODELS`.
+   */
+  instanceModels?: InstanceModels | Record<string, unknown> | Answer
+  /**
+   * PUT /api/instances/{id}/profiles/model (brief 16, 17e.3): the reply to the
+   * n-th write of `*` (from 1), given the parsed body `{"all"}` and the decoded
+   * instance id. Default 200 `{"running": false}`.
+   */
+  instanceModelsAll?: (
+    body: unknown,
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * PUT /api/instances/{id}/profiles/model/{profile} (brief 16, 17e.6): the
+   * reply to the n-th row write (from 1), given the parsed body `{"value"}`, the
+   * decoded instance id, the decoded profile id and n. Default 200 with
+   * `effective` the row the word leaves (the rule of `pai_core::assign`) and
+   * `running: false`.
+   */
+  instanceModelsProfile?: (
+    body: unknown,
+    id: string,
+    profile: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
 }
 
 export type Call = { method: string; path: string; body: unknown }
@@ -1986,6 +2148,73 @@ export function fakeBff(options: BffOptions = {}) {
         options.instanceLabel
           ? options.instanceLabel(body, id, n, init)
           : reply(204),
+      )
+    }
+    // An instance's model profiles (brief 16 slice 17e, served since 2d9a4c8):
+    // the read, the write of `*`, and the write of one row.
+    const instanceModels =
+      /^GET \/api\/instances\/([^/]+)\/profiles\/model$/.exec(route)
+    if (instanceModels) {
+      const m = options.instanceModels ?? INSTANCE_MODELS
+      // An object is the body of the 200, as the instances array is.
+      if (typeof m === 'function' || m instanceof Response)
+        return answer(m, init)
+      return Promise.resolve(reply(200, m))
+    }
+    const instanceModelsAll =
+      /^PUT \/api\/instances\/([^/]+)\/profiles\/model$/.exec(route)
+    if (instanceModelsAll) {
+      const id = decodeURIComponent(instanceModelsAll[1]!)
+      const n = calls.filter(
+        (c) =>
+          c.method === 'PUT' &&
+          /^\/api\/instances\/[^/]+\/profiles\/model$/.test(c.path),
+      ).length
+      return Promise.resolve(
+        options.instanceModelsAll
+          ? options.instanceModelsAll(body, id, n, init)
+          : reply(200, { running: false }),
+      )
+    }
+    const instanceModelsProfile =
+      /^PUT \/api\/instances\/([^/]+)\/profiles\/model\/([^/]+)$/.exec(route)
+    if (instanceModelsProfile) {
+      const id = decodeURIComponent(instanceModelsProfile[1]!)
+      const profile = decodeURIComponent(instanceModelsProfile[2]!)
+      const n = calls.filter(
+        (c) =>
+          c.method === 'PUT' &&
+          /^\/api\/instances\/[^/]+\/profiles\/model\/[^/]+$/.test(c.path),
+      ).length
+      if (options.instanceModelsProfile)
+        return Promise.resolve(
+          options.instanceModelsProfile(body, id, profile, n, init),
+        )
+      // The row as the word leaves it, by the rule of `pai_core::assign`, under
+      // the `all` the read answers with.
+      const served =
+        options.instanceModels &&
+        typeof options.instanceModels !== 'function' &&
+        !(options.instanceModels instanceof Response)
+          ? (options.instanceModels as Partial<InstanceModels>)
+          : INSTANCE_MODELS
+      const row = instanceModelRow(served.profiles ?? [], profile)
+      const value = (body as { value?: InstanceModelRow['value'] })?.value
+      const all = served.all ?? 'inherit'
+      return Promise.resolve(
+        reply(200, {
+          effective: {
+            ...row,
+            value,
+            viaAll: value === 'none',
+            effective: assignEffective(
+              value ?? 'none',
+              row.enabled,
+              all as InstanceModels['all'],
+            ),
+          },
+          running: false,
+        }),
       )
     }
     return Promise.reject(new TypeError(`unexpected ${route}`))

@@ -149,6 +149,21 @@ MODEL_PROFILES = [
     {"id": "Old-Coder", "engine": "llama.cpp", "engineAvailable": True, "enabled": False, "model": ""},
 ]
 
+# GET /api/instances/<id>/profiles/model (brief 16, slice 17e, the state
+# `instance-models` of check.js): the pool's rows with the words of the
+# instance's record. The list's own switch is on (`all` inherit), so one profile
+# on in the list follows it, one off in the list is served by an explicit on,
+# and one on in the list is refused by an explicit off: the three shapes the
+# section's rows show.
+INSTANCE_MODELS = {
+    "all": "inherit",
+    "profiles": [
+        dict(MODEL_PROFILES[1], value="inherit", viaAll=True, effective=True),
+        dict(MODEL_PROFILES[3], value="on", viaAll=False, effective=True),
+        dict(MODEL_PROFILES[0], value="off", viaAll=False, effective=False),
+    ],
+}
+
 # GET /api/profiles/model/<id>: the one model profile page that is there. A model
 # profile with no values is a real shape: every key of the model profile file is
 # unset.
@@ -402,6 +417,10 @@ class Handler(SimpleHTTPRequestHandler):
             if STATE["key"] == "withheld":
                 doc["withheld"] = ["OpencodeApiKey"]
             return self.json(200, doc)
+        # Brief 16 slice 17e (the state `instance-models` of check.js): the model
+        # profiles the instance serves, with the words of its record.
+        if p == "/api/instances/default/profiles/model":
+            return self.json(200, INSTANCE_MODELS)
         if p == "/api/profiles/server":
             # Brief 16 17a: the pool list's page (`pool=long`) gains the widest
             # row the rule allows; every other state sees today's pool, so the
@@ -493,6 +512,25 @@ class Handler(SimpleHTTPRequestHandler):
                     200, {"revision": SERVER_DOC["revision"], "running": False}
                 )
             return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
+        # Brief 16 slice 17e (the state `instance-models` of check.js): the
+        # section's two writes. The check reads the section and never presses a
+        # control, so the answers are the plain ones: the pool-wide write says
+        # nothing needs a restart, and a row write answers the row it was asked
+        # about (fe/briefs/api-contract.md 878).
+        if p.startswith("/api/instances/") and p.endswith("/profiles/model"):
+            return self.json(200, {"running": False})
+        if p.startswith("/api/instances/") and p.count("/") == 6:
+            parts = p.split("/")
+            if parts[4:6] == ["profiles", "model"]:
+                pid = unquote(parts[6])
+                for row in INSTANCE_MODELS["profiles"]:
+                    if row["id"] == pid:
+                        return self.json(
+                            200, {"effective": dict(row), "running": False}
+                        )
+                return self.json(
+                    404, {"key": "no-model-profile-named", "args": [pid]}
+                )
         return self.send_error(404, "no PUT of " + p)
 
     def do_POST(self):

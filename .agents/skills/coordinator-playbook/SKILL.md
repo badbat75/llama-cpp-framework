@@ -170,3 +170,4 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 - A tester proving a flake fix may start CPU burners (16 `while :; do :; done` loops, its playbook's load harness) and leave them spinning beside Strata: say "no synthetic load" in follow-up briefs, and on a liveness check stop leftover burners by PID.
 - An agent may launch `find /` and leave it hanging in D state for many minutes: check `pgrep -x find` on liveness checks and stop it by PID; brief docs runs with the source URL so they need not search the disk.
 - A wait loop that tests `pgrep -f "<titles>"` matches its own shell, whose command line holds the same text, and waits forever: wait on the chain's task notification, or match with `pgrep -f "^opencode run.*title X"`.
+- An OpenCode run can end with `Error: Failed to execute statement` (its own SQLite store, seen with several sessions at once): the work so far is in the tree; relaunch the same brief with a CONTINUATION note.

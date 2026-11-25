@@ -1,8 +1,9 @@
 // An instance's page (#/instances/<id>, signed in): the header with the id,
 // the engine, the state and the run controls, kept live from the app's one
-// read of /api/instances, and Start at boot, then the tags field and the
-// server profile the instance runs. The Server form is on the profile's own
-// page (fe/briefs/16-server-profiles-and-instances.md, 16 17a.10; the header:
+// read of /api/instances, and Start at boot, then the tags field, the server
+// profile the instance runs and the model profiles it serves. The Server form
+// is on the profile's own page
+// (fe/briefs/16-server-profiles-and-instances.md, 16 17a.10; the header:
 // fe/briefs/01-server.md, sections 2.4 and 4).
 import {
   useCallback,
@@ -25,6 +26,7 @@ import {
   HintToggle,
 } from './Field.tsx'
 import { Icon } from './Icon.tsx'
+import { InstanceModels } from './InstanceModels.tsx'
 import {
   errorText,
   findInstance,
@@ -151,12 +153,15 @@ export default function InstancePage({
   )
   // The Sign in whose dialog is open (43a, 45e).
   const [asking, setAsking] = useState<
-    'run' | 'boot' | 'tags' | 'label' | null
+    'run' | 'boot' | 'tags' | 'label' | 'models' | null
   >(null)
+  // The Model profiles control a write was made with, so the page puts the
+  // focus back on it when its dialog answers (17e.10a).
+  const modelsControl = useRef('')
   const [runs, setRuns] = useState<Runs>({ started: 0, settled: 0 })
   // Sign-ins in the page's dialogs (43b): after each one as another session, the
   // tags field is remounted (keyed by `rereads`), so it shows what the page reads
-  // for the new session.
+  // for the new session; the Model profiles section reads again on that count.
   const [signIns, setSignIns] = useState({ rereads: 0, kept: 0 })
   const clicked = useRef<Action>('start')
   // The page's unsaved changes, which are the tags field's (12 T1.13): leaving
@@ -314,7 +319,9 @@ export default function InstancePage({
           ? `${uid}-tags-sign-in`
           : from === 'label'
             ? `${uid}-name-sign-in`
-            : `${uid}-sign-in`
+            : from === 'models'
+              ? modelsControl.current
+              : `${uid}-sign-in`
     document.getElementById(signIn)?.focus()
   }
 
@@ -336,7 +343,9 @@ export default function InstancePage({
           ? `${uid}-tags-${pillOpen ? 'box' : 'add'}`
           : from === 'label'
             ? `${uid}-name-save`
-            : `${uid}-${clicked.current}`
+            : from === 'models'
+              ? modelsControl.current
+              : `${uid}-${clicked.current}`
     document.getElementById(control)?.focus()
   }
 
@@ -433,6 +442,19 @@ export default function InstancePage({
                 )}
               </dl>
             </section>
+            {/* The model profiles the instance serves (16 17e): its own read,
+                never the page's poll, and read again for every sign-in the page
+                answers, so it shows what the record holds for that session. */}
+            <InstanceModels
+              id={id}
+              fieldId={`${uid}-models`}
+              renewals={signIns.rereads + signIns.kept}
+              onSignIn={(control) => {
+                modelsControl.current = control
+                setAsking('models')
+              }}
+              onSignedOut={onSignedOut}
+            />
           </>
         )}
       </Body>

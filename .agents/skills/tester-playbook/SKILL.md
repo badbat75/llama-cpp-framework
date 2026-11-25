@@ -328,7 +328,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   plain run: reproduce it by running the flaky set at `--maxWorkers=4` under CPU load (N burners of
   `while :; do :; done`, ~16 on this 24 CPU box) 3 to 6 times, reading each run's `Test Files` / `Tests`
   line. The rate here is ~1 red per 3 runs of 12 files, so a green solo x3 proves nothing. Give each
-  harness its own log prefix: two harnesses writing `r$i.log` overwrite each other's runs.
+  harness its own log prefix: two harnesses writing `r$i.log` overwrite each other's runs. The known
+  full-run flaky set (2026-11-25, green solo x3): `ModelProfileGpu3/4/6`, `TensorPlacement1/2` (the
+  Tensor placement card, the suite's heaviest files).
 
 ### The web UI (fe/): the fake bff and fixtures
 
@@ -410,6 +412,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   flush with `act(() => advanceTimersByTimeAsync(0))` repeated, put the answer's own timeout inside the
   fake clock, and pin delay boundaries tight (`advance(299)` absent, `advance(1)` present). Poll-driven
   rows never advance under real timers.
+- A file whose reds are `findBy*` misses (a section that does not exist yet, so every test opens with
+  `await findByRole(..)`) uses `vi.useFakeTimers({ shouldAdvanceTime: true })` (`InstancePage.test.tsx`
+  405), not the `toFake` list: under the list an awaited `findBy*` on a MISSING element polls on timers
+  nobody advances, so the test hangs to vitest's own timeout and prints no assertion, and the report's
+  "expected reason" is unreadable.
 - Find `role="status"` with `getAllByRole('status').find(el => el.textContent?.trim() === text)`, and pin
   an absence with the same filter: it has no name from content, so `queryByRole(.., {name})` never
   matches. A page-level live region breaks every page-wide status count: pin the count the brief rules.
@@ -458,6 +465,10 @@ fixes where in the rule the new declaration sits: add it last, and name that in 
 before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-width` or
 `grid-template-columns` fix reds nothing there), and `CLASSES` keeps a slice namespace
 (`instance-(rename|label|name)*`, `ot*`) outside the frozen list, so a class inside one needs no entry.
+A new slice whose classes the brief describes without naming them adds its own allowance beside
+`ofRename` (one regex over the slice's strings namespace, `/^instance-models[-a-z0-9]*$/`): inert while
+no class exists, so `Reflow.test.ts` stays green on the day, and the coder's naming cannot red the
+frozen list.
 - A helper that reads a declaration's VALUE (`values(decls, 'position')` returns `fixed`) must be
   compared with a value literal: an expected `'position: fixed'` is a test-side red whose output reads
   "received 'fixed'", which is right. Compare like with like, and sweep every call site of the helper.
@@ -613,6 +624,10 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
   passes when the key lands) and retarget its text expectations on the new key too. `node --check
   fe/ux/check.js` is the cheap proof the edit parses: the full run needs the Playwright browsers, which
   `npm ci` does not install.
+- A state for a section the coder has not built: mark it by role and text (`main [role="switch"]`,
+  `main tbody tr` with a `count`), never by a class the brief leaves unnamed, and answer the routes its
+  page calls in `fe/ux/stub.py` (`do_GET` and `do_PUT`), else the state fails on a 404 the slice does not
+  own. `python3 -m py_compile fe/ux/stub.py` is the cheap proof of that edit.
 
 ### Behaviour that cannot run here
 

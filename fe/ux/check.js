@@ -399,6 +399,32 @@ const STATES = [
     open: { click: NAME_EDIT, then: 'main form input' },
   },
   {
+    // Brief 16, slice 17e (17e.10, as its 17e check of 2026-11-25 amends it):
+    // the instance page's Model profiles section, on the stub's three rows
+    // (stub.py `INSTANCE_MODELS`), one of them the widest id of the pool. The
+    // markers name no class of the slice: the section's h2, its table's rows,
+    // the row switches and the section's checkbox beside the page's own Start
+    // at boot. The table box scrolls inside itself at 320 px and at 200 % text,
+    // and every control stays within 1 px of its row's centre.
+    name: 'instance-models',
+    set: 'session=admin',
+    hash: '#/instances/default',
+    expect: [
+      { selector: 'h2', text: S['instance-models-title'] },
+      { selector: 'main tbody tr', count: 3, message: 'one row per profile' },
+      {
+        selector: 'main [role="switch"]',
+        count: 3,
+        message: 'the switch of each row (17e.4a)',
+      },
+      {
+        selector: 'main input[type="checkbox"]',
+        count: 2,
+        message: 'the section\'s checkbox, beside Start at boot',
+      },
+    ],
+  },
+  {
     // Brief 16, slice 17a (17a.11): the pool list at its widest row, so the
     // check reads the table box and the tags cell with a 32-character id and
     // 8 tags of 32 characters in it.
