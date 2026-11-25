@@ -477,6 +477,10 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   differ. A new refusal key needs its arm in `checks::Refusal::text`, its keys in `en_US.toml` AND
   `cli.toml`, and passes `binding_lint`'s `cli_print_paths_hold_no_language` only when the strings
   carry no path: reuse an existing key (`not-one-of` names the offending key as its first value).
+- `pai-config`'s `names_lint::no_code_names_the_old_project` scans `crates/{app,bff,cli,config,core,manager}`
+  and `OLD_NAMES` holds `join("llama.cpp")`, so a manager test fixture that writes the engine's version
+  file reddens `cargo test -p pai-config`, naming a `crates/manager` line in a crate you did not touch.
+  Prove it is pre-existing with `git show HEAD:<file> | sed -n '<n>p'` plus `git diff --name-only -- crates/manager`.
 - A new `pai-manager` verb reddens `pai-core`'s `strings::tests::the_manager_usage_names_pai_manager`:
   it pins `manager-usage` by EXACT equality with the old verb list, so it and a manager test that
   requires the new verb in the same key are a witness pair no strings value satisfies. The core pin is

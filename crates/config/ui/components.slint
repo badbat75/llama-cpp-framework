@@ -100,7 +100,10 @@ export global Options {
     // LOAD_MODES in src/server_cfg.rs (equality asserted by the e2e test,
     // src/tests/ui_bindings.rs), and the values are passed to -lm verbatim.
     out property <[string]> load_modes: ["default", "auto", "none", "mmap", "mlock", "mmap+mlock", "dio"];
-    out property <[string]> load_mode_labels: [Strings.t("default"), Strings.t("auto"), Strings.t("none"), "mmap", "mlock", "mmap+mlock", "dio"];
+    // The unset entry's label says what an unset key means (brief 25 GT5b.1):
+    // it is not llama.cpp's auto on a ROCm instance. The value it stands for
+    // stays "default", so the combo still writes no key.
+    out property <[string]> load_mode_labels: [Strings.t("load-mode-default"), Strings.t("auto"), Strings.t("none"), "mmap", "mlock", "mmap+mlock", "dio"];
     // The words form.rs's tri_state / tri_bool pair speaks, for a tri-state shown
     // as a dropdown (SDK tuning's hipBLASLt): "default" passes nothing.
     out property <[string]> tri_states: ["default", "on", "off"];

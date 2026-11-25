@@ -153,6 +153,11 @@ type SelectRow = RowBase & {
    * out). Read before the option match, so the state and what the save sends
    * are that option's. */
   alias?: Record<string, string>
+  /** Brief 25 GT5b.1 (the review's D1): the words the absent key means, in a
+   * muted line under the select while the control is at `absent`, and the
+   * select's description. A native select cannot wrap them, so they sit outside
+   * it and its option keeps the shared `option-default`. Absent: no line. */
+  unsetNote?: string
 }
 
 /** A text: one monospace input showing the string as it is. The unit, when the
@@ -362,7 +367,11 @@ const LAZY_MODES: Option[] = [
 ]
 
 /** The Load mode options of 107 (MP 102-103 of `components.slint`): three
- * strings, then the literals the file writes. */
+ * strings, then the literals the file writes. The unset entry is the shared
+ * `option-default` (brief 25 GT5b.1, the review's D1: a native select clips the
+ * long words at 320 px), and the row says what an unset key means in a line
+ * under the select. The value it stands for stays `default`, so the key is
+ * still left out of the file. */
 const LOAD_MODES: Option[] = [
   { value: 'default', text: t('option-default') },
   { value: 'auto', text: t('option-auto') },
@@ -539,6 +548,9 @@ const CARDS: CardFields[] = [
         key: 'load-mode',
         options: LOAD_MODES,
         absent: 'default',
+        // 25 GT5b.1: an unset key is not llama.cpp's `auto` on a ROCm instance,
+        // so the words the option cannot carry sit under the select.
+        unsetNote: t('model-profile-load-mode-default'),
         label: t('model-profile-load-mode'),
         hint: t('model-profile-load-mode-hint'),
         editable: true,
@@ -2311,6 +2323,15 @@ function ModelProfileField({
     row.kind === 'select' && editable
       ? editableWritten(row, values, loaded)
       : state?.written
+  // 25 GT5b.1 (the review's D1): the row that words its absent key shows those
+  // words under the select while the control is at the absent option, and names
+  // them as its description. They go with the first value picked.
+  const note =
+    row.kind === 'select' &&
+    row.unsetNote !== undefined &&
+    select.value === row.absent
+      ? { id: `${common.id}-unset`, text: row.unsetNote }
+      : undefined
   return (
     <SelectField
       {...common}
@@ -2318,6 +2339,7 @@ function ModelProfileField({
       options={select.options}
       value={select.value}
       full={full}
+      note={note}
       written={
         written === undefined
           ? undefined

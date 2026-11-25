@@ -493,6 +493,23 @@ test('2h.180, 2h.133: Load mode matches the file value exactly: MLOCK is the ext
   expect(optionValues(sel), 'the load-mode options of 107, then MLOCK').toEqual(
     ['default', 'auto', 'none', 'mmap', 'mlock', 'mmap+mlock', 'dio', 'MLOCK'],
   )
+  // 25 GT5b.1 amended (the review's D1): the first option is the shared
+  // option-default again, the unset words moved to a line under the select
+  // (pinned in ModelProfileCards4.test.tsx), and the values and the order stay
+  // (GT5b.3).
+  expect(
+    optionTexts(sel),
+    'the option texts: option-default first, the rest as 107 wrote them',
+  ).toEqual([
+    en('option-default'),
+    'auto',
+    'none',
+    'mmap',
+    'mlock',
+    'mmap+mlock',
+    'dio',
+    'MLOCK',
+  ])
   expect(sel.value, 'MLOCK is selected, not mlock').toBe('MLOCK')
   expect(sel.options[7]?.text, 'the extra option is the file text').toBe(
     'MLOCK',

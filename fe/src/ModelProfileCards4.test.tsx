@@ -34,8 +34,11 @@ import {
   screen,
   within,
 } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
+import strings from './strings/en_US.json'
 import {
   before,
   en,
@@ -92,7 +95,10 @@ const LAZY = [
   en('option-off'),
 ]
 
-/** The Load mode options of 107 (MP 102-103): three strings, four literals. */
+/** The Load mode options of 107 (MP 102-103): three strings, four literals.
+ * 25 GT5b.1 amended (the review's D1): the first is the shared `option-default`
+ * again, since a native select cannot wrap the long words; they moved to a line
+ * under the select, pinned below. */
 const LOAD = [
   en('option-default'),
   en('option-auto'),
@@ -258,6 +264,7 @@ const FIELDS: Row[] = [
     // 180: the select is enabled, so the match is exact and the stub's `MLOCK`
     // stands as the extra option the file's value, listed last.
     options: [...LOAD, 'MLOCK'],
+    // 25 GT5b.1 amended (D1): the unset option is the shared one again.
     absentOption: en('option-default'),
     set: 'MLOCK',
     shown: 'MLOCK',
@@ -1084,6 +1091,207 @@ test('2e.107, 2h.180: Load mode: a value no mode is gets one extra last option, 
   expect(selectedTextExact(select), 'and it is the value as written').toBe(
     'MLOCKED',
   )
+})
+
+/** One basic string of the GUI's language file, unescaped: the file is a flat
+ * list of `key = "text"` lines, read as HearthTiles.test.tsx reads it. */
+function guiString(key: string): string {
+  const toml = readFileSync(
+    join(import.meta.dirname, '../../crates/core/strings/en_US.toml'),
+    'utf8',
+  )
+  const line = toml.split('\n').find((l) => l.startsWith(`${key} = "`))
+  expect(line, `en_US.toml holds ${key}`).toBeDefined()
+  const body = line!.slice(key.length + 4, line!.length - 1)
+  return body.replace(/\\(.)/g, (_, c: string) => (c === 'n' ? '\n' : c))
+}
+
+/** The sheet, whole-line comments dropped, as 2e.124 reads it. */
+const CSS = readFileSync(
+  join(import.meta.dirname, 'index.css'),
+  'utf8',
+).replace(/\/\*[\s\S]*?\*\//g, '')
+
+/** The declarations of every top-level rule of the sheet that styles `el`: a
+ * rule with a selector whose LAST token is the element's tag, its id or one of
+ * its classes. The brief gives a look ("muted", "in the flow") and leaves the
+ * class to the coder, so the pin reads the cascade, not a class name (as 2e.124
+ * accepts the full-value class or a rule naming its own line). */
+function stylesOf(el: Element): string {
+  const names = new Set(
+    [el.tagName.toLowerCase(), el.id, ...el.classList].filter(Boolean),
+  )
+  return [...CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) =>
+      m[1].split(',').some((part) => {
+        const last = (
+          part
+            .trim()
+            .split(/[\s>+~]+/)
+            .pop() ?? ''
+        ).replace(/^[.#]/, '')
+        return names.has(last)
+      }),
+    )
+    .map((m) => m[2])
+    .join(';')
+}
+
+/** The element the control's `aria-describedby` names that carries `text`
+ * exactly, or null. Every id it names must be in the document: a description is
+ * a real element, not a phantom id (2e.124b). */
+function describedWith(control: Element, text: string): HTMLElement | null {
+  const ids = (control.getAttribute('aria-describedby') ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+  const named = ids.map((id) => document.getElementById(id))
+  expect(
+    named.filter((el) => el !== null).length,
+    `aria-describedby names ${ids.join(' ')}: every id is in the document`,
+  ).toBe(ids.length)
+  return named.find((el) => (el?.textContent ?? '').trim() === text) ?? null
+}
+
+// ── 25 GT5b: what an unset Load mode means ─────────────────────────────────
+
+test('25 GT5b.1 (review D1): the unset Load mode option is option-default again and its value stays default, the long words sit in no select option, and every other select of the card keeps option-default', async () => {
+  const f = FIELDS.find((x) => x.key === 'load-mode')!
+  const { main } = await loaded({
+    modelProfile: () => reply(200, exactOf({})),
+  })
+  const sel = selectOf(main, f.label)
+  expect(
+    optionTexts(sel),
+    'the options of 107, the first the shared default (D1: a native select cannot wrap)',
+  ).toEqual(LOAD)
+  expect(optionTexts(sel)[0], 'the unset option is option-default again').toBe(
+    en('option-default'),
+  )
+  expect(
+    optionsOf(sel)[0]!.value,
+    'the value written stays default (GT5b.1)',
+  ).toBe('default')
+  expect(selectedText(sel), 'the absent key selects the default option').toBe(
+    en('option-default'),
+  )
+  // The long words are in no option of any select: at 320 px the closed select
+  // clips them (D1). They live in the line under the select, pinned next.
+  const carriers = within(main)
+    .getAllByRole('combobox')
+    .filter((s) =>
+      optionTexts(s as HTMLSelectElement).some((o) =>
+        o.includes(en('model-profile-load-mode-default')),
+      ),
+    )
+  expect(carriers, 'no select carries the unset words').toEqual([])
+  // GT5b.3: every other select's unset option is the shared one, as before.
+  for (const key of ['op-offload', 'repack', 'lazy-mode']) {
+    const other = FIELDS.find((x) => x.key === key)!
+    expect(
+      optionTexts(selectOf(main, other.label))[0],
+      `${key}: its unset option is still option-default (GT5b.3)`,
+    ).toBe(en('option-default'))
+  }
+})
+
+test("25 GT5b.1 (review): while load-mode is unset a muted line under the select reads model-profile-load-mode-default, is the select's description and not a live region, and is gone once a value is set", async () => {
+  const f = FIELDS.find((x) => x.key === 'load-mode')!
+  const words = en('model-profile-load-mode-default')
+  const { main } = await loaded({
+    modelProfile: () => reply(200, exactOf({})),
+  })
+  const sel = selectOf(main, f.label)
+  const line = describedWith(sel, words)
+  expect(
+    line,
+    'the select names, as its description, a line carrying the unset words',
+  ).toBeTruthy()
+  // Under the select, in its own field, read after the control.
+  const field = fieldOf(main, f.label)
+  expect(field.contains(line!), "the line is in the select's field").toBe(true)
+  expect(before(sel, line!), 'the line is after the select').toBe(true)
+  // Shown, not aria-hidden, and no tab stop: it is a line of text.
+  expect(isHidden(line!), 'the line is shown').toBe(false)
+  expect(
+    line!.getAttribute('aria-hidden'),
+    'not hidden from readers',
+  ).toBeNull()
+  expect(line!.getAttribute('tabindex'), 'no focus').toBeNull()
+  expect(
+    ['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(line!.tagName),
+    `${line!.tagName}: not a control`,
+  ).toBe(false)
+  // A description, not a live region: it must not be announced on its own.
+  expect(line!.getAttribute('aria-live'), 'no aria-live').toBeNull()
+  expect(
+    ['status', 'alert', 'log'].includes(line!.getAttribute('role') ?? ''),
+    'no live role',
+  ).toBe(false)
+  // Muted, and in the flow (not a popover): read from the sheet, the class the
+  // coder picked being free. Wrapping at 320 px and 200 % is a layout fact,
+  // checked by the UX check, not in jsdom.
+  const styles = stylesOf(line!)
+  expect(styles, 'the line is muted').toMatch(/(^|;)\s*color:\s*var\(--muted\)/)
+  expect(
+    styles,
+    'the line sits in the flow: no rule reaching it is absolute or fixed',
+  ).not.toMatch(/(^|;)\s*position:\s*(absolute|fixed)/)
+  // It goes when a value is picked: a value of the list, and one the file holds
+  // that the select shows as an extra option.
+  for (const value of ['auto', 'MLOCK']) {
+    cleanup()
+    vi.unstubAllGlobals()
+    const second = await loaded({
+      modelProfile: () => reply(200, exactOf({ 'load-mode': value })),
+    })
+    const sel2 = selectOf(second.main, f.label)
+    expect(sel2.value, `${value}: the select shows the value`).toBe(value)
+    expect(
+      describedWith(sel2, words),
+      `${value}: the select names no unset line`,
+    ).toBeNull()
+    expect(
+      within(second.main).queryAllByText(words),
+      `${value}: the unset words are nowhere on the page`,
+    ).toHaveLength(0)
+  }
+  // The line is the page's own text, not a label, hint, option or title: the
+  // unset words appear exactly once, so no other field carries them (2e.110
+  // counts the texts of the card, and this is not one of them).
+  cleanup()
+  vi.unstubAllGlobals()
+  const third = await loaded({ modelProfile: () => reply(200, exactOf({})) })
+  expect(
+    within(third.main).getAllByText(words).length,
+    'the unset words appear once on the page',
+  ).toBe(1)
+})
+
+test('25 GT5b.2: Load mode About shows the new text, one paragraph per line, and the web and the GUI strings files hold the same words', async () => {
+  const f = FIELDS.find((x) => x.key === 'load-mode')!
+  const { main } = await loaded({
+    modelProfile: () => reply(200, exactOf({})),
+  })
+  const about = aboutOf(main, f.label)
+  const hint = document.getElementById(
+    about.getAttribute('aria-controls') ?? '',
+  )
+  expect(hint, 'the hint element').not.toBe(null)
+  expect(isHidden(hint!), 'the hint starts hidden').toBe(true)
+  fireEvent.click(about)
+  expect(about.getAttribute('aria-expanded'), 'the toggle opens').toBe('true')
+  expect(isHidden(hint!), 'the hint is shown').toBe(false)
+  expect(
+    [...hint!.querySelectorAll('p')].map((p) => p.textContent),
+    'the hint is the new text, one paragraph per line',
+  ).toEqual(en('model-profile-load-mode-hint').split('\n'))
+  // The same words in both files (GT5b.2), line for line: the web's JSON line
+  // and the GUI's TOML line. A day-one guard: it is green while both files
+  // agree, and reds the moment one of the two is left behind.
+  expect(
+    guiString('load-mode-hint').split('\n'),
+    'the GUI hint is the web hint, line for line',
+  ).toEqual(strings['model-profile-load-mode-hint'].split('\n'))
 })
 
 test('2e.107, 2e.1.3: Op offload and Repack carry the shared tri-state of 1.3, No host buffer the off / on of 1.3', () => {

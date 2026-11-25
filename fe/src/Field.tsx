@@ -26,20 +26,22 @@ type Common = {
 }
 
 /** What a control's accessibility tree names: in `aria-describedby` the unit
- * first, then the error, then the written-as line, keeping the ids already
- * there and their order; `aria-invalid` only when there is an error. The
- * full-value line is named by no control, since the control already exposes
- * that value. A unit is a description (criterion 159): "Cache RAM, edit text,
- * MiB" is read, so the unit element takes the id `<field id>-unit` and is
+ * first, then the unset note, then the error, then the written-as line, keeping
+ * the ids already there and their order; `aria-invalid` only when there is an
+ * error. The full-value line is named by no control, since the control already
+ * exposes that value. A unit is a description (criterion 159): "Cache RAM, edit
+ * text, MiB" is read, so the unit element takes the id `<field id>-unit` and is
  * never named by `aria-hidden`. */
 function describes(
   id: string,
   error: string | undefined,
   unitId?: string,
   writtenId?: string,
+  noteId?: string,
 ) {
   const ids: string[] = []
   if (unitId !== undefined) ids.push(unitId)
+  if (noteId !== undefined) ids.push(noteId)
   if (error !== undefined) ids.push(`${id}-error`)
   if (writtenId !== undefined) ids.push(writtenId)
   return ids.length === 0
@@ -116,6 +118,20 @@ function WrittenValue({ id, text }: { id: string; text: string }) {
   )
 }
 
+/** The unset line: what the control's default state means, under the control,
+ * as muted text in the flow (brief 25 GT5b.1, the review's D1). A native select
+ * cannot wrap it, so it sits outside the control and shows only while the
+ * control is at that state; the control names it as its description. It is a
+ * paragraph, so it takes no tab stop, and no live role, being a description and
+ * not an announcement. */
+function UnsetNote({ id, text }: { id: string; text: string }) {
+  return (
+    <p id={id} className="field-hint">
+      {text}
+    </p>
+  )
+}
+
 /** A field of one control named by its label, `<id>-control`. */
 function LabelField({
   id,
@@ -124,8 +140,9 @@ function LabelField({
   error,
   full,
   written,
+  note,
   children,
-}: Common & { children: ReactNode }) {
+}: Common & { children: ReactNode; note?: { id: string; text: string } }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="field">
@@ -139,6 +156,7 @@ function LabelField({
         />
       </div>
       <div className="field-control">{children}</div>
+      {note !== undefined && <UnsetNote id={note.id} text={note.text} />}
       {full !== undefined && <FullValue id={full.id} text={full.text} />}
       {written !== undefined && (
         <WrittenValue id={written.id} text={written.text} />
@@ -530,7 +548,9 @@ export function TextField({
   )
 }
 
-/** A native select. */
+/** A native select. `note` is the unset line of 25 GT5b.1: the caller passes it
+ * only while the select is at the state an absent key shows, and the select
+ * names it as its description. */
 export function SelectField({
   id,
   label,
@@ -538,6 +558,7 @@ export function SelectField({
   error,
   full,
   written,
+  note,
   options,
   value,
   disabled,
@@ -547,6 +568,7 @@ export function SelectField({
   value: string
   /** Omitted: the select is enabled. */
   disabled?: boolean
+  note?: { id: string; text: string }
   /** `picked` is false when the change left the select with no selected
    * option: the value is not in its list, so it is not a pick the control
    * holds. A page that shows the value it lists (as an extra option) never
@@ -561,13 +583,14 @@ export function SelectField({
       error={error}
       full={full}
       written={written}
+      note={note}
     >
       <select
         id={`${id}-control`}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value, e.target.selectedIndex >= 0)}
-        {...describes(id, error, undefined, written?.id)}
+        {...describes(id, error, undefined, written?.id, note?.id)}
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>

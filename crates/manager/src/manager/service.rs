@@ -22588,7 +22588,7 @@ pub(crate) fn manager_gt5a_rocm_load_mode_e2e() {
     let installed_backends = |backends: &[&str]| {
         for d in versions_dirs() {
             std::fs::create_dir_all(&d).expect("versions dir");
-            std::fs::write(d.join("llama.cpp"), "b1000\n").expect("engine version file");
+            std::fs::write(d.join(ENGINE), "b1000\n").expect("engine version file");
             for b in ["cuda", "rocm", "vulkan"] {
                 let path = d.join(format!("llama.cpp-{b}"));
                 if backends.contains(&b) {

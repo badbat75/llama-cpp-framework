@@ -418,6 +418,74 @@ fn editable_widgets_track_model_after_edit() {
         "Options.load_modes (ui/components.slint) drifted from server_cfg::LOAD_MODES"
     );
 
+    // 25 GT5b.1: the entry for the unset key says what it means. The value it
+    // stands for stays "default" (the drift guard above writes the file with
+    // no key), and a key missing from the language file echoes itself on
+    // screen, so the echo is the red here.
+    let load_mode_default = app
+        .global::<crate::gui::Strings>()
+        .invoke_t("load-mode-default".into());
+    assert_ne!(
+        load_mode_default.as_str(),
+        "load-mode-default",
+        "25 GT5b.1: en_US.toml has no load-mode-default, so the combo would show the key"
+    );
+    // GT5b.1 amended (the review's D1, and the reviewer's point that the ROCm
+    // default is Linux only): the GUI's combo is wide on a desktop, so the
+    // words stay in the option label here, with Linux named. The web says the
+    // same in a line under its select, whose option stays "default".
+    assert_eq!(
+        load_mode_default.as_str(),
+        "default (none on Linux ROCm, auto elsewhere)",
+        "25 GT5b.1 (review D1): en_US.toml's load-mode-default is not the amended words"
+    );
+    let load_mode_labels: Vec<String> = app
+        .global::<crate::gui::Options>()
+        .get_load_mode_labels()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        load_mode_labels.first().map(String::as_str),
+        Some(load_mode_default.as_str()),
+        "25 GT5b.1: Options.load_mode_labels[0] (ui/components.slint 103) is not Strings.t(\"load-mode-default\")"
+    );
+    // GT5b.3: nothing else moves: the labels after the unset entry, and the
+    // values the drift guard above pins, stay as they are.
+    let rest_labels: Vec<String> = ["auto", "none", "mmap", "mlock", "mmap+mlock", "dio"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    assert_eq!(
+        load_mode_labels[1..],
+        rest_labels,
+        "25 GT5b.3: the load-mode labels after the unset entry moved"
+    );
+
+    // 25 GT5b.2: the About text tells why a ROCm instance loads with none, and
+    // the trade-off: the Default line changes and two lines follow it, so the
+    // text is twelve lines. The web's own text, and the two files compared
+    // with each other, are pinned in fe/src/ModelProfileCards4.test.tsx.
+    let load_mode_hint = app
+        .global::<crate::gui::Strings>()
+        .invoke_t("load-mode-hint".into());
+    let hint_lines: Vec<&str> = load_mode_hint.split('\n').collect();
+    assert_eq!(
+        hint_lines.len(),
+        12,
+        "25 GT5b.2: load-mode-hint is twelve lines, it reads {hint_lines:?}"
+    );
+    for start in [
+        "Default: none on an instance that runs on ROCm GPUs (Linux)",
+        "Why none on ROCm:",
+        "The cost:",
+    ] {
+        assert!(
+            hint_lines.iter().any(|l| l.starts_with(start)),
+            "25 GT5b.2: load-mode-hint holds no line starting {start:?}, it reads {hint_lines:?}"
+        );
+    }
+
     // And for the AllReduce dropdown: its entries after "default" are exported
     // verbatim as GGML_CUDA_ALLREDUCE, and `normalize_allreduce` drops a word
     // the Rust list lacks, so an entry only the combo has would save as unset.

@@ -1416,7 +1416,7 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   default, or per call) are not involved; `GPU_PINNED_MIN_XFER_SIZE` was not needed. Decided (user,
   2026-11-25): a default on ROCm plus a guide, GT5 (ARCHITECTURE.md "ROCm instances load models with
   `load-mode = none`"): GT5a (built 2026-11-25) the manager's render gives a ROCm instance's `models@<id>.ini` `[*] load-mode
-  = none` when the pool's `[*]` sets none (an explicit value wins; Linux only); GT5b a hint on the unset
+  = none` when the pool's `[*]` sets none (an explicit value wins; Linux only); GT5b (built 2026-11-25) a hint on the unset
   field (designer first); GT5c the R9700 guide (written 2026-11-25).
   **RS, instance readiness** (the owner, relayed by the strata-framework agent, 2026-11-25: Strata's
   system unit orders After=llama.cpp@default): ARCHITECTURE.md "An instance is started once its router

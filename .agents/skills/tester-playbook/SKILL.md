@@ -70,6 +70,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - For a defect a review found in a closed slice, pin the WORDS the review proposes: an existing test that
   compares two places (the tile's alert with the page's) is green when both carry the same wrong fallback,
   so it covers the defect's shape and not its fix.
+- Read an existing pin of the same rule for teeth before trusting it as a base: a GUI label compared with
+  `Strings.t("key")` is a TAUTOLOGY (both sides read the same language file), so the amended words need a
+  literal in the assert.
 - Assert an observable (a suffix, a pattern) where a name's shape is free (a generated temp name, an
   ephemeral id): a red is a contract, and the coder is free to pick the literal.
 - Pin an ORDER rule ("the record is written last") with a call that fails on the LAST step (make the
@@ -295,6 +298,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   legend move to the filled call (one `removeName(n)` helper per file), and the visible-text pins of the
   old shape are deleted, not amended. `App.test.tsx` `1a strings` stays red until the coder edits
   `en_US.json`: that red is the strings contract.
+- A strings parity test between the web JSON and the GUI TOML reads the TOML line `key = "…"` and
+  unescapes `\n` (one basic string, no escaped quotes in these hints). The two files do NOT share key
+  names for the same word (`option-default` is `default` in `en_US.toml`), so parity is per key PAIR the
+  brief names, never by name equality: a probe proved the helper red on the web-only key before the real
+  test shipped. The parity pin sits after the page's own paragraph pin, so it is a day-one guard that
+  reds when one file is left behind.
 - Never add keys to `src/strings/en_US.json` and never weaken the strings guard: `App.test.tsx`'s
   `1a strings` compares the test mirror `EN` (`fe/src/test/bff.ts`) with `en_US.json` key by key, so a key
   you add to `EN` is the coder's signal and that one red is the intended one, not collateral damage from
@@ -478,6 +487,15 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
   the element and its EARLIER tokens against the classes of the element's ancestors (read off the DOM): a
   rule requiring every token to be the element's own misses the scoped rule the coder writes
   (`.instance-header .x`), which is a red for a correct fix.
+- Pin a line the brief gives by LOOK ("a muted line under the select") and by its RELATION to a control,
+  never by a new id literal: take the ids in the control's `aria-describedby` (every one must exist in the
+  document), pick the element carrying the key's text exactly, then pin it is in the control's field, after
+  the control, shown, not `aria-hidden`, no tab stop, not a control, and no `aria-live`/`status`/`alert`
+  (a description, not a live region), and that the text is GONE once the state changes. Read the look from
+  the sheet with the same last-token rule as the cascade above (tag, id or class), so the coder's class
+  stays free; "wrapping at 320 px / 200 %" is layout, unproven in jsdom, so name it for the UX check.
+  Add one page-level count of the text (`getAllByText(words).length === 1`): a shared key's words landing
+  in a label, hint or option elsewhere is the defect this catches.
 - Pin a cascade value that today's sheet already carries globally (the `h1`'s `overflow-wrap: anywhere`)
   as a presence pin on that global rule, not as a value of the scoped merge: the merge sees only the rules
   scoped to the new box, so a global declaration reads absent and the pin is red on a correct fix.
@@ -796,6 +814,10 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
 - Dropping a key from the test's `EN` mirror reds EVERY test that calls `en(key)` for it: that full run's
   `FAIL` list IS the census of the pins to report. A pin that reads `en_US.json` directly (a file's own
   `S['key']`) stays green until the coder removes the key from the file, so it is missing from that census.
+- Changing the TEXT of a shared key (adding none) fans out to every table that lists the words: the card
+  files' `LOAD`/`FIELDS` `options` and `absentOption`, and the local option-text arrays of the save tests.
+  Grep the key AND the old words: the FIELDS-driven tests (the Hardware card's `2e.107`, `2e.109`,
+  `2e.110`) red beside the slice's own, and the brief's list names none of them.
 - A full-suite run reds the heaviest page tests with `Test timed out in 5000ms` under the load (they pass
   in isolation, at baseline and with the change): rerun those files alone before reporting a timeout.
 - vitest's `toBe` takes ONE argument: a failure message passed to it is a typecheck red, not a test red.

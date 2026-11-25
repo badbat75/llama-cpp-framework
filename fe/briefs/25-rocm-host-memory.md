@@ -153,3 +153,67 @@ Tests to amend or add:
   the key exists in `en_US.toml`.
 - Strings: the two hint texts are equal, line for line, in both files. A parity test, if the
   tester adds one, compares `model-profile-load-mode-hint` with `load-mode-hint`.
+
+### GT5b review (designer, 2026-11-25)
+
+Built code. The strings were read from both files; the select was measured with
+`build/ux-review/gt5b.js` in Chromium and Firefox at 1280 px, 320 px and 320 px at 200 % text.
+WebKit's browser closed during the run, a crash of the tool and not of the page; the measure is
+the same CSS in every engine.
+
+- GT5b.2 met. `model-profile-load-mode-hint` and `load-mode-hint` are identical, line for line,
+  and they are the brief's text. GT5b.3 met.
+- The GUI side of GT5b.1 met: `crates/config/ui/components.slint` 106 uses
+  `Strings.t("load-mode-default")`, and `en_US.toml` 272 holds it.
+- **The web side of GT5b.1 is not met (D1).** At 1280 px the closed select shows the whole option
+  (300 px of text in 320 px). At 320 px the select is 238 px wide (220 px for its text), and the
+  option reads "default (none on ROCm, au", cut off. At 200 % text it is cut after about 13
+  characters. A native `select` cannot wrap, so "shows the whole text or wraps" cannot hold for
+  this option ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)). Screenshot:
+  `build/ux-review/shots/GT5b-320.png`.
+- The reviewer's point holds too: the ROCm default is Linux only, and a Windows ROCm instance
+  stays `auto`. Adding "on Linux" makes the option longer still.
+
+**GT5b.1 amended (adviser's decision; the web differs from the GUI on purpose):**
+- Web: the Load mode select's unset option goes back to `option-default` (`default`), like every
+  other select. While the field is unset, a muted line under the select, in the flow and wrapping,
+  reads `model-profile-load-mode-default` with its text changed to
+  `Unset: none on a ROCm instance on Linux, auto elsewhere.`
+  - It is a description, not a live region: the select's `aria-describedby` names it while it
+    shows ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)).
+  - It goes when a value is picked.
+  - The Server page's unset folders say the same kind of thing as a placeholder
+    (`server-folder-instance-default`, `ServerForm.tsx` 227). A `select` has no placeholder, so
+    here it is a line.
+- GUI: the combo is wide on a desktop, so the option label stays, with Linux added:
+  `load-mode-default` = `default (none on Linux ROCm, auto elsewhere)` (`en_US.toml` 272).
+- Tests: `fe/src/ModelProfileSave13.test.tsx`: the first option reads `option-default` again; a new
+  test that the line shows only while unset and is the select's description;
+  `crates/config/src/tests/ui_bindings.rs`: the label check, with the text changed.
+
+UX check (204 states per browser): 0 failing in all three browsers.
+
+### GT5b re-check (designer, 2026-11-25)
+
+Built code, measured with `build/ux-review/gt5b2.js` (and its filtered copies) in Chromium,
+Firefox and WebKit, one browser at a time, at 1280 px, 320 px and 320 px at 200 % text.
+
+- D1 closed; the amended GT5b.1 met in all three engines. The unset option reads `default` and
+  fits. The line reads `Unset: none on a ROCm instance on Linux, auto elsewhere.`, sits under the
+  select, inside the viewport (41 to 279 px at 320 px), on 1 line at 1280 px, 2 at 320 px, 4 at
+  200 % text, never cut, no sideways scroll
+  ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow), [1.4.4](https://www.w3.org/TR/WCAG22/#resize-text)).
+  The select's `aria-describedby` is `model-profile-load-mode-unset`, the line's id, while unset;
+  after picking `mmap` the line and the reference are both gone
+  ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)). Screenshots:
+  `build/ux-review/shots/GT5b2-1280.png`, `GT5b2-320.png`, `GT5b2-320-200.png`.
+- The first page load of a fresh Chromium and WebKit timed out in the script at 1280 px (a cold
+  start); the same case passed on a second load in both.
+- Adviser notes for a later slice, not defects:
+  1. At 1280 px the Load mode select is about 138 px wide while its neighbours (Op offload,
+     Repack, Lazy tensors) are about 90 px: its options are longer. Fine as is; a shared select
+     width per section would align the column (preference).
+  2. The gap under the line before Fit to VRAM is larger than between other rows; the line could
+     take the row's bottom margin instead of adding to it (preference).
+
+UX check (204 states per browser): 0 failing in Chromium, Firefox and WebKit.
