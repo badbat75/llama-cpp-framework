@@ -164,19 +164,24 @@ they win.</p>
   <text x="257" y="696" class="t-small">no path or unit name passes through</text>
 
   <!-- column C: instances, systemd, director, files -->
-  <rect class="svc" x="590" y="50" width="350" height="120" rx="5"/>
+  <rect class="svc" x="590" y="50" width="350" height="136" rx="5"/>
   <text x="602" y="70" class="t-title">llama.cpp@&lt;id&gt;.service (one per instance)</text>
   <text x="602" y="88">run-instance &lt;id&gt; execs llama-server</text>
   <text x="602" y="104" class="t-small">user private-ai, groups render video</text>
   <text x="602" y="120" class="t-mono">port from its server profile (9931 default)</text>
   <text x="602" y="136" class="t-small">ExecStop: save-slots; log: the journal</text>
-  <text x="602" y="152" class="t-small">OpenAI-compatible HTTP, its own API key</text>
+  <text x="602" y="152" class="t-small">ExecStartPost: wait-ready, active once /health is 200</text>
+  <text x="602" y="168" class="t-small">(10 min, else the start fails); OpenAI-compatible HTTP</text>
 
   <rect class="svc" x="590" y="205" width="160" height="50" rx="5"/>
   <text x="602" y="225" class="t-title">systemd</text>
   <text x="602" y="243" class="t-small">units; boot = enabled</text>
   <line class="edge" x1="525" y1="230" x2="588" y2="230"/>
-  <line class="edge" x1="670" y1="205" x2="670" y2="172"/>
+  <line class="edge" x1="670" y1="205" x2="670" y2="188"/>
+  <rect class="svc" x="770" y="205" width="170" height="50" rx="5"/>
+  <text x="782" y="225" class="t-title">llama.cpp.target</text>
+  <text x="782" y="243" class="t-small">after each wait-ready</text>
+  <line class="edge" x1="855" y1="188" x2="855" y2="203"/>
 
   <rect class="svc" x="590" y="275" width="350" height="152" rx="5"/>
   <text x="602" y="295" class="t-title">private-ai-director.service</text>
@@ -216,8 +221,8 @@ they win.</p>
   <text x="140" y="732" class="t-trust">OS identity</text>
   <rect class="trust" x="235" y="545" width="300" height="172" rx="4"/>
   <text x="500" y="558" class="t-trust">root</text>
-  <rect class="trust" x="582" y="42" width="366" height="136" rx="4"/>
-  <text x="770" y="194" class="t-trust">engine account</text>
+  <rect class="trust" x="582" y="42" width="366" height="152" rx="4"/>
+  <text x="856" y="38" class="t-trust">engine account</text>
   <rect class="trust" x="582" y="267" width="366" height="166" rx="4"/>
   <text x="770" y="449" class="t-trust">director account</text>
 </svg>
@@ -341,7 +346,7 @@ manager's SID, <code>node\</code>, <code>models</code> and the metrics store.</p
 <h2>Packages and what each installs</h2>
 <table>
 <tr><th>Package</th><th>Installs</th><th>Built today</th></tr>
-<tr><td><code>llama.cpp</code> (own version)</td><td>llama-server and tools, the template unit <code>llama.cpp@.service</code>, the default <code>server@default.ini</code>, <code>models.ini</code>, <code>instances.ini</code>, <code>assignments.ini</code> in <code>/etc/llama.cpp/</code></td><td>yes</td></tr>
+<tr><td><code>llama.cpp</code> (own version)</td><td>llama-server and tools, the template unit <code>llama.cpp@.service</code> (<code>ExecStartPost=</code> <code>pai-manager wait-ready</code>), <code>llama.cpp.target</code> ordered after every instance (what another unit puts in <code>After=</code>), the default <code>server@default.ini</code>, <code>models.ini</code>, <code>instances.ini</code>, <code>assignments.ini</code> in <code>/etc/llama.cpp/</code></td><td>yes</td></tr>
 <tr><td><code>llama.cpp-rocm</code>, <code>-cuda</code>, <code>-vulkan</code></td><td>the GPU runtimes, at the SDK's version</td><td>yes</td></tr>
 <tr><td><code>private-ai-framework-core</code></td><td><code>pai-manager</code> and its unit (user <code>private-ai-manager</code>), the helper's socket and unit, the D-Bus and polkit policies, the rules files (<code>pai</code>, and the manager's <code>manage-units</code> rule), tmpfiles and sysusers (<code>private-ai</code>, <code>private-ai-manager</code>, <code>private-ai-director</code>, group <code>pai</code>), the director's unit, disabled</td><td>the manager (as root), its policies and <code>private-ai</code>, <code>pai</code>; not the helper, the director or their accounts</td></tr>
 <tr><td><code>-bff</code>, <code>-cli</code>, <code>-config</code></td><td><code>pai-bff</code> and its unit and user; <code>pai</code>; <code>pai-config</code></td><td>yes</td></tr>

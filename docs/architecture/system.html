@@ -149,7 +149,7 @@ those disagree, they win.</p>
   <text x="272" y="254" class="t-small">API, authorization, checks, records</text>
   <text x="272" y="268" class="t-small">ModelFiles, ModelInfo, NodeInfo</text>
   <text x="272" y="282" class="t-small">sampler, metrics store, ReadLog</text>
-  <text x="272" y="298" class="t-mono">run-instance, save-slots</text>
+  <text x="272" y="298" class="t-mono">run-instance, save-slots, wait-ready</text>
   <text x="272" y="314" class="t-small">--list-devices and vulkan-probe</text>
   <text x="272" y="330" class="t-small">listener :8592, store pull client</text>
   <line class="edge" x1="385" y1="160" x2="385" y2="198"/>
@@ -211,12 +211,12 @@ those disagree, they win.</p>
 </svg>
 <figcaption>One <code>pai-manager</code> binary, roles chosen by the unit's command line: <code>serve</code>
 (the node's manager, unprivileged), <code>director</code> (its own account, refuses root),
-<code>helper</code> (the only privileged code) and <code>run-instance</code>, <code>save-slots</code>,
+<code>helper</code> (the only privileged code) and <code>run-instance</code>, <code>save-slots</code>, <code>wait-ready</code>,
 <code>vulkan-probe</code>. Only <code>pai-config</code> links Slint. <code>xtask</code> and
 <code>docs-site</code> are build tools, not shipped. macOS has no manager and no bff: there
 <code>pai-config</code> spawns llama-server itself.</figcaption>
 <p class="built"><b>Built today:</b> the web UI, the bff, <code>pai-manager serve</code> (as root or
-LocalSystem, doing the helper's verbs itself), <code>run-instance</code>, <code>save-slots</code>,
+LocalSystem, doing the helper's verbs itself), <code>run-instance</code>, <code>save-slots</code>, <code>wait-ready</code>,
 <code>pai-config</code>, <code>pai</code>, <code>pai-app</code> and <code>pai-core</code>. Not built: the
 director and helper roles, <code>pai-hwmon</code>, the metrics, <code>ModelFiles</code>, the Hugging Face listing and the Nodes page.</p>
 </figure>
@@ -381,7 +381,7 @@ which needs no privilege, so no helper is asked.</figcaption>
 
 <h2>Start and stop</h2>
 <figure>
-<svg viewBox="0 0 960 170" role="img" aria-label="Start and stop flow">
+<svg viewBox="0 0 960 184" role="img" aria-label="Start and stop flow">
   <rect class="usr" x="10" y="30" width="150" height="56" rx="5"/>
   <text x="22" y="52" class="t-title">Server page / pai</text>
   <text x="22" y="70" class="t-mono">POST .../{id}/start</text>
@@ -400,6 +400,7 @@ which needs no privilege, so no helper is asked.</figcaption>
   <text x="10" y="120" class="t-small">The unprivileged manager may start, stop and restart only the instances: a polkit rule scoped to llama.cpp@*.service (Linux), each</text>
   <text x="10" y="136" class="t-small">instance service's DACL (Windows). Stop runs save-slots first (TimeoutStopSec=300 on Linux; Windows: the parent stops the child); a stop</text>
   <text x="10" y="152" class="t-small">can last minutes, so callers that act after one must wait. Start at boot goes through the helper's SetBoot, the one verb polkit cannot scope.</text>
+  <text x="10" y="168" class="t-small">Linux: the unit stays activating until wait-ready sees /health answer 200 (10 min, else the start fails); llama.cpp.target is ordered after every instance.</text>
 </svg>
 <p class="built"><b>Built today:</b> the flow, with the manager as root or LocalSystem calling systemd
 and the SCM directly, boot included.</p>
