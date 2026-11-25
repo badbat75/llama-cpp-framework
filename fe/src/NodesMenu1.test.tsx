@@ -570,8 +570,13 @@ async function noInstances(options: BffOptions): Promise<HTMLElement> {
   expect(words(byId('nav-nodes')), 'the Nodes label is there').toBe(
     en('nav-nodes'),
   )
-  expect(words(byId('nav-host')), 'the host label is there').toBe(
-    VERSION_HOST.name,
+  // The host label is the shell's read of GET /api/version: the nav and the
+  // page are on screen while that read is open, with the fallback words, so
+  // the label is waited for (it lands a task later on a loaded machine).
+  await waitFor(() =>
+    expect(words(byId('nav-host')), 'the host label is there').toBe(
+      VERSION_HOST.name,
+    ),
   )
   expect(
     within(nav).getByRole('link', { name: en('nav-node') }),

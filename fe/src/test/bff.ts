@@ -1,7 +1,8 @@
 // Test helpers for the web UI: a fake bff behind a mocked fetch (no network),
 // the English texts of the design brief, and the hash route of the page.
 // The shapes are those of fe/briefs/api-contract.md.
-import { test, vi } from 'vitest'
+import { expect, test, vi } from 'vitest'
+import { waitFor } from '@testing-library/react'
 
 /**
  * The English of the strings keys the tests read, as the design brief gives
@@ -1996,6 +1997,64 @@ export function fakeBff(options: BffOptions = {}) {
       instances = i
     },
   }
+}
+
+/**
+ * The page has arrived: the focus is on its h1 and the document title names it.
+ *
+ * React writes both in a passive effect (PageHeading.tsx), and an async finder
+ * resolves on the DOM mutation that puts the h1 in the tree, which is BEFORE
+ * those effects run. On a loaded machine the effect lands a task later, so a
+ * test that reads `document.activeElement` or `document.title` right after a
+ * `findByRole` races it and goes red only in a full run. This polls what the
+ * effects write, the way a visitor sees the page arrive.
+ */
+export async function arrived(h1: HTMLElement, title: string): Promise<void> {
+  await waitFor(() => {
+    expect(document.activeElement, 'the h1 takes the focus').toBe(h1)
+    expect(document.title, 'the document title is the page').toBe(title)
+  })
+}
+
+/**
+ * The app is quiet: the fake bff has seen no call for `idle` ms of real time.
+ *
+ * A page sends its own reads from effects that run AFTER the render its
+ * elements appear in, so a count pinned as exact is only meaningful once the
+ * app has stopped sending: on a loaded machine that is a task or two after the
+ * async finder resolved, which is what this waits for. It returns as soon as
+ * the calls stop growing, so a page that sent nothing costs `idle` ms.
+ *
+ * Pin a count that must NOT grow the same way: the quiet app is the evidence
+ * that no read went out. A page that polls (the instance page's idle poll)
+ * never goes quiet: settle its counts on the read that lands, not here.
+ * Real timers only: under `vi.useFakeTimers()` the poll never runs.
+ *
+ * The window is measured on the clock, not by counting polls: `waitFor` also
+ * re-runs the callback on every DOM mutation, so a burst of mutations would
+ * end a counted window early.
+ */
+export async function quiet(
+  bff: ReturnType<typeof fakeBff>,
+  idle = 40,
+): Promise<void> {
+  const step = 5
+  let last = -1
+  let t = performance.now()
+  await waitFor(
+    () => {
+      const n = bff.calls.length
+      if (n !== last) {
+        last = n
+        t = performance.now()
+      }
+      expect(
+        performance.now() - t,
+        'the app has stopped sending reads',
+      ).toBeGreaterThanOrEqual(idle)
+    },
+    { timeout: 2_000, interval: step },
+  )
 }
 
 /** Puts the page on `hash` before it renders (no hashchange event). */

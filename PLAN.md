@@ -81,7 +81,9 @@ in, sees the instances, starts, stops and restarts them, edits and saves the ser
 presets and switches them on or off, and (user, 2026-11-17, relayed by the web UI session and
 confirmed here) opens a preset and saves it. Built on the bff and the fe (the preset save on the fe,
 2h, at 9ea579d) and deployed on this machine after every slice since; the web UI's work goes on with the
-UX audit (fe brief 24) and the slices of step 10.
+UX audit (fe brief 24) and the slices of step 10. The web UI suite: ten load-sensitive tests made
+deterministic 2026-11-25 (focus, title and request counts awaited, not read at once); one unnamed red
+remained in 10 full runs: every full run names its reds until it is caught and fixed.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in

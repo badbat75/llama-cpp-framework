@@ -28,6 +28,7 @@ import {
   held,
   isHidden,
   navigate,
+  quiet,
   reply,
   startAt,
   stubDialog,
@@ -167,6 +168,9 @@ test('13 N.3: a session at the start sends exactly one GET /api/version, and mov
   const { bff } = await open({ version: VERSION_HOST })
   // The shell's read of the host is GET /api/version (18 AN.15), and the
   // Overview's version line of 13 N.10 keeps its own read beside it (AN.15).
+  // Both go out from an effect that runs after the render the nav and the
+  // links appear in, so the count is read once the app is quiet.
+  await quiet(bff)
   expect(
     hostReads(bff),
     'the session brings the shell one and the page one',
@@ -188,6 +192,10 @@ test('13 N.3: a session at the start sends exactly one GET /api/version, and mov
     navigate(hash)
     await screen.findByRole('main')
     if (hash === '#/about' || hash === '#/') owed += 1
+    // A page that shows the host sends its own read from an effect after it
+    // mounts, so the count is read once the app is quiet: that is also the
+    // evidence the shell added nothing at this address.
+    await quiet(bff)
     expect(
       hostReads(bff),
       `no shell read for ${hash}: a page that shows the host reads once of its own`,
@@ -210,6 +218,7 @@ test('13 N.3: signed out nothing is read about the host; a sign-in on the sign-i
   await signIn(main, 'alice')
   const nav = await navOf()
   await within(nav).findByRole('link', { name: 'default' })
+  await quiet(bff)
   expect(hostReads(bff), 'the sign-in starts a session: one read').toBe(1)
 })
 
@@ -224,16 +233,20 @@ test('13 N.3: a sign-out and a sign-in as another user send one more', async () 
   await signIn(await signInPage(screen.getByRole('main')), 'alice')
   const nav = await navOf()
   await within(nav).findByRole('link', { name: 'default' })
+  await quiet(bff)
   expect(hostReads(bff), "alice's session reads once").toBe(1)
   fireEvent.click(
     await screen.findByRole('button', { name: en('session-sign-out') }),
   )
   await signInPage(screen.getByRole('main'))
+  await quiet(bff)
   expect(hostReads(bff), 'the sign-out reads nothing about the host').toBe(1)
   await signIn(screen.getByRole('main'), 'bob')
   await navOf()
   // A sign-in lands on the Overview (09 S1a.9), so bob's session brings the
-  // shell's read and the Overview's own one (13 N.10, 18 AN.15).
+  // shell's read and the Overview's own one (13 N.10, 18 AN.15). Both go out
+  // from an effect, so the count is read once the app is quiet.
+  await quiet(bff)
   expect(hostReads(bff), "bob's session reads again").toBe(3)
 })
 
@@ -259,6 +272,7 @@ test('13 N.3: a sign-in in a page dialog as the same user sends no shell read; a
     const box = await within(main).findByRole('switch', {
       name: MODEL_PROFILES[0]!.id,
     })
+    await quiet(bff)
     expect(hostReads(bff), `${user}: the session read`).toBe(1)
     fireEvent.click(box)
     const ask = await within(main).findByRole('button', {
@@ -268,6 +282,7 @@ test('13 N.3: a sign-in in a page dialog as the same user sends no shell read; a
     const dialog = screen.getByRole('dialog', { name: en('signin-title') })
     await signIn(dialog, user)
     await within(main).findByRole('switch', { name: MODEL_PROFILES[0]!.id })
+    await quiet(bff)
     expect(
       hostReads(bff),
       `${user}: a dialog sign-in as ${user} ${want === 1 ? 'keeps the one read' : 'is a new session'}`,
@@ -322,9 +337,11 @@ test('13 N.3: a sign-out then a sign-in as the same user is a new session: one m
     await screen.findByRole('button', { name: en('session-sign-out') }),
   )
   await signInPage(screen.getByRole('main'))
+  await quiet(bff)
   expect(hostReads(bff), 'the sign-out reads nothing about the host').toBe(1)
   await signIn(screen.getByRole('main'), 'alice')
   nav = await navOf()
+  await quiet(bff)
   expect(
     hostReads(bff),
     'the same user signing back in starts a session: the shell one and the Overview line one (13 N.10, 18 AN.15)',
@@ -367,6 +384,7 @@ test('13 N.3: a sign-in in a page dialog as the same user while the host read is
     'alice',
   )
   await within(main).findByRole('switch', { name: MODEL_PROFILES[0]!.id })
+  await quiet(bff)
   expect(hostReads(bff), 'the same user in a dialog is not a new session').toBe(
     1,
   )
@@ -401,6 +419,7 @@ test.each(HOST_FAILURES)(
     expect(await hostLabel(nav), `${what}: the nav label`).toBe(
       en('nav-this-node'),
     )
+    await quiet(bff)
     expect(hostReads(bff), `${what}: one read, no retry`).toBe(1)
     expect(
       bff.to('GET', '/api/node').length,

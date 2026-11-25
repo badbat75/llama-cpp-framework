@@ -15,16 +15,19 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  arrived,
   before,
   deferred,
   en,
   fakeBff,
   isHidden,
+  quiet,
   reply,
   startAt,
   type BffOptions,
@@ -150,11 +153,12 @@ test('16 17a.1: #/profiles/server is the list page: its h1 is server-profiles-ti
     level: 1,
     name: en('server-profiles-title'),
   })
-  expect(document.activeElement, 'the h1 takes the focus').toBe(h1)
+  // The focus and the document title are written by the heading's effects,
+  // which run after the render that put the h1 in the tree: an async finder
+  // resolves on that render, so both are waited for (arrived).
+  await arrived(h1, en('page-title', en('server-profiles-title')))
   expect(h1.getAttribute('tabindex'), 'so it is focusable').toBe('-1')
-  expect(document.title, 'the page name and the app name, as every page').toBe(
-    en('page-title', en('server-profiles-title')),
-  )
+  await quiet(bff)
   expect(listReads(bff).length, 'one read of the pool').toBe(1)
 })
 
@@ -196,7 +200,9 @@ test('16 17a.1: the ids . and .. of a server profile show server-profile-not-fou
       en('server-profile-not-found', id),
     )
     const h1 = within(main).getByRole('heading', { level: 1, name: id })
-    expect(document.title, hash).toBe(en('page-title', id))
+    // The heading's effect writes the document title after the render that
+    // put the h1 in the tree, so it is waited for.
+    await waitFor(() => expect(document.title, hash).toBe(en('page-title', id)))
     const back = within(main).getByRole('link', {
       name: en('server-profile-back'),
     })

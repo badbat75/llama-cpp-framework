@@ -1207,7 +1207,9 @@ test('1b.36b: the edits-dropped alert stays until the page is left', async () =>
     level: 1,
     name: en('server-profiles-title'),
   })
-  fireEvent.click(within(main).getByRole('link', { name: 'default' }))
+  // The pool's rows arrive with GET /api/profiles/server: the h1 is there
+  // while the read is open, so the row is found once the reply landed.
+  fireEvent.click(await within(main).findByRole('link', { name: 'default' }))
   await within(main).findByRole('heading', {
     level: 3,
     name: en('server-network'),

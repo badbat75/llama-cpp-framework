@@ -280,7 +280,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Group fe reds by cause: strip ANSI and
   `grep -oE "(TestingLibraryElementError|AssertionError|TypeError): .{0,60}" | sort | uniq -c`.
 - Judge a flaky fe red solo x3 before anything is touched; state a full-suite red that is green as a
-  file, do not chase it.
+  file, do not chase it. A red that appears ONLY in the full parallel run is invisible solo and in one
+  plain run: reproduce it by running the flaky set at `--maxWorkers=4` under CPU load (N burners of
+  `while :; do :; done`, ~16 on this 24 CPU box) 3 to 6 times, reading each run's `Test Files` / `Tests`
+  line. The rate here is ~1 red per 3 runs of 12 files, so a green solo x3 proves nothing. Give each
+  harness its own log prefix: two harnesses writing `r$i.log` overwrite each other's runs.
 
 ### The web UI (fe/): the fake bff and fixtures
 
@@ -327,6 +331,23 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - Never query before the async read settles: add an async finder, settle signed-out states by the sign-in
   `h1`, and settle on the page's `h1` before asserting loading text.
+- A row or link that arrives WITH a read is found with `findByRole` after a navigation, never
+  `getByRole`: the target page's h1 is on screen while its list read is still open, so a sync query right
+  after the h1 reds only under load (`ServerSave.test.tsx`'s `1b.36b` nav to the server profile).
+- The focus and the document title are written by `PageHeading`'s PASSIVE effects, which run AFTER the
+  render that put the h1 in the tree, and an async finder resolves on that render. So a synchronous
+  `document.activeElement` / `document.title` assertion after a `findByRole` is a load-only flake: use
+  `arrived(h1, en('page-title', name))` from `src/test/bff.ts` (polls both), or `waitFor` around the title
+  alone where no focus is owed (a direct load takes no focus, 09).
+- A call count pinned as exact is read after `quiet(bff)` (`src/test/bff.ts`: returns once the fake has
+  seen no new call for 40 ms of real time). A page sends its own read from an effect that runs after the
+  render its h1 appears in, so a count read right after an async finder sees 0 where 1 is pinned
+  (`NodeNav.test.tsx`'s `13 N.3`, `AboutPage.test.tsx`'s `18 AN.2`, `ModelProfilePage.test.tsx`'s `2d.63`).
+  A count pinned as 0 is read the same way: the quiet app is the evidence nothing was sent. `quiet` needs
+  REAL timers (under `vi.useFakeTimers()` its poll never runs) and never settles a page that POLLS (the
+  instance page's idle poll): pin those counts on the read that lands. Measure its idle window on
+  `performance.now()` (the moment the count last changed): `waitFor` re-runs the callback on every DOM
+  mutation too, so a window counted in polls ends early under a burst of mutations.
 - In a tab-order snapshot take EVERY async element (`await findByRole(..)`) first, THEN `tabbable(main)`,
   and settle the nav's instance links too: a snapshot taken earlier prints `indexOf = -1` for a real tab
   stop (about one run in two). Grep the suite and amend the tester's lists when you add a focusable
@@ -674,3 +695,4 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
   `null`), while a clean form sets it to `"true"`: a dirty pin asserts `getAttribute(..) ?? 'false'`.
 - No jest-dom matchers are configured: `toContainElement` is a typecheck red (TS2339), not a test red.
   Pin containment with `expect(row.contains(el), 'msg').toBe(true)`.
+- Never leave CPU burners running and never start them unless the brief asks for a load test: they compete with the local model and Strata on the same machine. Always name every red test of a full run (grep the log for FAIL), never "name lost".

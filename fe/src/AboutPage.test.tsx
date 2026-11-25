@@ -23,6 +23,7 @@ import {
   navigate,
   NODE,
   OS,
+  quiet,
   reply,
   startAt,
   VERSION_HOST,
@@ -143,24 +144,32 @@ test('18 AN.2: arriving at #/about sends one GET /api/version of the page own, b
   // What the app read before the page ever appeared: the shell's read (AN.15)
   // and the Overview's own version line.
   const reads = () => bff.to('GET', '/api/version').length
+  // Every read of this criterion goes out from an effect that runs after the
+  // render the page's h1 appears in, so each count is read once the app is
+  // quiet: that is also the evidence that the click sent nothing.
+  await quiet(bff)
   const start = reads()
   expect(start, 'the shell reads once, and the Overview has its own line').toBe(
     2,
   )
   navigate('#/about')
   await screen.findByRole('heading', { level: 1, name: en('about-title') })
+  await quiet(bff)
   expect(reads(), 'the page reads once on arrival').toBe(start + 1)
   navigate('#/')
   await screen.findByRole('heading', { level: 1, name: en('overview-title') })
+  await quiet(bff)
   expect(reads(), 'the Overview sends its own one, the About page none').toBe(
     start + 2,
   )
   navigate('#/about')
   await screen.findByRole('heading', { level: 1, name: en('about-title') })
+  await quiet(bff)
   expect(reads(), 'the page reads again').toBe(start + 3)
   fireEvent.click(
     screen.getByRole('heading', { level: 1, name: en('about-title') }),
   )
+  await quiet(bff)
   expect(reads(), 'no read for a click').toBe(start + 3)
 })
 
@@ -298,6 +307,7 @@ test('18 AN.4: a version read answering 401 signs the app out: the sign-in page 
   const { bff } = await open({
     version: () => reply(401, { key: 'session-required', args: [] }),
   })
+  await quiet(bff)
   expect(
     bff.to('GET', '/api/version').length,
     'the page read once, beside the shell one of the session (18 AN.15), and it does not retry a 401',
@@ -321,6 +331,7 @@ test('18 AN.4: a version read answering 403 session-not-administrator ends the s
   const { bff } = await open({
     version: () => reply(403, { key: 'session-not-administrator', args: [] }),
   })
+  await quiet(bff)
   expect(
     bff.to('GET', '/api/version').length,
     'the page read once, beside the shell one of the session (18 AN.15), and it does not retry a 403',

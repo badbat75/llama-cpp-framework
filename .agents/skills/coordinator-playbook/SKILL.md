@@ -167,3 +167,4 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 - A designer review left its stub servers running once, so its task showed as running for hours.
 - A run from outside the repo root left a stray `node_modules/` at the repo root twice.
 - A coder was reaped for memory when two cargo builds ran at once.
+- A tester proving a flake fix may start CPU burners (16 `while :; do :; done` loops, its playbook's load harness) and leave them spinning beside Strata: say "no synthetic load" in follow-up briefs, and on a liveness check stop leftover burners by PID.

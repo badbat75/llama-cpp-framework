@@ -30,6 +30,7 @@ import {
   navigate,
   MODEL_PROFILES,
   modelProfileDoc,
+  quiet,
   reply,
   startAt,
   heavyTest,
@@ -436,6 +437,9 @@ test('2d.66: a 401 on the read signs the whole app out; after sign-in the page r
   const h1 = await heading1(main, ID)
   await waitFor(() => expect(document.activeElement).toBe(h1))
   expect(window.location.hash).toBe(HASH)
+  // The page sends its read from an effect that runs after the render the h1
+  // appears in, so the count is read once the app is quiet.
+  await quiet(bff)
   expect(modelProfileReads(bff)).toBe(2)
   expect(
     await within(nav()).findByRole('link', { name: en('nav-model-profiles') }),
@@ -544,7 +548,11 @@ test('2d.59a: only exactly . and .. are refused: ... and a.b read as usual, with
     expect(status.getAttribute('role'), id).toBe('status')
     const h1 = await heading1(main, id)
     expect(h1.getAttribute('tabindex'), id).toBe('-1')
-    expect(document.title, id).toBe(en('page-title', id))
+    // The heading's effect writes the document title after the render that
+    // put the h1 in the tree, and the page sends its reads from effects that
+    // run after that render: both are waited for.
+    await waitFor(() => expect(document.title, id).toBe(en('page-title', id)))
+    await quiet(bff)
     expect(
       within(main).queryByText(en('model-profile-not-found', id)),
       id,
@@ -581,6 +589,9 @@ test('2d.58, 2d.63, 2d.67: after sign-in the model profile page is read, once, w
   expect(h1.getAttribute('tabindex')).toBe('-1')
   expect(document.title).toBe(en('page-title', ID))
   expect(window.location.hash).toBe(HASH)
+  // The page sends its read from an effect that runs after the render the h1
+  // appears in, so the count is read once the app is quiet.
+  await quiet(bff)
   expect(modelProfileReads(bff)).toBe(1)
 })
 
@@ -794,9 +805,13 @@ test('2d.62: back to the list keeps the filter: read again, the field holds the 
   fireEvent.change(filterField(main), { target: { value: 'gemma' } })
   navigate(OFF_HASH)
   await heading1(main, OFF_ID)
+  // The page sends its reads from effects that run after the render the h1
+  // appears in, so the counts are read once the app is quiet.
+  await quiet(bff)
   expect(modelProfileReads(bff, OFF_ID)).toBe(1)
   await clickLink(backLink(main))
   expect(window.location.hash).toBe('#/profiles/model')
+  await quiet(bff)
   expect(
     bff.to('GET', '/api/profiles/model'),
     'the list is read again',
