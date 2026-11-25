@@ -106,7 +106,18 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
   control; status beside its control; relations shown on lists; empty states with their next action;
   the instance's address; sizes as numbers, measured.
 
+- A review also checks composition against a screenshot, not only that nothing moves and that axe
+  passes. Take a full-page PNG at 1280 and 320 px (`page.screenshot`), look at it, and measure:
+  - every control's centre against its row's or line's centre (within 1 px);
+  - where each control sits in its column;
+  - each column's width against its content;
+  - the empty space at a row's end.
+  `build/ux-review/lists-shots.js` is the model (user, 2026-11-25: nothing had pinned these).
+
 ## Pitfalls
+
+- `display: flex` on a `td` makes it a flex box, not a table cell: `vertical-align` stops applying
+  and its content sits at the top. Brief a wrapper inside the cell instead.
 
 - `page.addStyleTag` puts a candidate CSS fix last in the cascade, so it wins ties the real
   sheet would lose: prepend it to `head` (or raise its specificity) before naming it as measured.

@@ -1426,3 +1426,201 @@ Built code; `build/ux-review/d4amend.js`, `dbg.js` and `dbg2.js` in Chromium, Fi
   - No state of the amendment failed.
 
 22D4 amendment accepted.
+
+### 22D4 composition: a column for the row's actions (user, 2026-11-25)
+
+The user, on the deployed lists: the trash can is not vertically centred in its row, sits right
+against the status switch at a place that looks random, and leaves a wide empty space before the
+table's end. They suggest a column of its own.
+
+No brief or check of mine pinned alignment or composition: only that nothing moves when the tip
+shows, and axe. Screenshots of the lists as built are in `build/ux-review/shots/`:
+`models-1280.png`, `models-320.png`, `servers-1280.png`, `servers-320.png`, plus a `-table` crop of
+each. They were measured with `build/ux-review/lists-shots.js` (Chromium, stub `list=many`,
+`pool=long`).
+
+**Audit** (dy is a control's centre minus its row's centre, in px):
+- Models, 1280 px: the table is 878 px wide in an 880 px card. The columns are name 345, engine
+  233 and status 300.
+  - The status cell holds the switch, the word and the trash can in one row. The trash can sits at
+    dy +6: `.ot-add`'s `margin-top: var(--space-3)` (`index.css` 2062-2070) is the add's gap after a
+    list, and it applies to the row's delete too.
+  - There are 159 px empty after the trash can. The status column is 300 px wide for about 140 px
+    of content, because `table { width: 100% }` shares the spare width out, and `.hint-box`'s
+    `min-width: 7rem` (2215-2221) is no longer needed now that the tip floats.
+- Models, 320 px: the status cell wraps. The switch sits at the cell's top (dy -66 in a 175 px
+  row) and the trash can under it, while the name and engine are centred.
+  - The cause: `.status-cell { display: flex }` (2202-2207) is set on the `td` itself, so it is no
+    longer a table cell. `vertical-align: middle` no longer applies, and its content stacks from
+    the top.
+  - The table is 296 px in a 288 px box: 8 px of sideways scroll inside the box.
+- Server profiles, 1280 and 320 px: the trash can lives in the Used by cell (162 px), under the
+  instance link (dy -31 / +36 in a 129 px row, -35 in a 227 px row). That is a different place
+  from the models list, with 110 px empty after it.
+
+**22 D4.23 A column for the row's actions.** Both tables gain a last column. Its `th scope="col"`
+holds only a `span.visually-hidden` with `profiles-column-actions` (`Actions`), so a screen reader
+announces the column. The trash can (the `RowDelete` box) moves from the status cell, or the Used
+by cell, to this column's `td`. The model status cell keeps the switch and its word; Used by keeps
+the instance link or `server-profiles-unused`. The confirm row's `colSpan` becomes the new column
+count (`RowDelete.tsx` 301).
+([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships): each header names its column.)
+
+**22 D4.24 Shrink to the content, aligned to the end.**
+- The actions column is as narrow as its button: `width: 1%; white-space: nowrap`.
+- Its cell is `text-align: end`, so the trash can's right edge is the cell's padding away from the
+  row's end.
+- The model Status column is also `width: 1%; white-space: nowrap` (the switch and a short word),
+  so the spare width goes to the name and the engine.
+- On the server list the spare width goes to Tags and Used by.
+- `.hint-box` drops its `min-width: 7rem` and becomes `display: inline-flex`, so it is as wide as
+  the button.
+
+**22 D4.25 Every control centred in its row.**
+- No `td` has `display: flex`. The model status cell wraps its switch and word in a `span`
+  (`display: inline-flex; align-items: center; gap: var(--space-2)`), inside a plain `td`.
+- Every list `td` is `vertical-align: middle`.
+- The row's delete has no top margin: `.ot-add.ot-delete { margin-top: 0 }`. The add after a list
+  keeps its `--space-3`.
+
+**22 D4.26 No dead space.** The table still fills the card (`width: 100%`), but the spare width
+goes to the text columns, never to the status or actions column. The gap between the trash can and
+the row's end is only the cell's padding (`--space-2` on the model list, `--space-3` on the server
+list).
+
+**22 D4.27 At 320 px.** No cell stacks its controls: the switch and its word stay on one line, and
+the actions column holds only its button. A table wider than its box scrolls inside `.table-scroll`,
+as the server list already does (fe/DESIGN.md Table), and the page itself never scrolls sideways.
+A data table is the exception
+[1.4.10](https://www.w3.org/TR/WCAG22/#reflow) names for two-dimensional scrolling inside its box.
+The name keeps wrapping anywhere.
+
+**22 D4.28 What is pinned.**
+- jsdom:
+  - each table has one `th` more, the last one with a visually hidden `profiles-column-actions`;
+  - every row's delete button is in the row's last `td`;
+  - the status and Used by cells hold no delete button;
+  - the confirm row's `colSpan` equals the header count;
+  - in the sheet, no rule gives a `td` or `.status-cell` `display: flex`, `.ot-add.ot-delete` has
+    `margin-top: 0`, the actions column has `width: 1%`, and `.hint-box` has no `min-width`.
+- The designer, in the three browsers, at 1280 and 320 px, in both lists, against a screenshot:
+  - every one-line control (a link, a switch, the trash can) has its centre within 1 px of its
+    row's centre, and the instance link's block likewise;
+  - the trash can's right edge is the cell's padding from the row's right edge (±1 px);
+  - the status and actions columns are no wider than their content plus padding;
+  - no sideways page scroll.
+
+New key: `profiles-column-actions`: `Actions`.
+
+Tests to amend:
+- `fe/src/ModelProfiles.test.tsx`: header counts and the Tab order test at 903 (the minus moves to
+  the last cell; the order is unchanged: link, switch, delete).
+- `fe/src/ModelProfilesDelete1.test.tsx`, `fe/src/ServerProfilesDelete1.test.tsx` and
+  `fe/src/ServerProfiles*.test.tsx`: any test that finds the delete inside `.status-cell`, and the
+  `colSpan` checks.
+
+### Adviser pass: the lists and the pages they lead to (designer, 2026-11-25)
+
+I looked at them as a user would, from these screenshots in `build/ux-review/shots/` (Chromium, stub
+`list=many`, `pool=long`):
+- the lists: `models-1280.png`, `models-320.png`, `servers-1280.png`, `servers-320.png`;
+- the pages: `model-page-1280.png`, `model-page-320.png`, `server-page-1280.png`,
+  `server-page-320.png`.
+
+Ranked by benefit; each point is a preference unless it cites a source. Rank 1 is D4.23 to D4.28
+above.
+
+**Rank 2, 22 D4.29: Create is a labelled button at the list's top.**
+- Today the server list's add is a bare round + under the card. It is small, unlabelled, and
+  easy to miss under a long table. The Models list has no create yet (22C).
+- Fix: a secondary button with the `plus` icon and the visible text `server-profiles-new`
+  (`New server profile`), at the end of the line holding the `h1`, wrapping under it at 320 px.
+  It keeps `aria-expanded`, and the form opens under the heading, above the table. 22 C.1 takes
+  the same place for `model-profiles-new`.
+- The round `.ot-add` stays for in-card adds: the tensor rules, the pencil. A visible label beats
+  an icon alone for a page's main action
+  ([2.5.3](https://www.w3.org/TR/WCAG22/#label-in-name) keeps the name equal to that text).
+
+**Rank 3, 22 D4.30: The Save bar reads Save first and Delete last.**
+- Today Delete opens the group with the same outline as Save, and Save changes is not filled.
+  On the model page the reason line sits at the end of the buttons' row, where it reads like the
+  bar's own status.
+- Fix:
+  - Save changes becomes the primary (filled) button while the page is dirty, after Discard.
+  - Delete moves to the end of the bar (`margin-inline-start: auto`), drawn as a `--danger` text
+    button.
+  - Delete's reason line sits under Delete, ending at its edge, on both pages.
+- This reverses 22 D4.10's "Delete first" (user, 2026-11-24), so it needs the user.
+
+**Rank 4, 22 D4.31: Card intros behind About.**
+- The model page's cards open with long paragraphs: GPU distribution's intro is eight lines
+  before its first control. The server page already keeps each field's help behind an About
+  toggle.
+- Fix: each card's intro becomes one sentence, and the rest goes behind the card's own About
+  toggle (the Field pattern, `fe/DESIGN.md` 5.2). This also shortens the page, so it is less
+  often scrolled past the On this page list.
+
+**Rank 5, 22 D4.32: The model page's head.**
+- The switch sits right against its text (no gap). A large empty space (about 70 px) separates
+  the state line from "Model profile settings". The page has two big titles (the `h1`, then the
+  settings `h2`) before the first control.
+- Fix:
+  - `gap: var(--space-2)` between the switch and its text;
+  - the state line followed by `--space-5`, not the section's top margin plus a heading;
+  - the settings `h2` visually hidden, kept for the outline
+    ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)).
+
+**Rank 6, 22 D4.33: The Models list's filter.**
+- The label, field and two-line hint take about 100 px, then about 70 px of empty space before
+  the table.
+- Fix: the hint becomes one line (`Name or model file; case does not matter.`), and the gap to
+  the table becomes `--space-4`. The field may stay at its width.
+
+**Rank 7, 22 D4.34: Used by on the server list.**
+- The instance name and its "ID default" line are two small links stacked in a cell, the second
+  underlined in a small size.
+- Fix: one link, the instance's name, with the id as muted plain text after it
+  (`Coding assistant (default)`). 16 17f.4 still holds: two instances named alike are told apart.
+
+Not proposed: the nav's wrapped mono names, which are the stub's extreme 40-character ids, a
+stress case.
+
+### Decisions and the slice's tests (user, 2026-11-25)
+
+The user accepted D4.23 to D4.34 on 2026-11-25, with one condition:
+- **Used by keeps its own column.** The Actions column holds the trash can alone (D4.23 already
+  moves the trash can out of the Used by cell; this makes it a rule). On the server list the
+  columns are Server profile, Port, Tags, Used by, Actions.
+- **D4.30 is the user's decision of 2026-11-25** and reverses their "Delete first" of 2026-11-24
+  (22 D4.10). The bar now reads Discard, then Save changes (primary, filled, while the page is
+  dirty), then Delete at the bar's end in `--danger`, with its reason line under it, ending at
+  its edge.
+
+Details fixed so the tester does not guess:
+- D4.29: the button is the existing `server-profiles-new` key (`New server profile`) shown as
+  text beside the `plus` icon, with no new key. The check's selector
+  (`button:has(svg path[d="M12 5v14"])`) still matches it.
+- D4.31: no new text. A card's intro keeps its first line visible (the first `\n`-separated line
+  of `model-profile-gpu-distribution-intro` and `model-profile-tensor-placement-intro`). The rest
+  moves into the card's About panel, a toggle with `aria-expanded`, as a Field's About.
+- D4.32: the settings `h2` stays in the accessibility tree (`.visually-hidden`), so tests that find
+  it by role are unchanged.
+- D4.33: `model-profiles-filter-hint` becomes `Name or model file; case does not matter.`
+- D4.34: `InstanceLink` (`Instances.tsx` 342-362, shared by the list and the server profile page)
+  keeps the name as the link. Its `instance-id-shown` span moves out of the `a`, right after it, as
+  muted plain text on the same line when it fits. The id text and key are unchanged.
+
+Tests each criterion changes (grep on 2026-11-25; the tester confirms):
+
+| Criteria | Tests |
+|---|---|
+| D4.23-D4.28 (Actions column, centring, widths) | `ModelProfiles.test.tsx` (header count, Tab order at 903), `ModelProfilesDelete1.test.tsx`, `ServerProfilesDelete1.test.tsx`, `ModelProfilesSwitch.test.tsx`, `ModelProfilesFilter.test.tsx`, `ModelProfilesOverMemory.test.tsx`, `U17cSort.test.tsx` (column count), `ListDeleteTip.test.tsx`, `ServerProfiles1.test.tsx` (Used by cell) |
+| D4.29 (labelled New) | `ServerProfiles2.test.tsx`, `ServerProfiles3.test.tsx` (place and text; the check selector at 650 stays), `ServerProfilesDelete1.test.tsx`, `WriteOutcome17f.test.tsx`, `ListDeleteTip.test.tsx` (where they find the +) |
+| D4.30 (Save bar order) | `ModelProfileDelete.test.tsx`, `ModelProfileDelete2.test.tsx`, `ModelProfileDelete3.test.tsx`, `ServerProfilePage2.test.tsx`, `ServerProfilePage3.test.tsx`, `ServerSave.test.tsx`, `ModelProfileSave2.test.tsx`, `ModelProfileSave16.test.tsx`, `HearthJumpRail.test.tsx`, `HearthJumpToggle.test.tsx`, `HearthAssetsEngine.test.tsx` (button order and `primary`) |
+| D4.31 (card intros) | `ModelProfileGpu1.test.tsx`, `ModelProfileGpu3.test.tsx`, `ModelProfileGpu5.test.tsx`, `TensorPlacement1.test.tsx` (`introLines`) |
+| D4.32 (page head) | `ModelProfileSwitch.test.tsx`, and any test checking the settings heading's look (most find it by role and stay) |
+| D4.33 (filter hint) | `ModelProfilesFilter.test.tsx`, `ModelProfiles.test.tsx`, `HearthIconsPages.test.tsx` |
+| D4.34 (instance link) | `InstanceName17f.test.tsx`, `ServerProfiles1.test.tsx`, `ServerProfilePage1.test.tsx`, `ModelProfileDelete2.test.tsx` |
+
+`fe/ux/check.js` needs no new state; its existing list and page states cover the new layout.
+After the build the designer measures D4.28's composition against screenshots.
