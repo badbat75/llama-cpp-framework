@@ -91,12 +91,17 @@ const DEFAULT_NAME = 'llama.cpp :9931'
 // from the strings file until 17f.11 adds the key, where the marker's text is
 // the key's own placeholder, so the state fails, as it asks.
 const ID_LINE = (id) => (S['instance-id-shown'] ?? '{0}').replace('{0}', id)
+// The instance page's own id line, which 16 17f2.2 reads `instance-id-fixed`
+// ("ID {0}, does not change"): the tiles and the Used by link keep the short
+// key above. Absent from the strings file until 17f2 lands, where the state
+// fails, as it asks.
+const ID_FIXED = (id) => (S['instance-id-fixed'] ?? '{0}').replace('{0}', id)
 // The host's list, where the nav's instance links live (20 N.3).
 const NAV_HOST = '#nav ul[aria-labelledby="nav-host"]'
-// The Rename of 16 17f.5, named by the key 17f.11 adds: absent from the strings
-// file it names a button of the text "undefined", so the state fails until the
-// slice lands, as it asks.
-const RENAME = `main button:has-text("${S['instance-rename']}")`
+// The display name pencil of 16 17f2.1, named by the key 17f2.10 adds: absent
+// from the strings file it names a button of the text "undefined", so the state
+// fails until the slice lands, as it asks.
+const NAME_EDIT = `main button:has-text("${S['instance-name-edit']}")`
 // The start of the GPU card's as-of line (brief 14 GD1.7): the sentence of
 // `model-profile-gpu-probed-at` up to its `{0}`, which the page fills with the
 // probe's moment in the browser's own locale, so no state can name the whole
@@ -330,9 +335,9 @@ const STATES = [
     hash: '#/instances/default',
     expect: [
       { selector: '#page-heading', text: DEFAULT_NAME },
-      // 16 17f.4: the id rides right after the name, so the page says which
-      // instance it is by the word the menu uses.
-      { selector: 'p.instance-id', text: ID_LINE(DEFAULT_ID) },
+      // 16 17f.4, as 17f2.2 rewrites it: the id rides right after the name and
+      // the page says it does not change.
+      { selector: 'p.instance-id', text: ID_FIXED(DEFAULT_ID) },
       { selector: 'h2', text: S['instance-server-title'] },
     ],
   },
@@ -370,19 +375,20 @@ const STATES = [
     open: { click: '.tag-add', then: '.tag-new input' },
   },
   {
-    // Brief 16, slice 17f (17f.12): the rename form opened on the instance page,
-    // on the name the stub's port spells. The marker names the key 17f.11 adds:
-    // absent from the strings file it names a button of the text "undefined", so
-    // the state fails until the slice lands, as it asks. The box the click opens
-    // is the page's only form input: the tags field is chips, its pill closed.
-    name: 'instance-rename',
+    // Brief 16, slice 17f2 (17f2.10): the display name form opened from the
+    // pencil on the instance page, on the name the stub's port spells. The
+    // marker names the key 17f2.10 adds: absent from the strings file it names
+    // a button of the text "undefined", so the state fails until the slice
+    // lands, as it asks. The box the click opens is the page's only form input:
+    // the tags field is chips, its pill closed.
+    name: 'instance-name-edit',
     set: 'session=admin',
     hash: '#/instances/default',
     expect: [
       { selector: '#page-heading', text: DEFAULT_NAME },
-      { selector: RENAME, message: 'the Rename, beside the name' },
+      { selector: NAME_EDIT, message: 'the pencil, right after the name' },
     ],
-    open: { click: RENAME, then: 'main form input' },
+    open: { click: NAME_EDIT, then: 'main form input' },
   },
   {
     // Brief 16, slice 17a (17a.11): the pool list at its widest row, so the

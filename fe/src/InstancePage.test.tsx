@@ -1163,6 +1163,9 @@ const SHELL = [
  *  page's last one, and the Server profile section shows a link, not a box). */
 const TAB_PATH_INSTANCE = [
   ...SHELL,
+  // 17f2.8: the display name pencil is the first stop of the page, before the
+  // run buttons. The form it opens adds its stops only while it is open.
+  en('instance-name-edit'),
   // The header's run buttons, inactive ones included, then Start at boot's
   // About toggle and its box (1c.45b, 46a: the box is enabled for every session).
   en('run-start'),
@@ -1170,8 +1173,6 @@ const TAB_PATH_INSTANCE = [
   en('run-restart'),
   about(en('boot-label')),
   en('boot-toggle'),
-  // 16 17f.9: the rename form's opener follows Start at boot.
-  en('instance-rename'),
   // fe/briefs/12-instance-tags.md, section 5, as fe/briefs/15-tag-chips.md
   // section 3 leaves it: the field's About toggle, then the + button (the
   // instances of this fixture have no tags, so the field shows no chip). The
@@ -1231,7 +1232,7 @@ const TAB_PATH_FORM = [
   ].flat(),
 ]
 
-test('6 (17a.10): Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the run buttons, Start at boot and Instance tags, and no control of a Server form', async () => {
+test('6 (17a.10): Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the display name pencil, the run buttons, Start at boot and Instance tags, and no control of a Server form', async () => {
   const main = await loadedInstance()
   // Start at boot is read on its own after the page opens (1c.45): the field
   // renders nothing until that answer lands (`value === undefined`), so the

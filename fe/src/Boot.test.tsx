@@ -1027,7 +1027,7 @@ function tabbable(main: HTMLElement): HTMLElement[] {
   )
 }
 
-test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, Add tag, then the Server profile link', async () => {
+test('1c.46a: Tab goes the display name pencil, Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, Add tag, then the Server profile link', async () => {
   const { main } = await loaded({
     run: SESSION_ENDED,
     boot: boot(false, SESSION_ENDED),
@@ -1048,9 +1048,9 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
   const tagAdd = within(main).getByRole('button', {
     name: en('instance-tag-add'),
   })
-  // 17f.9: the rename form's opener follows Start at boot.
-  const rename = within(main).getByRole('button', {
-    name: en('instance-rename'),
+  // 17f2.8: the display name pencil is the page's first stop, before Start.
+  const pencil = within(main).getByRole('button', {
+    name: en('instance-name-edit'),
   })
   const names = (expected: [string, HTMLElement][]) => {
     const map = new Map(expected.map(([n, el]) => [el as Element, n]))
@@ -1059,12 +1059,12 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
       .map((el) => map.get(el) ?? el.outerHTML)
   }
   let expected: [string, HTMLElement][] = [
+    ['Edit display name', pencil],
     ['Start', button(main, 'run-start')],
     ['Stop', button(main, 'run-stop')],
     ['Restart', button(main, 'run-restart')],
     ['About Start at boot', aboutBoot(main)],
     ['Start at boot', bootBox(main)],
-    ['Rename', rename],
     ['About Instance tags', tagsAbout],
     ['Add tag', tagAdd],
     ['Server profile link', profileLink],
@@ -1076,6 +1076,7 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
   press(bootBox(main))
   await flush()
   expected = [
+    ['Edit display name', pencil],
     ['Start', button(main, 'run-start')],
     ['Stop', button(main, 'run-stop')],
     ['Restart', button(main, 'run-restart')],
@@ -1083,7 +1084,6 @@ test('1c.46a: Tab goes Start, Stop, Restart, the run Sign in, About Start at boo
     ['About Start at boot', aboutBoot(main)],
     ['Start at boot', bootBox(main)],
     ['boot Sign in', bootSignIns(main)[0]!],
-    ['Rename', rename],
     ['About Instance tags', tagsAbout],
     ['Add tag', tagAdd],
     ['Server profile link', profileLink],

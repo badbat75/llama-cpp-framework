@@ -2,7 +2,7 @@
 // 17f.10: a 504 `client-timeout` is "not confirmed" for every write, never
 // `request-failed`, and the place that got it is read again. The whole app
 // renders against a fake bff (mocked fetch). The label's own 504 is in
-// InstanceRename17f.test.tsx; 17d's and 17e's writes have no page yet, so they
+// InstanceNameEdit17f2.test.tsx; 17d's and 17e's writes have no page yet, so they
 // are not pinned here. "16 17f.10" is the brief's criterion.
 import {
   act,

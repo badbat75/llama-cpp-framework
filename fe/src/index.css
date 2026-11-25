@@ -294,6 +294,12 @@ h1 {
   margin: 0 0 var(--space-4);
   /* A model profile id has no spaces: it breaks anywhere in the column (2d.7). */
   overflow-wrap: anywhere;
+  /* A heading made a flex item, as the instance page's title row does it
+     (16 17f2.9), has an automatic minimum size of its longest word: a 64
+     character display name with no break point would push the page sideways
+     (1.4.10). 0 lets the item go below that, and the break above does the rest.
+     For a heading in normal flow this is the value it already has. */
+  min-width: 0;
 }
 
 h2 {
@@ -974,6 +980,27 @@ tr:last-child td {
   margin-bottom: var(--space-1);
 }
 
+/* The instance page's title row (16 17f2.1): the heading and the pencil that
+   opens its display name form, on one line while the name fits and on two when
+   it wraps (17f2.9). The room between them is the one token the brief gives,
+   and the row carries the --space-4 a heading leaves under it, now that the
+   heading's own margin is 0 inside the row. */
+.instance-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+/* The heading is a flex item of the row, so the row carries the room below it
+   and the heading keeps none: `min-width: 0` is on the global `h1` rule, and
+   the `overflow-wrap: anywhere` there breaks a 64-character display name inside
+   the line (16 17f2.9, 1.4.10, 2d.7). */
+.instance-name-row h1 {
+  margin: 0;
+}
+
 /* The id as the stable key, shown small under the name the label gives (16
    17f.8): a quiet line, and `anywhere` because an id is one long word with no
    break point (CSS Text 3, overflow-wrap). */
@@ -993,27 +1020,51 @@ tr:last-child td {
   display: block;
 }
 
-/* The rename form of the header (16 17f.5, its review D3): a column like the
-   page's other fields, so the label sits above the box and the box takes the
-   form's width (17f.8, 1.4.10). It starts --space-3 under the Rename that
-   opens it (DESIGN.md principle 9). */
-.instance-label-form {
+/* The display name form of the heading (16 17f2.3, laid out as 17f's form of
+   its review D3): a column like the page's other fields, so the label sits
+   above the box and the box takes the form's width (17f2.3, 1.4.10). It starts
+   --space-3 under the title row it follows (DESIGN.md principle 9). */
+.instance-name-form {
   display: grid;
   gap: var(--space-1);
   margin-top: var(--space-3);
+  /* 17f2 review D1: one column of its own, so the 720 px field rule's column
+     2 never pulls the label beside the box (17f2.3: above it). */
+  grid-template-columns: minmax(0, 1fr);
+  /* 17f2 review D3 (17f2.3): no wider than the Server form's field. */
+  max-width: 40rem;
+  /* 17f2 review D3: DESIGN.md principle 9, the room under the form too. */
+  margin-bottom: var(--space-3);
+}
+
+/* 17f2 review D1: every child in that one column, the hint included. */
+.instance-name-form > * {
+  grid-column: 1;
+}
+
+/* 17f2 re-check D1b: the 720 px .field-hint grid-column: 2 would win over the rule above and squeeze the box. */
+.instance-name-form > .field-hint,
+.instance-name-form > .field-error {
+  grid-column: 1;
+}
+
+/* 17f2 review D2 (17f2.9, 1.4.10): the hint's 40-character id has no break
+   point, and its width sets the form's column. */
+.instance-name-form .field-hint {
+  overflow-wrap: anywhere;
 }
 
 /* The label above the box (17f review D3): inline, the box's focus ring covers
    its last letter. The weight is the one the page's other field labels have. */
-.instance-label-form > label {
+.instance-name-form > label {
   display: block;
   font-weight: 600;
 }
 
 /* The two buttons in a row of their own, --space-2 between them (17f review
-   D3): they touch today. The row wraps, so the buttons keep their room at the
-   largest browser text (1.4.10). */
-.instance-label-form > div {
+   D3). The row wraps, so the buttons keep their room at the largest browser
+   text (1.4.10). */
+.instance-name-form > div {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
@@ -2041,6 +2092,15 @@ ul.check-list {
    + follows the `ul`, so it keeps the --space-3 above it. One rule covers both
    pages that share the class (brief 16, 17b2.2). */
 p + .ot-add {
+  margin-top: 0;
+}
+
+/* The pencil that opens the instance's display name form (brief 16, 17f2.1) is
+   the list add's icon button, the class shared and not copied (17b2.2). It
+   follows the page's heading, not a list, so the --space-3 above an add is room
+   nothing asked for: the row's own gap is the room between the name and it. The
+   selector is the pencil's own class, so it reaches no list add. */
+.instance-name-edit {
   margin-top: 0;
 }
 

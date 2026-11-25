@@ -409,7 +409,7 @@ export default function InstancePage({
         : from === 'tags'
           ? `${uid}-tags-sign-in`
           : from === 'label'
-            ? `${uid}-rename-sign-in`
+            ? `${uid}-name-sign-in`
             : `${uid}-sign-in`
     document.getElementById(signIn)?.focus()
   }
@@ -422,7 +422,7 @@ export default function InstancePage({
     // Back on the control the sign-in answers for: the run button that was
     // clicked, Start at boot's checkbox, in the tags field the New tag box
     // while its pill is open, else the Add tag button (15 C1.10), and in the
-    // rename form Save label with what was typed kept (16 17f.7). The box is
+    // display name form Save with what was typed kept (16 17f2.6). The box is
     // in the document only while the pill is open.
     const pillOpen = document.getElementById(`${uid}-tags-box`) !== null
     const control =
@@ -431,23 +431,30 @@ export default function InstancePage({
         : from === 'tags'
           ? `${uid}-tags-${pillOpen ? 'box' : 'add'}`
           : from === 'label'
-            ? `${uid}-rename-save`
+            ? `${uid}-name-save`
             : `${uid}-${clicked.current}`
     document.getElementById(control)?.focus()
   }
 
+  const edit = useNameEdit({
+    id,
+    fieldId: `${uid}-name`,
+    instance,
+    renewals: signIns.rereads + signIns.kept,
+    onSignIn: () => setAsking('label'),
+    onSaved: reread,
+  })
+
   return (
     <>
-      {/* The name, and the id as the stable key right after it (16 17f.4): the
-          title follows the name, the route stays the id. */}
+      {/* The name, the pencil that sets it in the same row, and the id as the
+          stable key under them (16 17f.4, 17f2.1 and 17f2.2): the title
+          follows the name, the route stays the id. */}
       <PageHeading
         text={instance === undefined ? id : instanceName(instance)}
-        idLine={
-          instance === undefined || instanceName(instance) === id
-            ? undefined
-            : t('instance-id-shown', id)
-        }
+        actions={edit.pencil}
       />
+      {edit.block}
       <Body answer={answer} id={id}>
         {instance !== undefined && (
           <>
@@ -500,14 +507,6 @@ export default function InstancePage({
                 fieldId={`${uid}-boot`}
                 renewals={signIns.rereads + signIns.kept}
                 onSignIn={() => setAsking('boot')}
-              />
-              <Rename
-                id={id}
-                fieldId={`${uid}-rename`}
-                instance={instance}
-                renewals={signIns.rereads + signIns.kept}
-                onSignIn={() => setAsking('label')}
-                onSaved={reread}
               />
             </div>
             <TagsField
@@ -765,18 +764,21 @@ function Boot({
 }
 
 /**
- * The rename form of the header (fe/briefs/16-server-profiles-and-instances.md,
- * 16 17f.5 to 17f.9): a secondary `Rename` opener with `aria-expanded`, and
- * right after it the form with the Label box, Save label and Cancel, its status
- * line and its alert place. The form is part of the header and not a page edit:
- * typing in it arms the unsaved-changes question of nothing.
+ * The instance's display name (fe/briefs/16-server-profiles-and-instances.md,
+ * 16 17f2.1 to 17f2.8): the `pencil` icon button that opens the form, and the
+ * form with the Display name box, Save and Cancel, its status line and its
+ * alert place. The pencil sits in the page's title row, right after the heading
+ * it changes, and the form opens right under the id line, so the two are handed
+ * to the page apart and share one state here: the heading stays a plain
+ * heading (17f2.1), and typing in the form arms the unsaved-changes question of
+ * nothing.
  *
  * The outcome of a write is committed to the form's status while the form is
- * open, and the form closes one commit later, where the header's own line after
- * the opener carries it: the page shows the outcome once, whether the form is
- * open or closed.
+ * open, and the form closes one commit later, where the line right after the
+ * title row carries it: the page shows the outcome once, whether the form is
+ * open or closed (17f2.6).
  */
-function Rename({
+function useNameEdit({
   id,
   fieldId,
   instance,
@@ -786,8 +788,9 @@ function Rename({
 }: {
   id: string
   fieldId: string
-  /** The instance as the page last read it: its label, engine and port. */
-  instance: Instance
+  /** The instance as the page last read it: its display name, engine and port.
+   *  Undefined while the page's first read is on its way: nothing shows. */
+  instance: Instance | undefined
   /** Raised by every sign-in that kept the page: a session alert goes. */
   renewals: number
   /** The Sign in of the 401 and the 403: the page opens its dialog. */
@@ -795,14 +798,14 @@ function Rename({
   /** Raised when the name shown must follow the manager's: the page reads the
    * list again. */
   onSaved: () => void
-}) {
+}): { pencil: ReactNode; block: ReactNode } {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
   // The outcome of the last write, in the form's status while it is open and in
-  // the header's line once it is closed (17f.6).
+  // the line after the title row once it is closed (17f2.6).
   const [outcome, setOutcome] = useState('')
-  // The 422 and the 409, under the box (17f.7); one keystroke clears it.
+  // The 422 and the 409, under the box (17f2.7); one keystroke clears it.
   const [error, setError] = useState<string | undefined>(undefined)
   const [stored, setAlert] = useState<{
     text: string
@@ -811,7 +814,7 @@ function Rename({
   } | null>(null)
   const alert = stored?.signIn && stored.at !== renewals ? null : stored
   // The write in flight, guarded by a ref: Enter in the box and the form's
-  // submit are the same save, and a press while it runs sends nothing (17f.6).
+  // submit are the same save, and a press while it runs sends nothing (17f2.6).
   const sent = useRef(false)
   const mounted = useRef(true)
   const renewalsNow = useRef(renewals)
@@ -825,27 +828,30 @@ function Rename({
     renewalsNow.current = renewals
   }, [renewals])
 
-  /** The line a write leaves: `instance-label-saved` with the name the label
-   *  gives, or `instance-label-cleared` with the name the instance is back to
-   *  (the engine and the port, or the id) for the empty label (17f.6). */
+  /** The name the instance shows with no display name: the engine and the
+   *  port, or the id when there is no port (17f.1). The hint and the cleared
+   *  line name it (17f2.4, 17f2.6). */
+  const auto =
+    instance === undefined || instance.port === 0
+      ? id
+      : t('instance-name-auto', instance.engine, String(instance.port))
+
+  /** The line a write leaves: `instance-name-saved` with the name the display
+   *  name gives, or `instance-name-cleared` with the name the instance is back
+   *  to for the empty display name (17f2.6). */
   function outcomeOf(trimmed: string): string {
-    if (trimmed !== '') return t('instance-label-saved', trimmed)
-    return t(
-      'instance-label-cleared',
-      instance.port > 0
-        ? t('instance-name-auto', instance.engine, String(instance.port))
-        : instance.id,
-    )
+    if (trimmed !== '') return t('instance-name-saved', trimmed)
+    return t('instance-name-cleared', auto)
   }
 
-  /** Opens the form with the current label, its text selected and the focus in
-   *  the box, so typing replaces it (17f.5). */
+  /** Opens the form with the current display name, its text selected and the
+   *  focus in the box, so typing replaces it (17f2.3). */
   function openForm() {
     flushSync(() => {
       setOutcome('')
       setError(undefined)
       setAlert(null)
-      setText(instance.label ?? '')
+      setText(instance?.label ?? '')
       setOpen(true)
     })
     const box = document.getElementById(`${fieldId}-box`)
@@ -856,17 +862,16 @@ function Rename({
   }
 
   /** Closes the form at once: the typing goes, and the outcome stays in the
-   *  header's line (17f.5, 17f.9). A write on its way is not cancelled: the
-   *  three ways of closing are refused while it runs, so the answer lands in
-   *  the status of the form the reader is looking at, with the typing they
-   *  made (17f review R1). */
+   *  line after the title row (17f2.6). A write on its way is not cancelled:
+   *  the three ways of closing are refused while it runs, so the answer lands
+   *  in the form the reader is looking at, with the typing they made. */
   function closeForm() {
     if (saving || sent.current) return
     leaveForm()
   }
 
   /** The closing of every path, the write's own included: the form goes, the
-   *  typing goes, and the opener takes the focus so it never drops. */
+   *  typing goes, and the pencil takes the focus so it never drops. */
   function leaveForm() {
     setOpen(false)
     setText('')
@@ -879,23 +884,23 @@ function Rename({
 
   /** Leaves a write's outcome and closes the form. The open form's status is
    *  committed first (flushSync), so the line the reader hears is the outcome
-   *  and not the text of the closing form; the header's own line after the
-   *  opener carries it from there (17f.6, 17f.9). */
+   *  and not the text of the closing form; the line after the title row carries
+   *  it from there (17f2.6). */
   function showOutcome(line: string) {
     flushSync(() => setOutcome(line))
     leaveForm()
   }
 
-  /** Saves what is in the box: the text trimmed, `""` for the clear (17f.6). A
-   *  text that trims to the label the instance has sends nothing. The trim is
-   *  the manager's, spaces and tabs only (17f review R2, `checks.rs`
+  /** Saves what is in the box: the text trimmed, `""` for the clear (17f2.6). A
+   *  text that trims to the display name the instance has sends nothing. The
+   *  trim is the manager's, spaces and tabs only (17f review R2, `checks.rs`
    *  `instance_label`): `String.prototype.trim` also strips a no-break space,
-   *  which the manager keeps, so the form would send a label the manager never
-   *  received and take such a label for the one the instance has. */
+   *  which the manager keeps, so the form would send a name the manager never
+   *  received and take such a name for the one the instance has. */
   async function save() {
     if (saving || sent.current) return
     const trimmed = text.replace(/^[ \t]+|[ \t]+$/g, '')
-    if (trimmed === (instance.label ?? '').replace(/^[ \t]+|[ \t]+$/g, '')) {
+    if (trimmed === (instance?.label ?? '').replace(/^[ \t]+|[ \t]+$/g, '')) {
       showOutcome(outcomeOf(trimmed))
       return
     }
@@ -903,7 +908,7 @@ function Rename({
     setSaving(true)
     setError(undefined)
     setAlert(null)
-    setOutcome(t('instance-label-saving'))
+    setOutcome(t('instance-name-saving'))
     const result = await writeLabel(id, trimmed)
     if (!mounted.current) return
     setSaving(false)
@@ -926,98 +931,114 @@ function Rename({
       at: renewalsNow.current,
     })
     // A 504 is not confirmed: the name shown is the manager's, so the list is
-    // read again (17f.7, 17f.10).
+    // read again (17f2.7, 17f.10).
     if (failure.again) onSaved()
   }
+
+  if (instance === undefined) return { pencil: null, block: null }
 
   const describedBy = [
     `${fieldId}-hint`,
     ...(error === undefined ? [] : [`${fieldId}-error`]),
   ].join(' ')
 
-  return (
-    <>
+  return {
+    pencil: (
       <button
         id={fieldId}
         type="button"
-        className="secondary"
+        className="ot-add instance-name-edit"
         aria-expanded={open}
+        aria-controls={`${fieldId}-form`}
         onClick={() => (open ? closeForm() : openForm())}
       >
-        {t('instance-rename')}
+        <Icon name="pencil" />
+        <span className="visually-hidden">{t('instance-name-edit')}</span>
       </button>
-      {open && (
-        <form
-          className="instance-label-form"
-          aria-label={t('instance-label')}
-          onSubmit={(e) => {
-            e.preventDefault()
-            void save()
-          }}
-        >
-          <label htmlFor={`${fieldId}-box`}>{t('instance-label')}</label>
-          <input
-            id={`${fieldId}-box`}
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            value={text}
-            aria-describedby={describedBy}
-            {...(error === undefined ? {} : { 'aria-invalid': true })}
-            onChange={(e) => {
-              setText(e.target.value)
-              setError(undefined)
+    ),
+    block: (
+      <>
+        {/* The line the write leaves, kept once the form is closed (17f2.6). */}
+        {!open && outcome !== '' && <p role="status">{outcome}</p>}
+        {/* The id as the stable key, and the word that says it stays (17f2.2). */}
+        <p className="instance-id">{t('instance-id-fixed', id)}</p>
+        {open && (
+          <form
+            id={`${fieldId}-form`}
+            className="instance-name-form"
+            aria-label={t('instance-name-label')}
+            onSubmit={(e) => {
+              e.preventDefault()
+              void save()
             }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                // The key is stopped (17f review D2): the save closes the form
-                // and focuses Rename, and the same Enter would press it.
-                e.preventDefault()
-                void save()
-              } else if (e.key === 'Escape') closeForm()
-            }}
-          />
-          <Hint id={`${fieldId}-hint`} text={t('instance-label-hint')} open />
-          {error !== undefined && (
-            <FieldError id={`${fieldId}-error`} text={error} />
-          )}
-          <div className="save-actions">
-            <button
-              id={`${fieldId}-save`}
-              type="button"
-              className="primary"
-              aria-disabled={saving || undefined}
-              onClick={() => void save()}
-            >
-              {t('instance-label-save')}
-            </button>
-            <button
-              id={`${fieldId}-cancel`}
-              type="button"
-              className="secondary"
-              aria-disabled={saving || undefined}
-              onClick={closeForm}
-            >
-              {t('instance-label-cancel')}
-            </button>
-          </div>
-          <p role="status">{outcome}</p>
-          {alert !== null && <p role="alert">{alert.text}</p>}
-          {alert?.signIn && (
-            <button
-              id={`${fieldId}-sign-in`}
-              type="button"
-              className="secondary"
-              onClick={onSignIn}
-            >
-              {t('session-sign-in')}
-            </button>
-          )}
-        </form>
-      )}
-      {!open && outcome !== '' && <p role="status">{outcome}</p>}
-    </>
-  )
+          >
+            <label htmlFor={`${fieldId}-box`}>{t('instance-name-label')}</label>
+            <input
+              id={`${fieldId}-box`}
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={text}
+              aria-describedby={describedBy}
+              {...(error === undefined ? {} : { 'aria-invalid': true })}
+              onChange={(e) => {
+                setText(e.target.value)
+                setError(undefined)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  // The key is stopped (17f review D2): the save closes the form
+                  // and focuses the pencil, and the same Enter would press it.
+                  e.preventDefault()
+                  void save()
+                } else if (e.key === 'Escape') closeForm()
+              }}
+            />
+            <Hint
+              id={`${fieldId}-hint`}
+              text={t('instance-name-hint', auto, id)}
+              open
+            />
+            {error !== undefined && (
+              <FieldError id={`${fieldId}-error`} text={error} />
+            )}
+            <div>
+              <button
+                id={`${fieldId}-save`}
+                type="button"
+                className="primary"
+                aria-disabled={saving || undefined}
+                onClick={() => void save()}
+              >
+                {t('instance-name-save')}
+              </button>
+              <button
+                id={`${fieldId}-cancel`}
+                type="button"
+                className="secondary"
+                aria-disabled={saving || undefined}
+                onClick={closeForm}
+              >
+                {t('instance-label-cancel')}
+              </button>
+            </div>
+            <p role="status">{outcome}</p>
+          </form>
+        )}
+        {alert !== null && <p role="alert">{alert.text}</p>}
+        {alert?.signIn && (
+          <button
+            id={`${fieldId}-sign-in`}
+            type="button"
+            className="secondary"
+            onClick={onSignIn}
+          >
+            {t('session-sign-in')}
+          </button>
+        )}
+      </>
+    ),
+  }
 }
 
 /**

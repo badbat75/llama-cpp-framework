@@ -108,6 +108,9 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
 
 ## Pitfalls
 
+- `page.addStyleTag` puts a candidate CSS fix last in the cascade, so it wins ties the real
+  sheet would lose: prepend it to `head` (or raise its specificity) before naming it as measured.
+
 - A floating tip or popup inside a table's `.table-scroll` (overflow-x auto, so it clips both axes)
   is cut off; brief such a tip in the top layer (`popover`) or in the flow, and in a review measure
   its right edge against the scroll box and move the pointer from the control onto it (1.4.13).

@@ -242,7 +242,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Reusing one list-add class (`.ot-add`) on another page is free: R1.8's class list allows the card's
   whole namespace, and HearthTokens' size filter `/ot-|tensor|placement/` reads only `min-height` and
   `min-width`, so a `margin-top` there is unpinned and a new size there is red. A page with no `.jump`
-  child is not the 1280 px grid, so its page-level `+` keeps the width of its words.
+  child is not the 1280 px grid, so its page-level `+` keeps the width of its words. The sheet tests
+  that read a heading inside a box (`rulesInside('h1', classes)`) resolve `h1` through the GLOBAL rule
+  only, so a `min-width: 0` for a heading made a flex item goes on the global `h1` rule, and joins
+  HearthTokens H1a.12's exact ordered list of every `min-height`/`min-width` in the sheet (17f2.9).
 - A compound-with-combinator rule (`p + .ot-add`) is free of the cascade pins too: the sheet tests'
   `cascade(classes)` keeps only a selector whose every token is `button` or one of the element's own
   classes, so it never applies, and the element keeps the plain `.ot-add` declaration in those pins.
@@ -440,6 +443,15 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 - `fireEvent.click` does not move focus like a real click.
 - Specificity: `button` and `.secondary` are (0,1,0), `.jump button` is (0,1,1); `input[role='switch']`
   and `input[type='checkbox']` tie, so source order decides.
+- A form that reuses the field-shape classes (`.field-hint` in 17f2) inherits the 720 px block's
+  `.field-control, .full-value, .field-hint, .field-error` grid placement: the hint lands in column 2,
+  the form gains an implicit second column, the label sits BESIDE the box at 1280 px and the hint's
+  unbroken id sets the column width (sideways scroll at 320 px). The measured fix is the form's own
+  `grid-template-columns: minmax(0, 1fr)` plus `.form > * { grid-column: 1 }` plus
+  `overflow-wrap: anywhere` on the hint (17f2 review D1/D2). The `> *` rule is (0,1,0) and sits BEFORE
+  the 720 px one, so source order hands the hint column 2 back and column 1 collapses (box 18 px at
+  720 px): name the hint AND the error at (0,2,0), the specificity winning at any source order (17f2
+  re-check D1b).
 - The `EN` table of `fe/src/test/bff.ts` is a second pin of `en_US.json` (`App.test.tsx` `1a strings`);
   "every value is used" scans for `t(` + a string literal, so a key that reaches `t` otherwise reds it.
   A strings key id makes a good `aria-labelledby` target.
@@ -447,6 +459,17 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   snapshots tab stops before the awaited element lands, is the TEST's race (`indexOf = -1`, a
   `Loading...` status quoted where a page's line is wanted). A page that returns `null` while its read is
   pending is not the defect. State the shape, do not touch production.
+- The same race has a second shape: a page that heads with the ROUTE id while its read is pending
+  (`InstancePage`: `instance === undefined ? id : instanceName(instance)`) makes a heading finder resolve
+  on the LOADING render, so `openPage(opts, 'embed')` returns before the instance is known, and every
+  control the read fills is `null`; the Overview's `h2` rides the tile skeleton the same way. Prove it in a
+  copy by awaiting the control's own text, never by widening production.
+- `en()` of `fe/src/test/bff.ts` substitutes `{0}`/`{1}`: a strings pin that compares the RAW
+  `en_US.json` value of a parameterised key with `en(key, 'a', 'b')` can never pass, and the render test
+  that names those args needs the placeholders kept: a witness pair to report (17f2.10 against 17f2.7).
+- A save rule of "an unchanged text sends nothing" (16 17f2.6) reddens a refusal-text test that clicks
+  Save on an UNTOUCHED box, whose text is the value the record holds: no request goes, so no refusal
+  shows. The test types a change first.
 - A field's read moved UP to its page so a test's synchronous `getByRole` finds the field is that same
   race answered in production: revert it, and prove the revert in a copy (the slice's files plus the
   field's own test file). `git diff --stat` over the slice's files is the check that nothing out of

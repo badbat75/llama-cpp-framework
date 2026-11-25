@@ -380,7 +380,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   order, per-card sets sorted on both sides), and a declaration added to a pinned rule reds that rule's
   "declares nothing else" list and its title. Read an array's own tail to see whether it is sorted.
 `Reflow.test.ts`'s `declares` compares the property list IN the sheet's declaration order, so amending it
-fixes where in the rule the new declaration sits: add it last, and name that in the report.
+fixes where in the rule the new declaration sits: add it last, and name that in the report. Check the list
+before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-width` or
+`grid-template-columns` fix reds nothing there), and `CLASSES` keeps a slice namespace
+(`instance-(rename|label|name)*`, `ot*`) outside the frozen list, so a class inside one needs no entry.
 - Pin a look the brief gives a control ("40 px, no border, no fill") as the CASCADE for the classes the
   element carries: read `button.classList` off the page, keep the top-level rules whose selector is the
   element's tag or a compound of those classes, order them by class count then sheet order, merge their
@@ -393,6 +396,11 @@ fixes where in the rule the new declaration sits: add it last, and name that in 
 - Pin a cascade value that today's sheet already carries globally (the `h1`'s `overflow-wrap: anywhere`)
   as a presence pin on that global rule, not as a value of the scoped merge: the merge sees only the rules
   scoped to the new box, so a global declaration reads absent and the pin is red on a correct fix.
+- A new box reusing the field classes needs a pin of the SELECTOR GROUP, not of a `> *` rule: the 720 px
+  block places `.field-control, .full-value, .field-hint, .field-error` in column 2, and a top-level
+  `.x > * { grid-column: 1 }` (0,1,0) BEFORE it loses on source order, so the box collapses (17f2 D1:
+  the box 18 px at 1280 px). Pin that one top-level rule names both children (0,2,0) and declares the
+  value: the specificity is the fix, so a source-order pin reds a correct fix.
 - When a review names two sanctioned fixes (a sheet declaration, or a markup shape like a wrapper div),
   pin the DISJUNCTION: the cascade value for the sheet option, the parent chain read off the page for the
   markup option, `a || b` in one assertion. Forcing one shape writes the coder's fix into the contract.
@@ -603,6 +611,15 @@ fixes where in the rule the new declaration sits: add it last, and name that in 
   slice proves, on the same fixture, that the PUT does go out.
 - Every shell part that arrives with the session (nav, instance links, banner) reds a synchronous
   `getByRole('navigation')` helper.
+- A page-open helper that only renders keeps the PREVIOUS test's hash: a second `openPage` in the same
+  test for another id renders the first id's page, and the DOM dump reads "There is no instance named
+  <first id>" with the h1 of the first id. `startAt('#/instances/<id>')` before each render.
+- Pressing Save with the box holding the loaded value sends NOTHING (the unchanged-text rule), so a
+  refusal fixture on that press is UNREACHABLE and the red is `Unable to find ... <refusal text>`: type a
+  new value before the press that pins a refusal.
+- `en(key, a, b)` FILLS the mirror's `{0}`/`{1}`, so a strings pin `table[key] === en(key, a, b)` can
+  never pass (the file keeps the template, the bff fills at runtime): pin the template with `en(key)` and
+  the fill where the text renders.
 - A `loaded()`-style helper that accepts any shape of a read's answer (a table, or the empty text) must
   poll with `waitFor` over a predicate: one `queryByRole` snapshot races the reply and reds with a DOM
   dump showing the element it sought.

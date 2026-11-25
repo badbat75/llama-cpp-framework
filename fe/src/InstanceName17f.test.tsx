@@ -1,7 +1,8 @@
 // Brief 16, slice 17f (fe/briefs/16-server-profiles-and-instances.md): the
 // instance's NAME, what every place shows and says for it, and the texts of the
 // slice. The whole app renders against a fake bff (mocked fetch); "16 17f.n" is
-// the brief's criterion n. The rename form is in InstanceRename17f.test.tsx and
+// the brief's criterion n. The display name form is in
+// InstanceNameEdit17f2.test.tsx (17f2 replaces 17f's Rename button) and
 // the "not confirmed" rule of every write in WriteOutcome17f.test.tsx; the
 // `.instance-id` rule of 17f.8 is in Reflow.test.ts, beside the other CSS
 // readers, and the nav's keyboard walk in NodesMenu1.test.tsx.
@@ -237,20 +238,24 @@ test('16 17f.3: the tile of an instance named by its id has no p.instance-id, an
 
 // ── 17f.4: the instance page ──────────────────────────────────────────────
 
-test('16 17f.4: the instance page h1 reads the name, a p.instance-id right after it reads instance-id-shown, the title is the name with the app name, and the route stays #/instances/<id>', async () => {
+// 17f2.2: the page's own id line reads `instance-id-fixed` ("ID {0}, does not
+// change"); the tiles and the Used by link keep `instance-id-shown`.
+test('16 17f.4: the instance page h1 reads the name, a p.instance-id right after it reads instance-id-fixed, the title is the name with the app name, and the route stays #/instances/<id>', async () => {
   const { main } = await open('#/instances/default')
   const h1 = await within(main).findByRole('heading', {
     level: 1,
     name: 'Coding assistant',
   })
   expect(h1.getAttribute('id'), 'the heading keeps its id').toBe('page-heading')
-  const id = h1.nextElementSibling
-  expect(id?.tagName, 'a paragraph right after the h1').toBe('P')
+  // 16 17f2.1: the heading sits in the title row, with the pencil after it, so
+  // the id line of 17f2.2 is the row's own next sibling.
+  const id = h1.parentElement?.nextElementSibling
+  expect(id?.tagName, 'a paragraph right after the title row').toBe('P')
   expect(id?.classList.contains('instance-id'), 'it is a p.instance-id').toBe(
     true,
   )
-  expect(id?.textContent, 'it reads instance-id-shown with the id').toBe(
-    en('instance-id-shown', 'default'),
+  expect(id?.textContent, 'it reads instance-id-fixed with the id').toBe(
+    en('instance-id-fixed', 'default'),
   )
   // The title is set by the heading's own effect, which React runs after the
   // commit that the finder saw: poll, so a fast reply cannot be read as the
@@ -265,29 +270,33 @@ test('16 17f.4: the instance page h1 reads the name, a p.instance-id right after
   )
 })
 
-test('16 17f.4: the page of an instance with no label heads with the engine and the port and shows the id, and the page of one with no port heads with the id alone and shows no id line', async () => {
+test('16 17f.4: the page of an instance with no label heads with the engine and the port and shows the id, and the page of one with no port heads with the id alone and, by 17f2.2, shows the id line too', async () => {
   const { main } = await open('#/instances/coder')
   const h1 = await within(main).findByRole('heading', {
     level: 1,
     name: en('instance-name-auto', 'llama.cpp', '8580'),
   })
   expect(
-    h1.nextElementSibling?.textContent,
-    'the id shows beside a name that is not the id',
-  ).toBe(en('instance-id-shown', 'coder'))
+    h1.parentElement?.nextElementSibling?.textContent,
+    'the id shows beside a name that is not the id (17f2.2: under the title row)',
+  ).toBe(en('instance-id-fixed', 'coder'))
   cleanup()
   const second = await open('#/instances/embed')
   const other = await within(second.main).findByRole('heading', {
     level: 1,
     name: 'embed',
   })
+  // The heading of a page whose list read has not landed is the route id, so
+  // the finder resolves before the instance is known: wait for the line.
+  await within(second.main).findByText(en('instance-id-fixed', 'embed'))
   expect(
-    second.main.querySelector('.instance-id'),
-    'the name IS the id: no id line',
-  ).toBeNull()
-  expect(other.nextElementSibling?.classList.contains('instance-id')).toBe(
-    false,
-  )
+    second.main.querySelector('.instance-id')?.textContent,
+    '17f2.2: the name IS the id, and the page says so, so the reader always sees which word is the key',
+  ).toBe(en('instance-id-fixed', 'embed'))
+  expect(
+    other.parentElement?.nextElementSibling?.classList.contains('instance-id'),
+    'the id line is right under the title row, as on the other page (17f2.2)',
+  ).toBe(true)
 })
 
 test('16 17f.4: a message that names an instance keeps the id: the page of an id the manager does not have reads instance-not-found with the id', async () => {
@@ -347,26 +356,24 @@ test('16 17f.4 (17f review D1): the profile page links its Used by row with the 
 
 // ── 17f.11: the texts ─────────────────────────────────────────────────────
 
-/** 17f.11: the keys the strings file gains, with the English of section 2. */
+/** 17f.11: the keys the strings file gains, with the English of section 2.
+ *  17f2.10 takes the seven of the Rename form out of the list (`instance-rename`,
+ *  `instance-label`, `instance-label-hint`, `instance-label-save`,
+ *  `instance-label-saving`, `instance-label-saved`, `instance-label-cleared`):
+ *  the form is gone, and its keys are pinned in InstanceNameEdit17f2.test.tsx.
+ *  The two refusal texts stay in the list, in the English 17f2.7 gives them. */
 const GAINS = [
   'instance-name-auto',
   'instance-id-shown',
   'instance-id-said',
-  'instance-rename',
-  'instance-label',
-  'instance-label-hint',
-  'instance-label-save',
   'instance-label-cancel',
-  'instance-label-saving',
-  'instance-label-saved',
-  'instance-label-cleared',
   'api-instance-bad-label',
   'api-instance-label-taken',
   'write-timeout',
   'delete-unknown',
 ]
 
-test('16 17f.11: en_US.json gains exactly the keys of section 2, each with the English of the brief', () => {
+test('16 17f.11 (as 17f2.10 trims it): en_US.json gains the keys of section 2 that 17f2 keeps, each with the English of the brief', () => {
   const table: Record<string, string> = strings
   const missing = GAINS.filter((key) => table[key] === undefined)
   expect(missing, 'keys missing from strings/en_US.json').toEqual([])

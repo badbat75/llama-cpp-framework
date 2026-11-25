@@ -1247,7 +1247,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     commands if GT1 left it out there. GT3 built 2026-11-25.
     Then 17f2 (brief 16, 17f2.1 to 17f2.10: the display name set from a pencil after the page heading, the
     hint saying the ID, service, files and address stay, Rename removed; user, 2026-11-24: "Rename is not
-    clear, we need another UX", the pencil chosen over a facts row), after 22D2.
+    clear, we need another UX", the pencil chosen over a facts row), after 22D2. 17f2 built 2026-11-25.
     22D2 built 2026-11-24. Then 22D2 (brief 22, 22 D2.1 to D2.10: Delete as a − beside a status row on both profile pages, the Save
     bar sticky at the top; user, 2026-11-23: "put a minus right of the status and the edit commands at the
     top", the bar at the top confirmed) and the UX audit, brief 24 (A1 to A10, 26 criteria, ranked: A1 run

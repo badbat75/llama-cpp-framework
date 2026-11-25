@@ -1645,9 +1645,10 @@ test('1c.46a: Tab reaches Start, Stop, Restart (inactive ones included), then th
   const { main } = await loaded({ run: SESSION_ENDED })
   // Start is inactive (state active) and still in the sequence.
   let names = tabNames(main)
+  // 16 17f2.8: the display name pencil is the first stop of main, before Start.
   const first = names.indexOf(en('run-start'))
-  expect(first, 'Start is reached').toBe(0)
-  expect(names.slice(0, 3)).toEqual([
+  expect(first, 'Start is reached').toBe(1)
+  expect(names.slice(1, 4)).toEqual([
     en('run-start'),
     en('run-stop'),
     en('run-restart'),
@@ -1673,9 +1674,10 @@ test('1c.46a: Tab reaches Start, Stop, Restart (inactive ones included), then th
   await flush()
   names = tabNames(main)
   expect(
-    names.slice(0, 4),
-    'during a 401 every button stays reachable',
+    names.slice(0, 5),
+    'during a 401 every button stays reachable (16 17f2.8: the pencil is the first stop of main)',
   ).toEqual([
+    en('instance-name-edit'),
     en('run-start'),
     en('run-stop'),
     en('run-restart'),

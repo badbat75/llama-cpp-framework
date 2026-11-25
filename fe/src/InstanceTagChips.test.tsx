@@ -730,8 +730,8 @@ test('15 C1.2 (as 15 section 10 R5 amends it): the tab order is Start at boot, A
   const stops = tabbable(p.main)
   const order = [
     boot,
-    // 16 17f.9: the rename form's opener follows Start at boot.
-    within(p.main).getByRole('button', { name: en('instance-rename') }),
+    // 16 17f2.8: the display name pencil is the page's first stop, before
+    // Start, so it is outside this window, which starts at Start at boot.
     within(p.main).getByRole('button', {
       name: `${en('field-about')} ${en('instance-tags-own')}`,
     }),

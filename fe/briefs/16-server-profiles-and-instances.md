@@ -1206,3 +1206,64 @@ forced colours, with keyboard (`build/ux-review/17b2.js`, shots in `build/ux-rev
 
 **Re-check (2026-11-24): D1 fixed (`p + .ot-add { margin-top: 0 }`, measured on the empty tensor
 list, the same rule and paragraph margin as the empty pool), 17b2 accepted.**
+
+### 17f2 review (designer, 2026-11-25)
+
+Driven in Chromium, Firefox and WebKit at 1280 and 320 px, light, dark, 200 % text and (Chromium)
+forced colours, on `default` (no label) and on the 40-character id with the 64-character label
+(`build/ux-review/17f2.js`).
+
+Met:
+- 17f2.1: the pencil is outside the `h1`, 40 px wide, `--space-2` (8 px) after the heading's text
+  on the same line, or on the next line when the long name wraps. It has `aria-expanded` and
+  `aria-controls`, and Rename is gone.
+- 17f2.2: the id line reads "ID default, does not change", and the same for the long id.
+- 17f2.3 and 17f2.4: the form is named "Display name" and sits 12 px under the id line. The focus is
+  in the box with the label's text selected, with `autocomplete="off"`, `spellcheck="false"` and no
+  placeholder. The hint is the box's description, shown all the time, and the buttons are Save
+  (primary) and Cancel.
+- 17f2.6: Enter sends `{"label":"Review name"}`, closes the form, focuses the pencil and says
+  "Display name saved: Review name." Escape closes and focuses the pencil.
+- 17f2.8: Tab goes heading, pencil, Start. Forced colours draws the pencil and the box.
+
+Not met:
+- **D1 (17f2.3: "the label above a text box"): at 720 px and wider the label sits beside the box.**
+  The form's hint is a `.field-hint`, which the field grid rule at 720 px places in column 2
+  (`fe/src/index.css` 1518-1523). That gives `.instance-name-form` (1027-1031) an implicit second
+  column: at 1280 px the label takes 164 px, the box 712 px, and Save and Cancel drop under the
+  label.
+- **D2 (17f2.9, [1.4.10](https://www.w3.org/TR/WCAG22/#reflow)): with the form open, the long id
+  scrolls the page sideways.** The hint holds the 40-character id with no break point. Its width
+  sets the grid column, and the box follows it: 342 to 346 px at 320 px, so the page scrolls 38 to
+  42 px; 680 px at 200 %, so it scrolls 376 to 379 px.
+- **D3 (principle 9): the form ends flush against the engine, port and state lines** (0 px).
+- Fix, measured by injection in all three engines at 320 px, 320 px with 200 % text, and 1280 px
+  (`build/ux-review/17f2fix2.js`):
+  `.instance-name-form { grid-template-columns: minmax(0, 1fr); max-width: 40rem; margin-bottom: var(--space-3); }`,
+  `.instance-name-form > * { grid-column: 1; }` and
+  `.instance-name-form .field-hint { overflow-wrap: anywhere; }`. With it the label sits above the
+  box, the box is 288 px at 320 px (both text sizes) and 640 px at 1280 px, the hint does not
+  overflow, the gap after the form is 12 px, and nothing scrolls sideways. The `max-width` keeps
+  17f2.3's "up to the Server form's field width".
+- Note, not a 17f2 defect: at 200 % text the pencil, like every `.ot-add`, is 40 × 45 px. It is
+  still above 2.5.8's minimum.
+
+### 17f2 re-check (designer, 2026-11-25)
+
+- D2 and D3 met as built: at 320 px (both text sizes) the box is 288 px, there is no sideways
+  scroll, and the form ends 12 px above the engine line, in all three engines.
+- **D1 not met at 720 px and wider: the box is 18 px wide.** `.instance-name-form > * { grid-column:
+  1 }` (0,1,0) comes before the 720 px rule `.field-hint { grid-column: 2 }` (0,1,0,
+  `fe/src/index.css` 1518-1523), so the later rule wins. The hint goes back to column 2, and the
+  `minmax(0, 1fr)` column 1 collapses (columns "0px 636px"). My earlier measure injected the fix
+  after the sheet, where source order made it win: my error. Fix, measured with the rule put
+  *first* in the cascade (prepended to `head`) in all three engines at 320 px, 200 % and 1280 px:
+  `.instance-name-form > .field-hint, .instance-name-form > .field-error { grid-column: 1; }`
+  (0,2,0). The box is then 640 px at 1280 px and 288 px at 320 px, the label sits above it, and
+  nothing scrolls sideways.
+- UX check: Chromium and WebKit pass all 198 states each; Firefox has only its known 22D4 segfault.
+  The check did not catch the 18 px box: no state measures the box's width.
+- D1 re-check on the real build (2026-11-25, `build/ux-review/17f2d1b.js`): met in Chromium, Firefox
+  and WebKit. The box is 288 px at 320 px (both text sizes) and 640 px at 1280 px. The label sits
+  above it, and under it come the hint and then a 422 error, both aligned with the box. No sideways
+  scroll. 17f2 accepted.

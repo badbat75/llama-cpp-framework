@@ -23,27 +23,35 @@ export const EN: Record<string, string> = {
   // once for the eye.
   'nav-nodes': 'Nodes',
   'nav-this-node': 'This node',
-  // Brief 16, slice 17f (section 2): the instance's name, the id shown beside
-  // it, and the rename form. 17f.11 takes `nav-instance-profile` and
+  // Brief 16, slice 17f (section 2): the instance's name and the id shown
+  // beside it. 17f.11 takes `nav-instance-profile` and
   // `nav-instance-profile-shown` out of the strings file: 17f.2 makes the menu
   // entry the name only, so the mirror no longer carries them either.
   'instance-name-auto': '{0} :{1}',
   'instance-id-shown': 'ID {0}',
   'instance-id-said': ', instance {0}',
-  'instance-rename': 'Rename',
-  'instance-label': 'Label',
-  'instance-label-hint':
-    'A name of your own for this instance, shown in the menu, on the overview and on this page. Leave it empty to name the instance by its engine and port again. The ID does not change.',
-  'instance-label-save': 'Save label',
+  // Brief 16, slice 17f2 (17f2.10): the display name, set from the heading.
+  // The seven keys 17f's Rename form used (`instance-rename`, `instance-label`,
+  // `instance-label-hint`, `instance-label-save`, `instance-label-saving`,
+  // `instance-label-saved`, `instance-label-cleared`) leave the strings file
+  // with it, so the mirror drops them too; `instance-label-cancel` stays.
+  // 17f2.10 also reads `instance-name` as "ID", the field of 17c's create
+  // form: that form is not built, the key is not in the strings file, so the
+  // mirror does not carry it either.
+  'instance-name-edit': 'Edit display name',
+  'instance-id-fixed': 'ID {0}, does not change',
+  'instance-name-label': 'Display name',
+  'instance-name-hint':
+    'Shown in the menu, on the overview and on this page. Leave it empty to show {0}. The ID {1}, the service, the files and the address stay the same.',
+  'instance-name-save': 'Save',
   'instance-label-cancel': 'Cancel',
-  'instance-label-saving': 'Saving the label…',
-  'instance-label-saved': 'The instance is now named {0}.',
-  'instance-label-cleared':
-    'The label is removed: the instance is named {0} again.',
+  'instance-name-saving': 'Saving the display name…',
+  'instance-name-saved': 'Display name saved: {0}.',
+  'instance-name-cleared': 'Display name removed: shown as {0}.',
   'api-instance-bad-label':
-    'invalid instance label `{0}`: use 1 to 64 characters with no control character, or leave it empty to remove the label',
+    'A display name has 1 to 64 characters and no control character; leave it empty to remove it.',
   'api-instance-label-taken':
-    'the label `{0}` is already used by instance {1}: pick another one',
+    'Instance {1} already shows the display name {0}; pick another one.',
   'write-timeout':
     'Not confirmed: the manager did not answer in time, so this may or may not have been done. The page shows what the manager holds once it answers.',
   loading: 'Loading…',

@@ -474,10 +474,10 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if length:
             self.rfile.read(length)
-        # Brief 16 slice 17f (17f.12, the state `instance-rename` of check.js):
-        # the instance page's rename form saves the label here, and the bff's
-        # reply is 204. The check opens the form and reads it; it never presses
-        # Save, so the answer is a plain 204.
+        # Brief 16 slice 17f, as its 17f2 moves the form to the heading (17f2.10,
+        # the state `instance-name-edit` of check.js): the display name form
+        # saves the label here, and the bff's reply is 204. The check opens the
+        # form and reads it; it never presses Save, so the answer is a plain 204.
         if p.startswith("/api/instances/") and p.count("/") == 4 and p.endswith("/label"):
             self.send_response(204)
             self.end_headers()

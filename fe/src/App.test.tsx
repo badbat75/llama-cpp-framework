@@ -466,6 +466,9 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
   // model-profile-delete-needs-off is out too.
   // 22 D4.12 adds two more: the profile pages' status row leaves (22 D4.9), so
   // its two sentences leave with it.
+  // 16 17f2.10 adds seven: 17f's Rename form leaves the page, and its keys
+  // leave the strings file with it (the display name form uses instance-name-*
+  // and keeps instance-label-cancel).
   const removed = [
     'server-read-only',
     'server-api-key-withheld',
@@ -475,6 +478,13 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
     'model-profile-delete-needs-off',
     'server-profile-unused',
     'server-profile-used-by',
+    'instance-rename',
+    'instance-label',
+    'instance-label-hint',
+    'instance-label-save',
+    'instance-label-saving',
+    'instance-label-saved',
+    'instance-label-cleared',
   ]
   expect(
     Object.keys(table).filter((key) => removed.includes(key)),

@@ -165,7 +165,7 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
   // these that sets it is a break no brief asked for.
   expect(
     sets('overflow-wrap'),
-    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, 16 17a review D1 adds the three cells of the Server profiles table, 16 17f.8 adds .instance-id, the rest are unchanged',
+    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, 16 17a review D1 adds the three cells of the Server profiles table, 16 17f.8 adds .instance-id, 16 17f2 review D2 adds the display name form’s hint, the rest are unchanged',
   ).toEqual(
     [
       'body = break-word',
@@ -213,6 +213,11 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
       // is a grid item of the tile and a block of the page header, so a
       // 32-character id with no break point needs the break.
       '.instance-id = anywhere',
+      // Brief 16, its 17f2 review (D2, 2026-11-25): the display name form's
+      // hint holds the 40-character id with no break point, and its width sets
+      // the form's grid column, so the page scrolls sideways at 320 px and at
+      // 200 % text (measured 38 to 42 px, and 376 to 379 px).
+      '.instance-name-form .field-hint = anywhere',
     ].sort(),
   )
   for (const r of RULES.filter((r) => prop(r.body, 'overflow-wrap') !== ''))
@@ -451,10 +456,12 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
   // row items, so they are kept in the card's namespace (the comment above
   // the frozen list), and the review's 720 px rule selects the card by an id.
   const ofCard = (c: string) => /^(ot|tensor|placement)[-a-z0-9]*$/.test(c)
-  // Brief 16, its 17f review (D3, 2026-11-23): the rename form gains a class
-  // the review describes and does not name, so it is kept in the namespace of
-  // the slice's strings keys (`instance-rename`, `instance-label`).
-  const ofRename = (c: string) => /^instance-(rename|label)[-a-z0-9]*$/.test(c)
+  // Brief 16, its 17f review (D3, 2026-11-23) and slice 17f2 (2026-11-25): the
+  // form that sets the display name gains a class the brief describes and does
+  // not name, so it is kept in the namespace of the slice's strings keys
+  // (`instance-name-*`, `instance-label-cancel`).
+  const ofRename = (c: string) =>
+    /^instance-(rename|label|name)[-a-z0-9]*$/.test(c)
   const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
     [...used].filter((c) => !ofCard(c) && !ofRename(c)).sort(),
@@ -523,33 +530,45 @@ test('16 17f review D1: a rule scoped to .instance-id makes the id of a Used by 
   ).not.toEqual([])
 })
 
-test('16 17f review D3: the rename form is laid out by one class of the slice namespace: it starts --space-3 under Rename and stacks, its label is a block above the box, and its buttons are a row with --space-2 between them', () => {
-  // The form of 17f.5 has no class today, so the sheet lays out nothing of it:
-  // the Label text ends at x 305 and the box starts at 305 (the focus ring
-  // covers the last letter), the form starts 0 px under Rename (DESIGN.md
-  // principle 9 asks --space-3), Save label and Cancel touch, and the open form
-  // scrolls sideways at 320 px and 200 % text (17f.8, WCAG 1.4.10). The coder
-  // names the class, as brief 21 TP1 review D1 names the card's row items.
+test('16 17f2.3 (17f review D3): the display name form is laid out by one class of the slice namespace: it starts --space-3 under the title row and stacks, its label is a block above the box, and its buttons are a row with --space-2 between them', () => {
+  // 17f2.3 lays the form out "as 17f's .instance-label-form (D3)": the label
+  // above the box (not inline against it, where the focus ring covered the
+  // last letter), the form --space-3 under the row it follows (DESIGN.md
+  // principle 9), Save and Cancel --space-2 apart, and the box at the form's
+  // width so the open form does not scroll sideways at 320 px and 200 % text
+  // (17f2.9, WCAG 1.4.10). The coder names the class, as brief 21 TP1 review
+  // D1 names the card's row items.
   const names = new Set<string>()
   for (const r of RULES)
-    for (const m of r.sel.matchAll(/\.(instance-(?:rename|label)[-a-z0-9]*)/g))
+    for (const m of r.sel.matchAll(/\.(instance-(?:name|label)[-a-z0-9]*)/g))
       names.add(m[1]!)
+  // The form's class is the one of the namespace whose rule stacks its
+  // children in a column: the title row of 17f2.9 is styled by a class of the
+  // same namespace, so the shape is what tells the two apart.
+  const stacking = [...names].filter((cls) => {
+    const body = topBy(`.${cls}`, `the rule of .${cls}`).body
+    const display = norm(prop(body, 'display'))
+    return (
+      display === 'grid' ||
+      (display === 'flex' && norm(prop(body, 'flex-direction')) === 'column')
+    )
+  })
   expect(
-    [...names].sort(),
-    'the rename form is styled by exactly one class of the slice namespace, the one the markup carries (pinned in InstanceRename17f.test.tsx)',
+    stacking,
+    'the display name form is styled by exactly one class of the slice namespace, the one the markup carries (pinned in InstanceNameEdit17f2.test.tsx)',
   ).toHaveLength(1)
-  const cls = [...names][0]!
-  const rule = topBy(`.${cls}`, 'the rename form rule')
+  const cls = stacking[0]!
+  const rule = topBy(`.${cls}`, 'the display name form rule')
   expect(
     norm(prop(rule.body, 'margin-top')),
-    'the form starts --space-3 under Rename (DESIGN.md principle 9)',
+    'the form starts --space-3 under the title row (DESIGN.md principle 9)',
   ).toBe('var(--space-3)')
   const display = norm(prop(rule.body, 'display'))
   expect(
     display === 'grid' ||
       (display === 'flex' &&
         norm(prop(rule.body, 'flex-direction')) === 'column'),
-    `the form stacks its children in one column, so the box takes the form's width (17f.8) and the label goes above it: display flex with flex-direction column, or grid. Today: "${display}"`,
+    `the form stacks its children in one column, so the box takes the form's width (17f2.3) and the label goes above it: display flex with flex-direction column, or grid. Today: "${display}"`,
   ).toBe(true)
   const scoped = TOP.filter((r) => r.compact.includes(`.${cls}`))
   expect(

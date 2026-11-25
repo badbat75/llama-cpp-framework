@@ -46,6 +46,9 @@ export type IconName =
   | 'arrow-up'
   | 'arrow-down'
   | 'arrow-up-down'
+  // 16 17f2.1 (fe/briefs/16-server-profiles-and-instances.md): the pencil that
+  // opens the display name form, right after the page heading.
+  | 'pencil'
 
 /** The children of the svg, the shapes of the brief's list, in its order. */
 const SHAPES: Record<IconName, ReactNode> = {
@@ -209,6 +212,12 @@ const SHAPES: Record<IconName, ReactNode> = {
       <path d="M17 20V4" />
       <path d="m3 8 4-4 4 4" />
       <path d="M7 4v16" />
+    </>
+  ),
+  pencil: (
+    <>
+      <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+      <path d="m15 5 4 4" />
     </>
   ),
 }
