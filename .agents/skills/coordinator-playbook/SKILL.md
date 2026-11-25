@@ -51,11 +51,13 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 - The local model server, Strata on :8580 (`PARALLEL=4`): up to 3 OpenCode runs at once, 4 only briefly (user,
   2026-11-19, once this session ran both sides); the reviewer, designer and architect are Claude and do
   not count. Count the live runs before launching (`pgrep -fc 'opencode run'`).
-- Launch every OpenCode agent with `opencode run --standalone` (its own private server): without it the
-  session lives in the shared background service (`opencode serve --service`) and keeps running and
-  editing files after its client is killed (bb-auth, 2026-11-24: a killed session ran 3 h and overwrote
-  another agent's work). With it, a `kill` of the PID really stops the agent. `opencode session list`
-  shows each session's last update.
+- Launch every OpenCode agent with plain `opencode run` (owner rule, 2026-11-25): never `--standalone`,
+  whose private server writes the same `~/.local/share/opencode/opencode.db` as the background service
+  (`opencode serve --service`), and the two collide (`database is locked`, seen as `Error: Failed to
+  execute statement`). A run then lives in the service and keeps editing files after its client is killed
+  (bb-auth, 2026-11-24), so to stop a stalled one kill the client and `opencode session delete <id>`
+  (`opencode session list` shows ids and last updates; that the delete stops a busy session is unverified,
+  so check its log stops growing). Service log: `~/.local/share/opencode/log/opencode.log`.
 - RAM is the other limit: one cargo build at a time, and one npm user in `fe/`, so pair a crate run with
   an `fe/` run or a docs run, not two crate builds. Never the designer's browsers (the UX check) and a
   Vitest run together.
@@ -170,4 +172,4 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 - A tester proving a flake fix may start CPU burners (16 `while :; do :; done` loops, its playbook's load harness) and leave them spinning beside Strata: say "no synthetic load" in follow-up briefs, and on a liveness check stop leftover burners by PID.
 - An agent may launch `find /` and leave it hanging in D state for many minutes: check `pgrep -x find` on liveness checks and stop it by PID; brief docs runs with the source URL so they need not search the disk.
 - A wait loop that tests `pgrep -f "<titles>"` matches its own shell, whose command line holds the same text, and waits forever: wait on the chain's task notification, or match with `pgrep -f "^opencode run.*title X"`.
-- An OpenCode run can end with `Error: Failed to execute statement` (its own SQLite store, seen with several sessions at once): the work so far is in the tree; relaunch the same brief with a CONTINUATION note.
+- A run can end with `Error: Failed to execute statement` (the store locked, from `--standalone` writers): the work so far is in the tree; relaunch the same brief with a CONTINUATION note.
