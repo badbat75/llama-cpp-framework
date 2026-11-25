@@ -135,7 +135,7 @@ test('H6 follow-up: ul.tiles carries role="list", so the count of instances is a
 
 // ── H6a.2: the tile ────────────────────────────────────────────────────────
 
-test('H6a.2: a tile is the tile-head row with the id link and the badge, and nothing else', async () => {
+test('H6a.2: a tile is the tile-head row with the id link and the badge, plus the run row (23 A1.1) and nothing else', async () => {
   // 09 S1a.1: the Overview is the signed-in page's, so a tile is seen signed
   // in: the boot read of H6b is held, so the tile is the DOM H6a left, with
   // no row to race the asserts. The signed-in tile with the row is pinned by
@@ -178,8 +178,20 @@ test('H6a.2: a tile is the tile-head row with the id link and the badge, and not
     shape,
   )
 
-  // the tile is one box: the head, and nothing else with one engine
-  expect(tile.children.length).toBe(1)
+  // the tile is one box: the head, and nothing else with one engine, and it
+  // ends with its run row (23 A1.1): the head first, the run row last, and
+  // nothing between them.
+  const row = tile.lastElementChild as HTMLElement
+  expect(row, 'the tile ends with its run row (23 A1.1)').toBeTruthy()
+  expect(
+    within(row).getAllByRole('button'),
+    'the run row carries the three run verbs',
+  ).toHaveLength(3)
+  expect(tile.firstElementChild, 'the head is the first child').toBe(head)
+  expect(
+    tile.children.length,
+    'the head and the run row, nothing between',
+  ).toBe(2)
   expect(tile.querySelector('.tile-engine')).toBeNull()
   expect(tableParts(tile)).toEqual([])
 })
@@ -216,9 +228,18 @@ test.each(engineCases)(
     expect(lines).toEqual(shown.map((engine) => en('instance-engine', engine)))
     for (const [n, engine] of shown.entries()) {
       const item = items[n]!
-      // a `p` of the tile, its last child, naming the engine
+      // a `p` of the tile, its last child before the run row (23 A1.1),
+      // naming the engine
       expect(item.querySelector('.tile-engine')?.tagName).toBe('P')
-      expect(item.lastElementChild).toBe(item.querySelector('.tile-engine'))
+      const row = item.lastElementChild as HTMLElement
+      expect(
+        within(row).getAllByRole('button'),
+        `${engine}: the tile ends with its run row (23 A1.1)`,
+      ).toHaveLength(3)
+      expect(
+        row.previousElementSibling,
+        'the engine line is the last child before the run row',
+      ).toBe(item.querySelector('.tile-engine'))
       expect(within(item).getByText(en('instance-engine', engine))).toBeTruthy()
     }
   },

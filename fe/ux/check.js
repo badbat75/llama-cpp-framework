@@ -255,6 +255,14 @@ const STATES = [
         text: ID_LINE(MANY_ID),
         message: 'the 40-character id, unbroken, under its label',
       },
+      {
+        // 24 A1.1: every tile ends with the instance page's three run verbs,
+        // in the row that wraps inside the tile: 4 tiles, 12 verbs of 40 px,
+        // the targets this check reads at 320 px and at 200 % text.
+        selector: '.tile .run-actions button',
+        count: 12,
+        message: 'the three verbs of every tile',
+      },
     ],
   },
   {

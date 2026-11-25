@@ -52,6 +52,9 @@ export const EN: Record<string, string> = {
     'A display name has 1 to 64 characters and no control character; leave it empty to remove it.',
   'api-instance-label-taken':
     'Instance {1} already shows the display name {0}; pick another one.',
+  // Brief 24, A1.4 D1: the 17c start refusal, in words of its own.
+  'api-instance-no-model-profiles':
+    '{0} has no model profile to serve: assign one on its page first.',
   'write-timeout':
     'Not confirmed: the manager did not answer in time, so this may or may not have been done. The page shows what the manager holds once it answers.',
   loading: 'Loading…',
@@ -363,6 +366,12 @@ export const EN: Record<string, string> = {
   // Slice S2 (section 4d): a Stop or Restart that saves snapshots for minutes.
   'run-timeout-stop':
     'llama-server did not reach the expected state within six minutes. The state above keeps updating.',
+  // Brief 24, A1.2 D2: a write the manager accepted, with no state to settle on.
+  'run-requested':
+    'Sent. The state shown is as of now: open the instance page to follow it.',
+  // Brief 24, A1.4 D1 and A1.2 D2: the link the tile's answer lines carry, to
+  // the instance page.
+  'run-open-page': 'Open the instance page',
   'request-failed': 'The request did not go through. Try again.',
   'session-ended-retry': 'Your session has ended. Sign in again, then retry.',
   'api-client-service-failed':

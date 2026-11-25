@@ -442,7 +442,7 @@ test('17b.1 (rule, 15 section 10 R5): the pointer entering a tile chip whose tex
   ).toBeNull()
 })
 
-test('17b.1 (rule, 15 section 10 R5): a tile chip is not focusable and carries no title: the tile has its one tab stop, the id link, and the pill is the only way the mouse sees a cut tag', async () => {
+test('17b.1 (rule, 15 section 10 R5): a tile chip is not focusable and carries no title: the tile’s controls are the id link and the run row’s verbs (23 A1.1), and the pill is the only way the mouse sees a cut tag', async () => {
   const { list } = await openOverview(() => [ITEM, LONG_ITEM])
   for (const item of [ITEM, LONG_ITEM]) {
     const tile = await tileOf(list, item.id)
@@ -461,10 +461,20 @@ test('17b.1 (rule, 15 section 10 R5): a tile chip is not focusable and carries n
         `${item.id}: the chip holds no control`,
       ).toBe(0)
     }
+    // 23 A1.1: the tile ends with its run row, whose three verbs are the
+    // tile's own tab stops. Outside that row the id link stays the tile's
+    // only control: a chip adds nothing focusable.
+    const row = tile.lastElementChild as HTMLElement
     expect(
-      tile.querySelectorAll('a, button, input, select, textarea').length,
-      `${item.id}: the id link is the tile's only control`,
-    ).toBe(1)
+      within(row).getAllByRole('button'),
+      `${item.id}: the tile ends with its run row (23 A1.1)`,
+    ).toHaveLength(3)
+    expect(
+      Array.from(
+        tile.querySelectorAll('a, button, input, select, textarea'),
+      ).filter((c) => !row.contains(c)),
+      `${item.id}: outside the run row the id link is the tile's only control`,
+    ).toEqual([tile.querySelector('a.tile-id')])
   }
 })
 

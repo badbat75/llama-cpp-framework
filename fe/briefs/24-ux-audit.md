@@ -182,3 +182,49 @@ part waits for it.
 
 Live GPU utilisation, log viewing (the journal), and per-row actions on the Server profiles list
 beyond the + all wait for a request: none is a common task today.
+
+## A1 review (designer, 2026-11-25)
+
+Driven in Chromium, Firefox and WebKit at 1280 and 320 px, light, dark, 200 % text and (Chromium)
+forced colours, on the stub's four tiles (`list=many`: running, stopped, failed, starting;
+`build/ux-review/a1.js`).
+
+Met:
+- A1.1: the buttons are 40 px high (63 px at 200 %) and wrap inside the tile; no sideways scroll.
+- A1.2: the focus stays on the pressed button through 204, 409 and 504.
+- A1.3: the names carry the tile's name ("Start Coding assistant", "Start llama.cpp :8580"): the
+  17f display name the tile shows, which reads better than the id the brief's example gave.
+- A1.4: the link to the instance page is there (`#/instances/coder`).
+- Forced colours draws the buttons.
+- Accepted deviation: every tile shows all three verbs, with the ones its state cannot take
+  `aria-disabled`, as the instance page does (`RunButtons`), not only the state's verbs as A1.1
+  listed. That keeps one pattern on both pages.
+
+Not met:
+- **D1 (A1.4): the 17c refusal reads "The request did not go through. Try again."** Trying again
+  cannot help. `failureText` (`fe/src/run.ts` 93-113) has no case for `instance-no-model-profiles`,
+  and the strings file has no text for it, so it falls to `request-failed`. The instance page has
+  the same fault. Proposed key: `api-instance-no-model-profiles`, "{0} has no model profile to
+  serve: assign one on its page first." (`{0}` the instance's name), followed by the existing link.
+- **D2 (A1.2): a Start or Restart that the manager accepted leaves the status line empty.** The
+  Overview is not polled (1c.41), so the one fresh read usually returns `activating` (or the old
+  state), `settledText` returns null, and the line is set to '' (`fe/src/Instances.tsx` about
+  515-519). The user sees no answer, and the badge may stay at Starting until the next visit.
+  Proposed: when `settledText` is null after a 204, the line reads `run-requested`, "Sent. The
+  state shown is as of now: open the instance page to follow it." with `run-open-page` as a link,
+  as for D1.
+
+The UX check waits for the fix (the states change).
+
+### A1 re-check (designer, 2026-11-25)
+
+D1 and D2 met in Chromium, Firefox and WebKit (`build/ux-review/a1b.js`).
+- A 204 reads "Sent. The state shown is as of now: open the instance page to follow it." with the
+  link.
+- The 409 reads "llama.cpp :8580 has no model profile to serve: assign one on its page first." with
+  the link.
+- A 504 reads the not-confirmed text.
+- The focus stays on the pressed button.
+
+UX check: Chromium and WebKit pass all 198 states each; Firefox has only its known 22D4 segfault.
+A1 accepted.

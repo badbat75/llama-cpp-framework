@@ -454,7 +454,9 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   re-check D1b).
 - The `EN` table of `fe/src/test/bff.ts` is a second pin of `en_US.json` (`App.test.tsx` `1a strings`);
   "every value is used" scans for `t(` + a string literal, so a key that reaches `t` otherwise reds it.
-  A strings key id makes a good `aria-labelledby` target.
+  A strings key id makes a good `aria-labelledby` target. A key the tester put in `en_US.json` but NOT
+  in `EN` makes every render test naming it throw `no English for <key> in the test`: the fix is the
+  mirror entry with the file's exact text (assertion-neutral, the tester's file), no production shape.
 - Queries run before an async read settles: a test that reads a control a device read fills, or
   snapshots tab stops before the awaited element lands, is the TEST's race (`indexOf = -1`, a
   `Loading...` status quoted where a page's line is wanted). A page that returns `null` while its read is
@@ -540,6 +542,28 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   after mount.
 - One full run in ten reddens `AboutPage.test.tsx` 18 AN.3 and `NodesMenu1.test.tsx` (no timeout line):
   both are green solo and in five paired runs. Rerun the file solo before reporting them.
+- `Reflow.test.ts` 10 R1.8 freezes the CLASS NAMES of `index.css` (the `CLASSES` list; only the `ot-*`
+  and `instance-name-*` namespaces are open): a new look reuses an existing class, and a class the brief
+  names is the tester's to add. A rule of a NARROWER selector (`.tile .run-actions`) is fine: the
+  cascade tests match a selector compacted with its spaces dropped, so `topBy(tight('.run-actions'))`
+  still finds one rule.
+- The Overview tile is pinned outside its own files: its LAST element child (the engine line in
+  `HearthTiles` H6a.2, `dl.tile-facts` in `HearthTilesBoot` H6b.3, `NodeBoot` 13 N.1, `OverviewHost`
+  13 N.12), "the head and nothing else" (H6a.2), "a tile carries no live region" (H6b.4, `SessionEnded`
+  S1b.6, `HearthTheme` H4.7 "the page has no live region to start with"), "the tile has its one tab
+  stop, the id link" (`InstanceTileChips` 17b.1) and `within(main).getByText(<id>)` being UNIQUE
+  (`NodesMenu1` 20 N.2). Anything added to a tile reddens that set: the brief amends them, report the
+  list, write no tile test. Since 23 A1.1 17b.1 pins only the controls OUTSIDE the run row (the id
+  link alone), so a verb or a status link inside `.run-actions` is free, and H6b.4 reads the tile's
+  live regions as the run row's empty status line alone.
+- dom-accessibility-api trims each child's text before joining, so a `span.visually-hidden` whose text
+  is `' default'` contributes `default` with NO separator: the name comes out `Startdefault`. Put a
+  `{' '}` text node between the visible word and the span, keeping the span's text `' <name>'` when a
+  test pins it.
+- When one test pins a row as the tile's LAST element child and another pins the row's status line as
+  `before(row, status)`, put the line INSIDE the row: `compareDocumentPosition` reports FOLLOWING for a
+  descendant, and the row stays the last element. A `flex-basis: 100%` child of the wrapping row takes
+  a line of its own and no room while empty.
 
 ### The UX check
 

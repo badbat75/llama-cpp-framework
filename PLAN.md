@@ -1250,7 +1250,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     clear, we need another UX", the pencil chosen over a facts row), after 22D2. 17f2 built 2026-11-25.
     22D2 built 2026-11-24. Then 22D2 (brief 22, 22 D2.1 to D2.10: Delete as a − beside a status row on both profile pages, the Save
     bar sticky at the top; user, 2026-11-23: "put a minus right of the status and the edit commands at the
-    top", the bar at the top confirmed) and the UX audit, brief 24 (A1 to A10, 26 criteria, ranked: A1 run
+    top", the bar at the top confirmed) and the UX audit, brief 24 (A1 built 2026-11-25; A1 to A10, 26 criteria, ranked: A1 run
     an instance from its tile, A2 the switch on the model profile page, A3 "Served by" on the Models list),
     after the user's "the designer should know these things" and "few clicks to reach an action"; the
     principles are DESIGN.md section 1, 6 to 14.

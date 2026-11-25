@@ -1,6 +1,6 @@
 // The manager's instances and the state of each, read from the bff's
 // /api/instances.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   apiError,
   call,
@@ -9,6 +9,18 @@ import {
   sessionRevoked,
 } from './api.ts'
 import { Chip, ChipList } from './Chip.tsx'
+import { Icon } from './Icon.tsx'
+import {
+  ACTIONS,
+  failureText,
+  inactiveIn,
+  runIcon,
+  runLabel,
+  runningText,
+  sendAction,
+  settledText,
+  type Action,
+} from './run.ts'
 import { instanceHref } from './route.ts'
 import type { SignedOut } from './session.ts'
 import { Loading, Lines } from './Skeleton.tsx'
@@ -68,6 +80,12 @@ export function errorText(key: string): string {
     default:
       return t('instances-failed')
   }
+}
+
+/** This instance in a successful answer, undefined when the answer is a failure
+ * or the list has no such instance (the page's `instance-not-found`). */
+export function findInstance(answer: Answer, id: string): Instance | undefined {
+  return Array.isArray(answer) ? answer.find((i) => i.id === id) : undefined
 }
 
 /** One item of the list reply, before its port and tags are read out. */
@@ -375,10 +393,22 @@ export default function Instances({
     }
   }, [store, onSignedOut])
 
+  // A tile's write settles on a fresh read of the shared list (23 A1.2, and
+  // 1c.41 leaves the Overview unpolluted): its answer reaches the watcher, so
+  // every tile redraws with it. A later read that fails leaves the tiles the
+  // first read drew: the Overview's own message is the first read's (S1b.2).
+  useEffect(
+    () =>
+      store.watch((a) => {
+        if (Array.isArray(a)) setAnswer(a)
+      }),
+    [store],
+  )
+
   return (
     <section>
       <h2>{host ?? t('instances-title')}</h2>
-      <Body answer={answer} />
+      <Body answer={answer} store={store} />
     </section>
   )
 }
@@ -389,7 +419,14 @@ function manyEngines(instances: Instance[]): boolean {
 }
 
 /** The instances as a list of tiles, or the message in their place. */
-function Body({ answer }: { answer: Answer | undefined }) {
+function Body({
+  answer,
+  store,
+}: {
+  answer: Answer | undefined
+  /** The app's list, so a tile's write settles on its fresh read (23 A1.2). */
+  store: InstancesStore
+}) {
   if (answer === undefined) {
     // The tiles' skeleton (17a.3): the shape of the list to come, two tiles of
     // three lines, so the section is no longer empty while the read runs.
@@ -425,9 +462,49 @@ function Body({ answer }: { answer: Answer | undefined }) {
     // 08-hearth-h6-overview.md section 4). The count of instances is the fact.
     <ul className="tiles" role="list">
       {answer.map((i) => (
-        <Tile key={i.id} instance={i} engines={engines} />
+        <Tile key={i.id} instance={i} engines={engines} store={store} />
       ))}
     </ul>
+  )
+}
+
+/**
+ * One line of a write's answer: its words, and the link to the instance page
+ * when the answer sends the user there (23 A1.4, 24 A1.2 D2).
+ */
+type WriteLine = { text: string; link: boolean }
+
+/**
+ * One line of a write's answer, in the row under the verbs (23 A1.2): its
+ * words, and the link to the instance page when the answer asks the user to
+ * go there, as the 17c refusal and the accepted write that has not settled
+ * do (23 A1.4, 24 A1.2 D2).
+ */
+function WriteAnswer({
+  role,
+  className,
+  id,
+  line,
+}: {
+  /** `status` for the line that is always there, `alert` for a failure. */
+  role: 'status' | 'alert'
+  /** The line's class, when the sheet styles it. */
+  className?: string
+  /** The instance the link leads to. */
+  id: string
+  /** The line to show, null for an empty one. */
+  line: WriteLine | null
+}) {
+  return (
+    <p role={role} className={className}>
+      {line?.text ?? ''}
+      {line?.link && (
+        <>
+          {' '}
+          <a href={instanceHref(id)}>{t('run-open-page')}</a>
+        </>
+      )}
+    </p>
   )
 }
 
@@ -439,14 +516,19 @@ function Body({ answer }: { answer: Answer | undefined }) {
  * no row, and a tile with no fact at all has no `dl`. The tags are the fixed
  * chips of brief 17 U17b, in the order of `tags`, the instance's own and the
  * profile's alike: the tile does not tell them apart, as it did not before.
+ * The tile ends with the instance page's run verbs (23 A1.1), and the verbs
+ * carry the write's answer in their own row (23 A1.2).
  */
 function Tile({
   instance,
   engines,
+  store,
 }: {
   instance: Instance
   /** The engine line is there: the engines tell the instances apart. */
   engines: boolean
+  /** The app's list: the write settles on one fresh read of it (23 A1.2). */
+  store: InstancesStore
 }) {
   const { id, engine, state, port, tags, boot } = instance
   // The name, and the id beside it except when the name IS the id (16 17f.3):
@@ -454,6 +536,49 @@ function Tile({
   // link, so two tiles labelled alike are told apart.
   const name = instanceName(instance)
   const idShown = name !== id
+  // This tile's write (23 A1.2): one at a time, its answer under the verbs.
+  const [busy, setBusy] = useState<Action | null>(null)
+  const [status, setStatus] = useState<WriteLine | null>(null)
+  const [alert, setAlert] = useState<WriteLine | null>(null)
+
+  async function run(action: Action) {
+    if (busy !== null || inactiveIn(state, action)) return
+    setBusy(action)
+    setAlert(null)
+    setStatus({ text: runningText(action), link: false })
+    const result = await sendAction(id, action)
+    if (result === 'ok') {
+      // The Overview is not polled (1c.41): the write settles on one fresh
+      // read of the shared list, whose answer redraws every tile.
+      const answer = await store.fresh()
+      const found = findInstance(answer, id)
+      setBusy(null)
+      if (found === undefined) {
+        setStatus(null)
+      } else {
+        // The one fresh read usually finds the instance still moving, so the
+        // line says the write went and links to the page that follows the
+        // state (24 A1.2 D2).
+        const settled = settledText(action, found.state)
+        setStatus(
+          settled === null
+            ? { text: t('run-requested'), link: true }
+            : { text: settled, link: false },
+        )
+      }
+      return
+    }
+    setBusy(null)
+    setStatus(null)
+    setAlert({
+      text: failureText(name, result),
+      // The 17c start refusal is fixed on the instance page (23 A1.4).
+      link: result === 'instance-no-model-profiles',
+    })
+    // A 504 is not confirmed: the state shown must follow the manager, so the
+    // list is read now (16 17f.10): the watcher redraws every tile.
+    if (result === 'client-timeout') void store.fresh()
+  }
 
   return (
     <li className="tile">
@@ -499,7 +624,82 @@ function Tile({
           )}
         </dl>
       )}
+      <RunButtons
+        state={state}
+        busy={busy}
+        nameOf={name}
+        onRun={(action) => void run(action)}
+      >
+        <WriteAnswer role="status" id={id} line={status} />
+        {alert !== null && (
+          <WriteAnswer
+            role="alert"
+            className="run-alert"
+            id={id}
+            line={alert}
+          />
+        )}
+      </RunButtons>
     </li>
+  )
+}
+
+/**
+ * The three run verbs of one instance, in the order every page shows them
+ * (23 A1.1): the instance page's header and the Overview's tile alike, with
+ * the words, icons and state rules of `run.ts`. A state leaves its verbs
+ * inactive, and a write in flight leaves all three so (23 A1.2): every one is
+ * `aria-disabled`, never `disabled`, so the reader reaches it and hears why.
+ * `children` are the write's answer, in the row under the verbs.
+ */
+export function RunButtons({
+  state,
+  busy,
+  onRun,
+  ids,
+  nameOf,
+  children,
+}: {
+  /** The instance's state, as the list gives it. */
+  state: string
+  /** The verb whose write is in flight, null while none is. */
+  busy: Action | null
+  /** Asks for one verb. */
+  onRun: (action: Action) => void
+  /** The id of each verb, as the instance page gives them for the focus a
+   * sign-in in its dialog returns (45e); a tile has none. */
+  ids?: (action: Action) => string
+  /** The instance the accessible name carries after the visible word
+   * (23 A1.3, "Start default"); a page with one instance needs none. */
+  nameOf?: string
+  /** The write's answer, under the verbs. */
+  children?: ReactNode
+}) {
+  return (
+    <div className="run-actions">
+      {ACTIONS.map((action) => (
+        <button
+          key={action}
+          {...(ids === undefined ? {} : { id: ids(action) })}
+          type="button"
+          className="secondary"
+          aria-disabled={
+            busy !== null || inactiveIn(state, action) ? true : undefined
+          }
+          onClick={() => onRun(action)}
+        >
+          <Icon name={runIcon(action)} />
+          {runLabel(action)}
+          {nameOf !== undefined && (
+            <>
+              {' '}
+              <span className="visually-hidden">{` ${nameOf}`}</span>
+            </>
+          )}
+        </button>
+      ))}
+      {children}
+    </div>
   )
 }
 

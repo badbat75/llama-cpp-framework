@@ -302,6 +302,10 @@ async function signInInDialog(user: string) {
 
 const SESSION_ENDED = () => reply(401, { key: 'session-required', args: [] })
 
+/** 17c: a Start or Restart of an instance with no model profile, refused. */
+const NO_PROFILES = () =>
+  reply(409, { key: 'instance-no-model-profiles', args: ['default'] })
+
 // ── Failure paths first: errors of an action (43) ───────────────────────
 
 /** 1c.43: one test per row, one mount each (as 2h.139 in
@@ -408,6 +412,28 @@ test('1c.43, 41c: after a failed POST the idle poll resumes, 5 s after the last 
   expect(reads(bff), 'nothing before 5 s').toBe(opening)
   await advance(1)
   expect(reads(bff), 'one read at 5 s').toBe(opening + 1)
+})
+
+test('24 A1.4 D1: the instance page answers the 409 instance-no-model-profiles with api-instance-no-model-profiles naming the instance, not the generic request-failed', async () => {
+  // Trying again cannot help a start the manager refuses for want of a model
+  // profile: the refusal has words of its own, on this page as on the tile.
+  const { bff, main } = await loaded({
+    instances: list('inactive'),
+    run: NO_PROFILES,
+  })
+  const start = button(main, 'run-start')
+  press(start)
+  await flush()
+  expect(posts(bff)).toEqual(['/api/instances/default/start'])
+  expect(runAlerts(main), 'the page names the missing model profile').toEqual([
+    en('api-instance-no-model-profiles', 'default'),
+  ])
+  expect(runStatus(main).textContent, 'the status is emptied').toBe('')
+  expect(document.activeElement, 'focus stays on the pressed verb').toBe(start)
+  expect(
+    inactiveSet(main),
+    'the verbs follow the last state (inactive)',
+  ).toEqual([false, true, true])
 })
 
 test('1c.43a: a 401 shows session-ended-retry and a Sign in button after the alert; banner, nav and edits stay', async () => {

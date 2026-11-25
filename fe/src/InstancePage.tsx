@@ -24,12 +24,14 @@ import {
   Hint,
   HintToggle,
 } from './Field.tsx'
-import { Icon, type IconName } from './Icon.tsx'
+import { Icon } from './Icon.tsx'
 import {
   errorText,
+  findInstance,
   instanceName,
   readInstanceTagSuggestions,
   readServerProfiles,
+  RunButtons,
   writeLabel,
   writeTags,
   type Answer,
@@ -38,6 +40,14 @@ import {
   type TagsRefusal,
 } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
+import {
+  failureText,
+  inactiveIn,
+  runningText,
+  sendAction,
+  settledText,
+  type Action,
+} from './run.ts'
 import { serverProfileHref } from './route.ts'
 import { useDirtyReport, useWarnOnLeave } from './SaveBar.tsx'
 import { Lines, Loading } from './Skeleton.tsx'
@@ -46,10 +56,6 @@ import type { Session, SignedOut } from './session.ts'
 import SignIn from './SignIn.tsx'
 import { StateShape, stateLabel } from './StateBadge.tsx'
 import { t } from './strings.ts'
-
-type Action = 'start' | 'stop' | 'restart'
-
-const ACTIONS: Action[] = ['start', 'stop', 'restart']
 
 /** The most labels the new-tag pill's list shows at once (15 decision 10). */
 const MAX_SUGGESTIONS = 8
@@ -75,105 +81,6 @@ function actionDeadline(action: Action): number {
 /** The status an action's deadline shows (41c, 4d S2.6). */
 function timeoutText(action: Action): string {
   return action === 'start' ? t('run-timeout') : t('run-timeout-stop')
-}
-
-function label(action: Action): string {
-  switch (action) {
-    case 'start':
-      return t('run-start')
-    case 'stop':
-      return t('run-stop')
-    case 'restart':
-      return t('run-restart')
-  }
-}
-
-/** The verb's icon (08-hearth-h8-icons.md H8b.1), beside the word it says. */
-function icon(action: Action): IconName {
-  switch (action) {
-    case 'start':
-      return 'play'
-    case 'stop':
-      return 'square'
-    case 'restart':
-      return 'rotate-cw'
-  }
-}
-
-function runningText(action: Action): string {
-  switch (action) {
-    case 'start':
-      return t('run-starting')
-    case 'stop':
-      return t('run-stopping')
-    case 'restart':
-      return t('run-restarting')
-  }
-}
-
-/** The outcome of `action` once a read gives `state`, null while it runs (42a). */
-function settledText(action: Action, state: string): string | null {
-  if (state === 'failed') return t('run-ended-failed')
-  if (action === 'start' && state === 'active') return t('run-started')
-  if (action === 'restart' && state === 'active') return t('run-restarted')
-  if (action === 'stop' && state === 'inactive') return t('run-stopped')
-  return null
-}
-
-/** The buttons a state leaves inactive (40a); an unknown state leaves none. */
-function inactiveIn(state: string, action: Action): boolean {
-  switch (state) {
-    case 'active':
-      return action === 'start'
-    case 'inactive':
-    case 'failed':
-      return action !== 'start'
-    case 'activating':
-    case 'deactivating':
-      return true
-    default:
-      return false
-  }
-}
-
-/** Sends the action: 'ok' on any 2xx, else 'signed-out' or the error key. */
-async function sendAction(id: string, action: Action): Promise<string> {
-  try {
-    const reply = await call(
-      `/api/instances/${encodeURIComponent(id)}/${action}`,
-      { method: 'POST' },
-    )
-    if (reply.ok) return 'ok'
-    if (reply.status === 401) return 'signed-out'
-    if (sessionRevoked(reply)) return 'revoked'
-    return apiError(reply.body)?.key ?? 'failed'
-  } catch {
-    return 'failed'
-  }
-}
-
-/** The run alert of a failed action, by its key (43). */
-function failureText(id: string, key: string): string {
-  switch (key) {
-    case 'signed-out':
-      return t('session-ended-retry')
-    case 'revoked':
-      return t('session-revoked')
-    case 'client-not-authorized':
-      return t('api-client-not-authorized')
-    case 'client-no-instance':
-      return t('instance-not-found', id)
-    case 'client-unavailable':
-      return t('api-client-unavailable')
-    case 'client-service-failed':
-      return t('api-client-service-failed')
-    // A 504 reached the manager: the write may have happened, and the page
-    // reads again to show what the manager holds (16 17f.10).
-    case 'client-timeout':
-      return t('write-timeout')
-    default:
-      return t('request-failed')
-  }
 }
 
 /** The text of a refusal the tags route answered (12 T1.9, T1.10): the 422 of
@@ -210,11 +117,6 @@ function alertText(key: string): string {
     default:
       return t('request-failed')
   }
-}
-
-/** This page's instance in a successful answer, undefined otherwise. */
-function find(answer: Answer, id: string): Instance | undefined {
-  return Array.isArray(answer) ? answer.find((i) => i.id === id) : undefined
 }
 
 /** The next read: after `delay`, for the running action (none: the idle poll). */
@@ -275,7 +177,7 @@ export default function InstancePage({
         return
       }
       setAnswer(a)
-      const found = find(a, id)
+      const found = findInstance(a, id)
       if (found === undefined) return
       setInstance(found)
       setNext({ delay: IDLE_MS, run: null })
@@ -310,7 +212,7 @@ export default function InstancePage({
       const reading = run === null ? store.read() : store.fresh(() => live)
       reading.then((a) => {
         if (!live) return
-        const found = find(a, id)
+        const found = findInstance(a, id)
         if (found !== undefined) setInstance(found)
         if (run === null) {
           setNext({ delay: IDLE_MS, run: null })
@@ -352,7 +254,7 @@ export default function InstancePage({
    * line, the nav and the Overview follow the file (12 T1.8). */
   const reread = useCallback(() => {
     store.fresh().then((a) => {
-      const found = find(a, id)
+      const found = findInstance(a, id)
       if (found !== undefined) setInstance(found)
     })
   }, [store, id])
@@ -364,6 +266,8 @@ export default function InstancePage({
 
   async function run(action: Action) {
     if (inactive(action)) return
+    // A refusal names the instance as the page names it (24 A1.4 D1).
+    const shownName = instance === undefined ? id : instanceName(instance)
     clicked.current = action
     const n = runs.started + 1
     setNext(null)
@@ -382,7 +286,7 @@ export default function InstancePage({
     setBusy(null)
     setStatus('')
     setAlert({
-      text: failureText(id, result),
+      text: failureText(shownName, result),
       signIn: result === 'signed-out' || result === 'revoked',
     })
     // A 504 is not confirmed: the state shown must follow the manager, so the
@@ -469,21 +373,12 @@ export default function InstancePage({
                 <StateShape state={instance.state} />
                 {t('instance-state', stateLabel(instance.state))}
               </p>
-              <div className="run-actions">
-                {ACTIONS.map((a) => (
-                  <button
-                    key={a}
-                    id={`${uid}-${a}`}
-                    type="button"
-                    className="secondary"
-                    aria-disabled={inactive(a) || undefined}
-                    onClick={() => void run(a)}
-                  >
-                    <Icon name={icon(a)} />
-                    {label(a)}
-                  </button>
-                ))}
-              </div>
+              <RunButtons
+                state={instance.state}
+                busy={busy}
+                ids={(action) => `${uid}-${action}`}
+                onRun={(action) => void run(action)}
+              />
               <p role="status" className="run-status">
                 {status}
               </p>
@@ -574,7 +469,7 @@ function Body({
   if (!Array.isArray(answer)) {
     return <p>{errorText(answer.error)}</p>
   }
-  if (find(answer, id) === undefined) {
+  if (findInstance(answer, id) === undefined) {
     return (
       <>
         <p>{t('instance-not-found', id)}</p>

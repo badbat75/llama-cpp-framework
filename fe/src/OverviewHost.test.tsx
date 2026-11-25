@@ -172,7 +172,7 @@ test('13 N.12: a name with no break point is plain text in the h2, with no class
   ).toEqual([])
 })
 
-test("13 N.12: the tiles are today's tiles beside the name: the facts list stays the last child of each tile", async () => {
+test("13 N.12: the tiles are today's tiles beside the name: the facts list stays the last child of each tile before its run row (23 A1.1)", async () => {
   const { main } = await open({
     instances: [
       {
@@ -196,9 +196,16 @@ test("13 N.12: the tiles are today's tiles beside the name: the facts list stays
   for (const tile of tiles) {
     const facts = tile.querySelector('dl')
     expect(facts, `${tile.textContent}: the facts list`).not.toBeNull()
+    // 23 A1.1: the tile ends with its run row, so the facts list is the
+    // tile's last child before it.
+    const row = tile.lastElementChild as HTMLElement
     expect(
-      tile.lastElementChild,
-      `${tile.textContent}: the facts are last`,
+      within(row).getAllByRole('button'),
+      `${tile.textContent}: the tile ends with its run row (23 A1.1)`,
+    ).toHaveLength(3)
+    expect(
+      row.previousElementSibling,
+      `${tile.textContent}: the facts are the last child before the run row`,
     ).toBe(facts)
     expect(
       facts?.classList.contains('tile-facts'),

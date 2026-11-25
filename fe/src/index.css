@@ -2617,6 +2617,19 @@ html:has(.save-bar) {
   gap: var(--space-2);
 }
 
+/* 24 A1.1: a tile's verbs carry their answer in the row: the status line and
+   the alert take a row of the tile under the buttons, and the empty status
+   takes no room. The row is the tile's last element, so it asks no space
+   below itself: the tile's own gap separates its elements. */
+.tile .run-actions {
+  margin-bottom: 0;
+}
+
+.run-actions p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .run-alert {
   color: var(--danger);
   font-weight: 600;

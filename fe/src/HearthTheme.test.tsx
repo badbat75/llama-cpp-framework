@@ -483,9 +483,13 @@ describe('H4: the light/dark theme switch', () => {
     })
     expect(tiles.some((a) => a.closest('.tile'))).toBe(true)
     const btn = themeButton()
-    expect(liveRegions(), 'the page has no live region to start with').toEqual(
-      [],
-    )
+    // 23 A1.2: the settled tiles each carry the run row's status line, by
+    // design. The page announces nothing: every live region is empty.
+    const regions = liveRegions()
+    expect(
+      regions.map((el) => el.textContent?.trim()),
+      'the live regions a press starts from say nothing',
+    ).toEqual(regions.map(() => ''))
     const title = document.title
     btn.focus()
     fireEvent.click(btn)
@@ -499,8 +503,8 @@ describe('H4: the light/dark theme switch', () => {
     ).toBe(en('theme-dark'))
     expect(
       liveRegions(),
-      'no role=status, role=alert or aria-live appears: aria-pressed is the announcement',
-    ).toEqual([])
+      'no role=status, role=alert or aria-live appears beside the tiles’ run-status lines: aria-pressed is the announcement',
+    ).toEqual(regions)
     expect(window.location.hash, 'a press is not a navigation').toBe('#/')
     expect(document.title, 'a press does not retitle the page').toBe(title)
   })

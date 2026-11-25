@@ -50,6 +50,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   coder must EDIT to go green pins more than one that merely passes.
 - When the coder's work already contains the rule, say so, and add an assertion that fails for a reason
   you cannot fix.
+- For a defect a review found in a closed slice, pin the WORDS the review proposes: an existing test that
+  compares two places (the tile's alert with the page's) is green when both carry the same wrong fallback,
+  so it covers the defect's shape and not its fix.
 - Assert an observable (a suffix, a pattern) where a name's shape is free (a generated temp name, an
   ephemeral id): a red is a contract, and the coder is free to pick the literal.
 - Pin an ORDER rule ("the record is written last") with a call that fails on the LAST step (make the
@@ -305,6 +308,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   changes the fixture (port 0, a label) awaits the name the change gives, and a hard-coded name reds it.
   The same for an open-form helper that PRESSES the opener: a test that presses first and then calls it
   presses twice, and the second press closes the form (the opener toggles).
+- A tile's run verb is named `<word> <instanceName>` (the label when it has one, the id otherwise), so a
+  helper that builds `${en(key)} ${id}` finds nothing on a labelled tile: pass the display name it shows.
 - A 403 `session-not-administrator` on a WRITE is the field's alert `session-revoked` with a Sign in
   after it (15 C1.9, 17b), the form open with the typing: the brief's "403 → session-revoked" is the
   alert family, not the sign-in page.
@@ -657,3 +662,5 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
   The message is the second argument of `expect(x, 'msg')`.
 - An ENABLED save or Discard button carries no `aria-disabled` attribute at all (`getAttribute` answers
   `null`), while a clean form sets it to `"true"`: a dirty pin asserts `getAttribute(..) ?? 'false'`.
+- No jest-dom matchers are configured: `toContainElement` is a typecheck red (TS2339), not a test red.
+  Pin containment with `expect(row.contains(el), 'msg').toBe(true)`.

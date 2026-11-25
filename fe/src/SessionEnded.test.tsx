@@ -917,11 +917,16 @@ test('09 S1b.5: where one read answers 403 session-not-administrator and another
 
 // ── S1b.6: nothing else moves ─────────────────────────────────────────────
 
-test('09 S1b.6: the tiles of the Overview keep their markup and carry no live region of their own (H6b.4)', async () => {
+test('09 S1b.6: the tiles of the Overview keep their markup and announce nothing of their own (H6b.4, 23 A1.2)', async () => {
   const { main } = await at(fakeBff())
   const tiles = tilesOf(main)
   expect(text(tiles), 'the tiles are shown').toContain('default')
-  expect(liveRegions(tiles), 'the tiles announce nothing').toEqual([])
+  // 23 A1.2: each tile's run row carries a status line, by design. The
+  // tiles announce nothing: every live region they hold is empty.
+  expect(
+    liveRegions(tiles).filter((s) => s !== ''),
+    'the tiles announce nothing: the run row status lines are empty',
+  ).toEqual([])
   expect(
     within(tiles).getAllByRole('listitem'),
     'one tile per instance, as H6b.4 pins their markup',

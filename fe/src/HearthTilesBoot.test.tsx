@@ -267,9 +267,10 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
       )
   })
 
-  // The row is the tile's last child, inside the tile: the head with the id
-  // and the badge, the engine line, and nothing of the tile left out (H6b.8).
-  test('H6b.3: the row is the last child of its own tile, after what H6a put there', async () => {
+  // The row is the tile's last child before the run row (23 A1.1), inside
+  // the tile: the head with the id and the badge, the engine line, and
+  // nothing of the tile left out (H6b.8).
+  test('H6b.3: the row is the last child of its own tile before its run row (23 A1.1), after what H6a put there', async () => {
     open(
       fakeBff({
         instances: [
@@ -294,9 +295,16 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
         Array.from(tile.children),
         `${i.id}: the row is a child of the tile, not of a wrapper`,
       ).toContain(dl)
+      // 23 A1.1: the tile ends with its run row, so the facts row is the
+      // tile's last child before it.
+      const row = tile.lastElementChild as HTMLElement
       expect(
-        tile.lastElementChild,
-        `${i.id}: the row is the tile's last child`,
+        within(row).getAllByRole('button'),
+        `${i.id}: the tile ends with its run row (23 A1.1)`,
+      ).toHaveLength(3)
+      expect(
+        row.previousElementSibling,
+        `${i.id}: the row is the tile's last child before the run row`,
       ).toBe(dl)
       expect(
         tile.querySelector('.tile-head'),
@@ -309,7 +317,7 @@ describe('H6b.3, H6b.5 and H6b.7: the row as the visitor reads it', () => {
       expect(
         Array.from(tile.children).indexOf(dl),
         `${i.id}: after the head and the engine line`,
-      ).toBe(tile.children.length - 1)
+      ).toBe(tile.children.length - 2)
     }
   })
 })
@@ -338,30 +346,49 @@ describe('H6b.4 (13 N.1): no claim about a state that is not known', () => {
       ).toEqual([])
     })
 
-  // The tiles are not a status region: the rows are the list's, and nothing
-  // arrives later to be read out over the visitor's own actions.
-  test('H6b.4: a tile carries no live region, rows and no rows', async () => {
+  // The tiles are not a status region for their facts: the rows are the
+  // list's, and nothing arrives later to be read out over the visitor's own
+  // actions. The one live region a tile carries is the run row's status
+  // line (23 A1.2), and it says nothing until a write answers.
+  test('H6b.4: a tile carries no live region beside the run row’s empty status line, rows and no rows (23 A1.2)', async () => {
     const LIVE =
       '[aria-live], [role="status"], [role="alert"], [role="log"], [role="timer"], [role="marquee"]'
+    // The texts of a tile's live regions: they are the run row's status
+    // line alone, and it is empty at rest.
+    const liveOf = (t: Element): string[] => {
+      const row = t.lastElementChild as HTMLElement
+      expect(
+        within(row).getAllByRole('button'),
+        'the tile ends with its run row (23 A1.1)',
+      ).toHaveLength(3)
+      const status = within(row).getAllByRole('status')
+      expect(
+        row.querySelectorAll(
+          '[role="alert"], [aria-live], [role="log"], [role="timer"], [role="marquee"]',
+        ).length,
+        'the run row carries no alert at rest',
+      ).toBe(0)
+      expect(
+        t.querySelectorAll(LIVE).length,
+        'the tile’s live regions are the run row’s',
+      ).toBe(status.length)
+      return status.map((el) => el.textContent?.trim() ?? '')
+    }
     open(fakeBff({ instances: [item('default')] }))
     const list = await tiles()
     expect(within(list).getAllByRole('listitem')).toHaveLength(1)
     expect(
-      Array.from(document.querySelectorAll('.tile')).map(
-        (t) => t.querySelectorAll(LIVE).length,
-      ),
+      Array.from(document.querySelectorAll('.tile')).map(liveOf),
       'no row: nothing announced',
-    ).toEqual([0])
+    ).toEqual([['']])
     cleanup()
 
     open(fakeBff({ instances: INSTANCES.map((i) => item(i.id, true)) }))
     await bootRows(await tiles())
     expect(
-      Array.from(document.querySelectorAll('.tile')).map(
-        (t) => t.querySelectorAll(LIVE).length,
-      ),
+      Array.from(document.querySelectorAll('.tile')).map(liveOf),
       'the rows, once they are here, are silent too',
-    ).toEqual(INSTANCES.map(() => 0))
+    ).toEqual(INSTANCES.map(() => ['']))
   })
 
   // With no list there is nothing to show: the failure message is the

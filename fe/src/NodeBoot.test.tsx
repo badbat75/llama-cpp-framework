@@ -135,7 +135,7 @@ test('13 N.1: an item whose boot is true shows the row On and one whose boot is 
   ).toBe(2)
 })
 
-test('13 N.1: the row is the pair it was, dl.tile-facts with one div, boot-label the term, the tile last child', async () => {
+test('13 N.1: the row is the pair it was, dl.tile-facts with one div, boot-label the term, the tile last child before its run row (23 A1.1)', async () => {
   const { list } = await open({ instances: [item('default', true)] })
   const tile = await tileOf(list, 'default')
   const dl = tile.querySelector('dl.tile-facts')
@@ -147,7 +147,17 @@ test('13 N.1: the row is the pair it was, dl.tile-facts with one div, boot-label
   expect(pairs(dl as Element), 'the pair, in the reused words').toEqual([
     [en('boot-label'), en('instances-boot-on')],
   ])
-  expect(tile.lastElementChild, 'the row is the tile last child').toBe(dl)
+  // 23 A1.1: the tile ends with its run row, so the row is the tile's last
+  // child before it.
+  const row = tile.lastElementChild as HTMLElement
+  expect(
+    within(row).getAllByRole('button'),
+    'the tile ends with its run row (23 A1.1)',
+  ).toHaveLength(3)
+  expect(
+    row.previousElementSibling,
+    'the row is the tile last child before the run row',
+  ).toBe(dl)
 })
 
 // The list is the only source: a value that is not a boolean says nothing, as

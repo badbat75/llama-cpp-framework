@@ -233,7 +233,10 @@ test('20 N.2 (as 16 17f.2 amends it): no serverProfile shape reaches the nav lin
       `${id}: the id alone, whatever the serverProfile`,
     ).toBe(id)
   const main = await screen.findByRole('main')
-  await within(main).findByText('with')
+  // Settle on the tile's id link, not on the bare text: the run verbs carry
+  // the instance name in a visually hidden span (23 A1.3), so a getByText
+  // of the id matches the link and the hidden names alike.
+  await within(main).findByRole('link', { name: 'with' })
   expect(
     main.textContent,
     'the Overview tiles do not show the server profile (20 N.2)',
