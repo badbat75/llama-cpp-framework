@@ -4016,6 +4016,31 @@ before the router listens. The unit's main process is llama-server (`run-instanc
 - **Windows: unchanged.** The SCM has no `After=` between Strata and an instance, and no consumer asks
   for it.
 
+**`llama.cpp.target`: one name for every instance** (the owner's second request, 2026-11-25, relayed by
+the strata-framework agent; `After=` takes no globs). Strata orders `After=llama.cpp.target` with no
+`Wants=`; at boot the target is reached once every enabled instance's `wait-ready` has exited (the owner
+accepts). Ordering holds between two jobs of one transaction whoever pulled them in
+(systemd.unit(5) `Before=`/`After=`,
+https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html), so the target only has to
+be in the boot transaction and to be ordered after the instances.
+- **Recommended (T0): ordering only.** `llama.cpp@.service` gains `Before=llama.cpp.target`, its
+  `[Install] WantedBy=multi-user.target` unchanged; `llama.cpp.target` ships in llama.cpp's package,
+  static (no `[Install]`), pulled in by a `multi-user.target.wants/llama.cpp.target` link the package
+  ships under `/usr/lib/systemd/system/` (the way systemd's own static units are pulled in), so no
+  enable step and no state. Nothing in the manager changes: `SetBootEnabled` keeps `EnableUnitFiles`
+  and `DisableUnitFiles` on the instance (`crates/manager/src/manager/dbus.rs` `set_boot_enabled`),
+  `BootEnabled` keeps reading `GetUnitFileState == "enabled"`, and the enabled instances' links in
+  `/etc/systemd/system/multi-user.target.wants/` stay valid through the upgrade, as do the purge and
+  `%preun` scripts that remove them (`system_files.rs` `INSTANCE_LINKS`).
+- Rejected (T1): `[Install] WantedBy=llama.cpp.target`, so the target pulls the instances in and
+  `systemctl start llama.cpp.target` starts them. It moves every enabled instance's link: the upgrade
+  must re-enable each linked instance, `INSTANCE_LINKS` and both packages' removal scripts change, and
+  the target itself needs enabling. Nobody asks for starting through the target; it can follow.
+- **No `PartOf=`**: stopping or restarting the target must not stop the instances, which the manager
+  starts and stops one by one (`StartUnit`/`StopUnit` per instance).
+- What the target does not give: an instance started by hand after boot is not waited for by a unit
+  already started, and a disabled instance is not in the boot transaction. Both as asked.
+
 **Slice RS1** (test first; `pai-manager`, Linux; Windows type-checked). `pai-manager wait-ready <id>`:
 the port from `$MAINPID`'s cmdline (`slot_save::slot_target`), `GET /health` on `127.0.0.1:<port>`
 every 2 s, the HTTP read and the clock behind seams. Done when: 200 exits 0; 503 and connection refused
@@ -4025,8 +4050,15 @@ or no port in its cmdline exits non-zero at once; the argument parser takes the 
 
 **Slice RS2** (test first; `xtask`, the instance unit and the llama.cpp packages): `ExecStartPost=
 {MANAGER_EXE} wait-ready %i` and `TimeoutStartSec=11min` in `instance_unit`; the `.deb` `Breaks:` and the
-`.rpm` `Conflicts:` on `private-ai-framework-core` below the version RS1 ships in. Done when the unit
-test pins both lines and the package tests pin both relations. Needs a llama.cpp package build and
+`.rpm` `Conflicts:` on `private-ai-framework-core` below the version RS1 ships in; `Before=llama.cpp.target`
+in `instance_unit`, `llama.cpp.target` (a description, no `[Install]`) and its
+`usr/lib/systemd/system/multi-user.target.wants/llama.cpp.target` link in llama.cpp's `.deb` and `.rpm`
+(Component::Llama). Done when the unit test pins the three lines, the package tests pin both relations,
+the target file and the link (a symlink to `../llama.cpp.target`; if a package format cannot ship the
+link, its install script runs `systemctl add-wants multi-user.target llama.cpp.target` and its removal
+undoes it), and `instance_unit`'s `[Install]` still reads `WantedBy=multi-user.target`. Live, after the
+install and the user's reboot or restart: `systemctl list-dependencies --after llama.cpp.target` lists
+`llama.cpp@default.service`, and `systemctl is-enabled llama.cpp@default` reads as it did before. Needs a llama.cpp package build and
 install, beyond the framework-only deploy go-ahead. Check after the user's restart of
 `llama.cpp@default` (starting llama-server is the user's): `systemctl status` shows `activating
 (start-post)` until the router answers, then `active`; `curl -s -o /dev/null -w '%{http_code}'

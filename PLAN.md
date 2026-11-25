@@ -1417,7 +1417,9 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   the start fails after 10 min (`TimeoutStartSec=11min`); the llama.cpp packages gain `Breaks:`/
   `Conflicts:` on a framework core older than `wait-ready`. Slices RS1 `wait-ready` (pai-manager), RS2
   the unit and the package relations (a llama.cpp package build, install and restart: user's go given),
-  RS3 the docs; then tell the strata-framework agent to drop its stopgap.
+  RS3 the docs; RS2 also ships `llama.cpp.target` (ordering only, the instances `Before=` it, pulled in by
+  a `multi-user.target.wants` link the package ships; requested the same day for Strata's `After=`); then
+  tell the strata-framework agent the target's name.
 
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
