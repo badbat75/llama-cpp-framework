@@ -1624,3 +1624,86 @@ Tests each criterion changes (grep on 2026-11-25; the tester confirms):
 
 `fe/ux/check.js` needs no new state; its existing list and page states cover the new layout.
 After the build the designer measures D4.28's composition against screenshots.
+
+### L1 review (designer, 2026-11-25)
+
+Built code: D4.23 to D4.28 and D4.34. Measured with `build/ux-review/l1.js`, `l1dy.js` and
+`l1fix.js` in Chromium, Firefox and WebKit, at 1280 and 320 px, light and dark. Screenshots:
+`build/ux-review/shots/L1-{models,servers}-{1280,320}-{light,dark}.png` (Chromium).
+
+Met:
+- D4.23: each table has a last `th` holding only the visually hidden "Actions". The trash can is
+  alone in the row's last cell, and Used by keeps its own column.
+- D4.24: the Actions column is 56 px (models) and 64 px (servers); the model Status column is
+  94-95 px. The trash can's right edge is the cell's padding from the row's end in every row.
+- D4.26: the 159 px and 110 px of empty space are gone. The spare width now goes to the name and
+  engine columns (435 and 293 px) and to Tags.
+- D4.27: no cell stacks its controls. The table scrolls inside its box at 320 px, and the page
+  never scrolls sideways.
+- D4.34: "Coding assistant" is the link, with "ID default" muted after it on the same line.
+- The tip still opens under the trash can, aligned to its end, inside the gutters, in all three
+  browsers and both themes.
+
+Not met:
+- **D1 (D4.25 and D4.28: centred within 1 px).** The model switch sits 1.70 to 1.78 px off its
+  row's centre in all three browsers. The trash can, the links and the server cells are within
+  0.7 px.
+  - Cause: `.status-cell > span` (`fe/src/index.css` 2231-2235) is `display: inline-flex`, an
+    inline box, so it sits on the cell's line box and its baseline, not on the row's middle.
+  - Measured at the rule's real place (CSSOM): `display: flex` brings the worst case down to
+    0.50-0.67 px in the three browsers; `vertical-align: middle` brings it to 0.80-0.89 px.
+  - Use `display: flex` on that rule.
+- The confirm row (the reviewer's find, `td:last-child` hitting the colSpan cell) is to be
+  rechecked when its fix lands.
+
+**For L2 or later (adviser, ranked):**
+1. **22 D4.35 The Models list at 320 px.** The trash can sits past the box's right edge: a delete
+   needs a sideways scroll inside the table, and the name wraps into five lines in an 80 px
+   column.
+   - Fix: below 480 px, the Engine column goes, and the engine becomes a muted second line under
+     the name in the first cell (`model-profiles-engine-not-available` as now). The table then
+     fits 288 px with no inner scroll: name and engine about 138 px, status 94, actions 56.
+   - The header's sort by engine stays reachable through the Engine `th`, which stays in the DOM
+     as a visually hidden header, or the coder drops the sort below 480 px (preference: keep it).
+2. **22 D4.36 The word beside the switch.** "On" and "Off" repeat the switch's state in 30 px of
+   every row. Keep them: they are the text cue next to a colour cue
+   ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)). Noted so nobody removes them to save
+   width.
+3. D4.29 to D4.33, already accepted (the labelled New, the Save bar order, the card intros, the
+   page head, the filter hint). On the screenshots the bare + under the server table and the
+   80 px between the Models filter and its table are now the weakest spots of the two lists.
+
+UX check (204 states per browser): 0 failing in all three browsers; Firefox did not crash this time. L1 is accepted once D1 is fixed and the confirm row is rechecked.
+
+### L2 additions (user, 2026-11-25)
+
+D4.35 (Engine under the name below 480 px) and D4.36 (keep the On/Off words) are accepted as
+written in "L1 review". They join D4.29 to D4.33 in L2.
+
+**22 D4.37 An instance is named by its name alone (user's decision, 2026-11-25; replaces D4.34's
+id line).** `InstanceLink` (`fe/src/Instances.tsx` 343-362) shows the name the app's instance
+list gives (`nameOf`) as the link, and nothing after it. It is used in the server list's Used by
+cell (`ServerProfiles.tsx` 329) and in the server profile page's Used by row
+(`ServerProfilePage.tsx` 439).
+- An instance with no label: the link's text is its id. `nameOf` already returns the id then, so
+  nothing is added.
+- Two instances in the app's instance list with the same name (exact text): each link carries,
+  after the name, the muted `instance-id-shown` (`ID {0}`) outside the `a`, as D4.34 has it today.
+  That keeps 16 17f.4: two instances named alike are told apart.
+- The instance page keeps its id line (`instance-id-fixed`), and the Overview tile's id line
+  (`Instances.tsx` 598) is out of scope.
+- The accessible name of the link is the name, or the id when there is no label
+  ([2.4.4](https://www.w3.org/TR/WCAG22/#link-purpose-in-context): the row and the column give
+  the context).
+
+Tests to amend:
+- `fe/src/InstanceName17f.test.tsx`: the id after the name now shows only for a duplicated name.
+  Add: a unique name shows no id, and a missing label shows the id as the link.
+- `fe/src/ListColumns.test.tsx`: the D4.34 assertion of "ID default" on the same line becomes "no
+  id" for the stub's unique name.
+- `fe/src/InstanceNameEdit17f2.test.tsx`, only where it reads `instance-id-shown` through
+  `InstanceLink` (the instance page's own id line is unchanged).
+- `fe/src/ServerProfiles1.test.tsx` and `fe/src/ServerProfilePage1.test.tsx`, where they read the
+  Used by text.
+- New test: two instances with the same label in the instance list make both Used by links carry
+  `ID <id>`.
