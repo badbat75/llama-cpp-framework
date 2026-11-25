@@ -348,15 +348,15 @@ test('2b.28: shown rows keep the reply order and their cells; switched-off rows 
   const input = await field(main)
   type(input, 'a')
   expect(rows(main)).toEqual([
-    ['zeta-a', 'llama.cpp', en('model-profiles-status-on')],
-    ['Alpha', 'llama.cpp', en('model-profiles-status-off')],
-    ['beto', 'llama.cpp', en('model-profiles-status-off')],
+    ['zeta-a', 'llama.cpp', en('model-profiles-status-on'), ''],
+    ['Alpha', 'llama.cpp', en('model-profiles-status-off'), ''],
+    ['beto', 'llama.cpp', en('model-profiles-status-off'), ''],
   ])
   const t = await table(main)
   expect(t.querySelectorAll('mark, b, strong, em')).toHaveLength(0)
   type(input, 'alpha')
   expect(rows(main)).toEqual([
-    ['Alpha', 'llama.cpp', en('model-profiles-status-off')],
+    ['Alpha', 'llama.cpp', en('model-profiles-status-off'), ''],
   ])
 })
 

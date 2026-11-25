@@ -127,6 +127,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `parse_sections` drops key lines before the first header; a section copied from a file with no final
   newline needs one appended; `ini::detect_eol` styles a writer's appended section. Writers outside core
   use the shared helpers.
+- A call to the running engine is `pai_core::http::request(port, method, path, body, timeout)`: the
+  hand-rolled loopback HTTP/1.1 client (always `127.0.0.1`, `Connection: close`, the timeout is the
+  WHOLE request's deadline), so a poll needs no new dependency. A unit-command verb (`wait-ready`)
+  takes its `/proc` read, clock, sleep and HTTP read as arguments, so a test drives the 2 s interval
+  and the 10 min deadline in 0.01 s; the port comes from `$MAINPID`'s `/proc/<pid>/cmdline`, the LAST
+  space-form `--port` (the `--port=N` form the framework never writes names no port).
 - A record (`assignments.ini`, `instances.ini`) is written through `write_served_file(..,
   &ConfigFile::Models, ..)`: mode 0644, temp file renamed over. A render written after a record change
   turns its failure into the call's answer. `assign::render` takes both pool files, so a profile in
@@ -244,7 +250,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `['x: v']` is unsatisfiable by any CSS (22D4 amendment: `ListDeleteTip.test.tsx` 333, 601). A
   `decls.filter((d) => /^x:(a|b)$/.test(d))` must spell the space the sheet writes: `/^position:
   (absolute|fixed)$/` never matches `position: fixed`, so the filter is empty and the assertion passes
-  vacuously (`ModelProfileDelete3.test.tsx` 275, `ServerProfilePage3.test.tsx`).
+  vacuously (`ModelProfileDelete3.test.tsx` 275, `ServerProfilePage3.test.tsx`). A `declsOf(sel)` that
+  splits each rule's selector list on `,` and compares a part to `sel` EXACTLY never matches an
+  argument with a comma: `declsOf('th, td')` is `[]` while `declsOf('td')` returns the `th, td` rule,
+  so such an assertion is unsatisfiable by any sheet (22 D4.27: `ListColumns.test.tsx` 663).
 - `box-shadow: var(--shadow)` is pinned as an EXHAUSTIVE list in two places at once
   (`HearthH2b.test.ts` H2b.6, `Reflow.test.ts` 10 R1.6): a new lifted box needs its selector added to
   both lists, so a brief that lifts a new box leaves those two reds for the tester.
@@ -276,6 +285,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   a pin reads (a flex row for a new button) needs a class of its own (`.status-cell`): a
   `.model-profiles td:nth-child(3)` rule is invisible to that reader, and a `.confirm-row td` rule is
   free of it (a descendant selector), which is where a confirm cell's `white-space: normal` goes.
+- `ListColumns.test.tsx`'s `cascade(el)` reads a rule that ENDS in the element: a pseudo-class on a
+  NON-last token is dropped and `>` is read as a descendant, so scoping the Actions rules to
+  `tr:not(.confirm-row) > td:last-child` leaves them reaching the confirm td in that read (22 D4.4, L1
+  review D1). Raise the confirm cell instead: add `.confirm-row td:last-child` to the selector list of
+  the `.confirm-row td` rule (the plain part keeps `declsOf('.confirm-row td')` reading it) and put the
+  overrides there; the reader's spec is the count of `.` and `#` per part, so a one-class part ties with
+  `.model-profiles td:last-child` and the later source order wins, as it does in a browser where both
+  are (0,2,1).
 - Moving a shared component (the Save bar: one `SaveBar.tsx` used by both form pages) reddens every
   HEAD test that pins its PLACE, not its behaviour: the tab-stop lists (`2d.67`, `2d.71`, `2d.78`,
   `2e.91`, `H9b.4`, `H10.10`, `H11b.4`, `2h.197`, `1b 6`, `6`), "the bar is the section's last child"
@@ -446,6 +463,10 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   differ. A new refusal key needs its arm in `checks::Refusal::text`, its keys in `en_US.toml` AND
   `cli.toml`, and passes `binding_lint`'s `cli_print_paths_hold_no_language` only when the strings
   carry no path: reuse an existing key (`not-one-of` names the offending key as its first value).
+- A new `pai-manager` verb reddens `pai-core`'s `strings::tests::the_manager_usage_names_pai_manager`:
+  it pins `manager-usage` by EXACT equality with the old verb list, so it and a manager test that
+  requires the new verb in the same key are a witness pair no strings value satisfies. The core pin is
+  the tester's to amend, and `cargo test -p pai-core` is the run that shows it.
 - A new field in the Slint `ServerForm` struct reddens every EXHAUSTIVE `ServerForm {…}` literal in
   `server_form.rs`'s tests (they carry no `..Default::default()`), and `rich_server_config_round_trips`
   fails unless `config_to_form` and `form_to_config` both carry it: the tri-state pair
@@ -484,6 +505,11 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   witness pair, the tester's to retarget. Prove it by moving the page's `<section>` after `<Body>`
   in a copy: that test goes green, 73 of those two files go red.
 - `fireEvent.click` does not move focus like a real click.
+- A cell pin that finds a text by "the first element in the cell whose `textContent` is X"
+  (`ModelProfilesSwitch.test.tsx` 2c.39) returns the OUTERMOST wrapper carrying that text, so a brief
+  that wraps a cell's controls in a `span` (22 D4.25) leaves it red: the wrapper is not the
+  `aria-hidden` word and precedes the switch. The behaviour holds, the witness is the tester's to
+  retarget.
 - Specificity: `button` and `.secondary` are (0,1,0), `.jump button` is (0,1,1); `input[role='switch']`
   and `input[type='checkbox']` tie, so source order decides.
 - A form that reuses the field-shape classes (`.field-hint` in 17f2) inherits the 720 px block's

@@ -255,7 +255,7 @@ test('10 R1.2: the .notice rule declares overflow-wrap: anywhere, its box is unc
 
 // ── R1.4: the scroll box ──────────────────────────────────────────────────
 
-test('10 R1.4 (as brief 22 22D4 D6 adds its position): .table-scroll is one new top-level rule: overflow-x auto, the scroll padding, --bg, the card radius, the shadow, the transparent 1px border and position: relative, and nothing else', () => {
+test('10 R1.4 (as brief 22 22D4 D6 adds its position, and brief 22 L1 re-check D2 its container type): .table-scroll is one new top-level rule: overflow-x auto, the scroll padding, --bg, the card radius, the shadow, the transparent 1px border, position: relative and container-type: inline-size, and nothing else', () => {
   const box = topBy('.table-scroll', 'the scroll box of R1.3')
   declares(
     box,
@@ -270,8 +270,13 @@ test('10 R1.4 (as brief 22 22D4 D6 adds its position): .table-scroll is one new 
       // Brief 22 22D4 D6: the box is the positioned ancestor the rows'
       // `.visually-hidden` names are placed against and clipped by (1.4.10).
       ['position', 'relative'],
+      // Brief 22 L1 re-check D2: the box is the inline-size container the
+      // confirm group's `100cqi` cap measures against, so the question of a
+      // confirm row wraps to the width the user sees and not to the width of
+      // the table it spans (ListColumns.test.tsx pins the pair).
+      ['container-type', 'inline-size'],
     ],
-    'no overflow-y, no height, no width: the box is as tall as the table and takes the width the page gives it (R1.4); the position is the anchor of 22 D6, declared last, the sheet’s way for a box that only gains an anchor',
+    'no overflow-y, no height, no width: the box is as tall as the table and takes the width the page gives it (R1.4); the position is the anchor of 22 D6 and the container type the L1 re-check D2 adds, both declared after the look, the sheet’s way for a box that only gains a rule',
   )
   expect(
     box.depth,
@@ -317,12 +322,11 @@ test('10 R1.5: table keeps border-collapse, border-spacing, --bg and 100%, and n
     ],
     'the engine column wraps as H2b.3 left it',
   )
-  declares(
-    topBy('.model-profiles td:last-child', 'the Status column'),
-    'td:last-child',
-    [['white-space', 'nowrap']],
-    'the switch cell stays one line, as H2b.3 left it',
-  )
+  // 22 D4.23 moves the row's − out of the Status cell and into the Actions
+  // column, so `td:last-child` is no longer the Status column. The one-line
+  // shape of the Status column and of the new Actions column is pinned off the
+  // cells themselves in ListColumns.test.tsx (22 D4.24). The header line and
+  // the Engine column, which the amendment leaves where they are, stay here.
   expect(
     prop(
       topBy('tr:last-child td', "the last row's divider").body,
@@ -513,22 +517,20 @@ test('16 17f.8: the .instance-id rule is a quiet small line that breaks anywhere
 
 // ── 16 17f review (designer, 2026-11-23): D1 the id span, D3 the form ──────
 
-test('16 17f review D1: a rule scoped to .instance-id makes the id of a Used by link a block, so it sits on its own line under the name', () => {
-  // The Used by cell and the Used by row put the id in a `span` after the name
-  // (17f.4). Inline, it runs into the name ("Coding assistantID default"), and
-  // in the table's cell a long id has no line to break on. The space in the
-  // markup is pinned in InstanceName17f.test.tsx; here, the span on its own
-  // line, as the tile's and the page's `p.instance-id` are. The shared
-  // `.instance-id` rule keeps the four of 17f.8 (pinned above), so the block
-  // is a rule scoped to the link.
+test('16 17f review D1 (as brief 22 22 D4.34 amends it): no rule scoped to .instance-id makes the id a block: the id of a Used by link is plain text on the name’s line, outside the link', () => {
+  // 17f review D1 stacked the id under the name, because it sat INSIDE the
+  // link and ran into it ("Coding assistantID default"). 22 D4.34 moves the id
+  // out of the link, so the inline span needs no line of its own: the name and
+  // the id are one line, the id muted. The markup is pinned in
+  // InstanceName17f.test.tsx and ListColumns.test.tsx; the shared `.instance-id`
+  // rule keeps the four of 17f.8 (pinned above), which is what makes it quiet.
   const scoped = TOP.filter((r) => r.compact.includes('.instance-id'))
   expect(
     scoped
       .filter((r) => norm(prop(r.body, 'display')) === 'block')
-      .map((r) => r.flat)
-      .sort(),
-    'a rule scoped to .instance-id declares display: block: the id line breaks under the name (17f.8, WCAG 1.4.10)',
-  ).not.toEqual([])
+      .map((r) => r.flat),
+    'no rule scoped to .instance-id declares display: block: the id of a Used by link is inline text after the link (22 D4.34)',
+  ).toEqual([])
 })
 
 test('16 17f2.3 (17f review D3): the display name form is laid out by one class of the slice namespace: it starts --space-3 under the title row and stacks, its label is a block above the box, and its buttons are a row with --space-2 between them', () => {

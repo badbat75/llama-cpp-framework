@@ -27,11 +27,25 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   delete it, then write the real tests: a Rust test that cannot compile is not a red. A probe proves
   reachability only (it compiles, a value is constructible), never that a call site exists, so call it a
   probe in the report.
+- A seam whose SIGNATURE changes (a Rust fn's argument list) is a COMPILE red, not a test red: add the
+  smallest stub of the new signature in production (`let _ = new_arg;`, the body unchanged, marked
+  `// <SLICE> STUB`), so the pins red on today's behaviour for the right reason; amend every existing
+  call site of the seam in the same pass, and run clippy (the stub's unused argument is a `-D warnings`
+  red). A retired source-text grep's note goes in `//` lines, not `///`: a doc block followed by a blank
+  line and another doc block is clippy `empty_line_after_doc_comments`.
 - Stub a manager verb that does not exist yet with `ManagerError::Io(std::io::ErrorKind::Unsupported)`
   (`ManagerError` has no `Other`); make the phase's refusal helper take `key: &'static str`, because
   `checks::Refusal.key` is `&'static str` (a `&str` closure argument is a lifetime red, not a test red);
   write `serde_json::from_str::<serde_json::Value>` inside a
   `json!` literal (the macro's `Into<Value>` leaves `T` ambiguous).
+- A new `pai-manager` subcommand is stubbed in the existing `manager.rs` (no new production file): the
+  `ManagerCommand` arm, the seam fns with a `// <SLICE> STUB` body, and the arm in `run()`. The parser
+  tests need no stub (`UnknownCommand` is today's red). Keep the seam's argument list at 7: clippy
+  `too_many_arguments` is a red under `-D warnings`, so pass the id to the caller (which builds the
+  strings sentence) and let the seam return a plain failure enum.
+- A fixture struct that holds a crate enum cannot `#[derive(Default)]`: write the fields out. A stub that
+  answers the value a test expects is green BY THE STUB (a stubbed `Unreachable` passes the refused-port
+  pin): name those tests in the report, their teeth show when the seam is wired.
 - Before reporting a new field on a struct, grep `<Struct> {` and run
   `cargo check --workspace --all-targets --exclude pai-config`: a field on a struct other crates build as
   a literal is a COMPILE red there. Fill each literal with the value its own fixture implies. A new field
@@ -416,7 +430,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   in the report, leaving none "for the coder": a new class reds `Reflow.test.ts` `CLASSES`, a new `overflow-wrap` reds its R1.1,
   a ruled size reds `HearthTokens.test.ts` H1a.12 (ordered list, one rule's entries in the test loop's
   order, per-card sets sorted on both sides), and a declaration added to a pinned rule reds that rule's
-  "declares nothing else" list and its title. Read an array's own tail to see whether it is sorted.
+  "declares nothing else" list and its title. A declaration the criterion takes AWAY reds the same lists
+  (D4.24 drops `.hint-box`'s `min-width: 7rem`: the entry goes out of H1a.12). The brief's "tests each
+  criterion changes" table names the layout tests, never the sheet readers: grep them for the class and
+  the property the criterion moves (`grep -n "hint-box\|status-cell\|instance-id" *.test.ts`), that is
+  where the pins of a declaration live. Read an array's own tail to see whether it is sorted.
 `Reflow.test.ts`'s `declares` compares the property list IN the sheet's declaration order, so amending it
 fixes where in the rule the new declaration sits: add it last, and name that in the report. Check the list
 before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-width` or
@@ -425,6 +443,16 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
 - A helper that reads a declaration's VALUE (`values(decls, 'position')` returns `fixed`) must be
   compared with a value literal: an expected `'position: fixed'` is a test-side red whose output reads
   "received 'fixed'", which is right. Compare like with like, and sweep every call site of the helper.
+- `ListColumns.test.tsx`'s `declsOf(sel)` matches a selector part EXACTLY, so `'th, td'` matches
+  nothing and the pin passes vacuously: pass one part (`'td'`), and prove the teeth with a css mutant
+  that drops the declaration from that rule.
+- Its `cascade()` scores specificity by counting `.` and `#` ONLY, so a `.x td:last-child` (real 0,2,1)
+  TIES with `.y td` (0,1,1) and the later rule wins: a cascade pin of the property the `:last-child`
+  rule sets is a day-one GREEN guard, and the red comes from the rule's OTHER properties (the L1 review
+  D1: `text-align: end` and `width: 1%` red, `white-space` green). Its `:not(...)` is evaluated on the
+  ELEMENT, so a fix that scopes with `tr:not(.confirm-row)` reads as still matching (proved: that
+  mutant stays red) and only a fix that adds overriding declarations to the later rule goes green: say
+  so in the report, the accepted fix shape is written into the contract.
 - A declaration filter must allow the space after the colon: the reader's `norm` leaves
   `position: fixed`, so `/^position:(absolute|fixed)$/` matches NOTHING and the pin passes vacuously.
   Write `/^position:\s*(absolute|fixed)$/` and prove the teeth with a css mutant that ADDS the
@@ -466,7 +494,10 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
 - Prove the teeth of a CSS pin in a scratch css + scratch test pair (`cp` both, one string swap, `-t`).
   The test reads `index.css` beside itself, so a real-tree mutant of the css, restored with `cp` and
   proved with `cmp -s`, is enough. A snippet that ends at the rule's `}` puts the added declaration
-  OUTSIDE the rule (the pin stays red on a correct fix): anchor inside, and read the rule back.
+  OUTSIDE the rule (the pin stays red on a correct fix): anchor inside, and read the rule back. Insert
+  it WITH its trailing `;`: the reader splits the body on `;`, so a bare `position: sticky` before the
+  rule's `}` merges with the declaration above into `position: sticky left: 0` and the full fix reads
+  RED, which looks like a broken pin and is a broken mutant.
 - Send a test that cannot fail in jsdom (real layout, focus movement, `fireEvent.click` moving no focus,
   clipping) to the UX check, or state it as unproven.
 - Pin a script's PLACEMENT (a floating tip's `top`/`left`) in jsdom by stubbing the geometry it reads:
@@ -490,6 +521,17 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
 - A link's accessible name joins the text of its children with NO separator, so a name built as text plus
   an inline `span` reads "Coding assistantID default": pin the space as a text node in the markup
   (`textContent` and the name both), and the span's own line in the sheet (16 17f review D1).
+- When a later criterion moves that span OUT of the link (22 D4.34), the pin flips and so does its sheet
+  pin: `link.textContent` is the name alone, `link.nextElementSibling` is the span (a space text node
+  between is fine, the CELL must still read "name ID"), `span.closest('a')` is null, and the scoped
+  `display: block` that stacked the id goes, so `Reflow.test.ts`'s pin of it flips from
+  `.not.toEqual([])` to `toEqual([])` and covers every selector of the comma group (`.assets .instance-id`
+  too, which the list-only filter misses).
+- A column added to a list reds every cell-text array of the list tests: a cell whose only text is a
+  `.visually-hidden` button name reads `''` through `rows()` / `shownText`, so each row array gains a
+  trailing `''` (and a header list gains the new key). It also retargets every `td:last-child` pin (the
+  Status column becomes the Actions column): grep `last-child` in the sheet tests, and check the
+  `td:nth-child(n)` pins, which survive when the new column lands LAST.
 
 ### The web UI (fe/): nav and order literals
 
@@ -549,6 +591,11 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
 
 - Pin Windows, xtask packaging and CI behaviour as text and type checks only, and state in the report what
   Linux can and cannot prove.
+- A real non-loopback socket pin (an address-aware HTTP read): take the host's own LAN address with a UDP
+  socket `bind("0.0.0.0:0")` then `connect("192.0.2.1:80")` and read `local_addr()` (no packet leaves, the
+  route is only picked), assert `!is_loopback()`, and bind the listener on that address. Here that is
+  `enp14s0` 192.168.50.210, and `127.0.0.1:9931` (`server_cfg::DEFAULT_PORT`) answers refused, so a
+  scripted seam, not a real read, must drive the default-port pins.
 
 ## Pitfalls
 

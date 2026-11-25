@@ -833,7 +833,10 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     // list row is in a table cell, so it shrinks below its content and a long
     // id wraps instead of widening the scroll box (1.4.10).
     '.confirm-group: min-width: 0',
-    '.hint-box: min-width: 7rem',
+    // 22 D4.24 (the 22D4 composition amendment) takes the 7rem floor off
+    // `.hint-box`: the box of a row's − and its reason is as wide as the −, so
+    // the Actions column shrinks to its button (ListColumns.test.tsx pins the
+    // box's display and the absence of the floor).
     // H7.6 (brief 08): the sign-in panel is a grid child, min-width 0 lets it shrink.
     '.signin-panel: min-width: 0',
     '.save-messages: min-width: 0',

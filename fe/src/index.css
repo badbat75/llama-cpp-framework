@@ -726,6 +726,8 @@ main > * {
   border: 1px solid transparent;
   /* 22 D4.8: this box is the containing block of the rows' absolutely positioned `.visually-hidden` names, so they are clipped here and cannot widen the page. */
   position: relative;
+  /* Brief 22, L1 re-check D2: the box is the inline-size container the confirm group's `100cqi` cap measures against, so the question of a confirm row wraps to the width the user sees and not to the width of the table it spans (ListColumns.test.tsx pins the pair). */
+  container-type: inline-size;
 }
 
 /* The table keeps its borders separate with no spacing, so the cell dividers
@@ -762,8 +764,8 @@ tr:last-child td {
   border-bottom: 0;
 }
 
-/* The model profiles keep three columns at 320 px: the name wraps anywhere,
-   the engine only at spaces, the headers and the status not at all. */
+/* The model profiles' cells at 320 px: the name wraps anywhere, the engine
+   only at spaces, the headers, the status and the actions not at all. */
 .model-profiles th,
 .model-profiles td {
   padding: var(--space-2);
@@ -800,8 +802,30 @@ tr:last-child td {
   overflow-wrap: normal;
 }
 
-.model-profiles td:last-child {
+/* The Actions column of both lists (22 D4.23, D4.24, D4.26): the last, holding
+   the row's trash can alone. `width: 1%` shrinks it to the button, so the
+   spare width of the table goes to the text columns; `white-space: nowrap`
+   keeps the cell one line, and `text-align: end` puts the trash can's edge at
+   the cell's padding from the row's end. */
+.model-profiles th:last-child,
+.model-profiles td:last-child,
+.server-profiles th:last-child,
+.server-profiles td:last-child {
+  width: 1%;
   white-space: nowrap;
+}
+
+.model-profiles td:last-child,
+.server-profiles td:last-child {
+  text-align: end;
+}
+
+/* Every cell of the two lists centres its content (22 D4.25): the cells are
+   table cells, not flex boxes, so `vertical-align` is what centres a switch, a
+   link or a trash can in a row taller than it. */
+.model-profiles td,
+.server-profiles td {
+  vertical-align: middle;
 }
 
 .model-profiles tr.off {
@@ -1009,15 +1033,6 @@ tr:last-child td {
   color: var(--muted);
   overflow-wrap: anywhere;
   margin: 0;
-}
-
-/* The id of a Used by link is the line under the name, as it is on the tile and
-   the page (16 17f review D1): inline it runs into the name ("Coding
-   assistantID default", WCAG 2.4.4), and in the table's cell a long id has no
-   line to break on (1.4.10). */
-.server-profiles .instance-id,
-.assets .instance-id {
-  display: block;
 }
 
 /* The display name form of the heading (16 17f2.3, laid out as 17f's form of
@@ -2071,11 +2086,17 @@ ul.check-list {
   border-radius: var(--radius-pill);
   background: var(--bg);
   color: var(--text);
-  /* 22 D4.1: in a list's Status cell the box is a flex item, and a flex item
-     shrinks and stretches by default; kept at its box it wraps under the
-     switch instead of being pulled across the line. On an add that is no flex
-     item it does nothing. */
+  /* 22 D4.1: the box of a list's − is kept at its 40 px, so a cell that
+     shrinks it, or a line that wraps, never pulls it across. On an add that is
+     no flex item it does nothing. */
   flex: none;
+}
+
+/* The − of a row (22 D4.25): it sits where its cell puts it, so it is centred
+   in the row with the cell's padding around it. The add's `--space-3` above it
+   is the room a + after a list needs, not a row's. */
+.ot-add.ot-delete {
+  margin-top: 0;
 }
 
 /* The hover of an icon button that can act (22 D4.21): the fill of a card, the
@@ -2185,39 +2206,58 @@ p + .ot-add {
      viewport: allowed to shrink below its content, the question wraps and the
      table's scroll box stays the page's width (1.4.10). */
   min-width: 0;
+  /* Brief 22, L1 re-check D2 (measured in Chromium, Firefox and WebKit): the confirm cell spans the whole table, wider than the scroll box at 320 px, so the question of a row scrolled to its trash can starts out of view. The group sticks to the box's inline start and caps itself to the box less its padding, so the question wraps inside what the user sees: `.table-scroll` is the container the `cqi` unit measures against. */
+  position: sticky;
+  left: 0;
+  max-width: calc(100cqi - 2 * var(--space-2));
 }
 
 /* The confirm of a list's row delete (22 D4.4): a row of the table right after
    the row it asks about, so its group wraps inside the table's scroll box
    (22 D4.8). Its one td spans every column, declares no width of its own and
    wraps: the columns' nowrap rules are for a value of one word, a question is
-   a sentence. */
-.confirm-row td {
+   a sentence. That one td is also its row's last child, so the Actions column
+   rules of 22 D4.24 reach it as they reach a data row's: the second selector
+   names it with the same weight as those rules and sits later in the sheet, so
+   the question keeps wrapping, starts at the inline start and takes the whole
+   row instead of shrinking to its content. */
+.confirm-row td,
+.confirm-row td:last-child {
   white-space: normal;
+  text-align: start;
+  width: auto;
 }
 
-/* The cell of a list row that holds a value and the row's − (22 D4.1, D4.8): a
-   wrapping flex row, so at 320 px and 200 % text the − drops under the value
-   instead of widening the table. */
+/* The cell of the model list's row that holds the switch and its word (22
+   D4.1, D4.25): a plain table cell, so `vertical-align: middle` centres its
+   content in the row, and `width: 1%` with `white-space: nowrap` keeps it as
+   narrow as the switch and a short word (22 D4.24). The switch and its word
+   are laid out by the span inside it, never by the cell: a `td` that is a flex
+   box is no longer a table cell, and stops centring. */
 .status-cell {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  align-items: center;
+  width: 1%;
+  white-space: nowrap;
 }
 
-/* The box of a control and the reason it shows when it cannot act (22 D4.13): a
-   column, so the control and the reason are its two children and the reason is
-   the control's next sibling, which is what keeps the pointer on the box on the
-   way to the reason (1.4.13). The reason floats since 22 D4.16, so the column
-   holds no room for it: the min-width is 22 D8's, the width the Status column
-   keeps with the reason shown and hidden, so the control never moves. */
-.hint-box {
+/* The switch and its word on one line (22 D4.25, D4.27): a flex row
+   with the token gap, centred on it. */
+.status-cell > span {
   display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The box of a control and the reason it shows when it cannot act (22 D4.13):
+   a column, so the control and the reason are its two children and the reason
+   is the control's next sibling, which is what keeps the pointer on the box on
+   the way to the reason (1.4.13). The reason floats since 22 D4.16, so the
+   column holds no room for it, and the box is no wider than the control: 22
+   D4.24 takes 22 D8's `min-width` off, the Actions column shrinking to its
+   button, and makes the box an inline box, so it sits in the cell's line. */
+.hint-box {
+  display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
-  /* 22 D8: the column keeps one width with or without the reason, so the − stays put. */
-  min-width: 7rem;
 }
 
 /* The reason a disabled control cannot act (22 D4.3, 22 D4.13): the words the

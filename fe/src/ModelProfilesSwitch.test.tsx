@@ -368,6 +368,8 @@ test.each(FAILED_WRITES)(
       'Old-Coder',
       'llama.cpp',
       en('model-profiles-status-on'),
+      // 22 D4.23: the Actions cell, showing the icon of the row’s −.
+      '',
     ])
     expect(
       switches(main).map(inactive),
@@ -485,8 +487,8 @@ test('2c.48: only that row takes the re-read value: the order, the other rows an
   expect(alerts(main)).toEqual([en('request-failed')])
   expect(filterField(main).value).toBe('coder')
   expect(rows(main)).toEqual([
-    ['Coder-30B', 'llama.cpp', en('model-profiles-status-on')],
-    ['Old-Coder', 'llama.cpp', en('model-profiles-status-on')],
+    ['Coder-30B', 'llama.cpp', en('model-profiles-status-on'), ''],
+    ['Old-Coder', 'llama.cpp', en('model-profiles-status-on'), ''],
   ])
   expect(filterStatus(main).textContent).toBe(
     en('model-profiles-filter-count', '2', '3'),
@@ -641,7 +643,7 @@ test('2c.49: another administrator signs in: the banner shows it, the alert goes
 
 // ── The control (37, 38, 39, 42) ────────────────────────────────────────
 
-test('2c.37, 2c.12, 2d.60, 22 D4.1: each row has a native checkbox with role="switch" in its Status cell, checked when on, never aria-checked, and after it the row’s minus; the name link is its only other control', async () => {
+test('2c.37, 2c.12, 2d.60, 22 D4.1, 22 D4.23: each row has a native checkbox with role="switch" in its Status cell, checked when on, never aria-checked, and the row’s minus in the Actions cell after it; the name link is its only other control', async () => {
   const { main } = await open()
   const rs = dataRows(main)
   expect(switches(main)).toHaveLength(3)
@@ -654,13 +656,14 @@ test('2c.37, 2c.12, 2d.60, 22 D4.1: each row has a native checkbox with role="sw
     expect(input.getAttribute('role'), IDS[i]).toBe('switch')
     expect(input.hasAttribute('aria-checked'), IDS[i]).toBe(false)
     expect(input.checked, IDS[i]).toBe(LIST[i]!.enabled)
-    // 22 D4.1: the minus sits in the same cell, after the switch.
+    // 22 D4.1 put the minus in the Status cell, after the switch; 22 D4.23
+    // moves it to the Actions cell, so the Status cell holds the switch alone.
     const minus = within(row).getByRole('button', {
       name: en('model-profiles-delete-row', IDS[i]!),
     })
-    expect(minus.closest('td'), IDS[i]).toBe(cells[2])
+    expect(minus.closest('td'), IDS[i]).toBe(cells[3])
     const controls = [...cells[2]!.querySelectorAll('button, input')]
-    expect(controls, IDS[i]).toEqual([input, minus])
+    expect(controls, IDS[i]).toEqual([input])
     // 2d.60 replaces the plain name with a link: the row's controls are that
     // link, in the name cell, then the switch, then the minus of 22 D4.1.
     // Nothing else acts.
@@ -714,10 +717,18 @@ test('2c.39, 2c.54: the Status cell holds the switch then its On/Off word, the w
         : 'model-profiles-status-off',
     )
     expect(shownText(cell), IDS[i]).toBe(word)
-    const holder = [...cell.querySelectorAll('*')].find(
+    // 22 D4.25 wraps the switch and its word in a span, whose text is the word
+    // too: the word's own element is the innermost of those whose text is the
+    // word, the last in document order, and it holds no element of its own.
+    const holders = [...cell.querySelectorAll('*')].filter(
       (el) => el !== input && (el.textContent ?? '').trim() === word,
     )
+    const holder = holders[holders.length - 1]
     expect(holder, `${IDS[i]}: the word in an element`).toBeDefined()
+    expect(
+      holder!.children,
+      `${IDS[i]}: the word span itself, not the wrapper of 22 D4.25`,
+    ).toHaveLength(0)
     expect(
       holder!.closest('[aria-hidden="true"]'),
       `${IDS[i]}: aria-hidden`,
@@ -767,6 +778,7 @@ test('2c.44: a change shows the new value at once (switch and word) and sends PU
       id,
       'llama.cpp',
       en('model-profiles-status-off'),
+      '',
     ])
     expect(writes(bff), id).toEqual([[path(id), { enabled: false }]])
     cleanup()
@@ -877,9 +889,9 @@ test('2c.47: after a success the row keeps its place, nothing is read, the filte
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
   expect(rows(main)).toEqual([
-    ['Qwen3-27B', 'llama.cpp', en('model-profiles-status-off')],
-    ['Coder-30B', 'llama.cpp', en('model-profiles-status-on')],
-    ['Old-Coder', 'llama.cpp', en('model-profiles-status-off')],
+    ['Qwen3-27B', 'llama.cpp', en('model-profiles-status-off'), ''],
+    ['Coder-30B', 'llama.cpp', en('model-profiles-status-on'), ''],
+    ['Old-Coder', 'llama.cpp', en('model-profiles-status-off'), ''],
   ])
   press(switchOf(main, 'Old-Coder'))
   await flush()

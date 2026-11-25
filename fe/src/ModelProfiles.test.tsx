@@ -486,7 +486,13 @@ test('2a.16: a 401 on the model profiles read signs the whole app out; after sig
   )
   const t = await table(main)
   expect(rows(t)).toEqual([
-    ['after-sign-in', 'llama.cpp', en('model-profiles-status-on')],
+    [
+      'after-sign-in',
+      'llama.cpp',
+      en('model-profiles-status-on'),
+      // 22 D4.23: the Actions cell shows nothing (its − is an icon).
+      '',
+    ],
   ])
   expect(window.location.hash).toBe('#/profiles/model')
   expect(modelProfilesReads(bff)).toBe(2)
@@ -714,7 +720,7 @@ test('2a.6, 5b.5: below the h1 come the intro, the table, then the note, and the
 
 // ── The table (7, 8) ────────────────────────────────────────────────────
 
-test('2a.7, 5b.5: a native table named by the h1, with one header row of ModelProfile, Engine, Status as scope="col"', async () => {
+test('2a.7, 5b.5, 22 D4.23: a native table named by the h1, with one header row of ModelProfile, Engine, Status, Actions as scope="col"', async () => {
   const { main } = open()
   const t = await table(main)
   expect(t.tagName).toBe('TABLE')
@@ -726,6 +732,10 @@ test('2a.7, 5b.5: a native table named by the h1, with one header row of ModelPr
     en('model-profiles-column-name'),
     en('model-profiles-column-engine'),
     en('model-profiles-column-status'),
+    // 22 D4.23: the column of the row’s actions, last. Its word is in the DOM
+    // in a span.visually-hidden, so textContent reads it while the eye does
+    // not (ListColumns.test.tsx pins the span).
+    en('profiles-column-actions'),
   ])
   for (const h of headers) {
     expect(h.tagName).toBe('TH')
@@ -779,16 +789,21 @@ test('2a.9: one row per model profile in the order received; the fe does not sor
   ])
 })
 
-test('2a.10, 2a.12, 2d.60, 22 D4.1: each row is the id as a link to the model profile page, the engine, then On or Off', async () => {
+test('2a.10, 2a.12, 2d.60, 22 D4.1, 22 D4.23: each row is the id as a link to the model profile page, the engine, then On or Off, then the empty Actions cell', async () => {
   const { main } = open()
   const t = await table(main)
-  // 22 D4.1 adds the row's minus to the Status cell, after the switch: it is
-  // icon-only and its reason is out of sight, so the cell reads as before
-  // (`rows` leaves the buttons' text out). The minus itself is 22 D4.1 in
-  // ModelProfilesDelete1.test.tsx.
+  // 22 D4.1 adds the row’s minus, 22 D4.23 moves it to its own last cell. It is
+  // icon-only and its words are in a span.visually-hidden, so the cell shows
+  // nothing (`rows` leaves the buttons' text out). The minus itself is 22 D4.1
+  // in ModelProfilesDelete1.test.tsx, its cell in ListColumns.test.tsx.
   expect(rows(t)).toEqual([
-    ['Qwen3.6-35B-A3B-UD-Q4_K_XL', 'llama.cpp', en('model-profiles-status-on')],
-    ['gemma-3-12b-it', 'llama.cpp', en('model-profiles-status-off')],
+    [
+      'Qwen3.6-35B-A3B-UD-Q4_K_XL',
+      'llama.cpp',
+      en('model-profiles-status-on'),
+      '',
+    ],
+    ['gemma-3-12b-it', 'llama.cpp', en('model-profiles-status-off'), ''],
   ])
   // 2d.60 replaces 2a.10's plain text: the id is an <a> to the model profile page.
   expect(
@@ -819,12 +834,14 @@ test('2a.11: the engine is shown as data, and an engine not available reads "<en
       'on-strata',
       en('model-profiles-engine-not-available', 'Strata'),
       en('model-profiles-status-on'),
+      '',
     ],
-    ['keyish', 'loading', en('model-profiles-status-on')],
+    ['keyish', 'loading', en('model-profiles-status-on'), ''],
     [
       'off-strata',
       en('model-profiles-engine-not-available', 'Strata'),
       en('model-profiles-status-off'),
+      '',
     ],
   ])
 })
@@ -937,15 +954,16 @@ test('2a.20, 2b.35, 2c.53, 2d.60, 22 D4.1: Tab goes skip link, banner, nav (Over
   ])
 })
 
-test('2a.21, 2b.30, 2c.50: the table has 3 columns and each data row 3 cells under them; the load announces nothing: the filter status and the switch status are there, empty', async () => {
+test('2a.21, 2b.30, 2c.50, 22 D4.23: the table has 4 columns and each data row 4 cells under them; the load announces nothing: the filter status and the switch status are there, empty', async () => {
   const { main } = open()
   const t = await table(main)
-  expect(within(t).getAllByRole('columnheader')).toHaveLength(3)
+  // 22 D4.23 adds the Actions column, so the row has one cell more under it.
+  expect(within(t).getAllByRole('columnheader')).toHaveLength(4)
   const dataRows = within(t)
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
   expect(dataRows).toHaveLength(2)
-  for (const row of dataRows) expect(cellsOf(row)).toHaveLength(3)
+  for (const row of dataRows) expect(cellsOf(row)).toHaveLength(4)
   // 2c.50 adds the switch region's status after the filter's.
   const statuses = within(main).getAllByRole('status')
   expect(statuses).toHaveLength(2)

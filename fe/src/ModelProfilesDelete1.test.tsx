@@ -292,21 +292,23 @@ function cascade(el: HTMLElement): {
 
 // ── 22 D4.1: the − on every row ─────────────────────────────────────────
 
-test('22 D4.1 (as 22 D4.21 changes its icon): every row has a − in its Status cell after the switch, in the shared 40 px .ot-add square with flex: none and the ot-delete class, the aria-hidden trash-2 icon and a visually hidden model-profiles-delete-row naming it with the row id, in a cell that is a wrapping flex row with gap var(--space-3) and align-items center', async () => {
+test('22 D4.1 (as 22 D4.21 changes its icon, as 22 D4.23 moves it to its own cell): every row has a − in the Actions cell after the switch, in the shared 40 px .ot-add square with flex: none and the ot-delete class, the aria-hidden trash-2 icon and a visually hidden model-profiles-delete-row naming it with the row id, in a cell that is a plain table cell (22 D4.25)', async () => {
   const { main } = await open()
   const rs = dataRows(main)
   expect(rs, 'one row per profile').toHaveLength(LIST.length)
   for (const row of rs) {
     const id = text(cellsOf(row)[0])
-    const cell = cellsOf(row)[2]!
+    const cells = cellsOf(row)
+    const cell = cells[cells.length - 1]!
     const minus = minusOf(main, id)
-    expect(minus.closest('td'), '22 D4.1: the − is in the Status cell').toBe(
-      cell,
-    )
-    const input = cell.querySelector('input')!
+    expect(
+      minus.closest('td'),
+      '22 D4.23: the − is in the row’s last cell, the Actions column',
+    ).toBe(cell)
+    const input = cells[2]!.querySelector('input')!
     expect(
       input.compareDocumentPosition(minus) & Node.DOCUMENT_POSITION_FOLLOWING,
-      '22 D4.1: after the switch',
+      '22 D4.1: after the switch, which stays in the Status cell',
     ).not.toBe(0)
     expect(minus.tagName, 'a native button').toBe('BUTTON')
     expect(minus.getAttribute('type'), 'it submits nothing').toBe('button')
@@ -343,24 +345,23 @@ test('22 D4.1 (as 22 D4.21 changes its icon): every row has a − in its Status 
     expect(norm(box['min-height'] ?? ''), 'and never shorter').toBe('40px')
     expect(
       norm(box['flex'] ?? ''),
-      'kept at its box, so it wraps under the switch',
+      'kept at its box, so the cell never shrinks it',
     ).toBe('none')
     expect(
       norm(box['border'] ?? ''),
       'the --control outline of a control',
     ).toBe('var(--border-w) solid var(--control)')
     const cellBox = cascade(cell as HTMLElement).decls
+    // 22 D4.25 takes the cell out of the flex layout: 22 D4.1's wrapping flex
+    // row with its gap and centred line is gone, and the cell centres its
+    // content as a table cell does. ListColumns.test.tsx pins the new shape.
     expect(
       norm(cellBox['display'] ?? ''),
-      '22 D4.1: the cell is a flex row',
-    ).toBe('flex')
-    expect(norm(cellBox['flex-wrap'] ?? ''), 'that wraps').toBe('wrap')
-    expect(norm(cellBox['gap'] ?? ''), 'with this space between the two').toBe(
-      'var(--space-3)',
-    )
-    expect(norm(cellBox['align-items'] ?? ''), 'centred on the line').toBe(
-      'center',
-    )
+      '22 D4.25: the cell is not a flex box',
+    ).not.toBe('flex')
+    expect(norm(cellBox['flex-wrap'] ?? ''), 'so it wraps nothing').toBe('')
+    expect(norm(cellBox['gap'] ?? ''), 'and has no gap of its own').toBe('')
+    expect(norm(cellBox['align-items'] ?? ''), 'and no align-items').toBe('')
   }
 })
 
@@ -532,7 +533,8 @@ test('22 D4.3, D4.13, D4.18 (as 22 D4.16 to D4.18 amend them): hovering a disabl
 
 test('22 D4.13, D4.16 (22 D4 review D1, as the 22D4 amendment amends it): the − and its reason are siblings in the .hint-box of the cell, the − first, and the rule that styles the reason places it against the viewport (position: fixed), so showing it changes no layout', async () => {
   const { main } = await open()
-  const cell = cellsOf(rowOf(main, 'Qwen3-27B'))[2]!
+  const cells = cellsOf(rowOf(main, 'Qwen3-27B'))
+  const cell = cells[cells.length - 1]!
   const box = boxOf(main, 'Qwen3-27B')
   const minus = minusOf(main, 'Qwen3-27B')
   expect(box.parentElement, 'the box sits in the cell, where the − sat').toBe(
@@ -624,7 +626,10 @@ test('22 D7: the reason is not contained (no contain on .hint-tip)', () => {
   // size out of the layout, so the flex column of `.hint-box` gives it none:
   // the reason collapses to its padding, its text breaks one letter per line,
   // and the pointer cannot stay on it. The reason declares no `contain` at
-  // all; the column's width is held by the box's min-width (22 D8).
+  // all: its width is its own (22 D4.19's max), it floats (22 D4.16, pinned
+  // above) and the box shrank to the button (22 D4.24 took 22 D8's
+  // `min-width: 7rem` off, so the box holds no column width: 22 D8 is retired
+  // here, its absence pinned by 22 D4.24 in ListColumns.test.tsx).
   const decls = TOP.filter((r) =>
     r.compact.split(',').includes('.hint-tip'),
   ).flatMap((r) => r.body.split(';').map((d) => norm(d)))
@@ -633,25 +638,6 @@ test('22 D7: the reason is not contained (no contain on .hint-tip)', () => {
     decls.filter((d) => d.startsWith('contain:')),
     '22 D7: no rule that styles the reason declares contain (the D8 fix drops it)',
   ).toEqual([])
-})
-
-// ── 22 D8: the box holds the column's width (22D4 D7 re-check) ──────────
-
-test('22 D8: the hint box keeps the column’s width (min-width: 7rem)', () => {
-  // 22 D4.13, 22 D4.15 (WCAG 1.4.10, the designer's fix for D8, measured in
-  // the three browsers at 320 px and 200 % text, fe/briefs/22-model-sources.md
-  // "22D4 D7 re-check"): the box of the − and its reason carries the width,
-  // not the reason. The min-width is the reason's longest word plus the tip's
-  // padding, so the Status column is as wide with the reason shown as hidden
-  // (the − stays put) and the reason has a box to wrap inside.
-  const decls = TOP.filter((r) =>
-    r.compact.split(',').includes('.hint-box'),
-  ).flatMap((r) => r.body.split(';').map((d) => norm(d)))
-  expect(decls.length, 'the box has rules in the sheet').toBeGreaterThan(0)
-  expect(
-    decls.filter((d) => d.startsWith('min-width:')),
-    '22 D8: the rule that styles the box holds the column’s width, so showing the reason changes none of it (1.4.10)',
-  ).toEqual(['min-width: 7rem'])
 })
 
 // ── 22 D4 review D2: the disabled − is drawn inactive ───────────────────
@@ -1136,10 +1122,9 @@ test('22 D4.8: the confirm row is a row of the table, so its group sits inside t
   ).toBe('0')
   expect(
     norm(
-      cascade(cellsOf(rowOf(main, 'Old-Coder'))[2] as HTMLElement).decls[
-        'flex-wrap'
-      ] ?? '',
+      cascade(cellsOf(rowOf(main, 'Old-Coder')).slice(-1)[0] as HTMLElement)
+        .decls['flex-wrap'] ?? '',
     ),
-    '22 D4.8: the − wraps under the switch inside its cell',
-  ).toBe('wrap')
+    '22 D4.25: the − has its own cell, which is no flex box and wraps nothing: the 40 px target is the button’s own, and the confirm row spans the row’s columns',
+  ).toBe('')
 })

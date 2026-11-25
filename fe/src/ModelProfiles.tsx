@@ -635,6 +635,14 @@ const Table = memo(function Table({
             {header('name', columnLabel('name'))}
             {header('engine', columnLabel('engine'))}
             <th scope="col">{t('model-profiles-column-status')}</th>
+            {/* The column of the row's actions (22 D4.23): its word is for a
+                reader, so the column is announced; the eye sees no heading over
+                an icon. */}
+            <th scope="col">
+              <span className="visually-hidden">
+                {t('profiles-column-actions')}
+              </span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -656,24 +664,33 @@ const Table = memo(function Table({
                     : t('model-profiles-engine-not-available', p.engine)}
                 </td>
                 <td className="status-cell">
-                  <label className="model-profiles-switch">
-                    <input
-                      id={`${uid}-switch-${i}`}
-                      type="checkbox"
-                      role="switch"
-                      checked={p.enabled}
-                      aria-labelledby={`${uid}-name-${i}`}
-                      aria-disabled={busy || deleting || undefined}
-                      onChange={(e) => {
-                        if (!busy) onChange(i, e.target.checked)
-                      }}
-                    />
-                  </label>
-                  <span aria-hidden="true">
-                    {p.enabled
-                      ? t('model-profiles-status-on')
-                      : t('model-profiles-status-off')}
+                  {/* The switch and its word are one line, carried by their own
+                      span (22 D4.25): the cell stays a plain table cell, so it
+                      centres its content in the row. */}
+                  <span>
+                    <label className="model-profiles-switch">
+                      <input
+                        id={`${uid}-switch-${i}`}
+                        type="checkbox"
+                        role="switch"
+                        checked={p.enabled}
+                        aria-labelledby={`${uid}-name-${i}`}
+                        aria-disabled={busy || deleting || undefined}
+                        onChange={(e) => {
+                          if (!busy) onChange(i, e.target.checked)
+                        }}
+                      />
+                    </label>
+                    <span aria-hidden="true">
+                      {p.enabled
+                        ? t('model-profiles-status-on')
+                        : t('model-profiles-status-off')}
+                    </span>
                   </span>
+                </td>
+                {/* The row's actions (22 D4.23): the trash can alone, in the
+                    column every row ends with. */}
+                <td>
                   <RowDelete
                     domId={`${uid}-delete-${p.id}`}
                     name={t('model-profiles-delete-row', p.id)}
@@ -689,7 +706,7 @@ const Table = memo(function Table({
               </tr>
               {confirming === p.id && (
                 <ConfirmRow
-                  columns={3}
+                  columns={4}
                   question={t('model-profiles-delete-question', p.id)}
                   status={confirmStatus}
                   alert={confirmAlert}

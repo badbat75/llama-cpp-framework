@@ -357,23 +357,24 @@ test('16 17a.2: the Menu button opens the nav, and a click on Server profiles cl
 
 // ── 17a.3: the read and the table ───────────────────────────────────────
 
-test('16 17a.3, 22 D4.1: the table has the four columns in order, one row per item in the reply order, the id a link to its page, the port as text, the tags joined by ", ", the instance a link, and a free profile says No instance muted', async () => {
+test('16 17a.3, 22 D4.1, 22 D4.23: the table has the five columns in order, one row per item in the reply order, the id a link to its page, the port as text, the tags joined by ", ", the instance a link, a free profile says No instance muted, and the row’s − in the Actions cell', async () => {
   const { main } = open({ serverProfiles: ROWS })
   const t = await tableOf(main)
   expect(
     [...t.querySelectorAll('thead th')].map((th) =>
       (th.textContent ?? '').trim(),
     ),
-    'the columns, in the brief order',
+    'the columns, in the brief order, the Actions column of 22 D4.23 last',
   ).toEqual([
     en('server-profiles-column-name'),
     en('server-profiles-column-port'),
     en('server-profiles-column-tags'),
     en('server-profiles-column-used-by'),
+    en('profiles-column-actions'),
   ])
   expect(rowsOf(t), 'the rows, in the reply order').toEqual([
-    ['default', '8580', 'edge, v2', 'default'],
-    ['qwen-27b', '9931', '', en('server-profiles-unused')],
+    ['default', '8580', 'edge, v2', 'default', ''],
+    ['qwen-27b', '9931', '', en('server-profiles-unused'), ''],
   ])
   const first = cellsOf(main, 'default')
   const idLink = within(first[0]!).getByRole('link', { name: 'default' })
@@ -393,13 +394,15 @@ test('16 17a.3, 22 D4.1: the table has the four columns in order, one row per it
     within(free[3]!).getByText(en('server-profiles-unused')).className,
     'the word sits in the muted style, as a tile with no tag',
   ).toContain('muted')
-  // 22 D4.1: the row's minus follows the value in the same Used by cell, on
-  // the in-use row too (there it is switched off, 22 D4.2).
+  // 22 D4.1 put the row's − in the Used by cell, after the value; 22 D4.23
+  // moves it to the Actions cell, the row's last, on the in-use row too (there
+  // it is switched off, 22 D4.2).
   const inUse = cellsOf(main, 'default')
-  const minus = within(inUse[3]!).getByRole('button', {
+  const last = inUse[inUse.length - 1]!
+  const minus = within(last).getByRole('button', {
     name: en('server-profiles-delete-row', 'default'),
   })
-  expect(minus.closest('td'), 'the minus is in the Used by cell').toBe(inUse[3])
+  expect(minus.closest('td'), 'the minus is in the Actions cell').toBe(last)
   expect(before(used, minus), 'and after the value, never before it').toBe(true)
 })
 
@@ -581,10 +584,10 @@ test('16 17a.4: an item with no readable id is left out; a non-number port reads
   })
   const t = await tableOf(main)
   expect(rowsOf(t), 'the rows the page can read, in the reply order').toEqual([
-    ['ok', '8580', 'edge, v2', 'default'],
+    ['ok', '8580', 'edge, v2', 'default', ''],
     // 17a.4: an id that is a non-empty string is kept; port 'x' reads as 0,
     // tags 'edge' (not an array) as none, instance 7 (not a string) as none.
-    ['bad', '0', '', 'No instance'],
+    ['bad', '0', '', 'No instance', ''],
   ])
 })
 

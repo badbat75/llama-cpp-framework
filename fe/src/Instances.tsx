@@ -335,9 +335,10 @@ export function useInstanceNames(
 
 /**
  * An instance as a link to its page, named as the menu names it, with the id
- * after the name in a `span.instance-id` (16 17f.4): the id is the key the
- * reader can act on. The id line is left out when the name IS the id, which
- * would say the same twice (17f.1).
+ * right after the link in a `span.instance-id` (16 17f.4, as brief 22 22 D4.34
+ * amends it): the id is the key the reader can act on, and it is plain text,
+ * so what a reader hears as the link is the name alone (2.4.4). The id is left
+ * out when the name IS the id, which would say the same twice (17f.1).
  */
 export function InstanceLink({
   id,
@@ -350,15 +351,15 @@ export function InstanceLink({
 }) {
   const name = nameOf(id)
   return (
-    <a href={instanceHref(id)}>
-      {name}
+    <>
+      <a href={instanceHref(id)}>{name}</a>
       {name !== id && (
         <>
           {' '}
           <span className="instance-id">{t('instance-id-shown', id)}</span>
         </>
       )}
-    </a>
+    </>
   )
 }
 

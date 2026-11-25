@@ -1707,3 +1707,62 @@ Tests to amend:
   Used by text.
 - New test: two instances with the same label in the instance list make both Used by links carry
   `ID <id>`.
+
+### L1 re-check (designer, 2026-11-25)
+
+Built code with both fixes. Measured with `build/ux-review/l1confirm.js`, `l1confirm2.js` and
+`l1.js` in Chromium, Firefox and WebKit.
+- D1 met. The switch and the trash can are within 0.50-0.52 px of their row's centre, in both
+  lists, at 1280 and 320 px. (`l1.js`'s 1.8 px is the text range of the Actions cell's hidden
+  header span, not a control.)
+- The confirm row's cell is met:
+  - `white-space: normal` and `text-align: start`, spanning the row;
+  - at 1280 px the question is one line in both lists;
+  - its buttons sit at the group's end, under the trash can that opened them, as since 22D4
+    (`.save-actions` `justify-content: flex-end`). This is not an L1 change.
+  - Everything else is as in the L1 review, and no page scrolls sideways.
+- **D2 (D4.8 at 320 px): the question runs past the visible box.**
+  - The confirm cell spans the whole table: 318-320 px on the models list (wider than its 286 px
+    box since the Actions column, D4.27) and 757-759 px on the server list.
+  - The question is then laid out over that width (302 px and 733 px). With the box scrolled to
+    the trash can that opened it, the question's start is out of view, so the user must scroll
+    back to read it.
+  - Measured fix, at the rules' real places (CSSOM), in all three browsers: in `fe/src/index.css`,
+    `.table-scroll` (720) gains `container-type: inline-size`, and `.confirm-group` (2200) gains
+    `position: sticky; left: 0; max-width: calc(100cqi - 2 * var(--space-2))`.
+  - With it, the question wraps to 270 px in four lines, wholly in view at any scroll position,
+    with its buttons below it. 1280 px is unchanged, and no page scrolls sideways.
+  - Container query units work in the three engines measured here (Playwright 1.65.1). Browser
+    version support was not checked against a source.
+- Confirm-row screenshots: `build/ux-review/shots/L1-confirm-{models,servers}-{1280,320}.png`,
+  and with the fix `L1-confirm-fix-<browser>-<list>.png`.
+
+### D2 re-check (designer, 2026-11-25)
+
+Built code: `.table-scroll` has `container-type: inline-size`, and `.confirm-group` has
+`position: sticky; left: 0; max-width: calc(100cqi - 2 * var(--space-2))`. Measured with
+`build/ux-review/d2pages.js`, `l1confirm2.js`, `d4fix2.js` and `d4focus.js` in Chromium, Firefox
+and WebKit.
+- The list confirm rows are met. At 320 px the question wraps to 270 px and stays in view at any
+  scroll of the box, with its buttons below it. At 1280 px it is one line, unchanged. No page
+  scrolls sideways.
+- The pages' Save bar confirm is not regressed. On the model and server profile pages at 320 and
+  1280 px, the group's box and its buttons are identical, to the pixel, with the rule as built
+  and with the three declarations removed (the scoped case).
+  - With no container, `100cqi` falls back to the viewport (304 and 1264 px), wider than the bar,
+    so it limits nothing. `sticky` with `left: 0` does nothing where nothing scrolls sideways.
+  - No scoped selector is needed. `.table-scroll .confirm-group` would only be clearer to read
+    (preference).
+- The reviewer's concern about `.hint-tip` does not hold. On the Models and server lists, at 320
+  and 1280 px, at the right and bottom edges, on hover and on focus, the tip still touches the
+  trash can, stays inside the gutters and is visible at its centre (not clipped) in the three
+  browsers.
+  - The reason: `container-type: inline-size` applies style and inline-size containment and an
+    independent formatting context, not layout containment
+    (https://www.w3.org/TR/css-conditional-5/, `container-type`). So the scroll box does not
+    become the containing block of `position: fixed` descendants.
+  - No portal is needed. If a later rule adds `contain: layout`, a `transform` or a `filter` to
+    `.table-scroll` or an ancestor, portal the tip to `document.body` (preference), since the
+    stylesheet cannot then keep it fixed to the viewport.
+
+D2 met. L1 accepted.

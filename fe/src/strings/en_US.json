@@ -77,6 +77,7 @@
   "server-profiles-column-tags": "Tags",
   "server-profiles-column-used-by": "Used by",
   "server-profiles-unused": "No instance",
+  "profiles-column-actions": "Actions",
   "server-profiles-delete-row": "Delete server profile {0}",
   "server-profiles-delete-in-use": "An instance uses it: give that instance another server profile to delete this one.",
   "server-profiles-delete-question": "Delete the server profile {0}? Its settings file is removed. This cannot be undone.",

@@ -119,9 +119,15 @@ function rowOf(main: HTMLElement, id: string): HTMLElement {
   return row!
 }
 
-/** The Used by cell, the last of the four (17a.3). */
+/** The Used by cell: the fourth, before the Actions column of 22 D4.23. */
 function usedByCell(main: HTMLElement, id: string): HTMLElement {
   return cellsOf(rowOf(main, id))[3] as HTMLElement
+}
+
+/** The Actions cell, the row's last (22 D4.23). */
+function actionsCell(main: HTMLElement, id: string): HTMLElement {
+  const cells = cellsOf(rowOf(main, id))
+  return cells[cells.length - 1] as HTMLElement
 }
 
 /** The row's −, named by `server-profiles-delete-row` with the id (22 D4.1). */
@@ -250,37 +256,43 @@ function cascade(el: HTMLElement): {
 
 // ── 22 D4.1: the − on every row ─────────────────────────────────────────
 
-test('22 D4.1 (as 22 D4.21 changes its icon): every row has a − in its Used by cell after the value, in the shared 40 px .ot-add square with flex: none and the ot-delete class, the aria-hidden trash-2 icon and a visually hidden server-profiles-delete-row naming it with the row id, in a cell that is a wrapping flex row with gap var(--space-3) and align-items center', async () => {
+test('22 D4.1 (as 22 D4.21 changes its icon, as 22 D4.23 moves it to its own cell): every row has a − in the Actions cell after the value, in the shared 40 px .ot-add square with flex: none and the ot-delete class, the aria-hidden trash-2 icon and a visually hidden server-profiles-delete-row naming it with the row id, in a cell that is a plain table cell (22 D4.25)', async () => {
   const { main } = await loaded()
   const rs = dataRows(main)
   expect(rs, 'one row per profile').toHaveLength(ROWS.length)
   for (const r of rs) {
     const id = text(cellsOf(r)[0])
-    const cell = usedByCell(main, id)
+    const cells = cellsOf(r)
+    const cell = cells[cells.length - 1]!
+    const used = usedByCell(main, id)
     const minus = minusOf(main, id)
-    expect(minus.closest('td'), '22 D4.1: the − is in the Used by cell').toBe(
-      cell,
-    )
-    const value = [...cell.children].find((el) => el !== minus) as
-      HTMLElement | undefined
+    expect(
+      minus.closest('td'),
+      '22 D4.23: the − is in the row’s last cell, the Actions column',
+    ).toBe(cell)
+    expect(
+      used.querySelector('button'),
+      '22 D4.23: the Used by cell holds no button, its value alone',
+    ).toBeNull()
+    const value = used.firstElementChild as HTMLElement | null
     expect(value, 'the value is there, before the −').not.toBeUndefined()
     expect(
       value!.compareDocumentPosition(minus) & Node.DOCUMENT_POSITION_FOLLOWING,
       '22 D4.1: after the value',
     ).not.toBe(0)
-    // 17a.3: the value the cell shows before the − is the instance's link for
+    // 17a.3: the value the Used by cell shows is the instance's link for
     // a profile an instance runs, the muted "No instance" for a free one.
     const instance = ROWS.find((x) => x.id === id)?.instance
     if (instance === null || instance === undefined)
-      expect(text(value!), '17a.3: a free profile says No instance').toBe(
+      expect(text(used), '17a.3: a free profile says No instance').toBe(
         en('server-profiles-unused'),
       )
     else
       expect(
-        within(value!).queryByRole('link', { name: instance }),
+        within(used).queryByRole('link', { name: instance }),
         '17a.3: the value is the instance link',
       ).not.toBeNull()
-    expect(text(value!), 'the value is the one 17a.3 shows').not.toBe('')
+    expect(text(used), 'the value is the one 17a.3 shows').not.toBe('')
     expect(minus.tagName, 'a native button').toBe('BUTTON')
     expect(minus.getAttribute('type'), 'it submits nothing').toBe('button')
     expect(minus.getAttribute('aria-expanded'), 'a disclosure, closed').toBe(
@@ -317,18 +329,17 @@ test('22 D4.1 (as 22 D4.21 changes its icon): every row has a − in its Used by
       norm(box['border'] ?? ''),
       'the --control outline of a control',
     ).toBe('var(--border-w) solid var(--control)')
-    const cellBox = cascade(cell).decls
+    const cellBox = cascade(cell as HTMLElement).decls
+    // 22 D4.25 takes the cell out of the flex layout: 22 D4.1's wrapping flex
+    // row with its gap and centred line is gone, and the cell centres its
+    // content as a table cell does. ListColumns.test.tsx pins the new shape.
     expect(
       norm(cellBox['display'] ?? ''),
-      '22 D4.1: the cell is a flex row',
-    ).toBe('flex')
-    expect(norm(cellBox['flex-wrap'] ?? ''), 'that wraps').toBe('wrap')
-    expect(norm(cellBox['gap'] ?? ''), 'with this space between the two').toBe(
-      'var(--space-3)',
-    )
-    expect(norm(cellBox['align-items'] ?? ''), 'centred on the line').toBe(
-      'center',
-    )
+      '22 D4.25: the cell is not a flex box',
+    ).not.toBe('flex')
+    expect(norm(cellBox['flex-wrap'] ?? ''), 'so it wraps nothing').toBe('')
+    expect(norm(cellBox['gap'] ?? ''), 'and has no gap of its own').toBe('')
+    expect(norm(cellBox['align-items'] ?? ''), 'and no align-items').toBe('')
   }
 })
 
@@ -485,12 +496,13 @@ test('22 D4.3, D4.13, D4.18 (as 22 D4.16 to D4.18 amend them): hovering the − 
 
 test('22 D4.13, D4.16 (22 D4 review D1, as the 22D4 amendment amends it): the − and its reason are siblings in the .hint-box of the cell, the − first, and the rule that styles the reason places it against the viewport (position: fixed), so showing it changes no layout', async () => {
   const { main } = await loaded()
-  const cell = usedByCell(main, 'default')
+  const cell = actionsCell(main, 'default')
   const box = boxOf(main, 'default')
   const minus = minusOf(main, 'default')
-  expect(box.parentElement, 'the box sits in the cell, where the − sat').toBe(
-    cell,
-  )
+  expect(
+    box.parentElement,
+    '22 D4.23: the box sits in the Actions cell, where the − is',
+  ).toBe(cell)
   fireEvent.mouseOver(minus)
   await flushTasks()
   const line = Array.from(box.querySelectorAll('span')).find(
@@ -865,7 +877,7 @@ test('22 D4.7: a 504 client-timeout shows delete-unknown in the group, then read
 
 // ── 22 D4.8: widths ─────────────────────────────────────────────────────
 
-test('22 D4.8: the confirm row is a row of the table, so its group sits inside the table’s scroll box and wraps with it: the td declares no width of its own and the group no width, and the Used by cell keeps its wrap', async () => {
+test('22 D4.8: the confirm row is a row of the table, so its group sits inside the table’s scroll box and wraps with it: the td declares no width of its own and the group no width, and the cell keeps its 40 px target', async () => {
   const { main } = await loaded()
   const group = await confirmGroup(main, 'qwen-27b')
   const tr = confirmRow(main)!
@@ -886,7 +898,7 @@ test('22 D4.8: the confirm row is a row of the table, so its group sits inside t
     'and shrinks below its content, so the words wrap (1.4.10)',
   ).toBe('0')
   expect(
-    norm(cascade(usedByCell(main, 'qwen-27b')).decls['flex-wrap'] ?? ''),
-    '22 D4.8: the − wraps under the value inside its cell',
-  ).toBe('wrap')
+    norm(cascade(actionsCell(main, 'qwen-27b')).decls['flex-wrap'] ?? ''),
+    '22 D4.25: the − has its own cell, which is no flex box and wraps nothing: the 40 px target is the button’s own, and the confirm row spans the row’s columns',
+  ).toBe('')
 })

@@ -258,6 +258,8 @@ test('11 M1.8: after the over-memory refusal the list is read again and the row 
     'qwen-27b',
     'llama.cpp',
     en('model-profiles-status-off'),
+    // 22 D4.23: the Actions cell, showing the icon of the row’s −.
+    '',
   ])
 })
 

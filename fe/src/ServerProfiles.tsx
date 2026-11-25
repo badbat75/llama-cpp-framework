@@ -288,6 +288,14 @@ function Body({
                 <th scope="col">{t('server-profiles-column-port')}</th>
                 <th scope="col">{t('server-profiles-column-tags')}</th>
                 <th scope="col">{t('server-profiles-column-used-by')}</th>
+                {/* The column of the row's actions (22 D4.23): its word is for
+                    a reader, so the column is announced; the eye sees no
+                    heading over an icon. */}
+                <th scope="col">
+                  <span className="visually-hidden">
+                    {t('profiles-column-actions')}
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -308,18 +316,22 @@ function Body({
                           : String(p.port)}
                     </td>
                     <td>{p.tags.join(', ')}</td>
-                    <td className="status-cell">
+                    <td>
                       {p.instance === null ? (
                         <span className="muted">
                           {t('server-profiles-unused')}
                         </span>
                       ) : (
-                        // The name the menu uses, then the id it is the key of
-                        // (16 17f.4): two instances named alike are told apart.
-                        <span>
-                          <InstanceLink id={p.instance} nameOf={nameOf} />
-                        </span>
+                        // The name the menu uses, and the id it is the key of
+                        // right after the link (16 17f.4, as 22 D4.34 amends
+                        // it): two instances named alike are told apart, and
+                        // what a reader hears as the link is the name alone.
+                        <InstanceLink id={p.instance} nameOf={nameOf} />
                       )}
+                    </td>
+                    {/* The row's actions (22 D4.23): the trash can alone, in
+                        the column every row ends with. */}
+                    <td>
                       <RowDelete
                         domId={`${uid}-delete-${p.id}`}
                         name={t('server-profiles-delete-row', p.id)}
@@ -337,7 +349,7 @@ function Body({
                   </tr>
                   {del.confirming === p.id && (
                     <ConfirmRow
-                      columns={4}
+                      columns={5}
                       question={t('server-profiles-delete-question', p.id)}
                       status={del.status}
                       alert={del.alert}

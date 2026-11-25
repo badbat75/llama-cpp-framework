@@ -1241,12 +1241,12 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     profile is on or used; on both profile pages Delete as a text button at the start of the top Save
     bar, disabled with the same hint when it cannot act; 22D2's status row and minus and all of 22D3
     superseded. The user confirmed the layout from a preview before the build. 22D4 built 2026-11-25
-    (D4.1 to D4.15, review fixes D1 to D8). Open: the UX check's Firefox run segfaults (content
-    process, signal 11, 3 of 3) at 320 px light during axe on `model-profiles-delete-tip` right after
-    `model-profiles-delete`; each state passes alone and Chromium and WebKit are clean (198/198), so
-    accepted as an engine fault of Playwright's Firefox (1.65.1, firefox-1572), decided by the
-    coordinator with the user away (2026-11-25, for review). Next: try stock Firefox or a newer
-    Playwright, or a fresh page per state in Firefox (fe/ux/check.js).
+    (D4.1 to D4.15, review fixes D1 to D8). L1 built 2026-11-25 (D4.23 to D4.28 and D4.34: the trash
+    alone in a last Actions column, Used by in its own column, every control centred within 1 px, the
+    confirm row readable at 320 px; review fixes: the confirm cell freed from the Actions rules, the
+    switch's flex line, the confirm group sticky in its scroll box). The UX check's Firefox segfault of
+    22D4 did not recur: 0 failing in Chromium, Firefox and WebKit on L1. Next L2: D4.29 to D4.33 and
+    D4.35 to D4.37 (brief 22).
     Then GT2 (user, 2026-11-24): `RocmHostMemoryGtt` (GT1's server profile key, on when unset) as a
     field in the Server page's SDK tuning card beside `RocblasUseHipblaslt` (designer brief, then
     tester and coder), after 22D4 (brief `fe/briefs/25-rocm-host-memory.md`, GT2.1 to GT2.5: a checkbox

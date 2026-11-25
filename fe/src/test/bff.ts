@@ -114,6 +114,10 @@ export const EN: Record<string, string> = {
   'server-profiles-column-tags': 'Tags',
   'server-profiles-column-used-by': 'Used by',
   'server-profiles-unused': 'No instance',
+  // Brief 22, the 22D4 composition amendment (22 D4.23): the last column of
+  // both profile lists, whose header is visually hidden and whose one cell
+  // holds the row's trash can. The key is shared by the two lists.
+  'profiles-column-actions': 'Actions',
   // Brief 22 slice 22D4 (22 D4.1, D4.2, D4.4, D4.6): the − in the Used by cell
   // of each row of the Server profiles list, its reason when it cannot act, the
   // question of its confirm row, and the line the region says when it is done.

@@ -307,13 +307,14 @@ test('16 17f.4: a message that names an instance keeps the id: the page of an id
   expect(text.textContent, 'the id, not a name').toContain('nosuch')
 })
 
-/** The Used by link of 17f.4, as it must read: the name, a space, the id. The
- *  space is the 17f review's D1: run together, the cell shows "Coding
- *  assistantID default" and the link's accessible name says the same, which is
- *  what 2.4.4 asks to fix. */
-const USED_BY = `Coding assistant ${en('instance-id-shown', 'default')}`
+/** The Used by link of 17f.4, as it must read: the name alone. The id follows
+ *  the link as plain text (22 D4.34 replaces the 17f review's D1, which set it
+ *  inside the link after a space): what a reader hears as the link is the
+ *  instance's name, and the id is still there to tell two named alike apart. */
+const USED_BY = 'Coding assistant'
+const USED_BY_ID = en('instance-id-shown', 'default')
 
-test('16 17f.4 (17f review D1): the Server profiles list links its Used by cell with the name, a space, and the id in a span.instance-id after it', async () => {
+test('16 17f.4 (as 22 D4.34 amends the 17f review D1): the Server profiles list links its Used by cell with the name alone, and the id in a span.instance-id right after the link, outside it', async () => {
   const pool = [
     {
       id: 'qwen-27b',
@@ -326,32 +327,41 @@ test('16 17f.4 (17f review D1): the Server profiles list links its Used by cell 
   const { main } = await open('#/profiles/server', {
     serverProfiles: () => reply(200, pool),
   })
-  const cell = await within(main).findByRole('link', { name: USED_BY })
-  expect(cell.getAttribute('href'), 'the link is the instance page').toBe(
+  const link = await within(main).findByRole('link', { name: USED_BY })
+  expect(link.getAttribute('href'), 'the link is the instance page').toBe(
     '#/instances/default',
   )
-  expect(cell.textContent, 'the cell reads the name, a space, the id').toBe(
-    USED_BY,
-  )
-  const span = cell.querySelector('span.instance-id')
-  expect(span, 'the id is in a span.instance-id').not.toBeNull()
-  expect(span!.textContent).toBe(en('instance-id-shown', 'default'))
+  expect(
+    link.textContent,
+    '22 D4.34: the link reads the name alone, so 2.4.4 is met',
+  ).toBe(USED_BY)
+  const span = link.nextElementSibling
+  expect(span, 'the id follows the link, as its sibling').not.toBeNull()
+  expect(
+    span!.classList.contains('instance-id'),
+    'the id is in a span.instance-id',
+  ).toBe(true)
+  expect(
+    span!.closest('a'),
+    '22 D4.34: it is outside the link, plain text on the same line',
+  ).toBeNull()
+  expect(span!.textContent).toBe(USED_BY_ID)
 })
 
-test('16 17f.4 (17f review D1): the profile page links its Used by row with the name, a space, and the id in a span.instance-id after it', async () => {
+test('16 17f.4 (as 22 D4.34 amends the 17f review D1): the profile page links its Used by row with the name alone, and the id in a span.instance-id right after the link, outside it', async () => {
   const { main } = await open('#/profiles/server/qwen-27b', {
     serverProfile: () => reply(200, serverProfileDoc()),
   })
-  const row = await within(main).findByRole('link', { name: USED_BY })
-  expect(row.getAttribute('href')).toBe('#/instances/default')
+  const link = await within(main).findByRole('link', { name: USED_BY })
+  expect(link.getAttribute('href')).toBe('#/instances/default')
   expect(
-    row.textContent,
-    'the row reads the name, a space, the id: the accessible name is read aloud, and "assistantID default" is not a name',
+    link.textContent,
+    '22 D4.34: the accessible name a reader hears is the instance name, not the name with the id glued to it',
   ).toBe(USED_BY)
-  expect(
-    row.querySelector('span.instance-id')?.textContent,
-    'the id is in a span.instance-id',
-  ).toBe(en('instance-id-shown', 'default'))
+  const span = link.nextElementSibling
+  expect(span, 'the id follows the link, as its sibling').not.toBeNull()
+  expect(span!.closest('a'), 'outside the link').toBeNull()
+  expect(span!.textContent, 'the id is in a span.instance-id').toBe(USED_BY_ID)
 })
 
 // ── 17f.11: the texts ─────────────────────────────────────────────────────
