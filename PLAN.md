@@ -79,9 +79,9 @@ as not checked, and the step stays open.
 **The web UI's MVP** (agreed with the user, 2026-11-15): on a real install, a member of `pai` signs
 in, sees the instances, starts, stops and restarts them, edits and saves the server file, sees the
 presets and switches them on or off, and (user, 2026-11-17, relayed by the web UI session and
-confirmed here) opens a preset and saves it. Built on the bff (2026-11-17, the preset save the last); left:
-the preset save on the fe (2h), then the user's run on their machine. After it: 11d,
-11f.
+confirmed here) opens a preset and saves it. Built on the bff and the fe (the preset save on the fe,
+2h, at 9ea579d) and deployed on this machine after every slice since; the web UI's work goes on with the
+UX audit (fe brief 24) and the slices of step 10.
 
 Release 2.4.0 bundles llama.cpp v1.0.0 with patches `0001`, `0005` and `0006`; `0002`, `0003` and `0004`
 were dropped at v0.9.0 and performance dropped with them (step 4). The test machine has two R9700 (one in

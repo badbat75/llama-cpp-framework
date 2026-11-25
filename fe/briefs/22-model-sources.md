@@ -78,9 +78,10 @@ prefers, 22 criteria then is too many: keep two runs); 22E last. A tester on 22C
   rules this brief keeps: the focus moves to a field only after its error renders (`flushSync`, D1),
   and a refusal whose read-again unmounts the control keeps its text in a focused
   `p[role="alert"][tabindex="-1"]` where the control was (D2).
-- **17f, not built**: its `delete-unknown` text and the 504 rule of 17f.10 (a 504 is "not confirmed",
-  never `request-failed`). MP3 is built first, so 22D brings `delete-unknown` and 22C and 22D apply
-  17f.10's rule to their own writes; 17f then reuses both.
+- **17f, built** (f70d631): its `delete-unknown` text and the 504 rule of 17f.10 (a 504 is "not
+  confirmed", never `request-failed`). MP3 was built first, so 22D brought `delete-unknown` and 22C and
+  22D applied 17f.10's rule to their own writes; 17f reused both. 17f's **Rename** is gone (17f2,
+  4c53fb5): the display name is set from a pencil after the instance page's heading.
 - **The GUI** (`fe/briefs/configurator-inventory.md` 1.2, 1.7, G14 to G16): the Models tab has New…,
   Clone… and Delete. New picks a model file or runs the Hugging Face dialog (search, a repo's
   candidates, download) and derives the id itself (silently made unique); Clone copies the selected

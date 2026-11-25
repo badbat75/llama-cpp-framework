@@ -175,6 +175,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `fe/src/strings/en_US.json`.
 - The count of a model profile page's editable cards moves with every fe slice: with `fe/` off-limits,
   run `git log --oneline <last-known>..HEAD` and read the `2h.<n>` messages before writing a count.
+  Write the rule, not the count ("every settings card is editable, the Engine field, the Assets card
+  and the file picks read-only"): a count goes stale at the next slice.
 - The nav's shape lives in `crates/bff/README.md` ("A shell with hash routes"): read `fe/src/App.tsx`
   (`NavHost`) before writing it.
 - The UX check's duration and its states repeat in `AGENTS.md` "Commands", `fe/ux/README.md` (count the
@@ -618,6 +620,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (`crates/bff/src/lib.rs`), which the fe reads as its generic "could not be read".
 - A brief can name a nav entry the code does not have yet, and a JSON body quoted in a brief may be
   shortened: check the route's fields in the code before quoting them.
+- A brief's "not built" line is a plan statement, and it goes stale the day the slice lands: the later
+  slice amends the brief (brief 16 lists its own "Superseded:" criteria, 17f2's pencil replacing 17f's
+  Rename), so read the brief for that note before calling it stale, and rewrite the line as built with
+  the commit that landed it (`fe/briefs/22-model-sources.md` said "17f, not built" after f70d631).
+- A string a slice drops stays in the repo: a test pins its absence (`DROPPED_DELETE` in
+  `fe/src/ModelProfileSwitch.test.tsx` holds "To delete it, switch it off first."). Grep
+  `fe/src/strings/en_US.json` for the key, not the whole tree for the text, before saying a page shows
+  a sentence.
 - A `](#slug)` into a BOLDED bullet of a README resolves nowhere: only headings get a slug. Link the
   heading that holds the bullet (`[Code conventions](#code-conventions)`) and name the bullet in words.
 - A hand-read figure sitting in an UNCOMMITTED page line can be from another engine and process than

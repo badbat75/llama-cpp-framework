@@ -57,10 +57,12 @@ the coordinator's contract; the brief assumes these:
 - `GET /api/version`: as today.
 - `GET /api/instances`: 200 `[{"id", "engine", "state"}]`; errors with keys `client-unavailable`,
   `client-not-authorized`, anything else.
-- `GET /api/instances/{id}/server`: 200 with `values` (INI key names: `Port`, `Hostname`,
-  `OpencodeBaseUrl`, `OpencodeApiKey`, `Threads`, `ThreadsBatch`, `ModelsMax`, `ModelsMemoryMargin`,
-  `ModelsDir`, `Webui`, `WebuiMcpProxy`, `LogVerbosity`, `SaveStateOnShutdown`, `StateDir`,
-  `RocblasUseHipblaslt`, `RocprofAttach`, `CudaAllreduce`, `CudaDisableGraphs`, `AttnRotDisable`;
+- `GET /api/instances/{id}/server`: 200 with `values` (the INI key names the bff reads, today 22,
+  `FIELDS` in `crates/bff/src/server.rs`: `Port`, `Hostname`, `OpencodeBaseUrl`, `OpencodeApiKey`,
+  `Threads`, `ThreadsBatch`, `ModelsMax`, `ModelsMemoryMargin`,
+  `ModelsDir`, `Devices`, `Tags`, `Webui`, `WebuiMcpProxy`, `LogVerbosity`, `SaveStateOnShutdown`,
+  `StateDir`, `RocblasUseHipblaslt`, `RocmHostMemoryGtt`, `RocprofAttach`, `CudaAllreduce`,
+  `CudaDisableGraphs`, `AttnRotDisable`;
   `null` = unset), `defaults` (`Port`, `ModelsMax`, `ModelsMemoryMargin`, `OpencodeBaseUrl`,
   `ModelsDir`, `StateDir`: the instance's own, resolved on the server), `limits` (`[min, max]` for
   `Port`, `ModelsMax`, `ModelsMemoryMargin`, `Threads`, `ThreadsBatch`; the thread max is the server
