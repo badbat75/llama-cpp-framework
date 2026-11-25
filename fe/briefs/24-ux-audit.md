@@ -10,6 +10,14 @@ Server profiles list and page (`ServerProfiles.tsx`, `ServerProfilePage.tsx`), I
 in use by 17f. Requests already briefed are listed, not repeated: the + spacing (21 TP1c), list adds
 as + (16 17b2), Delete as − beside the status and the Save bar at the top (22 22D2).
 
+**Revised 2026-11-25** (designer), after 22D4 and 17f2 were built. 22D4 removed the 22D2 status row:
+the model profile page now shows its state as a plain paragraph under the summary line, and its
+Delete is the Save bar's first button, with an always-shown reason line in the bar while it cannot
+act (22 D4.9, D4.10, D4.14). 17f2 replaced Rename with the display name pencil after the heading.
+The table in section 1, A2, A4, A7 and A9 are updated; each change says what changed and why. A3, A5,
+A6, A8 and A10 were checked and still hold. The criteria keep their **23 A.n.m** ids so that tests
+already written against them stay valid.
+
 ## 1. Clicks from the Overview today
 
 Desktop nav, with the profile reached through the list. At 320 px the menu button adds one click to
@@ -19,12 +27,12 @@ every task that starts in the nav.
 |---|---|---|---|
 | Start, stop or restart an instance | tile link, then Start | 2 | **1**: the run action on the tile (A1) |
 | Switch a model profile on or off | nav Model profiles, then the row's switch | 2 | 2 (fine) |
-| Switch the profile you are looking at on or off | back to the list, find the row, switch | 3 or more, plus a filter | **1**: the switch in the page's status row (A2) |
-| Delete a switched-on model profile | list, switch off, profile link, Delete, confirm | 5 | **3**: profile page, switch off, −, confirm (A2) |
+| Switch the profile you are looking at on or off | back to the list, find the row, switch | 3 or more, plus a filter | **1**: the switch in the page's state line (A2, revised) |
+| Delete a switched-on model profile | from the list (22D4): the row's switch, the row's −, confirm | 3 | 3 from the list, unchanged; **3** from the profile page too: switch off, the Save bar's Delete, confirm (A2, revised) |
 | Edit one model profile setting | nav, profile, jump toggle (below 1280 px), jump, field, Save | 4 to 5 | 3 to 4 with a setting search (A6) |
 | Create a server profile | nav, + (17b2), fill, Create | 3 | 3 (fine) |
 | Create a model profile | nav, + (22C), fill, Create | 3 (22C) | 3 (fine) |
-| Rename an instance | tile, Rename, Save (17f) | 3 (17f) | 3 (fine) |
+| Set an instance's display name | tile, the pencil after the heading, Save (17f2) | 3 | 3 (fine; revised: 17f2 replaced Rename) |
 | See which instance serves a model profile | nav, profile page: not shown there either; instance page | 3 or more, by elimination | **1**: a column on the Models list (A3) |
 | See a GPU's memory | nowhere on a page (the data is in `GET /api/node/devices`) | not possible | **1**: Node info (A5) |
 
@@ -56,17 +64,34 @@ Each finding gives its criteria (**23 A.n.m**) for the tester. Texts are propose
 Today the page only says "switch it on in the list of all model profiles" (`model-profile-off`), so
 a page reached from a search or a link sends the user back to a list.
 
-- **23 A2.1** The 22D2 status row holds, before the −, the same on/off switch as the Models list's row
-  (the same component and the same `PUT /api/profiles/model/{id}/enabled`, with its restart note and
-  its feedback in the row's status line). The status paragraph becomes short: `model-profile-on-short`
-  (`Switched on: its engine serves it.`) or `model-profile-off-short` (`Switched off: kept, but not
-  served.`).
-- **23 A2.2** Switching it off brings the − into the row without moving the focus. Switching it on
-  removes the −, and if the confirm group is open it closes; the focus stays on the switch.
-- **23 A2.3** The switch's write takes the page's revision into account: after a switch the page
-  reads the document again, so a later Save uses the new revision. An unsaved edit is kept, and the
-  switch is `aria-disabled` while the page is dirty, with the reason in its description
-  (`model-profile-switch-dirty`: `Save or discard your changes first.`).
+*Revised 2026-11-25*: the first version put the switch in the 22D2 status row, before the −. 22D4
+removed that row and the − (the page's Delete is in the Save bar, with its reason line under the
+bar's buttons), so A2.1 to A2.3 are rewritten for the current page and A2.4 is new.
+
+- **23 A2.1** The state paragraph under the summary line (22 D4.9, `ModelProfilePage.tsx` about 1787)
+  becomes a state line: the same on/off switch as the Models list's row (the same component, named by
+  the profile, and the same `PUT /api/profiles/model/{id}/enabled`, with its restart note), then its
+  short text, then the line's own `role="status"` and `role="alert"` places for the switch's
+  feedback. The texts become `model-profile-on-short` (`Switched on: its engine serves it.`) and
+  `model-profile-off-short` (`Switched off: kept, but not served.`). The "To delete it, switch it off
+  first." and "switch it on in the list" sentences go: the switch is right there, and the Save bar's
+  reason line says the rest. The line stays outside the settings section, above the Save bar (status
+  beside its control, principle 10; the bar keeps the edit commands, principle 6).
+- **23 A2.2** The switch drives the Save bar's Delete without moving the focus. Switching off makes
+  Delete active and removes its reason line (22 D4.14). Switching on makes Delete `aria-disabled`
+  again and shows the reason line, `model-profiles-delete-needs-off` ("Switch it off to delete it."),
+  which now points at a switch on the same page. The confirm can only be open while the profile is
+  off, so a switch-on with the confirm open closes it first. The focus stays on the switch.
+- **23 A2.3** The dirty rule. Moving a profile between `models.ini` and `models.ini.disabled` changes
+  the document's revision, so a switch under unsaved edits would make the next Save conflict. While
+  the page is dirty, the switch is `aria-disabled` and described by `model-profile-switch-dirty`
+  (`Save or discard your changes first.`), shown as a line in the state line. After a switch, the
+  page reads the document again, so the next Save uses the new revision. This differs on purpose
+  from Delete, which does not follow the dirty state (22 D4.10): its question already says the
+  unsaved changes go with it.
+- **23 A2.4** One write at a time on the page. While the switch's write runs, Delete and Save are
+  `aria-disabled`. While a Save or a Delete runs, the switch is. A refusal of the switch goes in the
+  line's alert, with the texts the list's row already maps for the same route.
 
 ### A3. The Models list shows what serves each profile (principle 11)
 
@@ -82,7 +107,11 @@ the Server profiles list already has "Used by".
 
 ### A4. The instance names its address (principle 13)
 
-- **23 A4.1** The instance page's header gains an "Address" row: `http://<host>:<port>/`, where host
+*Revised 2026-11-25*: the header now starts with 17f2's title row, the id line and the display name
+form's place, so the row's place is named.
+
+- **23 A4.1** The instance page's header gains an "Address" row, right after the port line (after
+  the 17f2 form's place, never between the id line and the form): `http://<host>:<port>/`, where host
   and port are the server profile's `Host` and `Port`, and a loopback or `0.0.0.0` host is replaced by
   the host name the page was loaded from. Beside it is a 40 px `copy` icon button named `Copy
   address`; its `role="status"` line says `Copied.`, or `Not copied: select the address and copy it.`
@@ -116,8 +145,12 @@ ruled out a refresh (2026-11-20), so this shows the probe and dates it.
 
 ### A7. The instance page has a back link like the profile pages (consistency)
 
+*Revised 2026-11-25*: the `h1` now sits in 17f2's title row with the pencil.
+
 - **23 A7.1** `InstancePage.tsx` gains the `chevron-left` back link to the Overview
-  (`instance-back`: `Overview`) above the `h1`, as the model and server profile pages have. At 320 px
+  (`instance-back`: `Overview`) above the title row (the `h1` and its pencil), as the model and
+  server profile pages have it above their heading. The Tab order becomes: the back link, then the
+  pencil (17f2.8). At 320 px
   the nav sits behind the menu, so today the only way back is the menu or the browser's Back.
 
 ### A8. Save from the keyboard (admin-console practice)
@@ -130,9 +163,13 @@ ruled out a refresh (2026-11-20), so this shows the probe and dates it.
 
 ### A9. Empty states offer their action (principle 12)
 
-- **23 A9.1** `instances-empty`, `server-profiles-empty` and `model-profiles-empty` are each followed
-  by their list's + (17b2, 22C), already open-able from there. Each text gains its next step: `No
-  instances yet: add one with the + below.` and the like. A failed read (`server-profiles-failed`,
+*Revised 2026-11-25*: the Overview has no + yet (17c's create form is not built), so the instances
+part waits for it.
+
+- **23 A9.1** `server-profiles-empty` and `model-profiles-empty` are each followed by their list's +
+  (17b2, 22C), already open-able from there. Each text gains its next step: `No server profiles yet:
+  add one with the + below.` and the like. `instances-empty` gains the same once 17c puts a + on the
+  Overview. Until then its text names no action it cannot offer. A failed read (`server-profiles-failed`,
   `model-profiles-load-failed`, the instances failure) gains a `Read again` button
   (`read-again`) that repeats the read and puts the focus on the page heading after it.
 
