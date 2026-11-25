@@ -295,6 +295,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (Holds table, paths table, system files heading and row), the README package table, and the manager
   row of `crates/config/README.md`'s source map. `components.rs` splits Linux and macOS alike: fix the
   path tables of `build-packaging.md` AND `build-macos.md`, and the README's package table.
+ - An instance's readiness rule (RS) is stated once, in `build-packaging.md`'s system files table: the
+   `llama.cpp@.service` row (the `ExecStartPost= wait-ready`, the 2 s poll, the 10-min deadline, the
+   `TimeoutStartSec=11min` backstop, `activating (start-post)`), the `llama.cpp.target` row beside it,
+   and the ordering paragraph under the table (`After=` only, and what it does not give). The manager
+   verb goes in `crates/config/README.md`'s manager source-map row beside `save-slots`, the package
+   relation in the relations table's `llama.cpp` rows, and the README package table names the target
+   only.
 - A maintainer-script change is described in `build-packaging.md`'s "When" table (Removal, Purge rows),
   the `DPKG_ROOT` sentence below it and the rpm `Requires(<tag>)` sentence; the "not run for real" line
   of the install log stays until a real removal or purge.

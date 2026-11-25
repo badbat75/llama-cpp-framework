@@ -1418,8 +1418,8 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   = none` when the pool's `[*]` sets none (an explicit value wins; Linux only); GT5b a hint on the unset
   field (designer first); GT5c the R9700 guide (written 2026-11-25).
   **RS, instance readiness** (the owner, relayed by the strata-framework agent, 2026-11-25: Strata's
-  system unit orders After=llama.cpp@default): ARCHITECTURE.md "An instance is started once its
-  load-on-startup models are loaded", as decided by the user the same day: `Type=exec` kept,
+  system unit orders After=llama.cpp@default): ARCHITECTURE.md "An instance is started once its router
+  answers", as decided by the user the same day: `Type=exec` kept,
   `ExecStartPost=pai-manager wait-ready %i` polls the router's `GET /health` every 2 s; started on 200,
   the start fails after 10 min (`TimeoutStartSec=11min`); the llama.cpp packages gain `Breaks:`/
   `Conflicts:` on a framework core older than `wait-ready`. Slices RS1 `wait-ready` (pai-manager; built 2026-11-25: it asks nothing until the main

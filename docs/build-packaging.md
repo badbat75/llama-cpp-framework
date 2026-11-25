@@ -285,7 +285,7 @@ RUNPATH described below.
 | `private-ai-framework-cli` | `pai` (the command line), the benchmark method; no graphics library | `<framework>` | not measured |
 | `private-ai-framework-bff` | `pai-bff` (the web service), `private-ai-bff.service` and the sysusers entry of its user | `<framework>` | not measured |
 | `private-ai-framework-core` | `pai-manager`, `private-ai-manager.service`, the D-Bus and polkit policies, the polkit rule, the sysusers entry of `private-ai` and the group `pai`, the PAM service `/etc/pam.d/private-ai`, `cli.toml`, the manager's maintainer scripts | `<framework>` | not measured |
-| `llama.cpp` | llama.cpp's executables and libraries, the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp, the instance unit `llama.cpp@.service` and the scripts that stop and restart the instances; nothing else of the framework | `1:<release>+pai<N>`, `1:1.0.0+pai2` | not measured |
+| `llama.cpp` | llama.cpp's executables and libraries, the ggml backends (`libggml-hip.so`, `libggml-cuda.so`, `libggml-vulkan.so`), libomp, the instance unit `llama.cpp@.service`, the static `llama.cpp.target` with the `multi-user.target.wants` link that pulls it in, and the scripts that stop and restart the instances; nothing else of the framework | `1:<release>+pai<N>`, `1:1.0.0+pai2` | not measured |
 | `llama.cpp-rocm` | The ROCm libraries with RCCL, and the kernel stores | The SDK's, `10.1.0` | 831 / 922 MiB |
 | `llama.cpp-cuda` | The CUDA libraries and NCCL | `<cuda>+nccl.<nccl>`, `13.5.0+nccl.2.32.3` | 655 / 675 MiB |
 | `llama.cpp-vulkan` | The Vulkan loader | The SDK's, `1.4.363.1` | 2 / 2 MiB |
@@ -324,6 +324,7 @@ missing is skipped at start, with only a log line.
 | `llama.cpp` asks for each runtime at the version it was built against | `Recommends` `(= <version>)` | `Recommends` `= <version>` |
 | `llama.cpp` refuses any other version of a runtime, whose symbols a backend may not resolve | `Breaks` `(<< <version>)`, `(>> <version>)` | `Conflicts` `< <version>`, `> <version>` |
 | `llama.cpp` keeps out the distribution's package of the same commands | `Conflicts: llama.cpp-tools` (Ubuntu) | `Conflicts: llama-cpp` (Fedora) |
+| `llama.cpp` keeps out a framework core with no `wait-ready`, the command its instance unit's `ExecStartPost=` runs, below the framework's workspace version (the unit carries no `-` prefix, so that pair would fail every start); it still requires nothing of the framework, the unit's `ConditionFileIsExecutable=` skipping the command where there is no manager | `Breaks: private-ai-framework-core (<< <framework>)` | `Conflicts: private-ai-framework-core < <framework>` |
 | `config`, `llama.cpp` and the runtimes replace `llama-cpp-framework`, the single package of the releases up to 2.2.0 | `Conflicts`, `Replaces` | `Obsoletes` `<= 2.2.0` |
 | The same replace their component's package of releases 2.3 and 2.4 (`llama-cpp-framework-config`, `-llama`, `-rocm`, `-cuda`, `-vulkan`) and stand in for it; `cli`, `bff` and `core` had none | `Conflicts`, `Replaces`, `Provides` `(= <version>)` | `Obsoletes` `< 2.4.1` (`config`, `llama.cpp`) or `<= <version>` (a runtime), `Provides` `= <EVR>` |
 
@@ -369,7 +370,7 @@ been run for real.
 | `/usr/share/private-ai/llama.cpp/versions/` | Each its own: `llama.cpp`, `llama.cpp-cuda`, `llama.cpp-rocm`, `llama.cpp-vulkan` | `versions/<package>`: one file per package, named after it, holding that package's version on one line (empty for an SDK outside the dist layout, which is no version). The web service reads the folder for `GET /api/node` ([crates/bff/README.md](../crates/bff/README.md#the-node)) |
 | `/usr/share/private-ai/licenses/<component>/` | Each its own (`llama/` for `llama.cpp`) | The licence texts and their `README.txt` |
 | `/usr/share/` | `config`; `doc/<package>/copyright` in each | The desktop entry `org.privateai.Config.desktop` ("Private AI Framework" in the menu), its icon, the copyright file |
-| `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/`, `/usr/share/polkit-1/rules.d/`, `/etc/pam.d/` | `core`; `llama.cpp@.service` in `llama.cpp`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
+| `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/`, `/usr/share/polkit-1/rules.d/`, `/etc/pam.d/` | `core`; `llama.cpp@.service`, `llama.cpp.target` and its `multi-user.target.wants/` symlink in `llama.cpp`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
 
 **Each package's `copyright` and `Homepage` (rpm `URL`) name its own source.** The framework's
 packages carry this project's MIT licence and repository; `llama.cpp` carries llama.cpp's own licence
@@ -456,13 +457,14 @@ user in `${XDG_CONFIG_HOME:-~/.config}/private-ai/` (`paths::config_dir`) and mo
 `~/.config/llama.cpp/` and `~/.local/share/llama.cpp/` there at its first start
 ([Migration from 2.4](../crates/config/README.md#migration-from-24)).
 
-**The services' system files are in `core`, beside `pai-manager`, the instance unit in `llama.cpp`, and the web service's unit and user in `bff`** (`xtask/src/linux/system_files.rs`,
+**The services' system files are in `core`, beside `pai-manager`, the instance unit and the target in `llama.cpp`, and the web service's unit and user in `bff`** (`xtask/src/linux/system_files.rs`,
 installed 0644, overwritten on every upgrade, the PAM service apart; local changes go in a drop-in, `systemctl edit`):
 
 | File | What it does |
 | --- | --- |
 | `/usr/lib/systemd/system/private-ai-manager.service` | `pai-manager serve` as root, `Type=dbus` on `org.privateai.Manager1`, `HOME=/var/lib/private-ai` so a blank `ModelsDir` means the same as for the instances, `ConfigurationDirectory=private-ai llama.cpp` (mode 0755), `Restart=on-failure`, enabled for `multi-user.target` |
-| `/usr/lib/systemd/system/llama.cpp@.service` | `pai-manager run-instance %i` as user `private-ai` (supplementary groups `render`, `video`), `StateDirectory=` for its home `/var/lib/private-ai` and the data root under it, `Restart=on-abnormal`, `ConditionFileIsExecutable=/usr/libexec/private-ai/pai-manager` (without the framework it does not run: the engine does not require it); `[Install] WantedBy=multi-user.target`, so an instance starts at boot once enabled, which no package does (the configurator's "start llama-server when the system starts", through the manager's `SetBootEnabled`); its output goes to journald |
+| `/usr/lib/systemd/system/llama.cpp@.service` | `pai-manager run-instance %i` as user `private-ai` (supplementary groups `render`, `video`), `StateDirectory=` for its home `/var/lib/private-ai` and the data root under it, `Restart=on-abnormal`, `ConditionFileIsExecutable=/usr/libexec/private-ai/pai-manager` (without the framework it does not run: the engine does not require it), `Before=llama.cpp.target` (below), `ExecStartPost=/usr/libexec/private-ai/pai-manager wait-ready %i`: the start job ends only when that command exits, and systemd counts it for the `Before=`/`After=` ordering (systemd.service(5)), so the instance goes `active`, and a unit ordered after it starts, only once its router answers `GET /health` with 200. The command re-reads `$MAINPID`'s command line every 2 s, asks nothing while the main process is still `run-instance` (the unit is `Type=exec`), then polls that launch's `--host` (loopback for a `0.0.0.0` or `::` bind) and `--port` (llama-server's default when the launch left it out); it exits 0 on the first 200 and non-zero at its 10-minute deadline, which fails the start, `TimeoutStartSec=11min` being the backstop behind it (a systemd start timeout is abnormal, and `Restart=on-abnormal` would restart a load that is only slow). `systemctl status` reads `activating (start-post)` while the router loads. Ready is the router listening, not its models loaded: the router answers before its children hold their VRAM, the trade-off accepted (`ARCHITECTURE.md` "An instance is started once its router answers"). The command has no `-` prefix, so a core with no `wait-ready` is kept out by the package's `Breaks:`/`Conflicts:` (above); `[Install] WantedBy=multi-user.target`, so an instance starts at boot once enabled, which no package does (the configurator's "start llama-server when the system starts", through the manager's `SetBootEnabled`); its output goes to journald |
+| `/usr/lib/systemd/system/llama.cpp.target` (`llama.cpp`) | The one name every instance is ordered `Before=`, for another unit to order itself after the servers (`After=` takes no globs). Static: no `[Install]`, it is pulled into the boot transaction by the `usr/lib/systemd/system/multi-user.target.wants/llama.cpp.target` symlink the package ships, the way systemd's own static units are, so nothing enables it and it starts nothing; no `PartOf=`, so stopping or restarting the target leaves the instances, which the manager starts and stops one by one |
 | `/usr/share/dbus-1/system.d/org.privateai.Manager1.conf` | Only root owns the name; anyone may call it, and polkit decides in each call |
 | `/usr/share/polkit-1/actions/org.privateai.manager.policy` | `org.privateai.manager.control` (start, stop, restart): `yes` in the active session, `auth_admin` otherwise; `org.privateai.manager.configure` (writing a file, start at boot): `no` everywhere, so a polkit that reads no rules refuses it |
 | `/usr/share/polkit-1/rules.d/50-private-ai.rules` | `org.privateai.manager.configure` asks a member of the group `pai` for their own password and keeps it for a while (`auth_self_keep`), and refuses everyone else, members of `sudo`, `wheel` or `adm` included; no other action is touched |
@@ -470,6 +472,18 @@ installed 0644, overwritten on every upgrade, the PAM service apart; local chang
 | `/etc/pam.d/private-ai` | The PAM service the manager's `Authenticate` checks a web sign-in with (`auth` then `account`): the `.deb` `@include common-auth` and `common-account`, the `.rpm` `include system-auth` for both (without the file PAM falls back to `other`, which on Fedora denies everything). A conffile (`DEBIAN/conffiles`, rpm `%config(noreplace)`): an upgrade keeps a local edit |
 | `/usr/lib/systemd/system/private-ai-bff.service` (`bff`) | `pai-bff`, `Type=exec`, as the static user and group `private-ai-bff`, hardened (`ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `RemoveIPC=yes`, `NoNewPrivileges=yes`, `RestrictSUIDSGID=yes`), with no capability, no device, the kernel and cgroups out of reach and only `AF_UNIX`, `AF_INET`, `AF_INET6` sockets; it reads `/etc/private-ai/bff.ini` and writes nothing; `Restart=on-failure`, enabled for `multi-user.target` |
 | `/usr/lib/sysusers.d/private-ai-bff.conf` (`bff`) | The system user `private-ai-bff`, with no home and no shell |
+
+**Another unit orders itself after the servers with `After=llama.cpp.target` and no `Wants=`**: the
+package's link puts the target in the boot transaction, and at boot it is reached once every enabled
+instance's start has ended, the `ExecStartPost=` included. What it does not give: an instance started by
+hand after boot is not waited for by a unit already started, and a disabled instance is not in the boot
+transaction. Checked on this machine 2026-11-25 (reported by the user, commit `a721790`): reinstalling
+`llama.cpp` restarted `llama.cpp@default`, which stood `activating (start-post)` from 18:22:07 to
+18:22:11, 4 s, before going active; `systemctl list-dependencies --after llama.cpp.target` listed
+`llama.cpp@default.service`, `systemctl is-enabled llama.cpp@default` still read `enabled`, and
+`dpkg-deb -c` shows the wants link as a symlink. The `.rpm` has never been installed: its `Conflicts`
+and its target are pinned by xtask's tests only (`rs2_*` in `xtask/src/linux/package.rs` and
+`system_files.rs`).
 
 **An administrator is a member of `pai`** (the user's decision of 2026-11-15, `PLAN.md` step 10): only
 a member saves the server and model profile files or changes start at boot, from the configurator, `pai` or

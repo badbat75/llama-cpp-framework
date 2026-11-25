@@ -140,7 +140,7 @@ The packages (about 1.7 GiB in all, 3.8 GiB installed) are self-contained, so th
 | `private-ai-framework-cli` | `pai`, the command line, and the benchmark method (requires `core` at the same version and `llama.cpp` at least; no graphics library) | framework |
 | `private-ai-framework-bff` | `pai-bff`, the web service, its systemd unit and its user (requires `core` at the same version) | framework |
 | `private-ai-framework-core` | `pai-manager`, its systemd unit, the D-Bus and polkit policies and rule, the service user, the empty group `pai`, the PAM service of the web sign-in and the text every program prints (requires `llama.cpp` at least) | framework |
-| `llama.cpp` | The engine: llama.cpp's programs and libraries, the ggml backends included, and its instance unit `llama.cpp@.service`, which runs only with the framework's `pai-manager` installed | `1:<release>+pai<N>`, `1:1.0.0+pai2` |
+| `llama.cpp` | The engine: llama.cpp's programs and libraries, the ggml backends included, and its instance unit `llama.cpp@.service` (it runs only with the framework's `pai-manager` installed), with the static `llama.cpp.target` every instance is ordered before | `1:<release>+pai<N>`, `1:1.0.0+pai2` |
 | `llama.cpp-rocm` | The ROCm runtime libraries (`lib/`) | ROCm SDK |
 | `llama.cpp-cuda` | The CUDA and NCCL runtime libraries (`lib/`) | CUDA + NCCL SDK |
 | `llama.cpp-vulkan` | The Vulkan loader (`lib/`) | Vulkan SDK |
