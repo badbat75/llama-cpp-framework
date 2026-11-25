@@ -770,9 +770,10 @@ framework to 2.99.2 and carry on toward it.
 **The release's goal (user, 2026-11-25):** every profile, model and server, assignable and editable from
 the web UI. Order: after GT5b (running), 17e (an instance's model profiles), 17d (its server profile
 switch and the restart offer), 17c (create and remove an instance), then 22P and 22C (create a model
-profile from a file, a Hugging Face repository or a copy). The release is cut once these are done, not
-at the end of step 10 (user, same day, replacing the line above it): the rest of step 10 (L2, brief 24's
-A3 to A10, K1 and K2, TP3, 22E and the items after them) comes after 2.99.1.
+profile from a file, a Hugging Face repository or a copy), then L2, brief 24's A3 to A10, K1 and K2,
+TP3 and 22E, all in the release. The release is cut once these are done, not at the end of step 10
+(user, same day): the rest of step 10 (model profile tags, R4 and R5, U17d to U17h, milestone 13a, F1
+to F3, M4, M5, 13c, 13d, the router, LAN access, the portal) comes after 2.99.1.
 
 Decided with the user on 2026-11-14: one local service on the machine, installed beside the manager by
 the same packages, listening on localhost and, when configured, on the LAN with authentication. It
