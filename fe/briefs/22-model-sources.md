@@ -47,7 +47,8 @@ prefers, 22 criteria then is too many: keep two runs); 22E last. A tester on 22C
     503 `client-unavailable` (nothing done); 504 `client-timeout` (the call was handed over, the outcome
     unknown: a retried create is then 409, a retried delete 404); 502 `client-other`.
 - **The lists the picker reads** (`ARCHITECTURE.md` "Choosing the model file on the web" (5), and "One
-  models folder for every engine" (3)). Neither is served yet (M2, M3); the shapes are the design's:
+  models folder for every engine" (3)). Both are served since 2026-11-24 (M2 04e085d, M3 da525bd); where
+  the served shape differs from the design's below, "22P check (2026-11-25)" at the end wins:
   - `GET /api/hf/files?repo=<owner>/<name>`:
     `{"source":"hf","repo","revision","files":[{"tag","file","shards","size","sha256","sidecars":{"mmproj"},"value":{"hf-repo":"o/r:TAG"[,"hf-file":"<path>"]},"default":true|false}]}`.
     `value` is exactly what a pick writes. Refusals: 400 `hf-repo-invalid`, 404 `hf-repo-unavailable`
@@ -306,7 +307,8 @@ Model file field is shown after the picker mounts (the create form opening with 
 Assets card opening, 22 E.1), and again by `model-files-retry` (22 P.6); not otherwise while it stays
 mounted. The text filters only once the reply is in.
 
-**22 P.5 The options.** From the files whose `category` is `models` or `null`, those whose `path`
+**22 P.5 The options.** (Amended 2026-11-25: the `category` filter is replaced, see "22P check" P.5a.)
+From the files whose `category` is `models` or `null`, those whose `path`
 relative to `dir` contains the typed text (letter case aside; all of them for an empty text), in the
 reply's order, at most 50. Each option reads the relative path, then `, ` and the size, then, for
 `shards` above 1, `, ` and `model-file-parts`; the relative path wraps anywhere
@@ -346,7 +348,8 @@ on arrival: the file whose tag equals the field's `:TAG` (letter case aside), el
 else none. The checked one is the pick: checking one (on arrival too) sets the field's text to its
 `value["hf-repo"]` and keeps its `value["hf-file"]` (or none); the picker's value is that pair. The focus stays on the button; the status line says nothing more (the
 radios are the answer). A 200 with no files: `hf-quants-empty` (the repo) in the status line, no
-fieldset.
+fieldset. (Amended 2026-11-25, "22P check" P.9a: the bff answers a repo with no GGUF as 502
+`hf-bad-answer`.)
 
 **22 P.10 Hugging Face refusals**, in the alert place (`role="alert"`), the field keeping its text,
 the focus on the button: 400 `hf-repo-invalid` → under the field, as 22 P.8's check, focus on the
@@ -1261,3 +1264,67 @@ Tests to amend:
   rule with `--danger` for `color` and `border-color`.
 - `fe/src/TensorPlacement*.test.tsx` and `fe/src/InstanceNameEdit17f2.test.tsx` only if they pin
   `.ot-add`'s radius (none found by grep).
+
+## 22P check against the current UI (designer, 2026-11-25)
+
+I checked 22P against the served routes (`fe/briefs/api-contract.md` 228-245 and 735-755,
+`crates/bff/README.md` 410-428 and 1191-1199) and the UI as it stands: 22D4 and its amendment
+(D4.16 to D4.21), A2's switch on the page (brief 24), and the round `.ot-add` buttons.
+
+Still true:
+- P.1 to P.4, P.6 to P.8, P.10 and P.11.
+- P.3's combobox is still `fe/DESIGN.md`'s tag combobox (Chips, the list in the flow).
+- 22 C.1's + after the table is the list's `.ot-add`, round since D4.21, with no change to its text.
+- Nothing in 22P touches the delete, the switch or the Save bar. On the page, the picker lives in the
+  Assets card (22E), below A2's state line, and the switch's dirty rule (23 A2.3) covers a picker
+  edit like any other edit.
+
+What changed, and the criteria replaced:
+
+**22 P.5a The options (replaces P.5's first sentence).** `category` is the first subfolder's name
+under `dir`, any text, or `null`. It is not the design's four values, so it cannot pick the main
+models. Each option comes from a row whose file name (the part of `path` after its last `/` or `\`)
+contains none of `mmproj`, `imatrix`, `mtp-`, `eagle3-`, `dflash-` and `dspark-`, compared with
+letter case kept. This is llama.cpp's own rule for a main model file (`gguf_filename_is_model` in
+`common/download.cpp`), which pai-core copies as `NOT_A_MODEL` (`crates/core/src/hf.rs` 69-71,
+990). Of those rows, the options are the ones whose `path` relative to `dir` contains the typed
+text, letter case aside, in the reply's order, at most 50. The rest of P.5 stands.
+`model-files-count`, `model-files-more` and `model-files-empty` count these rows only. A folder
+holding only projector or draft files reads as empty.
+
+**22 P.6a Truncated (changes one text).** `truncated` is true when the walk kept 5 000 rows or
+visited 50 000 entries. The old text promised "the first 5000", which is wrong in the second case.
+`model-files-truncated` becomes:
+`The models folder holds more than the list can read, so some files are missing from it. Move the files no profile uses out of it.`
+
+**22 P.9a A repo with no GGUF.** The bff answers it 502 `hf-bad-answer`, never a 200 with no files.
+- `hf-quants-empty` leaves the strings list.
+- A 200 with an empty `files` (not expected) reads as `api-hf-bad-answer`.
+- `api-hf-bad-answer` becomes:
+  `Hugging Face's answer lists no GGUF file llama.cpp can load: the repo may hold none, or the answer could not be read. Check the repo's name, or try again later.`
+
+**22 P.10a Arguments.** `hf-busy`, `hf-bad-answer`, `hf-tool-missing` and `hf-unreachable` carry no
+`args`, so their texts take none, as the 22P table already has. `hf-repo-invalid`,
+`hf-repo-unavailable` and `hf-repo-moved` carry `[repo]`.
+
+**Run order.** 22P has no user until 22C. Its tester mounts `ModelSource` alone in its tests,
+stubbing both routes with the served shapes above. 22C follows as its own run (section 0's order).
+
+Already stale for 22C and 22E, not 22P (recorded here so their runs do not pick it up):
+- Decision 7 and the 22D text table are superseded by 22D4 (Delete on the rows and in the Save bar)
+  and A2 (the page's own switch). `model-profile-delete-needs-off` is gone from the strings file.
+  `api-model-profile-enabled` (used by `RowDelete.tsx` 49 and the page's delete) still says
+  "Switch it off in the list of model profiles first", which is wrong on the page, where the switch
+  is right there. Its text becomes, in any run that touches it:
+  `{0} is switched on, so it cannot be deleted. Switch it off first.`
+- Section 0's "The page today" now also has A2's state line between the summary and the settings.
+  The model file is still a read-only row of the Assets card (`ModelProfilePage.tsx` `assetRows`,
+  223).
+
+The tester pins these first, in this order:
+1. P.1 and P.2: the shape and the value.
+2. P.3 and P.5a: the combobox and its options, with the file-name rule.
+3. P.6 with P.6a: the state line.
+4. P.8 and P.9: Show quants and the quants.
+5. P.10 with P.9a and P.10a: the refusals.
+6. Then P.4, P.7, P.11 and P.12.
