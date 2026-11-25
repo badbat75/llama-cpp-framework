@@ -1409,7 +1409,13 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   source of the weight upload, which stays registered (inferred from timing and sizes: the stacks stop in
   libhsa-runtime64, built without frame pointers). Levers to test, one at a time, each with a restart, the
   same probe and the user's go: `GPU_PINNED_MIN_XFER_SIZE=1000000` for the instance, or `--no-mmap` for
-  the embedder's model profile): ROCclr's
+  the embedder's model profile). First lever tried 2026-11-25 09:30 with the user's go: `load-mode =
+  none` written into the embedder's section by hand (models.ini and models@default.ini, backup in
+  /var/tmp/gt4-backup-0856). At load: 5 SVM sets, 147 MiB (5 x 30,044 KiB, the same size every
+  llama-server registers at init, likely the runtime's), against 406 sets and 722 MiB with mmap; no
+  /dev/zero mapping; evictions 0 at 15 s. Pending: its evictions after an hour (against ~1.5 s per GPU
+  with mmap), then decide whether the framework sets load-mode none for small models on ROCm by
+  default or documents it, and whether GPU_PINNED_MIN_XFER_SIZE is still needed): ROCclr's
   `GPU_PINNED_MIN_XFER_SIZE=1000000` (copies of 1 MiB or more through a pre-pinned staging buffer; Strata
   runs with it), and, if ggml calls hipHostRegister itself, a patch so that memory comes from
   hipHostMalloc (GTT under GT1) instead.
