@@ -1267,3 +1267,74 @@ Not met:
   and WebKit. The box is 288 px at 320 px (both text sizes) and 640 px at 1280 px. The label sits
   above it, and under it come the hint and then a 422 error, both aligned with the box. No sideways
   scroll. 17f2 accepted.
+
+## 17e check (2026-11-25)
+
+Release goal (user, 2026-11-25): every profile, model and server, can be assigned and edited from
+the web UI. 17e is built first.
+
+I checked 17e.1 to 17e.11 against:
+- the served routes (`fe/briefs/api-contract.md` 868-897, 2d9a4c8);
+- the instance page as built (run controls with `RunButtons`, 17f2's pencil after the `h1`, the
+  Server profile section, `InstancePage.tsx` 376 and 419-432);
+- L1's lists (22 D4.23 to D4.28) and D4.37's `InstanceLink`.
+
+Still true: 17e.1, 17e.2, 17e.3, 17e.6, 17e.9 and 17e.11. The routes and their shapes match: the
+GET has `all`, and rows with `value`, `viaAll`, `effective`; the PUTs answer `{effective, running}`
+and `{running}`.
+
+**17e.4a The table, in L1's composition (replaces 17e.4's layout; the content is unchanged).**
+- Columns: `model-profiles-column-name`, `instance-models-column-pool`, `instance-models-column-here`.
+- The id is a link to `#/profiles/model/<id>` in a `span` with an id.
+- "In the list" is `model-profiles-status-on` or `-off` as muted text.
+- The Served here cell is a `.status-cell`: `width: 1%; white-space: nowrap`, its switch and word
+  laid out by an inner `span` with `display: flex` (22 D4.25), never by the `td`.
+- The switch is named with `aria-labelledby` the id's `span`, as on the Models list
+  (`ModelProfiles.tsx`), not with `aria-label`: one way of naming a row's switch across the app
+  ([4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)).
+- No Actions column: nothing is deleted here.
+- Every control within 1 px of its row's centre (22 D4.28). At 320 px the table scrolls inside its
+  box, and the page never scrolls sideways.
+
+**17e.5 stands, and 17e.7a replaces 17e.7's restart offer.**
+- No "Restart offer" component was built (decision 8), and the instance page already carries its
+  own Restart at its top (`RunButtons`).
+- When `running` is true, the status reads `instance-models-on-restart`, `-off-restart` or
+  `instance-models-all-restart`. Those texts already say to restart, and nothing more is shown: no
+  second Restart button on the same page, and no focus move. Decision 8 still holds where a page
+  has no Restart of its own.
+- This is the adviser's preference: it is one control fewer, the existing one is two Tabs back up
+  the page, and it keeps the user where they were.
+
+**17e.8a Refusals (adds what the contract serves).**
+- 422 `model-profile-bad-value` and 400 `assignment-malformed` → `request-failed`: the page never
+  sends a wrong word, so either is a bug.
+- A 503 on a write can mean the outcome is unknown: "a write that outlives the limit is 503 here,
+  never 504". 17e.8's read again after every failure already shows what the record holds, and the
+  alert keeps `api-client-unavailable`.
+- The rest of 17e.8 stands.
+
+**17e.10a Keyboard (replaces 17e.10).** Tab goes: the checkbox, then each row's id link and
+switch. Space toggles a focused switch. The focus stays on the control used through every answer
+([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)).
+
+Adviser notes (not criteria; for the user if they want them):
+- The section's place: after the Server profile section, before Remove instance (decision 2),
+  unchanged. On the screenshots of the instance page the run controls and the pencil already fill
+  the head. A short "Model profiles" heading with the count served ("3 of 4 served") would let a
+  user check the page without scrolling the table. This would need a new key, so it is left out
+  unless the user wants it.
+- "In the list" names the global switch, and "Served here" the effective state. When they differ
+  (on here while off in the list, or the reverse) the row is an override, the case that confuses.
+  A muted word after the switch, "override", would name it. Also left out for now: the intro
+  paragraph already explains it.
+
+17e then counts 11 criteria (17e.4a, 17e.7a, 17e.8a and 17e.10a replace their originals).
+
+Tests to amend or add:
+- `fe/src/InstancePage.test.tsx`: the section after Server profile, its Tab order, and the absence
+  of any Restart offer button.
+- `fe/src/test/bff.ts`: the three routes with the served shapes (rows with `value`, `viaAll`,
+  `effective`; the PUTs' `{effective, running}` and `{running}`).
+- A new `InstanceModels*.test.tsx` for 17e.1 to 17e.11.
+- `fe/ux/check.js` gains an `instance-models` state (the tester adds it; the designer runs it).
