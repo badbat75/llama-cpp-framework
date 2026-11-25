@@ -1416,7 +1416,8 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   /var/tmp/gt4-backup-0856). At load: 5 SVM sets, 147 MiB (5 x 30,044 KiB, the same size every
   llama-server registers at init, likely the runtime's), against 406 sets and 722 MiB with mmap; no
   /dev/zero mapping; evictions 0 at 15 s. After 53 minutes 0/0/0 ms (against ~1.5 s per GPU in an hour with
-  mmap), on a quiet box; pending: the same under heavy load (builds, Vitest, browsers), then decide whether the framework sets load-mode none for small models on ROCm by
+  mmap), on a quiet box, and still 0/0/0 about 3 h after load, through an hour of builds, Vitest and
+  browsers (IO pressure up to 88%, 11.3 GB free); Strata 0 in the same window. Left: then decide whether the framework sets load-mode none for small models on ROCm by
   default or documents it, and whether GPU_PINNED_MIN_XFER_SIZE is still needed): ROCclr's
   `GPU_PINNED_MIN_XFER_SIZE=1000000` (copies of 1 MiB or more through a pre-pinned staging buffer; Strata
   runs with it), and, if ggml calls hipHostRegister itself, a patch so that memory comes from
