@@ -1391,7 +1391,12 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   hsaKmtRegisterMemoryWithFlags, not yet verified on llama-server): memory a process registers or pins
   (hsa_amd_memory_lock, hipHostRegister, ROCclr's pin-in-place for pageable copies) always goes through
   the SVM API when the driver has it, whatever the two variables say. Levers to test (GT4, after a
-  read-only trace of svm_range_add in the embedder, user's go given 2026-11-25 07:45, running): ROCclr's
+  read-only trace of svm_range_add in the embedder, user's go given 2026-11-25 07:45; run 08:00-08:15: 0 svm_range_set_attr calls by the embedder while
+  evictions kept growing, so the range hit was registered once at load, not per request, and the XFER
+  lever alone is unlikely to help). In llama.cpp v1.0.0 the only explicit host registrations are
+  `ggml_backend_cuda_register_host_buffer` (off unless `GGML_CUDA_REGISTER_HOST` is set) and
+  batch-get's per-call mapping (`batch-get.cu`), neither a one-time one; the next check is the same
+  probe across a fresh start of the instance, which needs a restart and the user's go): ROCclr's
   `GPU_PINNED_MIN_XFER_SIZE=1000000` (copies of 1 MiB or more through a pre-pinned staging buffer; Strata
   runs with it), and, if ggml calls hipHostRegister itself, a patch so that memory comes from
   hipHostMalloc (GTT under GT1) instead.
