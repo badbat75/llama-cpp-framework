@@ -128,11 +128,20 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   newline needs one appended; `ini::detect_eol` styles a writer's appended section. Writers outside core
   use the shared helpers.
 - A call to the running engine is `pai_core::http::request(port, method, path, body, timeout)`: the
-  hand-rolled loopback HTTP/1.1 client (always `127.0.0.1`, `Connection: close`, the timeout is the
-  WHOLE request's deadline), so a poll needs no new dependency. A unit-command verb (`wait-ready`)
-  takes its `/proc` read, clock, sleep and HTTP read as arguments, so a test drives the 2 s interval
-  and the 10 min deadline in 0.01 s; the port comes from `$MAINPID`'s `/proc/<pid>/cmdline`, the LAST
-  space-form `--port` (the `--port=N` form the framework never writes names no port).
+  hand-rolled loopback HTTP/1.1 client (`Connection: close`, the timeout is the WHOLE request's
+  deadline), so a poll needs no new dependency; `request_host(host, ..)` dials the address the caller
+  names, and the caller maps the bound-everywhere `0.0.0.0` and `::` to `http::LOOPBACK` itself; its
+  `Host:` header brackets an IPv6 host (bare, the last colon reads as the port separator). A
+  unit-command verb (`wait-ready`) takes its `/proc` read, clock, sleep and HTTP read as arguments, so
+  a test drives the 2 s interval and the 10 min deadline in 0.01 s. Its target is read AGAIN every
+  round (the unit is `Type=exec`, so the first `/proc` read is `pai-manager run-instance <id>`), and
+  ONLY an argv whose argv[0] basename is `paths::binary_name("llama-server")` is asked anything: the
+  LAST space-form `--port` (the `--port=N` form the framework never writes names no port, so the
+  default `server_cfg::DEFAULT_PORT`, as `slot_save::slot_target`, and that default is the fallback of
+  the ENGINE's argv, never of a pre-exec one) and the `--host` the engine bound. A pre-exec round asks
+  NOTHING and is counted not ready, retried to the deadline: a listener on the default port is another
+  server, not this instance. Only a `$MAINPID` that is unset, no number, a pid that is gone, or an
+  engine `--port` that is no listener fails at once.
 - A record (`assignments.ini`, `instances.ini`) is written through `write_served_file(..,
   &ConfigFile::Models, ..)`: mode 0644, temp file renamed over. A render written after a record change
   turns its failure into the call's answer. `assign::render` takes both pool files, so a profile in
@@ -664,6 +673,10 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 
 ### Rust library traps
 
+- A test listener that writes its answer and drops the socket WITHOUT reading the request closes with
+  unread data: the kernel sends RST and the client loses the answer it had queued ("read failed:
+  Connection reset by peer after 40 bytes"). A "real listener" test is flaky that way (2 of 8 solo);
+  the listener that drains the request head to `\r\n\r\n` first passes every time.
 - A `server_cfg::render` template is one `format!` string: a `"` in the INI text it carries breaks the
   parse (Rust 2021 reads the word after a closed string as a literal prefix, "prefix `GTT` is unknown"),
   so a `;` comment that names a doc section states it without quotes.

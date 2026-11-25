@@ -64,6 +64,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   coder must EDIT to go green pins more than one that merely passes.
 - When the coder's work already contains the rule, say so, and add an assertion that fails for a reason
   you cannot fix.
+- A review rule that tells one process from another by argv[0] reddens every fixture that starts at the
+  first flag: sweep the fixtures and add argv[0] in the same pass, and retarget the pins that read the old
+  shape into shape-tolerant ones (every ask is X, `len >= 2`) when the fix's round count is the coder's.
 - For a defect a review found in a closed slice, pin the WORDS the review proposes: an existing test that
   compares two places (the tile's alert with the page's) is green when both carry the same wrong fallback,
   so it covers the defect's shape and not its fix.
@@ -162,6 +165,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Register a new phase in the same edit that writes it: `pai-core`, `pai-app`, `pai-cli` and
   `pai-manager` each have one `#[test] fn data_root_e2e()` in `src/tests/mod.rs` calling the phases in
   sequence, and the GUI's e2e is the one `#[test]` of `crates/config/src/tests/ui_bindings.rs`.
+- Judge a manager D-Bus e2e red by its DURATION: `data_root_e2e` runs ~30 s, and a red whose panic is the
+  `call` helper's `not a method error reply: InputOutput(Custom { kind: TimedOut, .. })` in
+  `manager/dbus.rs` is zbus's 25 s call timeout crossed while the box is loaded (measured on this box:
+  the SAME test 23 s, 150 s, 170 s, 293 s, 432 s, green and red, at load 6-12). Show it is not the slice
+  by interleaving solo runs in the tree and in a HEAD worktree (own `CARGO_TARGET_DIR`, removed after)
+  and by showing no symbol of the slice sits on the verb's path.
 - Prove each phase alone when a refusal aborts at its own phase, and report the later ones as blocked,
   not passed.
 - Prove each later red of a test that masks its own reds by cutting the earlier block out of the real
@@ -596,6 +605,13 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
   route is only picked), assert `!is_loopback()`, and bind the listener on that address. Here that is
   `enp14s0` 192.168.50.210, and `127.0.0.1:9931` (`server_cfg::DEFAULT_PORT`) answers refused, so a
   scripted seam, not a real read, must drive the default-port pins.
+- Return that probe as an `Option` and skip the test with an `eprintln!("skipped: …")` when the connect,
+  the bind or the address fails: a CI box with no route must not read as a red. Prove the skip with a
+  mutant that points the connect at `256.256.256.256:80` (the parse fails, the helper answers `None`).
+- A pin of a header the client WRITES needs a listener that captures the request head and sends it back
+  over a channel: the slice's existing listener drains the head and discards it, so it pins a status and
+  never a header. Bind `[::1]:0` for an IPv6 pin, and skip when that bind fails (a host with no IPv6).
+  `Response` has no `Debug`: print `res.status` or the `Err` string, never `{res:?}`.
 
 ## Pitfalls
 
@@ -640,6 +656,12 @@ before amending it: H1a.12 collects `min-height` and `min-width` ONLY (a `max-wi
 
 - A helper that trims a line's end (`str::trim_end`) erases a trailing non-breaking space: pin a
   Unicode-whitespace value with the raw line, never with the file's `keys_of`-style helper.
+- `pai_core::strings`' `READER` is a process-wide `OnceLock`: the FIRST test that calls `manager::run()`
+  sets it to `Cli` for the whole process, so in a full parallel run the e2e's string reads flip to
+  `cli.toml`. One caller exists at HEAD (`save-slots`); every `run()` test a slice adds raises the odds.
+- `slot_save::slot_target` answers `None` for an argv with no `--slot-save-path` (snapshots off): a
+  cross-check pin "the readiness and the save ask the same port" needs the flag IN the fixture, else the
+  red is the fixture, not the rule.
 - One `data_root_e2e` masks its own later reds: `pai-manager`'s service phases AND its D-Bus/pipe client
   phases are calls of ONE test, so a full run prints only the first panic. To show a LATER phase's
   day-one state, comment out the earlier phase's one CALL LINE in `src/tests/mod.rs` (a `// GATE`

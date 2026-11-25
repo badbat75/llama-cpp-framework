@@ -1415,7 +1415,8 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   load-on-startup models are loaded", as decided by the user the same day: `Type=exec` kept,
   `ExecStartPost=pai-manager wait-ready %i` polls the router's `GET /health` every 2 s; started on 200,
   the start fails after 10 min (`TimeoutStartSec=11min`); the llama.cpp packages gain `Breaks:`/
-  `Conflicts:` on a framework core older than `wait-ready`. Slices RS1 `wait-ready` (pai-manager), RS2
+  `Conflicts:` on a framework core older than `wait-ready`. Slices RS1 `wait-ready` (pai-manager; built 2026-11-25: it asks nothing until the main
+  process is `llama-server`, then polls that launch's `--host` and `--port`, the default port when unset), RS2
   the unit and the package relations (a llama.cpp package build, install and restart: user's go given),
   RS3 the docs; RS2 also ships `llama.cpp.target` (ordering only, the instances `Before=` it, pulled in by
   a `multi-user.target.wants` link the package ships; requested the same day for Strata's `After=`); then

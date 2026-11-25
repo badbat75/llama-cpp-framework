@@ -7,10 +7,13 @@
 //! `Content-Length` bookkeeping is needed on the way back; chunked responses are
 //! decoded anyway because cpp-httplib may pick that framing regardless.
 //!
-//! Always 127.0.0.1, never the configured `Hostname`: that value is the address
-//! llama-server BINDS (`0.0.0.0` is a common one and not connectable as a
-//! destination on every stack), while loopback reaches it under every binding
-//! the framework can produce.
+//! `request` always dials 127.0.0.1, never the configured `Hostname`: that
+//! value is the address llama-server BINDS (`0.0.0.0` is a common one and not
+//! connectable as a destination on every stack), while loopback reaches it
+//! under every binding the framework can produce. `request_host` dials the
+//! address the caller names, for a caller that asks the engine where it is
+//! bound: the readiness check polls the `--host` of the launch, and maps the
+//! bound-everywhere values to loopback itself.
 //!
 //! Two callers, with very different deadlines, which is why the timeout is
 //! the caller's argument and not a constant here: `slot_save` waits out a
@@ -29,6 +32,10 @@ use std::time::Instant;
 /// listener is instant or never, whatever the request then costs to answer.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The address that reaches llama-server under every binding the framework can
+/// produce, so what every caller with no address of its own dials.
+pub const LOOPBACK: &str = "127.0.0.1";
+
 pub struct Response {
     pub status: u16,
     pub body: String,
@@ -45,19 +52,40 @@ pub fn request(
     body: Option<&str>,
     timeout: Duration,
 ) -> Result<Response, String> {
+    request_host(LOOPBACK, port, method, path, body, timeout)
+}
+
+/// The same request on the address `host` names, for a caller that asks
+/// llama-server where it is bound. The caller maps what is bound everywhere
+/// (`0.0.0.0`, `::`) to `LOOPBACK` first: those are bindings, no destination.
+pub fn request_host(
+    host: &str,
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    timeout: Duration,
+) -> Result<Response, String> {
     let deadline = Instant::now() + timeout;
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let connect = CONNECT_TIMEOUT.min(remaining(deadline).ok_or_else(timed_out)?);
-    let mut stream = std::net::TcpStream::connect_timeout(&addr, connect)
+    let mut stream = connect_host(host, port, connect)
         .map_err(|e| strings::fill("cannot-reach-server", &[&port, &e]))?;
     stream
         .set_write_timeout(Some(remaining(deadline).ok_or_else(timed_out)?))
         .map_err(err_str)?;
 
     let payload = body.unwrap_or("");
+    // The `Host:` header of an IPv6 address carries brackets (the URL form of
+    // an IP literal): written bare, its last colon reads as the port separator
+    // and the server sees no address.
+    let authority = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
     let mut req = format!(
         "{method} {path} HTTP/1.1\r\n\
-         Host: 127.0.0.1:{port}\r\n\
+         Host: {authority}\r\n\
          Connection: close\r\n\
          Content-Type: application/json\r\n\
          Content-Length: {}\r\n\r\n",
@@ -92,6 +120,23 @@ pub fn request(
         }
     }
     parse_response(&String::from_utf8_lossy(&raw))
+}
+
+/// The dial of one request: every address `host` names, tried in order, each
+/// under `timeout`. A host the framework writes is an address, so this is
+/// normally one try; a name resolves, and every answer gets its turn.
+fn connect_host(host: &str, port: u16, timeout: Duration) -> std::io::Result<std::net::TcpStream> {
+    let mut last = Err(std::io::Error::new(
+        std::io::ErrorKind::AddrNotAvailable,
+        "no address",
+    ));
+    for addr in std::net::ToSocketAddrs::to_socket_addrs(&(host, port))? {
+        match std::net::TcpStream::connect_timeout(&addr, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last = Err(e),
+        }
+    }
+    last
 }
 
 /// What the request has left of its deadline, `None` once it is spent. A zero
@@ -184,6 +229,7 @@ mod tests {
     use super::parse_response;
     use super::read_error_step;
     use super::request;
+    use super::request_host;
     use super::ReadStep;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -284,6 +330,86 @@ mod tests {
         assert!(
             outcome.is_err(),
             "a reply that never completed is an error, got: {outcome:?}"
+        );
+    }
+
+    /// A listener on `bind` that answers one request with 200 and hands back the
+    /// port it got and the request head it read, so a test can read what the
+    /// client wrote. `None` when `bind` is no address here (an IPv6 loopback on
+    /// a host with no IPv6).
+    fn head_listener(bind: &str) -> Option<(u16, std::sync::mpsc::Receiver<String>)> {
+        let listener = std::net::TcpListener::bind(bind).ok()?;
+        let port = listener.local_addr().ok()?.port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _addr)) = listener.accept() else {
+                return;
+            };
+            // Drain the request head first, so the client is not left writing
+            // into a socket nobody reads, and keep it for the caller.
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            loop {
+                if stream.read(&mut byte).unwrap_or(0) == 0 {
+                    return;
+                }
+                head.push(byte[0]);
+                if head.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&head).to_string());
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            let _ = stream.flush();
+        });
+        Some((port, rx))
+    }
+
+    /// The port of, and the head written by, the one request `request_host`
+    /// sends to `host`: `None` when `bind` is no address here.
+    fn head_written_to(host: &str, bind: &str) -> Option<(u16, String)> {
+        let (port, rx) = head_listener(bind)?;
+        let res = request_host(host, port, "GET", "/health", None, Duration::from_secs(5));
+        match &res {
+            Ok(res) => assert_eq!(
+                res.status, 200,
+                "the listener on {bind} answers the request"
+            ),
+            Err(why) => panic!("the request to {bind}:{port} failed: {why}"),
+        }
+        let head = match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(head) => head,
+            Err(e) => panic!("the listener never saw a request head: {e:?}"),
+        };
+        Some((port, head))
+    }
+
+    /// The `Host:` header of an IPv6 address carries brackets (the URL form of
+    /// an IP literal): written bare, the last colon reads as the port separator
+    /// and the server sees no address.
+    #[test]
+    fn the_host_header_brackets_an_ipv6_address() {
+        let Some((port, head)) = head_written_to("::1", "[::1]:0") else {
+            eprintln!("skipped: this host has no IPv6 loopback to bind");
+            return;
+        };
+        assert!(
+            head.lines().any(|l| l == format!("Host: [::1]:{port}")),
+            "an IPv6 address in the Host header is bracketed, the request head is: {head:?}"
+        );
+    }
+
+    /// The same header for an IPv4 address is written bare: brackets there are
+    /// no address the server reads.
+    #[test]
+    fn the_host_header_of_an_ipv4_address_carries_no_brackets() {
+        let Some((port, head)) = head_written_to("127.0.0.1", "127.0.0.1:0") else {
+            eprintln!("skipped: this host has no IPv4 loopback to bind");
+            return;
+        };
+        assert!(
+            head.lines().any(|l| l == format!("Host: 127.0.0.1:{port}")),
+            "an IPv4 address in the Host header is bare, the request head is: {head:?}"
         );
     }
 

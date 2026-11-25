@@ -4042,10 +4042,14 @@ be in the boot transaction and to be ordered after the instances.
   already started, and a disabled instance is not in the boot transaction. Both as asked.
 
 **Slice RS1** (test first; `pai-manager`, Linux; Windows type-checked). `pai-manager wait-ready <id>`:
-the port from `$MAINPID`'s cmdline (`slot_save::slot_target`), `GET /health` on `127.0.0.1:<port>`
-every 2 s, the HTTP read and the clock behind seams. Done when: 200 exits 0; 503 and connection refused
-are retried; the 10-min deadline exits non-zero with a journal line naming the instance; no `$MAINPID`
-or no port in its cmdline exits non-zero at once; the argument parser takes the command beside
+the port and the address from `$MAINPID`'s cmdline: `--port`, or llama-server's default
+(`server_cfg::DEFAULT_PORT`) when the launch left it out, as `slot_save::slot_target` does (`launch.rs`
+omits `--port` for an unset `Port`); the address is `--host`, loopback for `0.0.0.0` or `::`, since an
+instance bound to one LAN address does not answer on `127.0.0.1` (amended at the RS1 review,
+2026-11-25). `GET /health` every 2 s, the HTTP read and the clock behind seams. Done when: 200 exits 0;
+503 and connection refused are retried; the 10-min deadline exits non-zero with a journal line naming
+the instance; a launch without `--port` polls the default port; a launch on a LAN address polls that
+address; no `$MAINPID` exits non-zero at once; the argument parser takes the command beside
 `run-instance` and `save-slots`; clippy and fmt green.
 
 **Slice RS2** (test first; `xtask`, the instance unit and the llama.cpp packages): `ExecStartPost=
