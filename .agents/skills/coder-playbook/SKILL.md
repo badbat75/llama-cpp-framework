@@ -176,6 +176,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   first); `windows/package.rs`'s `bundled` map is keyed by the dist label; the engine revision is
   `components::LLAMA_CPP_REVISION` and a bump moves the packages' Depends. Pin a file that must land in
   one package by reusing the test module's helpers.
+- Linux system files: `system_files::files()` is the list of PLAIN TEXT files and `stage()` writes each
+  as 0644, so a symlink (a target's `multi-user.target.wants/` link) is linked OUTSIDE that loop, is not
+  in `files()`, and needs its own named line in rpm's `%files` (a bare system directory line is refused).
+  The engine's unit runs the framework's binary, so the engine's `.deb`/`.rpm` carry the version bound on
+  the core, from `version::framework()` (the same read `run` does before staging).
 
 ### The bff (Rust)
 

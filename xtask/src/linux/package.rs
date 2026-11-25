@@ -187,6 +187,12 @@ fn rpm_spec(f: &Fields, license: &str, libraries: &str, root: &Path) -> String {
             files.push_str(&format!("/{rel}\n"));
         }
     }
+    // The target's `multi-user.target.wants/` link is a symlink, so it is not
+    // one of [`system_files::files`]: `stage` links it. rpm packs the path as
+    // the symlink it is.
+    if root.join(system_files::TARGET_LINK).is_symlink() {
+        files.push_str(&format!("/{}\n", system_files::TARGET_LINK));
+    }
     // The PAM service is the administrator's to edit: an update keeps a local
     // edit (rpm-spec(5) `%config(noreplace)`).
     if root.join(system_files::PAM_SERVICE).is_file() {
@@ -1116,6 +1122,13 @@ struct Fields<'a> {
     runtimes: &'a [(Component, String)],
 }
 
+/// The framework's version, the bound of the engine's Breaks and Conflicts on
+/// the core: read from the workspace, the same read `run` does before staging
+/// (which stops the phase when it fails).
+fn framework_version() -> String {
+    version::framework().expect("the package phase reads the framework version first")
+}
+
 /// The `.deb` relations beyond the scanned Depends: (Recommends, Breaks, Conflicts).
 fn deb_relations(f: &Fields) -> (String, String, String) {
     let mut recommends: Vec<String> = Vec::new();
@@ -1124,6 +1137,20 @@ fn deb_relations(f: &Fields) -> (String, String, String) {
         recommends.push(format!("{} (= {v})", c.package()));
         breaks.push(format!("{} (<< {v})", c.package()));
         breaks.push(format!("{} (>> {v})", c.package()));
+    }
+    // RS2: the instance unit's `ExecStartPost= ... wait-ready` carries no `-`
+    // prefix, so a unit of this package beside a manager with no `wait-ready`
+    // would fail every start: the engine breaks a framework core below the
+    // framework version (Debian Policy 7.4: Breaks is the reverse of Depends).
+    // It requires nothing of the framework: the unit's
+    // ConditionFileIsExecutable= skips the command where there is no manager,
+    // so the engine installs and runs alone.
+    if f.component == Component::Llama {
+        breaks.push(format!(
+            "{} (<< {})",
+            Component::Core.package(),
+            framework_version()
+        ));
     }
     // What pai-config loads at run time by dlopen, which no link-time
     // scan sees.
@@ -1269,6 +1296,14 @@ fn rpm_relations(f: &Fields) -> String {
     }
     if f.component == Component::Llama {
         lines.push("Conflicts:      llama-cpp".into());
+        // RS2: the same relation as rpm spells it (rpm-dependencies(7):
+        // Conflicts is the pair relation, and rpm has no Breaks), keeping a
+        // new unit off a manager with no `wait-ready`.
+        lines.push(format!(
+            "Conflicts:      {} < {}",
+            Component::Core.package(),
+            framework_version()
+        ));
     }
     if matches!(f.component, Component::Core | Component::Bff) {
         // What the scriptlets run (Fedora's %systemd_requires, plus %pre and
@@ -1802,16 +1837,24 @@ mod tests {
     /// supersedes by name and epoch) and Fedora's `llama-cpp` (its spec,
     /// src.fedoraproject.org/rpms/llama-cpp: `%{_bindir}/llama-server`...;
     /// `llama-cpp-examples` requires it). It no longer conflicts with
-    /// `llama.cpp`, its own name. It names nothing of the framework.
+    /// `llama.cpp`, its own name. It requires nothing of the framework; RS2
+    /// added the one framework name it carries, the core in its versioned
+    /// Breaks/Conflicts.
     #[test]
     fn llama_cpp_recommends_its_runtimes_and_refuses_any_other_version() {
+        let core = Component::Core.package();
+        let v = version::framework().unwrap();
         let runtimes = [(Component::Rocm, "10.1.0".to_string())];
         let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
         let (recommends, breaks, conflicts) = deb_relations(&f);
         assert_eq!(recommends, "llama.cpp-rocm (= 10.1.0)");
+        // RS2: the runtime breaks come first, then the one framework relation
+        // the engine carries, the core below the workspace version.
         assert_eq!(
             breaks,
-            "llama.cpp-rocm (<< 10.1.0), llama.cpp-rocm (>> 10.1.0)"
+            format!(
+                "llama.cpp-rocm (<< 10.1.0), llama.cpp-rocm (>> 10.1.0), {core} (<< {v})"
+            )
         );
         assert_eq!(conflicts, format!("{OLD}, {OLD}-llama, llama.cpp-tools"));
         let rpm = rpm_relations(&f);
@@ -1825,9 +1868,159 @@ mod tests {
             assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
         }
         assert!(!rpm.contains(&format!("{OLD}-rocm")), "{rpm}");
-        for text in [&rpm, &recommends, &breaks, &conflicts] {
-            assert!(!text.contains("private-ai-framework"), "{text}");
+        // The engine runs alone: no Depends, Recommends, Conflicts or Requires
+        // of the framework. RS2 added the one relation that does name it, the
+        // versioned Breaks/Conflicts that keeps a new unit off an old
+        // manager (`rs2_the_engine_deb_breaks_an_older_framework_core_and_requires_nothing_of_it`).
+        let depends = depends_line(&f, "libc6 (>= 2.34)");
+        assert!(
+            !depends.contains("private-ai-framework"),
+            "the engine depends on the framework: {depends}"
+        );
+        assert!(!recommends.contains("private-ai-framework"), "{recommends}");
+        assert!(!conflicts.contains("private-ai-framework"), "{conflicts}");
+        for item in breaks
+            .split(", ")
+            .filter(|i| i.contains("private-ai-framework"))
+        {
+            assert!(
+                item.starts_with(&core) && item.contains("(<< "),
+                "the engine's Breaks names more of the framework: {item}\n{breaks}"
+            );
         }
+        for l in rpm.lines().filter(|l| l.contains("private-ai-framework")) {
+            assert!(
+                l.starts_with("Conflicts:") && l.contains(&core),
+                "the engine's rpm names more of the framework: {l}\n{rpm}"
+            );
+        }
+    }
+
+    /// RS2: the instance unit's `ExecStartPost= pai-manager wait-ready %i`
+    /// has no `-` prefix, so a unit of this package paired with a manager
+    /// that has no `wait-ready` would fail every start. The engine's `.deb`
+    /// therefore `Breaks:` the framework core below the framework version
+    /// (Debian Policy 7.4: Breaks is the reverse of Depends), the version
+    /// read from the workspace (`version::framework`, no constant of its own
+    /// to fall behind). It still requires nothing of the framework: the
+    /// unit's `ConditionFileIsExecutable=` skips the command when the
+    /// manager is not there, so the engine installs and runs alone.
+    #[test]
+    fn rs2_the_engine_deb_breaks_an_older_framework_core_and_requires_nothing_of_it() {
+        let core = Component::Core.package();
+        let v = version::framework().unwrap();
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let (recommends, breaks, conflicts) = deb_relations(&f);
+        let items: Vec<&str> = breaks.split(", ").map(str::trim).collect();
+        let want = format!("{core} (<< {v})");
+        assert!(
+            items.contains(&want.as_str()),
+            "no {want} in the Breaks:\n{breaks}"
+        );
+        for keep in ["llama.cpp-rocm (<< 10.1.0)", "llama.cpp-rocm (>> 10.1.0)"] {
+            assert!(items.contains(&keep), "{keep} missing:\n{breaks}");
+        }
+        assert_eq!(
+            conflicts,
+            format!("{OLD}, {OLD}-llama, llama.cpp-tools"),
+            "the existing Conflicts stay"
+        );
+        assert!(!recommends.contains(&core), "{recommends}");
+        let depends = depends_line(&f, "libc6");
+        assert!(
+            !depends.contains("private-ai-framework"),
+            "the engine depends on the framework: {depends}"
+        );
+        let text = deb_control(&f, "amd64", "Someone <a@b.c>", "1234", &depends);
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("Breaks:") && l.contains(&want)),
+            "the control's Breaks:\n{text}"
+        );
+        for tag in ["Depends:", "Recommends:", "Provides:", "Replaces:"] {
+            assert!(
+                !lines
+                    .iter()
+                    .any(|l| l.starts_with(tag) && l.contains("private-ai-framework")),
+                "{tag} names the framework:\n{text}"
+            );
+        }
+    }
+
+    /// RS2: the same relation as rpm spells it, `Conflicts: <core> < V`
+    /// (rpm has no Breaks; rpm-dependencies(7): Conflicts is the pair
+    /// relation), V the workspace version, and no `Requires:` of the
+    /// framework: the engine's scriptlets run systemctl alone.
+    #[test]
+    fn rs2_the_engine_rpm_conflicts_with_an_older_framework_core_and_requires_nothing_of_it() {
+        let core = Component::Core.package();
+        let v = version::framework().unwrap();
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let rpm = rpm_relations(&f);
+        let want = format!("Conflicts:      {core} < {v}");
+        assert!(rpm.lines().any(|l| l == want), "{want} missing:\n{rpm}");
+        for keep in [
+            "Conflicts:      llama.cpp-rocm < 10.1.0",
+            "Conflicts:      llama.cpp-rocm > 10.1.0",
+            "Conflicts:      llama-cpp",
+        ] {
+            assert!(rpm.lines().any(|l| l == keep), "{keep} missing:\n{rpm}");
+        }
+        for l in rpm.lines().filter(|l| l.starts_with("Requires:")) {
+            assert!(
+                !l.contains("private-ai-framework"),
+                "the engine requires the framework: {l}\n{rpm}"
+            );
+        }
+        // The two formats agree on the version, and it is the workspace's.
+        let (deb_recommends, deb_breaks, _) = deb_relations(&f);
+        assert!(
+            deb_breaks.contains(&format!("{core} (<< {v})")),
+            "{deb_recommends} / {deb_breaks}"
+        );
+    }
+
+    /// RS2: the target unit and its `multi-user.target.wants/` link go in
+    /// the engine's `.rpm`, each listed by name in `%files` (systemd owns
+    /// the directory, so no directory line takes them), the link as the
+    /// symlink it is. The `.deb` data archive is the same staged tree
+    /// (`system_files::stage` then `components::split`, pinned in
+    /// `system_files.rs`), which `dpkg-deb --build` packs as it stands.
+    #[test]
+    fn rs2_the_engine_packages_ship_the_target_unit_and_its_wants_link() {
+        let unit_rel = "usr/lib/systemd/system/llama.cpp.target";
+        let link_rel = "usr/lib/systemd/system/multi-user.target.wants/llama.cpp.target";
+        let dir = scratch("rpm-spec-target");
+        let llama = dir.join("llama");
+        put(&llama, "usr/bin/llama-server", ELF, 0o755);
+        put(&llama, "usr/share/doc/llama.cpp/copyright", ELF, 0o644);
+        let text = system_files::files()
+            .into_iter()
+            .find(|(r, _)| *r == unit_rel)
+            .unwrap_or_else(|| panic!("{unit_rel} is not among the system files"))
+            .1;
+        put(&llama, unit_rel, text.as_bytes(), 0o644);
+        let link = llama.join(link_rel);
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("../llama.cpp.target", &link).unwrap();
+        let runtimes = [(Component::Rocm, "10.1.0".to_string())];
+        let f = fields_v(Component::Llama, ENGINE, &runtimes, None);
+        let spec = rpm_spec(&f, "MIT", "libggml", &llama);
+        check_files(&spec, &llama);
+        let listed = files_section(&spec);
+        for rel in [unit_rel, link_rel] {
+            let path = format!("/{rel}");
+            assert_eq!(
+                listed.iter().filter(|l| **l == path).count(),
+                1,
+                "{path} by name, once:\n{spec}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The configurator requires the command line and the core at its own
@@ -3288,7 +3481,9 @@ mod tests {
 
     /// The engine's `.deb` carries its version whole, epoch and build
     /// revision (Debian Policy 5.6.12: `[epoch:]upstream_version`), and
-    /// names nothing of the framework: it installs and runs alone.
+    /// requires nothing of the framework: it installs and runs alone. RS2
+    /// added the one framework name it carries, the core in its versioned
+    /// Breaks.
     #[test]
     fn the_engine_deb_carries_its_epoch_and_requires_nothing_of_the_framework() {
         let runtimes = [(Component::Rocm, "10.1.0".to_string())];
@@ -3305,8 +3500,23 @@ mod tests {
         ] {
             assert!(lines.contains(&want.as_str()), "{want} missing:\n{text}");
         }
-        assert!(!text.contains("private-ai-framework"), "{text}");
-        assert!(!rpm_relations(&f).contains("private-ai-framework"));
+        // RS2: the one framework name the engine's control carries is the
+        // core in its versioned Breaks (and the rpm Conflicts), which keeps
+        // a new unit off an old manager; it requires nothing of it.
+        let core = Component::Core.package();
+        for l in text.lines().filter(|l| l.contains("private-ai-framework")) {
+            assert!(
+                l.starts_with("Breaks:") && l.contains(&core),
+                "the engine's deb requires the framework:\n{l}\n{text}"
+            );
+        }
+        let rpm = rpm_relations(&f);
+        for l in rpm.lines().filter(|l| l.contains("private-ai-framework")) {
+            assert!(
+                l.starts_with("Conflicts:") && l.contains(&core),
+                "the engine's rpm requires the framework:\n{l}\n{rpm}"
+            );
+        }
     }
 
     /// The engine's `.rpm` spells its version as rpm wants it: `Epoch: 1`,

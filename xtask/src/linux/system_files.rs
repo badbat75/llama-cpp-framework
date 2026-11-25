@@ -4,10 +4,12 @@
 //! entry of the service user and the administrators' group, the PAM service
 //! of the web sign-in (a conffile, one text per format), and the
 //! maintainer scripts that create the user and enable, start and stop the
-//! manager; the instance unit and the maintainer scripts that stop the
-//! running instances and start them again, which the engine's package
-//! ships; and the unit of the web service, the sysusers.d entry of its user
-//! and its maintainer scripts, which the `-bff` package ships. The engine's
+//! manager; the instance unit, the `llama.cpp.target` every instance is
+//! ordered before with its `multi-user.target.wants/` link, and the
+//! maintainer scripts that stop the running instances and start them
+//! again, which the engine's package ships; and the unit of the web
+//! service, the sysusers.d entry of its user and its maintainer scripts,
+//! which the `-bff` package ships. The engine's
 //! package also ships its defaults read-only, which its maintainer scripts
 //! copy into the engine's configuration directory when missing.
 
@@ -41,6 +43,13 @@ const ENGINE_ETC: &str = "/etc/llama.cpp";
 const INSTANCE_LINKS: &str = "/etc/systemd/system/multi-user.target.wants/llama.cpp@";
 /// The engine's tmpfiles.d entry, by name.
 const TMPFILES_NAME: &str = "llama.cpp.conf";
+/// The target every instance is ordered before, the one name another unit
+/// gives its `After=` (which takes no globs).
+const TARGET_UNIT: &str = "usr/lib/systemd/system/llama.cpp.target";
+/// The link that pulls the target into the boot transaction, under the
+/// package's own `multi-user.target.wants/` (the way systemd's own static
+/// units are pulled in: no enable step, no state).
+pub const TARGET_LINK: &str = "usr/lib/systemd/system/multi-user.target.wants/llama.cpp.target";
 /// Where the engine's package ships its defaults, read-only.
 const ENGINE_DEFAULTS: &str = "/usr/share/private-ai/llama.cpp";
 /// The group of the administrators, who may change the configuration
@@ -73,6 +82,7 @@ pub fn files() -> Vec<(&'static str, String)> {
             manager_unit(),
         ),
         ("usr/lib/systemd/system/llama.cpp@.service", instance_unit()),
+        (TARGET_UNIT, llama_cpp_target()),
         (
             "usr/share/dbus-1/system.d/org.privateai.Manager1.conf",
             dbus_policy(),
@@ -171,6 +181,9 @@ pub fn instance_unit() -> String {
          After=private-ai-manager.service\n\
          # The launcher is the framework's, which this package does not require.\n\
          ConditionFileIsExecutable={MANAGER_EXE}\n\
+         # The one name another unit orders itself after (`After=` takes no\n\
+         # globs): ordering only, the target pulls nothing in.\n\
+         Before=llama.cpp.target\n\
          \n\
          [Service]\n\
          Type=exec\n\
@@ -181,6 +194,18 @@ pub fn instance_unit() -> String {
          StateDirectory=private-ai private-ai/.local/share/private-ai\n\
          StateDirectoryMode=0750\n\
          ExecStart={MANAGER_EXE} run-instance %i\n\
+         # The start job ends once the router answers: systemd counts the start\n\
+         # done when this command exits and takes it into account for the\n\
+         # Before=/After= ordering (systemd.service(5)), so a unit ordered after\n\
+         # this instance starts once the server listens. No `-` prefix: a manager\n\
+         # with no `wait-ready` answers a non-zero code, and the engine's package\n\
+         # keeps that pair honest (its Breaks and Conflicts on an older core,\n\
+         # `linux::package`).\n\
+         ExecStartPost={MANAGER_EXE} wait-ready %i\n\
+         # The backstop behind the command's own deadline: a systemd start\n\
+         # timeout is abnormal, and Restart=on-abnormal would restart a load\n\
+         # that is only slow, so the command's deadline must come first.\n\
+         TimeoutStartSec=11min\n\
          # The stop first saves the conversation snapshots; this bounds that save.\n\
          ExecStop={MANAGER_EXE} save-slots %i\n\
          TimeoutStopSec=300\n\
@@ -189,6 +214,24 @@ pub fn instance_unit() -> String {
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
+        header_of(Component::Llama, "#")
+    )
+}
+
+/// `llama.cpp.target`: the one name every instance is ordered before, so
+/// another unit has one name to order itself after (`After=` takes no globs).
+/// Static: no `[Install]`, it is pulled into the boot transaction by the link
+/// the package ships ([`TARGET_LINK`], the way systemd's own static units
+/// are), and no `PartOf=`: stopping the target must not stop the instances,
+/// which the manager starts and stops one by one.
+fn llama_cpp_target() -> String {
+    format!(
+        "{}# Ordered before by every instance (llama.cpp@.service, Before=).\n\
+         # Reached at boot once every enabled instance's start has ended, the\n\
+         # ExecStartPost= included. Nothing enables it and it starts nothing.\n\
+         \n\
+         [Unit]\n\
+         Description=llama.cpp servers (Private AI Framework)\n",
         header_of(Component::Llama, "#")
     )
 }
@@ -383,7 +426,9 @@ pub fn write_rpm_files(root: &Path, c: Component) -> Result<()> {
     Ok(())
 }
 
-/// Writes [`files`] under `stage`, mode 0644.
+/// Writes [`files`] under `stage`, mode 0644, and the target's
+/// `multi-user.target.wants/` link, as a symlink to the unit beside it (a copy
+/// of the text would drift from the unit; both formats pack a symlink).
 pub fn stage(stage: &Path) -> Result<()> {
     for (rel, text) in files() {
         let p = stage.join(rel);
@@ -391,7 +436,11 @@ pub fn stage(stage: &Path) -> Result<()> {
         std::fs::write(&p, text).with_context(|| format!("writing {}", p.display()))?;
         set_mode(&p, 0o644)?;
     }
-    Ok(())
+    let link = stage.join(TARGET_LINK);
+    std::fs::create_dir_all(link.parent().unwrap())?;
+    let unit = TARGET_UNIT.rsplit('/').next().unwrap_or(TARGET_UNIT);
+    std::os::unix::fs::symlink(Path::new("..").join(unit), &link)
+        .with_context(|| format!("linking {}", link.display()))
 }
 
 /// The `.deb` maintainer scripts of a package, by name (`postinst`,
@@ -810,6 +859,11 @@ mod tests {
     const DEFAULT_MODELS: &str = "usr/share/private-ai/llama.cpp/models.ini";
     const DEFAULT_ASSIGNMENTS: &str = "usr/share/private-ai/llama.cpp/assignments.ini";
     const DEFAULT_INSTANCES: &str = "usr/share/private-ai/llama.cpp/instances.ini";
+    /// RS2: the target every instance is ordered before, and the link that
+    /// pulls it into the boot transaction (the package's own
+    /// `multi-user.target.wants/`, the way systemd's static units are).
+    const TARGET_UNIT: &str = "usr/lib/systemd/system/llama.cpp.target";
+    const TARGET_LINK: &str = "usr/lib/systemd/system/multi-user.target.wants/llama.cpp.target";
 
     /// The text of the generated file at `path`, from [`files`].
     fn file(path: &str) -> String {
@@ -880,6 +934,7 @@ mod tests {
             [
                 MANAGER_UNIT,
                 INSTANCE_UNIT,
+                TARGET_UNIT,
                 DBUS_POLICY,
                 POLKIT_POLICY,
                 POLKIT_RULES,
@@ -897,7 +952,7 @@ mod tests {
             let owner = match *path {
                 BFF_UNIT | BFF_SYSUSERS => Component::Bff,
                 INSTANCE_UNIT | DEFAULT_SERVER | DEFAULT_MODELS | DEFAULT_ASSIGNMENTS
-                | DEFAULT_INSTANCES | TMPFILES => Component::Llama,
+                | DEFAULT_INSTANCES | TMPFILES | TARGET_UNIT => Component::Llama,
                 _ => Component::Core,
             };
             assert_eq!(components::of(path), owner, "{path}");
@@ -909,7 +964,7 @@ mod tests {
                 POLKIT_RULES => polkit_rules(),
                 BFF_UNIT => bff_unit(),
                 BFF_SYSUSERS | DEFAULT_SERVER | DEFAULT_MODELS | DEFAULT_ASSIGNMENTS
-                | DEFAULT_INSTANCES | TMPFILES => text.clone(),
+                | DEFAULT_INSTANCES | TMPFILES | TARGET_UNIT => text.clone(),
                 _ => sysusers(),
             };
             assert_eq!(*text, want, "{path}");
@@ -1317,6 +1372,160 @@ mod tests {
             .filter(|l| l.starts_with("StateDirectoryMode="))
             .collect::<Vec<_>>();
         assert_eq!(modes, ["StateDirectoryMode=0750"], "{unit}");
+    }
+
+    /// RS2: the start job ends only once the router answers. `Type=exec`
+    /// stays (the main process is llama-server, which `run-instance` execs,
+    /// so `save-slots` and the signals keep reading `$MAINPID`), and
+    /// `ExecStartPost=` runs the manager's `wait-ready` for the instance:
+    /// systemd counts the start done when that command exits and takes it
+    /// into account for `Before=`/`After=` ordering (systemd.service(5)).
+    /// No `-` prefix: an old `pai-manager` answers `wait-ready` with its
+    /// usage text and a non-zero code, and a `-` prefix would hide that
+    /// behind a start that looks fine; the package keeps the pair honest
+    /// instead (the `.deb` `Breaks:` and the `.rpm` `Conflicts:` on a core
+    /// below the framework version, `linux/package.rs`). `TimeoutStartSec=`
+    /// is the backstop behind the command's own deadline: a systemd start
+    /// timeout is abnormal and `Restart=on-abnormal` would restart a load
+    /// that is only slow, so the command's deadline must come first.
+    #[test]
+    fn rs2_the_instance_unit_ends_its_start_once_the_router_answers() {
+        let unit = instance_unit();
+        let service = section(&unit, "[Service]");
+        let want = format!("ExecStartPost={MANAGER_EXE} wait-ready %i");
+        let posts: Vec<&str> = service
+            .iter()
+            .copied()
+            .filter(|l| l.starts_with("ExecStartPost="))
+            .collect();
+        assert_eq!(
+            posts,
+            [want.as_str()],
+            "one ExecStartPost=, no '-' prefix:\n{unit}"
+        );
+        assert!(service.contains(&"TimeoutStartSec=11min"), "{unit}");
+        for want in ["Type=exec", "Restart=on-abnormal"] {
+            assert!(service.contains(&want), "{want} missing:\n{unit}");
+        }
+    }
+
+    /// RS2: `llama.cpp.target` is the one name another unit orders itself
+    /// after (`After=` takes no globs), so the instance is ordered
+    /// `Before=llama.cpp.target`. Ordering only: the target pulls no
+    /// instance in (no `Wants=`/`Requires=` naming it, and the template's
+    /// `[Install]` keeps `WantedBy=multi-user.target`, so every enabled
+    /// instance's link stays where it is and the manager's enable and
+    /// `BootEnabled` read keep working).
+    #[test]
+    fn rs2_the_instance_unit_is_ordered_before_the_target_and_keeps_its_boot_link() {
+        let unit = instance_unit();
+        let head = section(&unit, "[Unit]");
+        assert!(
+            head.contains(&"Before=llama.cpp.target"),
+            "the instance is not ordered before the target:\n{unit}"
+        );
+        for name in requirement_targets(&unit) {
+            assert_ne!(
+                name, "llama.cpp.target",
+                "the target pulls the instance in, which moves every enabled link:\n{unit}"
+            );
+        }
+        assert_eq!(
+            section(&unit, "[Install]"),
+            ["WantedBy=multi-user.target"],
+            "{unit}"
+        );
+    }
+
+    /// RS2: the target ships in the engine's package, static: a
+    /// `[Unit] Description=` and no `[Install]` section, so nothing enables
+    /// it and `systemctl start llama.cpp.target` is not what the instances
+    /// are started through. It has no `PartOf=` tie to the instances:
+    /// stopping the target must not stop them (the manager starts and stops
+    /// them one by one).
+    #[test]
+    fn rs2_the_engine_ships_a_static_llama_cpp_target() {
+        assert!(
+            files().iter().any(|(p, _)| *p == TARGET_UNIT),
+            "no {TARGET_UNIT} among the system files"
+        );
+        assert_eq!(
+            components::of(TARGET_UNIT),
+            Component::Llama,
+            "{TARGET_UNIT}"
+        );
+        let text = file(TARGET_UNIT);
+        assert!(
+            text.starts_with(&header_of(Component::Llama, "#")),
+            "the engine's header:\n{text}"
+        );
+        assert!(
+            section(&text, "[Unit]")
+                .iter()
+                .any(|l| l.starts_with("Description=")),
+            "{text}"
+        );
+        assert!(!text.contains("[Install]"), "static, no [Install]:\n{text}");
+        assert!(!text.contains("WantedBy="), "{text}");
+        assert!(
+            !section(&text, "[Unit]")
+                .iter()
+                .any(|l| l.starts_with("PartOf=")),
+            "stopping the target would stop the instances:\n{text}"
+        );
+    }
+
+    /// RS2: the target is pulled into the boot transaction by the link the
+    /// package ships under `/usr/lib/systemd/system/multi-user.target.wants/`
+    /// (the way systemd's own static units are pulled in: no enable step, no
+    /// state), a symlink to `../llama.cpp.target` and not a copy of the
+    /// unit, so the two can never drift apart. Staged, it goes with the
+    /// engine's tree, which is what the `.deb` data archive and the `.rpm`
+    /// `%files` are built from (`linux/package.rs`).
+    #[test]
+    fn rs2_the_engine_ships_the_target_wants_link_as_a_symlink() {
+        assert_eq!(
+            components::of(TARGET_LINK),
+            Component::Llama,
+            "{TARGET_LINK}"
+        );
+        let dir = std::env::temp_dir().join(format!("xtask-rs2-target-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let stage_dir = dir.join("stage");
+        stage(&stage_dir).unwrap();
+        let want = Path::new("../llama.cpp.target");
+        let link = stage_dir.join(TARGET_LINK);
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap_or_else(|e| panic!("{TARGET_LINK}: {e}"))
+                .file_type()
+                .is_symlink(),
+            "{TARGET_LINK} is not a symlink"
+        );
+        assert_eq!(std::fs::read_link(&link).unwrap(), want);
+        // The split hands both to the engine, the link still a symlink.
+        let into = dir.join("into");
+        assert!(
+            components::split(&stage_dir, &into)
+                .unwrap()
+                .contains(&Component::Llama),
+            "the engine's tree is empty"
+        );
+        let engine = into.join(Component::Llama.suffix());
+        let engine_link = engine.join(TARGET_LINK);
+        assert!(
+            std::fs::symlink_metadata(&engine_link)
+                .unwrap_or_else(|e| panic!("{TARGET_LINK}: {e}"))
+                .file_type()
+                .is_symlink(),
+            "the split copied the link"
+        );
+        assert_eq!(std::fs::read_link(&engine_link).unwrap(), want);
+        assert!(
+            engine.join(TARGET_UNIT).is_file(),
+            "the unit the link points at is not the engine's"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The engine's `.deb` postinst applies its entry on configure, as
@@ -2407,7 +2616,9 @@ mod tests {
     /// scripts included, names the package that installs it now, the
     /// core's, never the never-published `-llama`. The instance unit is the
     /// engine's (pinned below), and so are its shipped defaults, which carry
-    /// no header (`the_engine_ships_its_defaults_read_only`).
+    /// no header (`the_engine_ships_its_defaults_read_only`), and its
+    /// `llama.cpp.target`, which carries the engine's header
+    /// (`rs2_the_engine_ships_a_static_llama_cpp_target`).
     #[test]
     fn the_system_files_and_scripts_name_the_core_package() {
         let mut texts: Vec<(String, String)> = files()
@@ -2417,6 +2628,7 @@ mod tests {
                     BFF_UNIT,
                     BFF_SYSUSERS,
                     INSTANCE_UNIT,
+                    TARGET_UNIT,
                     DEFAULT_SERVER,
                     DEFAULT_MODELS,
                     DEFAULT_ASSIGNMENTS,

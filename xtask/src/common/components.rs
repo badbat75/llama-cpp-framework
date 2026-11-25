@@ -145,10 +145,14 @@ pub fn of(rel: &str) -> Component {
             return *c;
         }
     }
-    // The engine's instance unit (the engine owns its unit), its shipped
-    // defaults, copied into /etc/llama.cpp by its maintainer scripts, and
-    // its tmpfiles.d entry (the instances' shared models folder).
+    // The engine's instance unit (the engine owns its unit), its target (the
+    // one name every instance is ordered before) with the link that pulls it
+    // into the boot transaction, its shipped defaults, copied into
+    // /etc/llama.cpp by its maintainer scripts, and its tmpfiles.d entry (the
+    // instances' shared models folder).
     if path == "usr/lib/systemd/system/llama.cpp@.service"
+        || path == "usr/lib/systemd/system/llama.cpp.target"
+        || path == "usr/lib/systemd/system/multi-user.target.wants/llama.cpp.target"
         || path.starts_with("usr/share/private-ai/llama.cpp/")
         || path == "usr/lib/tmpfiles.d/llama.cpp.conf"
     {
@@ -532,6 +536,10 @@ mod tests {
             "usr/lib/private-ai/libllama-server-impl.so",
             "usr/lib/private-ai/lib/llvm/lib/libomp.so",
             "usr/lib/systemd/system/llama.cpp@.service",
+            // RS2: the target every instance is ordered before, and the
+            // link that pulls it into the boot transaction.
+            "usr/lib/systemd/system/llama.cpp.target",
+            "usr/lib/systemd/system/multi-user.target.wants/llama.cpp.target",
             // The engine's defaults, copied into /etc/llama.cpp when missing.
             "usr/share/private-ai/llama.cpp/server@default.ini",
             "usr/share/private-ai/llama.cpp/models.ini",
