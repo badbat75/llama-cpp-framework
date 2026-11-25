@@ -3972,6 +3972,77 @@ stays flat under load.
 **Slice GT5c** (docs agent): the R9700 guide states the default, the GT4 measurement with its date and
 when to set `mmap` instead.
 
+## An instance is started once its load-on-startup models are loaded (RS, proposed 2026-11-25)
+
+Why (the owner's requirement, relayed by the strata-framework agent): Strata moves to its own system
+unit, `After=llama.cpp@default.service` with no `Wants=`, and sizes its expert cache on the VRAM free
+when it starts, so it must start after the embedder holds its VRAM. Today `llama.cpp@.service` is
+`Type=exec` (`xtask/src/linux/system_files.rs` `instance_unit`): the start job ends as soon as
+`pai-manager run-instance` has exec'd llama-server. On the morning of 2026-11-25 the router took about
+10 min to spawn the embedder (disk contention).
+
+The crux: the unit's main process is llama-server, not the manager (`run-instance` execs it), and
+`save-slots`, the unit's `ExecStop=`, reads the port and the state folder from `$MAINPID`'s cmdline
+(`crates/manager/src/manager.rs` `save_slots_target`). Whatever sends "ready" must leave both alone.
+
+- **Option A (recommended): `Type=exec` kept, plus `ExecStartPost=-pai-manager wait-ready %i`.** The
+  start job ends only when the `ExecStartPost=` command exits, and `After=` orders on that ("the
+  execution of ExecStartPost= is taken into account for the purpose of Before=/After= ordering
+  constraints", systemd.service(5),
+  https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html). Until then the unit
+  is `activating`, which the manager already reads (`dbus.rs` `UnitState::Activating`). The main PID,
+  `save-slots`, signals and `Restart=` stay as they are. No helper process, no patch, and the
+  manager's `Start` is unchanged: `StartUnit` returns its job at once (`dbus.rs` `unit_job`).
+  `NotifyAccess=exec` lets the command send `STATUS=` lines ("only service updates sent from any of the
+  main or control processes originating from one of the Exec*= commands", same page). Unverified until
+  the live check: that systemd sets `NOTIFY_SOCKET` for a `Type=exec` unit with that setting.
+- Option B: `Type=notify`, the manager kept as the parent supervising llama-server and sending
+  `READY=1`. Changes the main PID: `save-slots`, signal forwarding, the exit code and `Restart=` all have
+  to be rebuilt. Most work and most risk, for nothing A lacks.
+- Option C: `Type=notify` with `NotifyAccess=all` and a poller forked before the exec. A second
+  long-lived process in the cgroup that nothing supervises; the fork before the exec is fragile.
+- Option D: patch llama-server to send `READY=1`. A patch to carry across every release
+  (`patches/llama.cpp/`), and the router alone knows which models must be loaded only through the
+  preset, which it already serves.
+
+**How `wait-ready` decides** (the same code on every instance, no ROCm condition):
+- The models to wait for: the sections of `models@<id>.ini` whose `load-on-startup` is true (own key,
+  else `[*]`), parsed with `pai-core`'s INI reader. None: it exits 0 at once, as today.
+- The port: from `$MAINPID`'s cmdline, the way `save-slots` reads it (`slot_save::slot_target`). No
+  `$MAINPID`, or no port: exit 0 at once.
+- The check: `GET /models` on `127.0.0.1:<port>` every 2 s (the router's list, each entry's
+  `status.value` `loading`, `loaded` or `unloaded`, plus `failed: true` for a load that failed:
+  `tools/server/README.md` "GET /models", llama.cpp v1.0.0). Done when each awaited id is `loaded` or
+  has `failed`; connection refused means the router is still starting. Each change of state goes to
+  `STATUS=` (for example `loading 1 of 2: embedder`) and the journal.
+- **A failed load, or its own deadline: ready anyway** (exit 0, a journal warning naming the model).
+  The router keeps serving the other models, as it does today; Strata has no `Requires=`, so failing
+  the start would not stop it either. The `-` prefix makes this hold for a llama.cpp package newer than
+  the framework's (an older manager answers `wait-ready` with its usage text and a non-zero code: the
+  start goes on, as today). The deadline is the command's own (20 min by default, one constant), so a
+  stall never becomes a systemd timeout. A timeout counts as abnormal and `Restart=on-abnormal` would
+  start a 20-minute load again. `TimeoutStartSec=25min` stays as the backstop.
+- `Restart=`: an automatic restart runs `ExecStartPost=` again, so units ordered after it wait again.
+- **Windows: unchanged.** The SCM has no `After=` between Strata and an instance, and no consumer asks
+  for it. `SERVICE_START_PENDING` with checkpoints could follow later from the same check.
+
+**Slice RS1** (test first; `pai-manager`, Linux; Windows type-checked). `pai-manager wait-ready <id>`
+as above, its HTTP read and clock behind seams. Done when: no load-on-startup section exits 0 without a
+request; two awaited ids exit 0 only once both are `loaded`; `failed: true` exits 0 with the warning;
+connection refused is retried; the deadline exits 0 with the warning; `STATUS=` is sent only when
+`NOTIFY_SOCKET` is set; the parser of `run-instance`/`save-slots` takes the new command; clippy and fmt
+green.
+
+**Slice RS2** (test first; `xtask`, the instance unit): `ExecStartPost=-{MANAGER_EXE} wait-ready %i`,
+`NotifyAccess=exec`, `TimeoutStartSec=25min`; the unit test pins the three lines. Ships in llama.cpp's
+package, so it needs a llama.cpp package build and install (not the framework-only deploy). Check after
+the user's restart of `llama.cpp@default` (starting llama-server is the user's): `systemctl status`
+shows `activating (start-post)` with the `STATUS=` line, then `active` once the embedder is loaded;
+`systemctl show -p ActiveEnterTimestamp` comes after the embedder's load line in the journal.
+
+**Slice RS3** (docs agent): the packaging guide's instance unit, and how another unit orders itself
+after an instance (`After=` only).
+
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
