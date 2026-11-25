@@ -1387,7 +1387,14 @@ packages is a new privileged verb, so it sits with the helper of step 14's "mana
   queues were suspended ~6 s per KFD node within 3 minutes of start, mostly while Strata allocated its
   GTT. The user confirmed the finding (2026-11-24), for every instance
   whatever its backend: the architect places
-  it (the instance unit's environment or `launch.rs`), then a test-first slice (GT1, built 2026-11-24, deployed 2026-11-25 01:27; checked live on llama.cpp@default after its restart: both variables in the router and the embedder, no `/dev/zero` SVM mapping, evicted_ms 18 ms per GPU from one eviction at load and none in the next 45 min under traffic, against about 45 s per GPU in 3.5 h before; strata-framework agent's trace; by 03:34 two compaction episodes had added about 1.2 s per GPU through an SVM range the process still registers (which allocation is unknown): a large cut, not zero; tracing it is open).
+  it (the instance unit's environment or `launch.rs`), then a test-first slice (GT1, built 2026-11-24, deployed 2026-11-25 01:27; checked live on llama.cpp@default after its restart: both variables in the router and the embedder, no `/dev/zero` SVM mapping, evicted_ms 18 ms per GPU from one eviction at load and none in the next 45 min under traffic, against about 45 s per GPU in 3.5 h before; strata-framework agent's trace; by 03:34 two compaction episodes had added about 1.2 s per GPU through an SVM range the process still registers (which allocation is unknown): a large cut, not zero; tracing it is open). Likely cause (strata-framework agent, from libhsakmt fmm.c
+  hsaKmtRegisterMemoryWithFlags, not yet verified on llama-server): memory a process registers or pins
+  (hsa_amd_memory_lock, hipHostRegister, ROCclr's pin-in-place for pageable copies) always goes through
+  the SVM API when the driver has it, whatever the two variables say. Levers to test (GT4, after a
+  read-only trace of svm_range_add in the embedder, which needs the user's go): ROCclr's
+  `GPU_PINNED_MIN_XFER_SIZE=1000000` (copies of 1 MiB or more through a pre-pinned staging buffer; Strata
+  runs with it), and, if ggml calls hipHostRegister itself, a patch so that memory comes from
+  hipHostMalloc (GTT under GT1) instead.
 
 - Step 1, taken by the coordinator on 2026-11-14, approved by the user on 2026-11-14:
   - Windows instance services are removed on every uninstall, repair and upgrade by
