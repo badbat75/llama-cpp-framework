@@ -129,6 +129,8 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 
 ## Pitfalls
 
+- An OpenCode run that ends its report and then prints `waiting for 1 background job` never exits (2026-11-25, twice): read its report from the log, kill the run by PID and start the next agent of the chain by hand (the `&&` chain stops on the kill). Briefs say: every command in the foreground.
+
 - A designer review that names a CSS fix as a guess ("try X", "about 7rem"): ask the designer to measure it first by injecting it with `page.addStyleTag` in its three browsers, then brief the tester with the measured CSS (2026-11-24: 22D4 D5 to D8 took four tester-coder rounds, D7's untried `contain: inline-size` broke the text).
 
 - A slice that adds a server or model profile key: before briefing, list every surface a user sets it from (the web UI form, the GUI configurator, `pai`) and queue each one missing in PLAN (2026-11-24: GT1 built `RocmHostMemoryGtt` without the Server page field; the user had to ask).
