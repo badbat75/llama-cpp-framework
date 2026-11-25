@@ -12,7 +12,9 @@ pool: its list, a new profile, one profile read and saved, and its delete
 ([below](#the-server-profile-pool)), and an instance's associations: its server profile switched, and
 its model profiles listed and assigned, one at a time or as the whole pool
 ([below](#the-association-routes)), and an instance created and its record removed
-([below](#creating-and-removing-an-instance)); the manager checks its sign-in: the password and the
+([below](#creating-and-removing-an-instance)), and the node's model files and a Hugging Face repo's
+GGUF files listed ([below](#the-hugging-face-file-listing)), and a model profile's model source
+checked at a save; the manager checks its sign-in: the password and the
 group `pai` (`PLAN.md` step 10).
 Only the web UI's page at `/`, its files under `/assets/` and the three session routes answer without
 a session: any other API route is 401 `session-required`, asking the manager nothing (user,
@@ -21,9 +23,9 @@ administrators only, members of the group `pai` (user, 2026-11-15): a right pass
 member signs in, a right password of anyone else is 403 `session-not-administrator`
 (`fe/briefs/api-contract.md`). Behind
 sign-in it has the Overview (version, instances), the About page (the framework's version and the operating system),
-a Node info page (this host's name, OS and kernel, each installed engine's version and backends, and each GPU's drivers, [below](#the-node)), an instance page (the server file, Start, Stop, Restart, start at boot: all served)
+a Node info page (this host's name, OS and kernel, each installed engine's version and backends, and each GPU's drivers, [below](#the-node)), an instance page (the server file, Start, Stop, Restart, start at boot, the instance's label set: all served)
 and the Model profiles page (the model profile list, the on/off switch per model profile and one model profile's own
-page, read and saved: all served, [below](#the-model-profile-routes)); on that page four cards are editable and the
+page, read, saved and deleted: all served, [below](#the-model-profile-routes)); on that page four cards are editable and the
 rest read-only, the fe's save being the open `PLAN.md` item 2h ([below](#the-web-ui-fe)).
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
@@ -330,8 +332,10 @@ files, and nothing renames it (slice IL1 and IL2; the design:
   restarts.
 - **The page's fallback is the engine and the port**: `GET /api/instances` carries the row's `label`
   ([above](#the-instances-from-the-manager)) and the page shows it where there is one and
-  `llama.cpp :9931` where there is none, the id as the secondary name (`fe/briefs/api-contract.md`
-  `PUT /api/instances/{id}/label`; the page's label field is the open `fe` work, brief 16, 17f).
+  `llama.cpp :9931` where there is none, the id as the secondary name. The instance page's **Rename**
+  opens a form with the label, its Save label being this route, and a 504 leaves the page saying the
+  write is not confirmed (f70d631, `fe/briefs/api-contract.md`
+  `PUT /api/instances/{id}/label`).
 - **The route is pinned by `tests/instance_label.rs`**, over the fake manager: 15 tests
   (`cargo test -p pai-bff --test instance_label`: 15 passed, rerun 2026-11-23 on the tree at 5ec6cf8,
   where the whole `pai-bff` was 718/718, the tester's rerun with binary freshness pinned), pinning that
@@ -403,6 +407,25 @@ ends. With no failure `nodeInfo` is absent. The web UI reads it for the Node inf
   manager refused that user, 503 `client-unavailable` for no manager or an answer that does not land
   within the bound, 502 `client-other` for anything else, never the manager's detail. **No page calls
   it yet**: the fe's GPU distribution card is the open brief `fe/briefs/14-gpu-distribution.md`.
+- **The node's model files are `GET /api/node/model-files`** (`node.rs` `model_files`, da525bd, slice
+  M3 of "Choosing the model file on the web" in [ARCHITECTURE.md](../../ARCHITECTURE.md)): the same
+  shape as the device list, the manager's `ModelFilesAs` as the signed-in user (its gate is the
+  device list's, `control` asked quietly), in a blocking task over one connect, on the read's 5 s
+  `MANAGER_TIMEOUT`, its failures the model profile reads' (`model_profiles::read_answer`). The
+  document is the manager's reply sent as it arrived: `source` is `"local"`, `dir` the models folder
+  as an absolute path (`paths::instance_models_dir`: `/var/lib/llama.cpp/models` on Linux,
+  `%ProgramData%\llama.cpp\models` on Windows), `files` one `{"path", "size", "shards", "category"}`
+  per `.gguf` under it (`path` the full path as the walk spells it, the text a model profile's
+  `model` key carries, `size` the bytes of that row's file, `shards` its shard count (1 for a single
+  file), `category` the first subfolder under `dir` or `null`), and `truncated`. The walk is the
+  manager's: 6 folders deep, at most 5 000 rows kept and 50 000 entries visited
+  (`MODELS_WALK_MAX_DEPTH`, `MODELS_WALK_MAX_FILES`, `MODELS_WALK_MAX_ENTRIES`,
+  [crates/manager/src/manager/service.rs](../manager/src/manager/service.rs) `walk_models_dir`: a
+  folder whose name starts with `.`, a symlink or other non-file, and a shard that is not the first
+  of its set, are passed by, so a split model is one row, its first shard's). A folder missing, not
+  a folder or unreadable is a 200 with `files: []` and `error` the keyed `models-dir-unreadable`
+  naming it: the picker shows an empty list with a text, the call does not fail. **No page calls it
+  yet**: the picker that picks from it (M4) is open `PLAN.md` work.
 
 ## The session
 
@@ -494,11 +517,14 @@ guide).
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach, or no answer within 5 s |
 | 502 | `{"key": "client-other", "args": []}` | Any other failure, never with the manager's detail: a manager built before the `As` methods, which refuses `ReadFileAs`, lands here |
 
-- **`values`**: the 21 `[Server]` keys of `pai_core::server_cfg::ServerConfig` by INI name, read as
+- **`values`**: the 22 `[Server]` keys of `pai_core::server_cfg::ServerConfig` by INI name, read as
   the configurator reads the file (`server_cfg::from_text`): a number, `true`/`false` or a string,
   `null` when unset or unreadable (`Port = abc`). `CudaAllreduce` is normalized to lowercase;
   `CudaDisableGraphs`, `AttnRotDisable` and `RocprofAttach` are `false` when absent;
-  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `Devices` is the file's GPU list in one string
+  `RocblasUseHipblaslt` is `"on"`, `"off"` or `null`. `RocmHostMemoryGtt` (GT1, 074b1a5) is `true`,
+  `false` or `null`, and `null` is its own state, not a stand-in for a default: the file names no key
+  and the launch exports the GTT pair, the on state
+  (`server_cfg::rocm_host_memory_gtt`, `launch::env_vars`). `Devices` is the file's GPU list in one string
   (`ROCm0,ROCm1`, the order `--device` takes, or `none`), `null` when the file names no key: every GPU
   of the node. `Tags` is always a list of strings, `[]` when
   the file has no key. `OpencodeApiKey` is `null` exactly when the
@@ -532,7 +558,7 @@ guide).
 ### Saving the server file
 
 `PUT /api/instances/{id}/server` (`server.rs` `save`) is the Server form's save, as the signed-in
-user. The body is `{"revision", "values"}`: the revision the GET answered and the 21 typed values, `Tags` a list of
+user. The body is `{"revision", "values"}`: the revision the GET answered and the 22 typed values, `Tags` a list of
 strings.
 The body becomes the file's text through the one fields table the GET reads with, and passes
 `pai_core::server_cfg::check` with this machine's CPU count, all before any manager is connected
@@ -548,7 +574,14 @@ while an id the node has no GPU for (`ROCm7`) is taken, the instance that names 
 list is the marker refusal and not the list's: 422 `comment-markers` with args `["Devices"]` and
 field `Devices`, the shape rule never seeing a marker (its `ROCm0;x` is one entry of the right
 shape) while the INI reader cuts the value at the marker, so the file would reload as `ROCm0`, GPUs
-nobody typed. A `null` `Devices`, like a blank, is no key in the file: every GPU.
+nobody typed. A `null` `Devices`, like a blank, is no key in the file: every GPU. The body's `values` is
+read by key and the whole file is re-rendered (`server.rs` `body_to_file`), so a key the body does not
+list is written as the file's commented hint. The web's Server form has no control for
+`RocmHostMemoryGtt` and the configurator's form has no widget for it
+(`crates/config/ui/server_page.slint`); both carry it through anyway, the page because its
+body is the values the read returned with the form's edits over them (`fe/src/ServerForm.tsx` `merged`),
+the GUI because its form reads the field into its draft (`crates/config/src/server_form.rs`), so a save
+from either keeps the line the file has.
 
 The file is then read as the session's user (the record's file, as the read resolves it), its text hashed with the run's secret and compared
 with the sent revision, and written through the manager's `WriteFileIfAs`, which accepts only while
@@ -593,8 +626,10 @@ Done answers the 200.
 profiles, the `server@<id>.ini` files of the engine's config directory, listed, created, read, saved
 and deleted. The `{id}` is a profile's own name, and the engine is always `llama.cpp`
 (`ENGINE_LLAMA_CPP`), the node's one engine: the create takes it in the body and refuses any other. The
-instance's Server route is unchanged ([above](#the-server-file-of-an-instance)): the web UI's instance
-page still reads and saves it, and no page uses the pool yet.
+instance's Server route is unchanged ([above](#the-server-file-of-an-instance)): the instance page
+names the profile the record gives it and links to its page (17a.10), and the pool is served as two
+pages, the list and the profile's own (098c177, 17a and 17b: `fe/src/ServerProfiles.tsx`,
+`fe/src/ServerProfilePage.tsx`, [above](#the-web-ui-fe)).
 
 All five sit behind sign-in: with no live session each answers 401 `session-required`, connecting to no
 manager, and each reads the session with `Sessions::current`, so every one of them moves the idle
@@ -680,8 +715,9 @@ never removed on a record read failure. The 503 and 504 are the create's. A retr
 (`crates/bff/src/model_profiles.rs`, built 2026-11-17; the fifth, the model's facts
 `GET /api/profiles/model/{id}/model-info`, [below](#the-model-info); the create and the delete, 76163d1, [below](#the-create-and-the-delete); `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
 designs "The switch on and off (item 11b)" and "Saving a preset from the web" in `ARCHITECTURE.md`):
-the Model profiles page's list and switch, and the read and the save of one model profile. All four are behind
-sign-in and all four ask `private-ai-manager` on **one connect as the signed-in user**, so it is
+the Model profiles page's list and switch, the read, the save and the delete of one model profile, and
+the model source a save carries. All of them are behind
+sign-in and all of them ask `private-ai-manager` on **one connect as the signed-in user**, so it is
 that user's own membership of `pai`, re-checked by the
 manager at the call, that answers: 401 `session-required` with no session (the manager is not
 connected to, nothing is written), 403 `session-not-administrator` and the end of the session when
@@ -808,8 +844,10 @@ written first, so a refusal leaves both files as they were.
 `POST /api/profiles/model` and `DELETE /api/profiles/model/{id}` (`model_profiles.rs` `create` and
 `remove`, 76163d1, slice MP2; the design "(3) The bff routes" in `ARCHITECTURE.md`) call the manager's
 `CreateModelProfileAs` and `DeleteModelProfileAs` (823a7c3: [crates/config/README.md](../config/README.md))
-on one connect as the signed-in user, under the write's 15 s (`WRITE_TIMEOUT`). Both are served as an
-API with no page of their own yet. The session rules are the pool's: 401 `session-required` with no
+on one connect as the signed-in user, under the write's 15 s (`WRITE_TIMEOUT`). The create is served as
+an API with no page of its own; the delete is the minus on the profile's row in the Models list and the
+**Delete** at the start of the page's Save bar (22D, e1eea89, 28a028f, 22D4 eb042d8,
+[above](#the-web-ui-fe)). The session rules are the pool's: 401 `session-required` with no
 session and the manager not connected to; 403 `session-not-administrator` ending the session; 503
 `client-unavailable` with no manager or a 15 s that ran out before the call was handed over, nothing
 written; 504 `client-timeout` for a 15 s that ran out after it or a manager lost after it, the outcome
@@ -888,8 +926,9 @@ and the rest of the file stand. The keys the body may touch are `checks::WEB_MOD
 GPU distribution keys `device`, `split-mode` and `tensor-split` joined them at 66b2bb3 (the design's
 G1), the page
 having no control for them yet (`fe/briefs/14-gpu-distribution.md`); `n-cpu-moe` at 4cfa909 (L3, an
-integer 0 to 4096, `checks::MODEL_PROFILE_INT_KEYS`) and `override-tensor` at 6570557 (J1). Only
-`model`, `mmproj`, `model-draft`, `spec-type` and `moe-cache-mib` are still refused
+integer 0 to 4096, `checks::MODEL_PROFILE_INT_KEYS`) and `override-tensor` at 6570557 (J1). The model's
+source, `model`, `hf-repo` and `hf-file`, joined at b1e52c8 (M3b, [below](#the-source-a-save-carries)).
+Only `mmproj`, `model-draft`, `spec-type` and `moe-cache-mib` are still refused
 (`checks::MODEL_PROFILE_KEYS_NOT_ON_WEB`).
 
 The body is read in full before a file is opened, and is refused whole:
@@ -945,6 +984,29 @@ the safe answer after a write that stands, as the switch's.
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
 | 502 | `client-other` | anything else, never the manager's detail |
 
+### The source a save carries
+
+Slice M3b (b1e52c8) of "Choosing the model file on the web" in `ARCHITECTURE.md`: the save checks the
+model source of the section as the save leaves it, before the write is asked, so a refused source leaves
+the file holding the source it had.
+
+- **Exactly one of `model` and `hf-repo`, and `hf-file` only beside a repo**: else 422
+  `model-profile-bad-source` `[id]`, `field` `model`.
+- **A `model` the body changed** is a path the manager's walk of the engine's models folder names
+  ([above](#the-node), asked inside this save): else 422 `model-profile-model-not-listed`
+  `[path]`, `field` `model`.
+- **A `hf-repo` of a source the save has to look at** goes through `pai_core::hf::parse_spec` before
+  anything is fetched, so a hostile id never reaches the network: else 422 `hf-repo-invalid` `[repo]`,
+  `field` `hf-repo`. The tag `parse_spec` cuts off is no refusal.
+- **An `hf-file` of a source the save has to look at** is a file of that repo's listing, read through
+  [the cache](#the-hugging-face-file-listing) (`hf::file_is_listed`): else 422
+  `model-profile-file-not-listed` `[repo, file]`, `field` `hf-file`. A file the body left alone counts as
+  changed when the repo changed, that file having been listed in the repo the section named.
+- **A value the body leaves alone beside a source it leaves alone is never checked**, so a source the
+  configurator or `pai` wrote outside the lists stays saveable, and no listing is asked for at all.
+- A listing that never reached Hugging Face answers that route's key at 503 instead (
+  `hf-unreachable`, `hf-tool-missing`: [above](#the-hugging-face-file-listing)), the file untouched.
+
 ### The device bound
 
 The manager refuses a model profile that names a GPU outside the `Devices` of the server profile of an
@@ -966,7 +1028,9 @@ tensor list 6570557 slice J1; the design "Layers, MoE and tensor placement on th
 page" in `ARCHITECTURE.md`) relays the manager's `ModelInfoAs` asked as the signed-in user on one
 connect: the layer facts of the GGUF file the model profile names
 ([crates/config/README.md](../config/README.md), the `ModelInfo` bullet, says how the manager finds and
-reads it). No page calls it yet in a commit. The 200 is always one shape, each part `null` where the
+reads it). The model profile page reads it when it opens: the model's facts line (block count, MoE,
+experts, or the reason there are none) and the GPU distribution card's Blocks mode (LS1, d6181ff,
+`fe/src/gpuBlocks.ts`). The 200 is always one shape, each part `null` where the
 manager answered none:
 
     {"model": "<the resolved path>",
@@ -1078,11 +1142,63 @@ verbatim (`none` included), a save of `null` writing no key, a save of another k
 `device-bad-name` naming `Devices` with nothing written, and the same key's `;`/`#` as 422
 `comment-markers` naming `Devices`. Green with the whole bff (605) at 3aaa4dc (its report): on that
 tree `tests/server.rs` holds 83 and `tests/server_profiles.rs` 30 test attributes (a count of the
-attributes, not a run). **Nothing here has been called against
+attributes, not a run). The Hugging Face listing is `tests/hf_files.rs` (18 tests) and the node's model
+files are `tests/node_model_files.rs` (10), both green 2026-11-25 on the tree at 1ef9ca8
+(`cargo test -p pai-bff --test hf_files --test node_model_files`): the runner's argv (`-q` first, no
+`location`, the bff's own config), every spec through `parse_spec` so a refused id fetches nothing, the
+401 that fetches nothing, HF's 401/403/404 as the one `hf-repo-unavailable`, a 3xx as `hf-repo-moved`
+with no second request, the third concurrent caller as 429 and a listing that failed giving its slot
+back, the 10 min window (a tagged call leaving the bare repository's cache alone), and the document with
+a `value` carrying `hf-file` only for a tag that names several candidates; beside them the model-files
+rows relayed as the manager answered them, asked as the signed-in user, with the 401 that asks nothing,
+the 403 that ends the session, the 503 of no manager and of an answer past the bound, and the 502 with no
+detail. The source keys of a save (M3b) are pinned in `tests/model_profile_save.rs` (73 test attributes
+on this tree, a count, not a run). **Nothing here has been called against
 a real manager**: no signed-in route has (the real install of 2.99.1 on Ubuntu 26.04 answered
 `/api/version` and `/api/instances` (that read of 2026-11-14 predates the `Instances` call, which no
 real manager has answered), [above](#running-it)), and on Windows the code is type-checked
 for the GNU target, never run.
+
+## The Hugging Face file listing
+
+`GET /api/hf/files?repo=<id>` (`crates/bff/src/hf.rs`, 04e085d, slice M2 of "Choosing the model file on
+the web" in [ARCHITECTURE.md](../../ARCHITECTURE.md)) answers the GGUF files of one Hugging Face
+repository, grouped as the files to pick: one row per quantization, its shards counted, its size, its
+`sha256` and the `mmproj` beside it, each carrying the `value` a model profile save sends as its source.
+The listing itself is `pai-core`'s (52b2460, M1: `pai_core::hf` is the two GETs, the refs one for the
+commit and the recursive tree one for that commit, and the mirror of llama.cpp's file rules that groups
+the rows into candidates, moved out of `pai-app`, which keeps the search, the download and the fit). Like
+the device list it is gated by a session and `Sessions::current` moves that session's idle deadline.
+
+- **The browser sends a repository id, never a URL or a host.** `pai_core::hf::parse_spec` (which holds
+  it to `valid_repo_id`) judges it before anything is fetched, and the two URLs are built from the fixed
+  endpoint `pai_core::hf::bff_endpoint`, `https://huggingface.co/`: `MODEL_ENDPOINT` and `HF_ENDPOINT`
+  reach nothing here.
+- **The runner is the bff's own** (`curl_argv`, `curl_config`), not the app's: `-q` first (no
+  `~/.curlrc` of the service's account), `-sS`, the config on stdin (`-K -`) and **no `-L` anywhere**, so
+  a 3xx stops here and no request reaches a host the answer names. The config is
+  `pai_core::hf::bff_curl_config` with no token: `proto =https` (curl restricts a redirect's protocol,
+  never its host), `connect-timeout` 10 s, `max-time` 20 s, `max-filesize` 16 MiB. **No token is sent at
+  all** in these slices, so a gated, a private and a missing repository answer the same.
+- **The cache is per repository**: a 10 min window (`CACHE_WINDOW`), 64 repositories (`CACHE_REPOS`), and
+  at most 2 listings running at once (`MAX_CALLS`), the third caller answered 429. The save's check of a
+  `hf-file` reads through this same cache ([below](#the-source-a-save-carries)), warm when the picker
+  listed the repository just before the save.
+- **The whole read has 25 s** (`HF_TIMEOUT`, `lib.rs`), the curl bounds inside it.
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `{"source": "hf", "repo", "revision", "files": [{"tag", "file", "shards", "size", "sha256", "sidecars": {"mmproj"}, "value": {"hf-repo", "hf-file"}, "default"}]}` | the listing answered: `revision` is the commit the tree was read at, `sidecars.mmproj` a path or `null`, `value` the source keys a save sends (`hf-file` in it only when the tag names several candidates, or nothing), `default` marking the row the picker opens on |
+| 401 | `session-required` | no session, nothing fetched |
+| 400 | `hf-repo-invalid` `[repo]` | no `repo`, or one `parse_spec` refuses; nothing fetched |
+| 404 | `hf-repo-unavailable` `[repo]` | Hugging Face answered 401, 403 or 404: with no token a gated, a private and a missing repository answer the same |
+| 429 | `hf-busy` | two listings are already running |
+| 502 | `hf-repo-moved` `[repo]` | a 3xx: the runner follows no redirect |
+| 502 | `hf-bad-answer` | an answer that names no model to pick: not JSON, over the cap, no branch, a repository with no GGUF |
+| 503 | `hf-tool-missing` | this machine has no `curl` |
+| 504 | `hf-unreachable` | Hugging Face was never reached: no host, no connect, no answer in time |
+
+**No page calls it yet**: the picker that reads it (M4) is open `PLAN.md` work.
 
 ## The association routes
 
@@ -1232,11 +1348,12 @@ kept by the `designer`; the slice briefs and the API contract the fe is built ag
 and `/assets/`: a skip link, a banner (Sign in, or the user and Sign out, no role word: fe slice R4,
 1827023), a nav (behind a Menu button below 960px; fe slice N1, `fe/briefs/20-nodes-menu.md`: **Overview** first;
 then a **Nodes** group, `nav-nodes`, holding the host as a plain label named by the host, the computer
-icon, and under it its instances as links named `id · server profile`, the box icon, the id alone when
-the record names no server profile, then **Node info**, the cpu icon, `nav-node`; then a **Profiles**
-group, `nav-profiles`, holding **Model profiles**, `nav-model-profiles` (a **Server profiles** entry waits
-on the server profile page, which the fe does not have yet); and last, in a list of its own, **About**,
-the info icon, `nav-about`) and the route's page, whose heading takes the focus and names the document title on a
+icon, and under it its instances as links named by `instanceName` (f70d631, 16 17f.2: the label, the
+engine and the port, the id alone), the box icon, then **Node info**, the cpu icon, `nav-node`; then a
+**Profiles** group, `nav-profiles`, holding **Server profiles**, `nav-server-profiles`, the server icon
+(098c177), and **Model profiles**, `nav-model-profiles`, the layers icon, each one the current item for
+its own page (`aria-current` "page") and for a profile's page ("true", 16 17a.2); and last, in a list of
+its own, **About**, the info icon, `nav-about`) and the route's page, whose heading takes the focus and names the document title on a
 change. Each page reads
 its data once when it opens and never shows a reply's text. The shell reads `GET /api/version` once per
 session (`readVersionInfo` in `fe/src/version.ts`, since fe slice AN5): the host name it answers names the nav's instance group and the
@@ -1248,9 +1365,11 @@ nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark i
 | --- | --- | --- |
 | `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none. The section is named by the host the shell read. Each tile carries its facts with the list, no read of its own: the port, the tags, and a Start at boot row from `boot`, absent when that is `null` (fe slice 12 T1, boot from 13 N.1). Both reads are 401 with no session, so an unsigned visitor has nothing to show (user, 2026-11-19; the sign-in-only shell the web UI shows here is its own slice, `fe/briefs/09-signin-only.md`, uncommitted when this was written) | signed in; otherwise the sign-in form in its place |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
-| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and `PUT /api/instances/<id>/boot`, both behind the session), then its server file (`GET /api/instances/<id>/server`) as the whole Server form of `pai-config`: editable, every signed-in session being a `pai` member (the administrator/user split is gone, fe slice R4, 1827023), with the GUI's field dependencies, a save bar (Save and Discard, a status line, an alert for a failure) and a save that sends `PUT /api/instances/<id>/server` (`fe/src/ServerForm.tsx`) | signed in; otherwise the sign-in form in its place |
-| `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`) | signed in; otherwise the sign-in form in its place |
-| `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; of the settings cards the Embeddings, Resource / context, KV cache (its first part) and Sampling overrides ones are editable (fe slices 2h.1, 2h.4, 2h.5: 57e5573, 39529ef, 40d19a7, dc1ff69) and the rest read-only with every control disabled, a save that sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d). After GPU distribution, the Tensor placement card shows `override-tensor` as rule rows (tensor kind, layers, a custom pattern, Goes on, Remove) with Add rule; the key is sent only when the rules differ from the loaded ones (1b98fee, TP1, `fe/src/TensorPlacement.tsx`, `fe/briefs/21-tensor-placement.md` 21 T.1 to T.9) | signed in; otherwise the sign-in form in its place |
+| `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`), Start at boot (`GET` and `PUT /api/instances/<id>/boot`, both behind the session), the tags field (`PUT /api/instances/<id>/tags`, 12 T1), and a **Rename** in the heading whose Save label sends `PUT /api/instances/<id>/label` (f70d631, 16 17f.5 to 17f.9: the form opens with the label, a text that trims to the label the instance has sends nothing, a 504 says the write is not confirmed). The Server section names the server profile the record gives the instance, as a link to that profile's page: the Server form is on the profile's page, not here (17a.10, 098c177) | signed in; otherwise the sign-in form in its place |
+| `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`). Each row's status cell ends with a 40 px minus named `Delete model profile <id>` (`fe/src/RowDelete.tsx`, 22D4 eb042d8): it is switched off (`aria-disabled`, drawn inactive) while the profile is on, and its reason `Switch it off to delete it.` shows as a line under the minus on hover and on focus; pressing it opens a confirm as a row of the table right after the row, whose **Delete** sends `DELETE /api/profiles/model/<id>`; the row leaves the list when it lands, every row's minus going inactive with the write, and a refusal reads the list again and puts its words on the line above the table (409 `model-profile-enabled` naming the profile, 404 `no-model-profile-named` saying it is gone, a 504 `Not confirmed:` read again to see whether it went), the focus landing on the next row's minus | signed in; otherwise the sign-in form in its place |
+| `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; every settings card's fields are editable (fe slices 2h.1 to 2h.10: 57e5573, 39529ef, 40d19a7, dc1ff69, f2fda3b, 4071f1e, 64cda2f, ce5fee0, c155194, b4a4343, 84cd76e; the GPU distribution card 3585c39, `n-cpu-moe` 7d9ba6e, the draft and vision devices d2dc056), the file picks `mmproj` and `model-draft` and the `moe-cache-mib` field staying read-only (2h.7's 178: it needs the model's facts) and the GPU list `device` with it (its control is the open brief `fe/briefs/14-gpu-distribution.md`); a save sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d). After GPU distribution, the Tensor placement card shows `override-tensor` as rule rows (tensor kind, layers, a custom pattern, Goes on, a 40 px `x` named `Remove Rule N`) with a 40 px outlined `+` named **Add rule**, each label above its control and the row's controls on one line (157d075, TP1b), and after them a **Rules as text** field with the whole value as llama.cpp reads it: paste a value from a guide, reorder the rules, and Enter or the focus leaving rebuilds the rows (2e0a027, TP2, 21 T.10 to T.13). Save is refused, the fields marked, while a rule has an unreadable Layers text, an empty pattern, a pattern holding `,` or `=`, or no device, and the manager's refusals land on the rule they name (21 T.11, T.12). The key is sent only when the rules differ from the loaded ones (1b98fee, TP1, `fe/src/TensorPlacement.tsx`, `fe/briefs/21-tensor-placement.md` 21 T.1 to T.9). Under the summary line a plain paragraph says the state, over the page's width and outside the settings section (22 D4.9: 22D2's status row and its minus are gone). The settings section opens with the Save bar, right after its heading and sticky to the viewport's top (22 D2.5, 22 D2.6), and the first button of its group is **Delete model profile** (22 D4.10): switched off while the profile is switched on, its reason `Switch it off to delete it.` a visible line under the bar's buttons; pressing it opens the confirm under them, whose **Delete** sends `DELETE /api/profiles/model/<id>`, and the page becomes the paragraph that says it is gone (e1eea89, 28a028f, 22D4 eb042d8, `fe/briefs/22-model-sources.md` 22 D.1 to 22 D.7 and 22 D4.9 to 22 D4.14); a refusal whose read again took the Delete away leaves its words in a paragraph of the bar's own | signed in; otherwise the sign-in form in its place |
+| `#/profiles/server` | The server profile pool (`fe/src/ServerProfiles.tsx`, 17a, 17b): the pool read once each time the page opens from `GET /api/profiles/server`, one row per profile in the reply's order, the id a link to its page, the port, the tags, and the instance that runs it a link to that page, the rows not sorted. At the end of the list a 40 px `+` (e73d922, 17b2.1) discloses the **Create** form in place: the new profile's id and port, sent as `POST /api/profiles/server`, a 201 opening the new profile's page, and a 503 or 504 reading the list again to say whether the profile landed (17b.4, 17b.5). Each row ends with a 40 px minus named `Delete server profile <id>` (`fe/src/RowDelete.tsx`, 22D4 eb042d8): it is switched off (`aria-disabled`, drawn inactive) while an instance runs the profile, and its reason `An instance uses it: give that instance another server profile to delete this one.` shows as a line under the minus on hover and on focus; pressing it opens a confirm as a row of the table right after the row, whose **Delete** sends `DELETE /api/profiles/server/<id>`; the row leaves the list when it lands, every row's minus going inactive with the write, and a refusal reads the list again and puts its words on the line above the table (409 `client-server-profile-in-use` naming the instance, 404 `client-no-server-profile` saying it is gone, a 504 `Not confirmed:` read again to see whether it went) | signed in; otherwise the sign-in form in its place |
+| `#/profiles/server/<id>` | One server profile's page (`fe/src/ServerProfilePage.tsx`, 17a.5 to 17a.9, 17b.6 to 17b.9): the way back, the id as the heading, and the whole Server form of that profile, read from `GET /api/profiles/server/<id>` (the server document plus `instance`) and saved as `PUT` there. Under the heading a definition row says **Used by**: `Unused` as muted text, or the instance as a link to its page, carrying the name the menu uses (22 D2.10). The Save bar at the end of the form starts its group with **Delete server profile** (22 D4.10): switched off while an instance runs the profile, its reason `An instance uses it: give that instance another server profile to delete this one.` a visible line under the bar's buttons; pressing it opens the confirm under them, whose **Delete** sends `DELETE /api/profiles/server/<id>` (22 D2.8, 22D4 eb042d8); a 409 `client-server-profile-in-use` read again leaves the words in a paragraph of the bar's own | signed in; otherwise the sign-in form in its place |
 | `#/node` | Node info (`fe/src/NodePage.tsx`, fe slice AN5, `fe/briefs/18-about-node-info.md`), read again at every arrival from `GET /api/node` (an engine upgrade does not restart the web service): the host name, the operating system and kernel, the framework's version, one section per installed engine with its version and a row per GPU runtime package (the three known suffixes by their own word, any other as sent; a `null` version as Unknown, an engine with no runtime as None, CPU only, `engines: []` as a paragraph that there is no engine), then one block per GPU (vendor, PCI address, driver, Vulkan driver). When the reply carries `nodeInfo` (the manager did not answer), the OS and kernel show as Unknown and the GPU section is a paragraph saying the manager did not answer or could not read them. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
 | `#/about` | The framework's version and the operating system with its version (`fe/src/About.tsx`, fe slice AN5), read again at every arrival from `GET /api/version`. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
 | anything else | Not found | anyone |
@@ -1268,9 +1387,11 @@ nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark i
   dialog that keeps the edits for the same administrator. Leaving the page with unsaved edits asks
   first: a link or Sign out in a dialog (`fe/src/Dialog.tsx`), closing or reloading the tab in the
   browser's own prompt; Back, Forward and a typed address do not ask yet.
-- **Every model profile call of the contract is served**: the page's read and its save
-  ([above](#the-save)), and the Model profiles page's list and switch ([above](#the-model-profile-routes)); what is
-  open is the fe's own save (`PLAN.md` item 2h). The fe is tested against that contract with mocked
+- **Every model profile call of the contract is served**: the page's read, its save and its delete
+  ([above](#the-save), [above](#the-create-and-the-delete)), the model info read
+  ([above](#the-model-info)), and the Model profiles page's list and switch
+  ([above](#the-model-profile-routes)). The fe has no page that creates a model profile, and no page
+  picks a model source: the file pick and the Hugging Face pick (M4) are open `PLAN.md` work. The fe is tested against that contract with mocked
   replies only, never against a real bff, so what those pages show takes a run on a machine. Everything the
   instance page makes is served: the
   server read and its save ([above](#the-server-file-of-an-instance)), the run verbs and
@@ -1344,6 +1465,11 @@ create's 201, its 400 that asks nothing, its 422 fields and the port's edges, th
 409 naming the instance, the document of a used and of an unused profile with the record's own failure,
 the save of the profile's own file answering `running` false, true on a state read that failed and true
 on a record read that failed after the write, and the instance's Server route answering as before;
+`tests/hf_files.rs` drives `GET /api/hf/files` through `router_with_session_and_hf` with a fake
+`pai_core::hf::Fetch` (never the network, `curl`, PAM or a real repository) and asserts the argv the
+bff's own runner builds, the cache window and the two-call bound; `tests/node_model_files.rs` drives
+`GET /api/node/model-files` through `router_with_session` over the fake manager's `model_files()`,
+pinning the principal of the connect and the document as the manager answered it;
 `src/tests/deps_lint.rs` keeps the GUI
 packages (Slint) out of its dependency tree. It is in the Windows GNU type check ("Commands" in
 [AGENTS.md](../../AGENTS.md#commands)); nothing of it has run on Windows.

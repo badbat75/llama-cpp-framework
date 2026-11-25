@@ -223,6 +223,28 @@ is R5, open work in `PLAN.md`. Source: `ARCHITECTURE.md`, the design block "GPU 
 model profile page" (in "Nodes and instances") and "Resources belong to the server profile",
 "(1) The node inventory" (its R1 bullets).
 
+### `GET /api/node/model-files` (M3, served da525bd)
+
+The `.gguf` files under the engine's models folder, for the picker that picks a local model file (M4,
+open work in `PLAN.md`). A page read behind a session (moves the idle deadline); the bff asks the
+manager's `ModelFilesAs` as the signed-in user, on the read's 5 s. 200:
+
+    {"source": "local", "dir": "/var/lib/llama.cpp/models",
+     "files": [{"path": "/var/lib/llama.cpp/models/qwen/qwen-q8_0.gguf",
+                "size": 529433600, "shards": 1, "category": "qwen"}],
+     "truncated": false, "error": null}
+
+`path` is the full path as the manager's walk spells it, the text a model profile's `model` key carries;
+`size` is the bytes of a split model's first shard and `shards` its shard count (1 for a single file);
+`category` is the first subfolder under `dir`, `null` for a file sitting in it. The walk is 6 folders
+deep, keeps at most 5 000 rows and visits at most 50 000 entries, `truncated` saying rows were dropped;
+a dot folder, a non-file and a shard that is not the first are passed by. A `dir` missing, not a folder
+or unreadable is a 200 with `files: []` and `"error": {"key": "models-dir-unreadable", "args":
+[<dir>]}`: the picker shows an empty list with a text, the call does not fail. Errors: 401
+`session-required` (manager not asked); 403 `session-not-administrator` (the session ended); 503
+`client-unavailable`; 502 `client-other`. No page calls it yet. Source: `crates/bff/src/node.rs`,
+`crates/manager/src/manager/service.rs` `walk_models_dir`, `crates/bff/tests/node_model_files.rs`.
+
 ### `PUT /api/instances/{id}/tags` (T1, being built)
 
 Body `{"tags": [string]}`, the instance's own tags in order (`[]` clears them); the server
@@ -328,10 +350,12 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   `server-malformed`), body at most 64 KiB, `{"revision": <string>, "values": {...}}`. The same-origin
   guard applies (a `PUT` is a write): the browser's own `Origin` and `Sec-Fetch-Site` on a same-origin
   `fetch` pass it.
-- **`values`**: the 21 keys of the read, typed as the read gives them, `null` the key unset: numbers
+- **`values`**: the 22 keys of the read, typed as the read gives them, `null` the key unset: numbers
   (whole, within `i32`) for `Port`, `Threads`, `ThreadsBatch`, `ModelsMax`, `ModelsMemoryMargin`,
   `LogVerbosity`; booleans for `CudaDisableGraphs`, `AttnRotDisable`, `RocprofAttach`, `Webui`,
-  `WebuiMcpProxy`, `SaveStateOnShutdown`; `"on"`/`"off"` for `RocblasUseHipblaslt`; a list of strings
+  `WebuiMcpProxy`, `SaveStateOnShutdown`, `RocmHostMemoryGtt` (GT1, 074b1a5: `null` is its own state,
+  the file naming no key, which is the state the launch exports the GTT pair from);
+  `"on"`/`"off"` for `RocblasUseHipblaslt`; a list of strings
   for `Tags`; strings for `Hostname`, `ModelsDir`, `CudaAllreduce`, `StateDir`, `OpencodeBaseUrl`,
   `OpencodeApiKey`, `Devices`. A value of
   another type (a fraction, a numeric string, another word for the tri-state) is 400
@@ -340,7 +364,8 @@ Checked against the fe's `ServerForm.tsx` (`toValues`, `sendSave`) on 2026-11-17
   read returned with the form's edits over them (`ServerForm.tsx` `merged`, the same merge the dirty
   compare uses), so a Server save keeps `Tags` and `Devices`, the two keys it has no control for
   (pinned by `fe/src/ServerSaveKeys.test.tsx`; at 3aaa4dc the body carried only the 19 of `toValues`
-  and a save cleared the other two). The GPUs card is R5, open work in
+  and a save cleared the other two), and keeps `RocmHostMemoryGtt` the same way, the key having no
+  control and no name in the form. The GPUs card is R5, open work in
   [PLAN.md](../../PLAN.md); the GUI's Server tab carries the list with no widget so its save keeps it
   (`server_form.rs`). Unknown keys are ignored. For the three off-by-default switches `null` and
   `false` write the same.
@@ -599,8 +624,20 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   `spec-type` (Assets, until 2i), `n-cpu-moe`, `moe-cache-mib` (MoE, until 2g), `device`,
   `split-mode`, `tensor-split` (GPU distribution, until 2f), `override-tensor` (Tensor placement,
   until 2j). **From bff slice G1** `device`, `split-mode` and `tensor-split` move to the
-  accepted list (68 keys, seven left out), for the GPU distribution card (`fe/briefs/14-gpu-distribution.md`); `n-cpu-moe` (0 to 4096) from L3 (4cfa909) and `override-tensor` from J1 (6570557): 70 keys, five left out. A slice that makes one editable moves it to the list in the same commit. **Body keys
+  accepted list (68 keys, seven left out), for the GPU distribution card (`fe/briefs/14-gpu-distribution.md`); `n-cpu-moe` (0 to 4096) from L3 (4cfa909) and `override-tensor` from J1 (6570557): 70 keys, five left out. From M3b (b1e52c8) the model's source joins it, `model`, `hf-repo` and `hf-file`: **73** keys, four left out (`mmproj`, `model-draft`, `spec-type`, `moe-cache-mib`). A slice that makes one editable moves it to the list in the same commit. **Body keys
   match in exact case** (`CTX-SIZE` is 400): the fe sends each key as 02e's tables spell it.
+- **The source is checked by the bff, before the write** (M3b, b1e52c8), on the section as the save
+  leaves it, and only where the body changed it: exactly one of `model` and `hf-repo`, and `hf-file`
+  only beside a repo, else 422 `model-profile-bad-source` (`args: [id]`, `field` `model`). A `model`
+  the body changed must be a path the manager's walk of the engine's models folder names
+  (`GET /api/node/model-files`'s rows): 422 `model-profile-model-not-listed` (`args: [path]`, `field`
+  `model`). A `hf-repo` must pass `pai_core::hf::parse_spec`: 422 `hf-repo-invalid` (`args: [repo]`,
+  `field` `hf-repo`), nothing fetched. An `hf-file` must be a file of that repo's `GET /api/hf/files`
+  listing (read through its cache): 422 `model-profile-file-not-listed` (`args: [repo, file]`, `field`
+  `hf-file`); a file the body left alone counts as changed when the repo changed. A source the body
+  leaves alone is never checked, so one the configurator wrote outside the lists stays saveable. A
+  listing that never reached Hugging Face is 503 `hf-unreachable` or `hf-tool-missing`. Nothing is
+  written.
 - **400 `model-profiles-malformed`**, `args: []`: a non-JSON body or another content type; `revision` not
   a string or `values` not an object; a key outside the list; a value neither a string nor `null`;
   a value empty after trimming spaces and tabs (clearing a key is `null`); a value holding a
@@ -665,8 +702,11 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
 
 ### `POST /api/profiles/model` and `DELETE /api/profiles/model/{id}` (MP2, served 76163d1)
 
-Served with no page of their own yet; the design is "(3) The bff routes" in `ARCHITECTURE.md`, the
-detail in [crates/bff/README.md](../../crates/bff/README.md#the-create-and-the-delete).
+The create is served with no page of its own; the delete is the minus on the profile's row in the Models
+list and the **Delete** at the start of the page's Save bar (22D, e1eea89, 22D4 eb042d8,
+`fe/briefs/22-model-sources.md` 22 D.1 to 22 D.7 and 22 D4.1 to 22 D4.15). The design is "(3) The bff
+routes" in `ARCHITECTURE.md`, the detail in
+[crates/bff/README.md](../../crates/bff/README.md#the-create-and-the-delete).
 
 - **Create**: `{"id": string, "from": string}` (a copy of a pool profile) or `{"id": string,
   "values": {"model": string} | {"hf-repo": string, "hf-file"?: string}}`. 201 `{"id"}`; the new
@@ -683,6 +723,35 @@ detail in [crates/bff/README.md](../../crates/bff/README.md#the-create-and-the-d
   `session-not-administrator` (the session ended), 503 `client-unavailable` (no manager, or the 15 s
   ran out before the call was handed over), 504 `client-timeout` (the call handed over, its outcome
   unknown: a retried create is then 409, a retried delete 404), 502 `client-other`.
+
+### `GET /api/hf/files?repo=<id>` (M2, served 04e085d)
+
+The GGUF files of one Hugging Face repository, grouped as the files to pick, for the picker that picks
+a model source (M4, open work in `PLAN.md`). A page read behind a session (moves the idle deadline),
+the whole read having 25 s. The browser sends a repository id, never a URL: the two requests are built
+from the fixed endpoint `https://huggingface.co/` and `pai_core::hf::parse_spec` judges the id first,
+so an id it refuses fetches nothing. No token is sent, so a gated, a private and a missing repository
+answer the same. 200:
+
+    {"source": "hf", "repo": "org/model", "revision": "<commit>",
+     "files": [{"tag": "Q8_0", "file": "model-Q8_0.gguf", "shards": 1,
+                "size": 529433600, "sha256": "<oid>",
+                "sidecars": {"mmproj": "mmproj-F16.gguf" | null},
+                "value": {"hf-repo": "org/model:Q8_0", "hf-file"?: "<path>"},
+                "default": <bool>}]}
+
+One row per quantization: `file` is the first shard, `shards` the shard count, `size` the total,
+`sha256` the first shard's, `sidecars.mmproj` the vision projector beside it when the repository
+carries one. `value` is the source a model profile save sends: `hf-repo` is `<repo>:<tag>`, and
+`hf-file` is in it only when several candidates share the tag or the tag is empty. `default` marks the row the
+picker opens on. The listing is cached per repository (the tag of the request is applied to the cached
+tree, never read out of it): 10 minutes, 64 repositories, at most 2 calls running at once. Errors, each
+`{"key", "args"}`: 401 `session-required` (nothing fetched); 400 `hf-repo-invalid` `[repo]` (no `repo`, or one `parse_spec` refuses); 404 `hf-repo-unavailable` `[repo]`
+(HF answered 401, 403 or 404); 429 `hf-busy` (two listings already running); 502 `hf-repo-moved`
+`[repo]` (a 3xx: the runner follows no redirect) and `hf-bad-answer` (an answer naming no model to
+pick: not JSON, over the cap, no branch, no GGUF); 503 `hf-tool-missing` (no `curl` on this machine);
+504 `hf-unreachable` (HF never reached). Source: `crates/bff/src/hf.rs`,
+`crates/bff/tests/hf_files.rs`, `ARCHITECTURE.md` "Choosing the model file on the web".
 
 ## Open on the bff side
 

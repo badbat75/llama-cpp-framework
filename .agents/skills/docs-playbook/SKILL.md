@@ -431,7 +431,7 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   flag does not reach it.
 - Count a suite's tests with `grep -c '#\[test\]\|#\[tokio::test\]'` on the file; a whole-crate total
   wants `grep -cE '#\[(tokio::)?test(\(|\])'` over the crate's files. Say which it is: it counts
-  attributes, not a run.
+  attributes, not a run, and a run can be larger (`tests/hf_files.rs`: 16 attributes, 18 tests run).
 - A README's per-suite count is the count of the tree it cites: recount a suite only when a commit
   changed it (`git show <sha>:<suite> | grep -c` settles the old number) and leave an untouched suite at
   its dated count. To date one test of a suite to the commit that added it, use
@@ -514,6 +514,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Mid-session the tree gains whole files you never touched (another agent's slice: `fe/src/*`,
   `fe/ux/*`, the other playbooks), and the working tree can be ahead of HEAD in `fe/` (the coder's slice
   in progress).
+- A slice in progress sits in the working tree as untracked files, so a grep of the working copy can
+  document unbuilt work: read `fe/` with `git show main:<path>`, and check a file is tracked
+  (`git ls-files --error-unmatch`) before citing it.
+- **`main` moves while a docs task runs**: the coordinator commits slices between your tool calls. The
+  22D4 delete was an untracked brief when the reading began and shipped (eb042d8) before the last
+  sentence was written, so a "not built" sentence written early became false inside the same session.
+  Re-read `git log --oneline -5 main` and `git status --porcelain` before the final pass, and re-check
+  every "not built" / "no page of its own" claim against the new HEAD.
+- The last docs commit is not the baseline for a served/not-served claim: `AGENTS.md` still said the
+  server profile pool had "no page of its own" long after the pages landed (56d5f66 predates the docs
+  commit 4d4a55f). Check every such claim against `fe/src/route.ts` and the `call(` paths on `main`, not
+  only against the commits since the last docs commit.
 - A gate of the form "run the docs-site check only if `pgrep -fc 'cargo|rustc'` is 0" never passes: the
   brief's own argv contains the word, so the launcher shell, the parent `opencode run` and the pgrep
   shell are all counted. Ask for the programs: `pgrep -xc cargo` and `pgrep -xc rustc`.
