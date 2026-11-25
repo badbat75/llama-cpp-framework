@@ -1242,7 +1242,7 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     Then GT2 (user, 2026-11-24): `RocmHostMemoryGtt` (GT1's server profile key, on when unset) as a
     field in the Server page's SDK tuning card beside `RocblasUseHipblaslt` (designer brief, then
     tester and coder), after 22D4 (brief `fe/briefs/25-rocm-host-memory.md`, GT2.1 to GT2.5: a checkbox
-    "Host memory as GTT", checked when unset). Then GT3: the same key in the GUI configurator's Server
+    "Host memory as GTT", checked when unset; GT2 built 2026-11-25). Then GT3: the same key in the GUI configurator's Server
     tab (`crates/config/ui/server_page.slint`, beside `rocblas_use_hipblaslt`), and `pai`'s server
     commands if GT1 left it out there.
     Then 17f2 (brief 16, 17f2.1 to 17f2.10: the display name set from a pencil after the page heading, the

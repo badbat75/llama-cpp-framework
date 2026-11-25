@@ -213,7 +213,7 @@ SERVER_DOC = {
         "Port": 8580, "Hostname": "localhost", "OpencodeBaseUrl": None, "OpencodeApiKey": None,
         "Threads": None, "ThreadsBatch": 8, "ModelsMax": None, "ModelsMemoryMargin": 512, "ModelsDir": None,
         "Webui": True, "WebuiMcpProxy": False, "LogVerbosity": 4, "SaveStateOnShutdown": False, "StateDir": None,
-        "RocblasUseHipblaslt": None, "RocprofAttach": False, "CudaAllreduce": None, "CudaDisableGraphs": False,
+        "RocblasUseHipblaslt": None, "RocmHostMemoryGtt": True, "RocprofAttach": False, "CudaAllreduce": None, "CudaDisableGraphs": False,
         "AttnRotDisable": False,
     },
     "defaults": {

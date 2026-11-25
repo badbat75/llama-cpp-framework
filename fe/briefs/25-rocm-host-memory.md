@@ -57,3 +57,22 @@ ignore it), and the docs.
 Tests to extend: `fe/src/ServerSaveKeys.test.tsx` (the key in the saved values, both states) and
 `fe/src/ServerSave.test.tsx` (the place, the default shown, the 422 field). If the test fixtures
 (`fe/src/test/bff.ts`) list the server document's keys, the key is added there as `null`.
+
+## GT2 review (designer, 2026-11-25)
+
+Driven in Chromium, Firefox and WebKit at 1280 and 320 px, light, dark, 200 % text and (Chromium)
+forced colours (`build/ux-review/gt2.js`). The stub's document carries `true`; the unset case is
+pinned by the tests.
+
+- GT2.1 met: the field is in the ROCm subgroup, ordered hipBLASLt, Host memory as GTT, Profiler
+  attach.
+- GT2.2 met: the label, the toggle text and the hint as briefed. The About toggle opens the hint as
+  5 paragraphs.
+- GT2.3 met for `true`: the checkbox is checked.
+- GT2.4 met: Space unchecks it and Save goes active. Space again re-checks it.
+- GT2.5 met as the card's other checkboxes do it: the legend "Host memory as GTT" names the group,
+  the checkbox is named by its toggle text, and the hint is behind its About toggle
+  (`aria-controls`), not an `aria-describedby`. The brief's "the hint as its description" was
+  inexact; this pattern is the one `fe/DESIGN.md` (Hint) sets. The tab order is About, the checkbox,
+  then the next About. The box scales to 40 px at 200 %, there is no sideways scroll at 320 px or
+  200 %, and under forced colours the box and its check are drawn.

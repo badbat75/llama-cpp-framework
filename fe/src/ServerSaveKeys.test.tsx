@@ -78,6 +78,19 @@ function saveButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-button') })
 }
 
+/** The checkbox of a field's group, by the field's label and the box's text. */
+function check(main: HTMLElement, field: string, name: string) {
+  return within(within(main).getByRole('group', { name: field })).getByRole(
+    'checkbox',
+    { name },
+  ) as HTMLInputElement
+}
+
+/** The Host memory as GTT checkbox (brief 25, GT2.1). */
+function gtt(main: HTMLElement): HTMLInputElement {
+  return check(main, en('server-rocm-gtt'), en('server-rocm-gtt-toggle'))
+}
+
 /** Clicks Save and waits until the PUT was sent (or `n` of them). */
 async function save(main: HTMLElement, bff: ReturnType<typeof fakeBff>, n = 1) {
   fireEvent.click(saveButton(main))
@@ -130,10 +143,13 @@ test('R2 fix: an empty Tags goes back as an empty list (a null one is 400 server
 })
 
 test('R2 fix: every key of the read goes back as it was read, only the edited Port differs', async () => {
-  // The two off-by-default switches read as false, so every key of this
-  // document round-trips by value through the form.
+  // The off-by-default switches read as false, so every key of this document
+  // round-trips by value through the form. GT2 gave RocmHostMemoryGtt a
+  // control: the form writes true for an unset key (GT2.4), so this document
+  // names it false, the state that does round-trip.
   const doc = serverDoc({
     ...KEPT,
+    RocmHostMemoryGtt: false,
     RocprofAttach: false,
     AttnRotDisable: false,
   })
@@ -172,4 +188,29 @@ test('R2 fix: a document with Tags and Devices loads clean: the keys the form do
   fireEvent.click(box(main, en('server-port')))
   await act(async () => {})
   expect(bff.to(...PUT), 'a clean form sends nothing').toHaveLength(0)
+})
+
+// ── Brief 25 GT2: the key the form has a control for ────────────────────
+
+test('25 GT2.4: a save sends RocmHostMemoryGtt true when the box is checked, the state an unset key shows', async () => {
+  const { bff, main } = await loaded({
+    serverProfile: () => reply(200, serverDoc({ RocmHostMemoryGtt: null })),
+  })
+  expect(gtt(main).checked, 'an unset key shows the box checked').toBe(true)
+  editPort(main)
+  await save(main, bff)
+  expect(sentValues(bff).RocmHostMemoryGtt, 'checked sends true').toBe(true)
+})
+
+test('25 GT2.4: unchecking Host memory as GTT is an edit, and the save sends RocmHostMemoryGtt false', async () => {
+  const { bff, main } = await loaded({
+    serverProfile: () => reply(200, serverDoc({ RocmHostMemoryGtt: true })),
+  })
+  fireEvent.click(gtt(main))
+  expect(
+    saveButton(main).getAttribute('aria-disabled') ?? 'false',
+    'dirty',
+  ).toBe('false')
+  await save(main, bff)
+  expect(sentValues(bff).RocmHostMemoryGtt, 'unchecked sends false').toBe(false)
 })

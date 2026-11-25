@@ -268,6 +268,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 ### The web UI (fe/): the fake bff and fixtures
 
 - Run the whole fe suite ONCE after changing the shared fake (`src/test/bff.ts`).
+- A key added to the shared `serverDoc()` reddens every strict body pin of the server form: `UNCHANGED`
+  (compared with `toEqual` in eleven places of `ServerSave.test.tsx`), the explicit value lists of its
+  `1b.32 (5.4)` pair, and the maps `SWITCHES_UNSET`, `SWITCHES` and `CARDS`/`FIELDS` of
+  `InstancePage.test.tsx`. A new FOCUSABLE field moves every tab-order list by TWO stops (the field's
+  About button, then its control): `ServerSave.test.tsx` `1b 6` and `InstancePage.test.tsx`
+  `TAB_PATH_FORM`. Amend each in the same pass and name them in the report.
 - Keep a fixture constant looked up by accessible name clear of every other control's name; call
   `cleanup()` per iteration in a test that renders in a loop (RTL cleans only between tests); put
   `Element.prototype.scrollIntoView = () => {}` in the `beforeEach` of a file whose test clicks a jump
@@ -391,6 +397,13 @@ fixes where in the rule the new declaration sits: add it last, and name that in 
   handler prevented it): jsdom never runs the key's default action, so the implicit submit, and the Enter
   that presses the control the handler just focused, are invisible here and only the prevention is
   pinnable (16 17f review D2).
+- A brief's "the hint is the field's description" is NOT `aria-describedby` in these forms: `describes()`
+  names only the error (and a written-as line), and the hint is a hidden `div#<id>-hint` behind the
+  field's About toggle. Pin it by clicking `About <label>` and reading the hint's `<p>` per `\n` of the
+  key, and pin the box's name by role and name (the group is named by the label).
+- `within(el).getByRole('group', { name })` never matches `el` itself: a `CheckboxField`'s `<fieldset>` IS
+  the group, so look it up from `main` and compare identity with `toBe`.
+- `closest()` answers `Element`: cast to `HTMLElement` where a helper takes one (typecheck TS2345).
 - A link's accessible name joins the text of its children with NO separator, so a name built as text plus
   an inline `span` reads "Coding assistantID default": pin the space as a text node in the markup
   (`textContent` and the name both), and the span's own line in the sheet (16 17f review D1).
@@ -600,3 +613,5 @@ fixes where in the rule the new declaration sits: add it last, and name that in 
   `button`, read `textContent`), and the same for the row's own text.
 - vitest's `toBe` takes ONE argument: a failure message passed to it is a typecheck red, not a test red.
   The message is the second argument of `expect(x, 'msg')`.
+- An ENABLED save or Discard button carries no `aria-disabled` attribute at all (`getAttribute` answers
+  `null`), while a clean form sets it to `"true"`: a dirty pin asserts `getAttribute(..) ?? 'false'`.

@@ -57,6 +57,8 @@ const CARDS: [string, string[]][] = [
     'server-sdk',
     [
       'hipBLASLt',
+      // 25 GT2.1: the new field of the ROCm subgroup.
+      'Host memory as GTT',
       'Profiler attach',
       'Tensor-split AllReduce',
       'Disable GPU graphs',
@@ -757,6 +759,7 @@ const SWITCHES_UNSET = {
   Webui: null,
   WebuiMcpProxy: null,
   SaveStateOnShutdown: null,
+  RocmHostMemoryGtt: null,
   RocprofAttach: null,
   CudaDisableGraphs: null,
   AttnRotDisable: null,
@@ -767,6 +770,7 @@ const SWITCHES: [string, string][] = [
   ['Web UI', 'server-web-ui-toggle'],
   ['Web UI MCP proxy', 'server-mcp-proxy-toggle'],
   ['Save on shutdown', 'server-save-on-shutdown-toggle'],
+  ['Host memory as GTT', 'server-rocm-gtt-toggle'],
   ['Profiler attach', 'server-profiler-attach-toggle'],
   ['Disable GPU graphs', 'server-gpu-graphs-toggle'],
   ['KV rotation', 'server-kv-rotation-toggle'],
@@ -781,7 +785,7 @@ function switches(main: HTMLElement): Record<string, boolean> {
   )
 }
 
-test('5.2: an unset Web UI shows ticked (the default), every other unset switch unticked', async () => {
+test('5.2: an unset Web UI and an unset Host memory as GTT show ticked (their defaults), every other unset switch unticked', async () => {
   const main = await loaded({
     serverProfile: () => reply(200, serverDoc(SWITCHES_UNSET)),
   })
@@ -789,6 +793,8 @@ test('5.2: an unset Web UI shows ticked (the default), every other unset switch 
     'Web UI': true,
     'Web UI MCP proxy': false,
     'Save on shutdown': false,
+    // 25 GT2.3: the key is on by default, so an unset one shows checked.
+    'Host memory as GTT': true,
     'Profiler attach': false,
     'Disable GPU graphs': false,
     'KV rotation': false,
@@ -1216,6 +1222,8 @@ const TAB_PATH_FORM = [
     [about('Save on shutdown'), en('server-save-on-shutdown-toggle')],
     [about('Snapshot folder'), 'Snapshot folder'],
     [about('hipBLASLt'), 'hipBLASLt'],
+    // 25 GT2.5: the new checkbox, between hipBLASLt and Profiler attach.
+    [about('Host memory as GTT'), en('server-rocm-gtt-toggle')],
     [about('Profiler attach'), en('server-profiler-attach-toggle')],
     [about('Tensor-split AllReduce'), 'Tensor-split AllReduce'],
     [about('Disable GPU graphs'), en('server-gpu-graphs-toggle')],

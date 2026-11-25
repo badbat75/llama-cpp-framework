@@ -80,6 +80,7 @@ type Draft = {
   SaveStateOnShutdown: boolean
   StateDir: string
   RocblasUseHipblaslt: string
+  RocmHostMemoryGtt: boolean
   RocprofAttach: boolean
   CudaAllreduce: string
   CudaDisableGraphs: boolean
@@ -182,6 +183,8 @@ function fromValues(v: Keys, d: Keys, rows: Row[]): Draft {
     SaveStateOnShutdown: v.SaveStateOnShutdown === true,
     StateDir: shown(v.StateDir),
     RocblasUseHipblaslt: oneOf(v.RocblasUseHipblaslt, ['on', 'off']),
+    RocmHostMemoryGtt:
+      v.RocmHostMemoryGtt == null || v.RocmHostMemoryGtt === true,
     RocprofAttach: v.RocprofAttach === true,
     CudaAllreduce: oneOf(v.CudaAllreduce, ['nccl', 'internal', 'none']),
     CudaDisableGraphs: v.CudaDisableGraphs === true,
@@ -250,6 +253,7 @@ function toValues(d: Draft, rows: Row[]): Keys {
     StateDir: folder(d.StateDir),
     RocblasUseHipblaslt:
       d.RocblasUseHipblaslt === 'default' ? null : d.RocblasUseHipblaslt,
+    RocmHostMemoryGtt: d.RocmHostMemoryGtt,
     RocprofAttach: d.RocprofAttach,
     CudaAllreduce: d.CudaAllreduce === 'default' ? null : d.CudaAllreduce,
     CudaDisableGraphs: d.CudaDisableGraphs,
@@ -320,6 +324,10 @@ const REFUSALS: RefusalTable = {
         return t('api-not-whole-number-in-range', ...args)
       case 'comment-markers':
         return t('api-comment-markers', ...args)
+      // Brief 25 GT2.4: the manager's refusal of a value that is no bool
+      // (checks.rs `bool_value`); the reply names the field.
+      case 'not-one-of':
+        return t('api-not-one-of', ...args)
       case 'load-on-startup-over-max':
         return t('api-load-on-startup-over-max', ...args)
       case 'load-on-startup-unlimited':
@@ -859,6 +867,15 @@ export default function ServerForm({
             ]}
             value={v.RocblasUseHipblaslt}
             onChange={(s) => edit('RocblasUseHipblaslt', s)}
+          />
+          <CheckboxField
+            id={`${fid}-RocmHostMemoryGtt`}
+            label={t('server-rocm-gtt')}
+            hint={t('server-rocm-gtt-hint')}
+            error={errors.RocmHostMemoryGtt}
+            toggle={t('server-rocm-gtt-toggle')}
+            checked={v.RocmHostMemoryGtt}
+            onChange={(c) => edit('RocmHostMemoryGtt', c)}
           />
           <CheckboxField
             id={`${fid}-RocprofAttach`}

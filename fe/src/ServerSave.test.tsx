@@ -67,6 +67,7 @@ const UNCHANGED = {
   SaveStateOnShutdown: true,
   StateDir: '/data/llama-state',
   RocblasUseHipblaslt: 'off',
+  RocmHostMemoryGtt: true,
   RocprofAttach: false,
   CudaAllreduce: 'nccl',
   CudaDisableGraphs: false,
@@ -1750,6 +1751,8 @@ test('1b.32 (5.4): each field is sent in its typed form', async () => {
       SaveStateOnShutdown: true,
       StateDir: null,
       RocblasUseHipblaslt: null,
+      // 25 GT2.4: the box shows checked for an unset key, so the save writes true.
+      RocmHostMemoryGtt: true,
       RocprofAttach: true,
       CudaAllreduce: 'internal',
       CudaDisableGraphs: true,
@@ -2052,6 +2055,7 @@ const SWITCHES_UNSET = {
   Webui: null,
   WebuiMcpProxy: null,
   SaveStateOnShutdown: null,
+  RocmHostMemoryGtt: null,
   RocprofAttach: null,
   CudaDisableGraphs: null,
   AttnRotDisable: null,
@@ -2070,7 +2074,7 @@ test('1b 5.2: a file with every switch unset loads clean for an administrator', 
   expect(bff.to(...PUT)).toHaveLength(0)
 })
 
-test('1b 5.2: a save after an unrelated edit sends Webui true for an unset Web UI, the other unset switches false', async () => {
+test('1b 5.2: a save after an unrelated edit sends Webui true for an unset Web UI, the unset Host memory as GTT true (25 GT2.3), the other unset switches false', async () => {
   const { bff, main } = await loaded({
     serverProfile: () => reply(200, serverDoc(SWITCHES_UNSET)),
   })
@@ -2084,6 +2088,8 @@ test('1b 5.2: a save after an unrelated edit sends Webui true for an unset Web U
       Webui: true,
       WebuiMcpProxy: false,
       SaveStateOnShutdown: false,
+      // 25 GT2.3: an unset Host memory as GTT is on, so its save is true.
+      RocmHostMemoryGtt: true,
       RocprofAttach: false,
       CudaDisableGraphs: false,
       AttnRotDisable: false,
@@ -2432,6 +2438,12 @@ test('1b 6 (22 D2.5, 22 D4.10): Tab reaches the back link, the Used by link, Del
     ['Snapshot folder', box(main, 'Snapshot folder')],
     ['About hipBLASLt', about('hipBLASLt')],
     ['hipBLASLt', select(main, 'hipBLASLt')],
+    // 25 GT2.5: the new checkbox sits between hipBLASLt and Profiler attach.
+    ['About Host memory as GTT', about(en('server-rocm-gtt'))],
+    [
+      'Host memory as GTT',
+      check(main, en('server-rocm-gtt'), en('server-rocm-gtt-toggle')),
+    ],
     ['About Profiler attach', about('Profiler attach')],
     [
       'Profiler attach',
@@ -3029,4 +3041,153 @@ test('198c: a 409, Reload on a dirty form, Keep editing: the dialog rule is unch
   ).not.toBe(pageH1(main))
   expect(box(main, 'Port').value, 'the edit is kept').toBe('8581')
   expectAlert(main, en('api-server-changed-elsewhere'), 'the alert stays')
+})
+
+// ── Brief 25 slice GT2: Host memory as GTT ──────────────────────────────
+// fe/briefs/25-rocm-host-memory.md: the server profile key
+// `RocmHostMemoryGtt` (the bff serves it since GT1, 074b1a5) as a checkbox of
+// the SDK tuning card's ROCm subgroup, following the Web UI field: checked when
+// the key is unset or true, saved as true or false.
+
+/** The Host memory as GTT checkbox: its field's label names the group. */
+function gtt(main: HTMLElement): HTMLInputElement {
+  return check(main, en('server-rocm-gtt'), en('server-rocm-gtt-toggle'))
+}
+
+test('25 GT2.1: Host memory as GTT is a field of the SDK tuning card, in the ROCm subgroup, after hipBLASLt and before Profiler attach', async () => {
+  const { main } = await loaded()
+  const field = gtt(main)
+  const subgroup = field.closest('.subgroup')
+  expect(subgroup, 'the field sits in a subgroup').not.toBe(null)
+  expect(
+    [...subgroup!.querySelectorAll('h4')].map((h) => h.textContent),
+    'the ROCm subgroup, and no other heading in it',
+  ).toEqual(['ROCm'])
+  const card = subgroup!.closest('section.card')
+  expect(card, 'the subgroup is inside a card').not.toBe(null)
+  expect(card!.querySelector('h3')?.textContent, 'the SDK tuning card').toBe(
+    en('server-sdk'),
+  )
+  const hip = select(main, 'hipBLASLt')
+  const profiler = check(
+    main,
+    'Profiler attach',
+    en('server-profiler-attach-toggle'),
+  )
+  expect(before(hip, field), 'after hipBLASLt').toBe(true)
+  expect(before(field, profiler), 'before Profiler attach').toBe(true)
+})
+
+test('25 GT2.3: an unset, a missing and a true RocmHostMemoryGtt show the box checked, a false shows it unchecked', async () => {
+  const cases: [string, Record<string, unknown>, boolean][] = [
+    ['the key null', { RocmHostMemoryGtt: null }, true],
+    // JSON drops a member whose value is undefined: the key is absent.
+    ['the key missing', { RocmHostMemoryGtt: undefined }, true],
+    ['the key true', { RocmHostMemoryGtt: true }, true],
+    ['the key false', { RocmHostMemoryGtt: false }, false],
+  ]
+  for (const [what, values, want] of cases) {
+    const { main } = await loaded({
+      serverProfile: () => reply(200, serverDoc(values)),
+    })
+    expect(gtt(main).checked, what).toBe(want)
+    cleanup()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('25 GT2.4: unchecking Host memory as GTT marks the form dirty, and Discard puts the box back', async () => {
+  const { bff, main } = await loaded({
+    serverProfile: () => reply(200, serverDoc({ RocmHostMemoryGtt: true })),
+  })
+  const line = status(main)
+  expect(gtt(main).checked, 'a true key shows the box checked').toBe(true)
+  fireEvent.click(gtt(main))
+  expect(gtt(main).checked).toBe(false)
+  expect(line.textContent).toBe(en('save-unsaved'))
+  fireEvent.click(discardButton(main))
+  expect(gtt(main).checked, 'Discard puts the box back').toBe(true)
+  expect(line.textContent).toBe('')
+  expect(bff.to(...PUT), 'Discard sends nothing').toHaveLength(0)
+})
+
+test('25 GT2.4: a 422 not-one-of with field RocmHostMemoryGtt shows its text under the checkbox, marks it and takes the focus', async () => {
+  const { bff, main } = await loaded({
+    // The manager's refusal of a value that is no bool (checks.rs
+    // `bool_value`): the key names the key in args[0], and the bff's
+    // `field_of` marks it.
+    serverProfileSave: () =>
+      reply(422, {
+        key: 'not-one-of',
+        args: ['RocmHostMemoryGtt', 'yes', 'true, false'],
+        field: 'RocmHostMemoryGtt',
+      }),
+  })
+  fireEvent.click(gtt(main))
+  await save(main, bff)
+  const text = en('api-not-one-of', 'RocmHostMemoryGtt', 'yes', 'true, false')
+  await within(main).findByText(en('save-refused', text))
+  expectError(gtt(main), text, 'Host memory as GTT')
+  expect(document.activeElement, 'the first error takes the focus').toBe(
+    gtt(main),
+  )
+  expectAlert(main, en('save-refused', text))
+})
+
+test('25 GT2.5: the field is a native checkbox named by its label and its own text, with the hint behind About, as the card’s other checkboxes', async () => {
+  const { main } = await loaded()
+  const field = gtt(main)
+  // The name: the group is named by the field's label, the box by its text
+  // (both found by role and name, which is what `gtt` does).
+  const gttField = field.closest('fieldset.field') as HTMLElement | null
+  expect(gttField, 'the field is a field of the form').not.toBe(null)
+  expect(
+    within(main).getByRole('group', { name: en('server-rocm-gtt') }),
+    'the group is named by the label',
+  ).toBe(gttField!)
+  // A native input, so Space toggles it. The harness fires no activation for
+  // a key (jsdom sends no click), so the press itself is open for the UX
+  // pass, as the other native controls' (HearthTheme's OPEN).
+  expect(field.type, 'a native checkbox').toBe('checkbox')
+  expect(field.getAttribute('aria-invalid') ?? 'false', 'clean').toBe('false')
+  // The hint: the About button of the field, hidden until opened, its text
+  // broken at each \n into a paragraph (fe/DESIGN.md, Hint).
+  const about = within(main).getByRole('button', {
+    name: `${en('field-about')} ${en('server-rocm-gtt')}`,
+  })
+  const hintId = about.getAttribute('aria-controls') ?? ''
+  expect(hintId, 'About names its hint').toMatch(/-hint$/)
+  const hint = document.getElementById(hintId)
+  expect(hint, 'the hint element').not.toBe(null)
+  expect(isHidden(hint!), 'the hint starts hidden').toBe(true)
+  fireEvent.click(about)
+  expect(about.getAttribute('aria-expanded')).toBe('true')
+  expect(isHidden(hint!), 'About shows the hint').toBe(false)
+  expect(
+    [...hint!.querySelectorAll('p')].map((p) => p.textContent),
+    'each paragraph of the brief is a paragraph',
+  ).toEqual(en('server-rocm-gtt-hint').split('\n'))
+  // No new component, token or style: the field is built of the classes the
+  // ROCm subgroup's other checkbox already uses, in the same subgroup.
+  const profiler = check(
+    main,
+    'Profiler attach',
+    en('server-profiler-attach-toggle'),
+  ).closest('fieldset.field') as HTMLElement | null
+  expect(profiler, 'Profiler attach is a field too').not.toBe(null)
+  const tokens = (el: HTMLElement) =>
+    new Set(
+      [el, ...el.querySelectorAll<HTMLElement>('*')].flatMap((e) => [
+        ...e.classList,
+      ]),
+    )
+  const other = tokens(profiler!)
+  expect(
+    [...tokens(gttField!)].filter((c) => !other.has(c)),
+    'the field uses no class the card’s checkbox does not',
+  ).toEqual([])
+  expect(
+    gttField!.parentElement!.className,
+    'the same subgroup as hipBLASLt and Profiler attach',
+  ).toBe(profiler!.parentElement!.className)
 })

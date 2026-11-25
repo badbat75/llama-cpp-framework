@@ -210,6 +210,11 @@ export const EN: Record<string, string> = {
   'server-snapshot-folder': 'Snapshot folder',
   'server-profiler-attach': 'Profiler attach',
   'server-profiler-attach-toggle': 'allow rocprofv3 --attach',
+  // Brief 25 slice GT2.2: the ROCm subgroup's Host memory as GTT checkbox.
+  'server-rocm-gtt': 'Host memory as GTT',
+  'server-rocm-gtt-toggle': "keep ROCm's host memory in GTT",
+  'server-rocm-gtt-hint':
+    "Puts the memory ROCm takes from system RAM in the graphics driver's GTT pool, so the kernel no longer moves it while llama-server runs. Without this, memory compaction and reclaim can stall the GPU in the middle of a request.\nTurn it off if loading a model fails after this was switched on: GTT memory cannot be swapped out, and GTT is capped near half the RAM, so a large allocation in system memory can fail where it used to succeed.\nChecked = set both variables to 0 (the default); unchecked = don't set them, so ROCm's own defaults apply.\nNo effect on CUDA, Vulkan or Metal builds.\nVariables: HSA_USERPTR_FOR_PAGED_MEM=0, HSA_SVM_FOR_PAGED_MEM=0",
   'server-allreduce': 'Tensor-split AllReduce',
   'server-gpu-graphs': 'Disable GPU graphs',
   'server-gpu-graphs-toggle': 'launch kernels one by one',
@@ -1441,6 +1446,7 @@ export function serverDoc(
       SaveStateOnShutdown: true,
       StateDir: '/data/llama-state',
       RocblasUseHipblaslt: 'off',
+      RocmHostMemoryGtt: null,
       RocprofAttach: null,
       CudaAllreduce: 'nccl',
       CudaDisableGraphs: false,

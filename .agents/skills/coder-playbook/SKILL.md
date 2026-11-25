@@ -261,7 +261,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `fe/src/boxed.ts`; a rule that spans a group is data on the row; the send rule of a checkbox row is
   data `onSend`/`offSend`); a helper shared by two pages takes each caller's rule as a named parameter.
   Per-field checks of a save run BEFORE the `!dirty` guard. A new 422 refusal key needs a `case` in each
-  of the two tables (`REFUSALS.text` and its sibling).
+  of the two tables (`REFUSALS.text` and its sibling), and the tables are PER PAGE: the Server
+  form's carried no `not-one-of` while the model profile page's does, so a manager bool refusal
+  there showed `api-other` and marked nothing. The bff's `field_of` names `field` for every server
+  422, so the Server form needs the `text` arm only, no `field` fallback.
 - Making a read-only card editable: amend the shared list under `fe/src/test/` that spells the editable
   set and derives tab stops from it (one fix point; an editable number field is two tab stops). On the
   model profile page that list is `MODEL_PROFILE_CARDS` in `fe/src/test/modelProfileCards.ts` (`fields`
