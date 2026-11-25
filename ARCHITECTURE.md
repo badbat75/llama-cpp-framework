@@ -4008,7 +4008,10 @@ before the router listens. The unit's main process is llama-server (`run-instanc
   answers `wait-ready` with its usage text and a non-zero code: every start would fail). The llama.cpp
   packages keep not requiring the framework (the unit's `ConditionFileIsExecutable=` skips it with no
   manager), and gain `Breaks: private-ai-framework-core (<< V)` on the `.deb` and `Conflicts:
-  private-ai-framework-core < V` on the `.rpm`, V the first framework version with `wait-ready`
+  private-ai-framework-core < V` on the `.rpm`, V the framework's workspace version (`Cargo.toml`
+  `[workspace.package] version`, read by `xtask/src/common/version.rs` `framework()`), 2.99.1 by the
+  user's decision of 2026-11-25: no bump, since no release shipped since and the only 2.99.1 core
+  without `wait-ready` was this machine's, replaced by that day's deploy
   (Debian Policy 7.4, https://www.debian.org/doc/debian-policy/ch-relationships.html; RPM dependencies,
   https://rpm-software-management.github.io/rpm/manual/dependencies.html). The framework side needs
   nothing: a new manager with an old unit simply never runs `wait-ready`.
@@ -4054,10 +4057,11 @@ address; no `$MAINPID` exits non-zero at once; the argument parser takes the com
 
 **Slice RS2** (test first; `xtask`, the instance unit and the llama.cpp packages): `ExecStartPost=
 {MANAGER_EXE} wait-ready %i` and `TimeoutStartSec=11min` in `instance_unit`; the `.deb` `Breaks:` and the
-`.rpm` `Conflicts:` on `private-ai-framework-core` below the version RS1 ships in; `Before=llama.cpp.target`
+`.rpm` `Conflicts:` on `private-ai-framework-core` below the workspace version (`<< 2.99.1` and
+`< 2.99.1` today, taken from `version::framework()`, not a separate constant); `Before=llama.cpp.target`
 in `instance_unit`, `llama.cpp.target` (a description, no `[Install]`) and its
 `usr/lib/systemd/system/multi-user.target.wants/llama.cpp.target` link in llama.cpp's `.deb` and `.rpm`
-(Component::Llama). Done when the unit test pins the three lines, the package tests pin both relations,
+(Component::Llama). Done when the unit test pins the three lines, the package tests pin both relations with the workspace version,
 the target file and the link (a symlink to `../llama.cpp.target`; if a package format cannot ship the
 link, its install script runs `systemctl add-wants multi-user.target llama.cpp.target` and its removal
 undoes it), and `instance_unit`'s `[Install]` still reads `WantedBy=multi-user.target`. Live, after the
