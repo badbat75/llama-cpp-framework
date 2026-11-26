@@ -2180,6 +2180,18 @@ p + .ot-add {
   flex-basis: 100%;
 }
 
+/* The coverage line of a rule (brief 21, 21 T.15a): what the rule places on the
+   model the page read. It is a line of its own under the controls, as the Field
+   Error above it is, and the quiet text of a report: `--muted`, the small text
+   token, and wrapping anywhere, because a long count sits in a narrow row at
+   320 px. */
+.ot-rule-row .ot-coverage {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
 .check-list-actions {
   display: flex;
   flex-wrap: wrap;

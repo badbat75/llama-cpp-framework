@@ -768,8 +768,11 @@ Each is one React component, reused by every page.
   pointer users can leave it too
   ([APG modal dialog](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)).
 - **Buttons**: pills, at least 40 px high; primary (filled `--accent`) for the one main action of a
-  view; secondary (outlined `--control`, `--border-w`) otherwise; no hover look (brief 06 section 0); danger is not a style of its own **(preference)**: destructive actions ask
-  first with a Confirm in place (below), never a browser dialog (coordinator, 2026-11-21; brief 16).
+  view; secondary (outlined `--control`, `--border-w`) otherwise; no hover look (brief 06 section 0); danger is a style only for the verb that
+  destroys: the verb button of a Confirm in place (below) is `.primary.danger`, filled `--danger` with
+  `--on-accent` text (user, 2026-11-26); the button that opens the confirm stays a text button in
+  `--danger` (D4.30). Destructive actions ask first with a Confirm in place, never a browser dialog
+  (coordinator, 2026-11-21; brief 16).
   - **Inactive**: a button that can turn inactive while it has focus (the save bar's, the run
     controls) uses `aria-disabled="true"`, never `disabled`: it stays in the tab sequence, a click,
     Enter or Space does nothing (the handler checks; the attribute blocks nothing by itself), and it
@@ -804,7 +807,8 @@ Each is one React component, reused by every page.
   question for it **(preference)**.
 - **Confirm in place** (a destructive action: delete, remove): the action's button reveals right after
   it a `div role="group"` named (`aria-labelledby`) by its question paragraph, which says what is lost,
-  then the action's verb button and Cancel, a status line and the alert place. The focus moves to
+  then the action's verb button (`.primary.danger`: filled `--danger`, `--on-accent` text, its
+  `aria-disabled` look as every primary's) and Cancel, a status line and the alert place. The focus moves to
   Cancel; Cancel or Escape closes it and puts the focus on the opener. Done, the page's content after
   the `h1` is replaced by one paragraph (`tabindex="-1"`, focused) saying it was done and a link to
   the list; no message travels to another page **(preference: no modal for a two-button question; it

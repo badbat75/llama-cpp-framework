@@ -10,6 +10,12 @@
 // names the probe prints, `CPU` one of them; a rule's pattern is searched
 // anywhere in a tensor's name and the FIRST rule that matches wins, so no edit
 // moves a rule.
+//
+// TP3 adds the counting of that first match: `coverage` answers, per rule, what
+// the rule places on the model the page read, as the GUI's
+// `crates/app/src/tensor_picker.rs` counts it (its `coverage` 133 and
+// `fmt_bytes` 110).
+import { t } from './strings.ts'
 
 /** One entry of the kinds table: `label` is the strings key of the option's
  *  text, `pattern` the canned regex and `block` the part after the layer
@@ -288,4 +294,66 @@ export function parseLayers(text: string): LayersRead {
   return {
     layers: layers.size === 0 ? null : [...layers].sort((a, b) => a - b),
   }
+}
+
+/** One tensor of the list the page read (brief 21, 21 T.14): the name a rule is
+ *  searched in, and its size in bytes. The shape of `api.ts`'s `ModelTensor`,
+ *  named here so the counting stays a unit of its own. */
+export type TensorInfo = { name: string; bytes: number }
+
+/** `1.21 GiB`, `312.0 MiB`, `16 KiB`: the GUI's `fmt_bytes` (that file 110).
+ *  Two decimals from 1 GiB, one from 1 MiB, whole KiB rounded up below that,
+ *  1024 based. */
+export function fmtBytes(bytes: number): string {
+  const KIB = 1024
+  if (bytes >= KIB * KIB * KIB)
+    return `${(bytes / (KIB * KIB * KIB)).toFixed(2)} GiB`
+  if (bytes >= KIB * KIB) return `${(bytes / (KIB * KIB)).toFixed(1)} MiB`
+  return `${Math.ceil(bytes / KIB)} KiB`
+}
+
+/** Per rule of the value `s`, the line the row shows under it (brief 21,
+ *  21 T.15), as the GUI's `tensor_picker::coverage` counts (that file 133): the
+ *  rules in order, a tensor counted for the FIRST rule whose pattern finds it
+ *  (llama.cpp applies the first match), `n` newly taken with their bytes summed
+ *  and `s` found but taken by an earlier rule. The pattern is searched anywhere
+ *  in the name, as `regex_search` does: `new RegExp(pattern)` with no flags.
+ *  `''` for a rule with an empty pattern, and for every rule when the page has
+ *  no tensor list: the row shows no line. */
+export function coverage(s: string, tensors: TensorInfo[]): string[] {
+  const rules = parse(s)
+  if (tensors.length === 0) return rules.map(() => '')
+  const taken = tensors.map(() => false)
+  return rules.map((rule) => {
+    if (rule.pattern === '') return ''
+    let n = 0
+    let bytes = 0
+    let shadowed = 0
+    let re: RegExp
+    try {
+      re = new RegExp(rule.pattern)
+    } catch {
+      return t('model-profile-ot-unreadable')
+    }
+    for (const [i, one] of tensors.entries()) {
+      if (!re.test(one.name)) continue
+      if (taken[i]) shadowed += 1
+      else {
+        taken[i] = true
+        n += 1
+        bytes += one.bytes
+      }
+    }
+    const line =
+      n === 0
+        ? shadowed === 0
+          ? t('model-profile-ot-matches-none')
+          : t('model-profile-ot-all-taken')
+        : n === 1
+          ? t('model-profile-ot-tensors-one', fmtBytes(bytes))
+          : t('model-profile-ot-tensors-many', `${n}`, fmtBytes(bytes))
+    return n > 0 && shadowed > 0
+      ? line + t('model-profile-ot-more-taken', `${shadowed}`)
+      : line
+  })
 }

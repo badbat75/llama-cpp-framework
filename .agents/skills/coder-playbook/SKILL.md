@@ -657,6 +657,11 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   after mount.
 - One full run in ten reddens `AboutPage.test.tsx` 18 AN.3 and `NodesMenu1.test.tsx` (no timeout line):
   both are green solo and in five paired runs. Rerun the file solo before reporting them.
+- `Reflow.test.ts` 10 R1.1 lists EVERY rule of `index.css` that sets `overflow-wrap`
+  (`sets('overflow-wrap')`, the expected array is `.sort()`ed, so the entry goes anywhere): a new rule
+  that sets it is red until its `"selector = value"` line joins the list with a comment naming the
+  slice, and the assertion's message names each addition too. Growing that list is the test's own
+  design, not a weakened pin.
 - `Reflow.test.ts` 10 R1.8 freezes the CLASS NAMES of `index.css` (the `CLASSES` list; only the `ot-*`
   and `instance-name-*` namespaces are open): a new look reuses an existing class, and a class the brief
   names is the tester's to add. A rule of a NARROWER selector (`.tile .run-actions`) is fine: the

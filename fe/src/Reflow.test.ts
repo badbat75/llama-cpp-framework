@@ -165,7 +165,7 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
   // these that sets it is a break no brief asked for.
   expect(
     sets('overflow-wrap'),
-    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, 16 17a review D1 adds the three cells of the Server profiles table, 16 17f.8 adds .instance-id, 16 17f2 review D2 adds the display name form’s hint, the rest are unchanged',
+    'the rules that set overflow-wrap, each with its value: R1.1 adds body, R1.2 adds .notice, 12 section 3 adds .tile-facts dd, 15 section 10 R3 adds the chip span inside its 15em block, R5 adds the expanded pill and 15 section 11 D2 adds the option line, 20 N.11 adds .nav-instance, 16 17a review D1 adds the three cells of the Server profiles table, 16 17f.8 adds .instance-id, 16 17f2 review D2 adds the display name form’s hint, 21 TP3 adds the coverage line of a rule, the rest are unchanged',
   ).toEqual(
     [
       'body = break-word',
@@ -218,6 +218,10 @@ test('10 R1.1: the body rule declares overflow-wrap: break-word, and every rule 
       // the form's grid column, so the page scrolls sideways at 320 px and at
       // 200 % text (measured 38 to 42 px, and 376 to 379 px).
       '.instance-name-form .field-hint = anywhere',
+      // Brief 21, sub-slice TP3 (21 T.15a): the coverage line of a rule counts
+      // up to 20 000 tensors in a row that is a few controls wide, so the count
+      // breaks anywhere at 320 px and at 200 % text.
+      '.ot-rule-row .ot-coverage = anywhere',
     ].sort(),
   )
   for (const r of RULES.filter((r) => prop(r.body, 'overflow-wrap') !== ''))

@@ -1766,3 +1766,36 @@ and WebKit.
     stylesheet cannot then keep it fixed to the viewport.
 
 D2 met. L1 accepted.
+
+## CD: the destructive verb filled in danger (user decision, 2026-11-26)
+
+The user accepted the 17c review's note 3 ("YES"): the verb that destroys, the last step of every
+Confirm in place, is drawn filled `--danger`, so the button that cannot be undone looks unlike
+Save and Create. Note 5 was declined: `instance-remove-stop-first` stays always shown (17c.6a).
+`fe/DESIGN.md` "Buttons" and "Confirm in place" carry the rule.
+
+**CD.1 The four verbs.** The verb button of each destructive Confirm in place gets the class
+`danger` beside `primary`; no other button does:
+- `confirm-delete` of a list row (`RowDelete.tsx` 257: Models and Server profiles lists);
+- `confirm-delete` of the model profile page's Save bar (`ModelProfilePage.tsx` 2169);
+- `confirm-delete` of the server profile page's Save bar (`ServerProfilePage.tsx` 527);
+- `confirm-remove` of the instance page (`InstancePage.tsx` 917).
+Save (`SaveBar.tsx` 328), Create (`ServerProfiles.tsx` 688, the instance create form) and the
+name's Save (`InstancePage.tsx` 1213) stay plain `primary`.
+
+**CD.2 The look.** `.primary.danger`: `background` and `border-color` `var(--danger)`, `color`
+`var(--on-accent)` (white on `#b3261e` 6.5:1 light, `#1b1714` on `#ff9a8a` 8.7:1 dark, both above
+4.5:1, [1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum); the values are the two tokens'
+computed by the WCAG formula, my arithmetic, so the tester pins them with the sheet's contrast
+helper). No new token. The rule sits before `.primary[aria-disabled='true']` in the sheet, so a
+switched-off verb (the instance's Remove while it runs again, 17c.7) keeps the shared inactive
+look; under forced colours the system colours apply as for every primary. The focus ring is the
+shared one.
+
+**CD.3 Nothing else changes.** Texts, focus, order (verb then Cancel, the focus on Cancel) and the
+opener's look (`--danger` text, D4.30) stay. No new string.
+
+Tests: a CSS-reading test that `.primary.danger` sets the three declarations and comes before the
+inactive rule; one test per confirm that its verb has `danger` and Save/Create do not; the UX check's
+existing confirm states (`model-profile-delete`, `server-profile-delete`, `model-profiles-delete`, `instance-remove`) run axe on
+the new pair in both themes.

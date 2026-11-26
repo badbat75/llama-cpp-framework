@@ -206,9 +206,32 @@ OT_RULES = (
 # GET /api/profiles/model/<id>/model-info (brief 19, section 7): the facts of the
 # profile's model file, read: 64 blocks and a Mixture of Experts with 8 of 128
 # experts used, so the GPU card is in blocks mode and the MoE pair is enabled.
+# 21 T.17a (the TP3 check): the model's tensors ride along, so the placement
+# state shows a coverage line under each of its three rules: 64 blocks, each
+# with its three expert tensors and its attention, plus the embedding table and
+# the output head. The embedding is 1.21 GiB and an expert tensor 1 MiB, so the
+# one and the many texts both show, at 320 px and at 200 % text.
+MODEL_TENSORS = (
+    [{"name": "token_embd.weight", "bytes": 1299227607}]
+    + [
+        {"name": f"blk.{b}.ffn_{p}_exps.weight", "bytes": 1 << 20}
+        for b in range(64)
+        for p in ("up", "down", "gate")
+    ]
+    + [{"name": f"blk.{b}.attn_q.weight", "bytes": 1 << 20} for b in range(64)]
+    + [{"name": "output.weight", "bytes": 1 << 29}]
+)
+
 MODEL_INFO = {
     "model": "/m/qwen/Qwen3-27B-Q8_0.gguf",
-    "info": {"blockCount": 64, "moe": True, "expertCount": 128, "expertUsed": 8},
+    "info": {
+        "blockCount": 64,
+        "moe": True,
+        "expertCount": 128,
+        "expertUsed": 8,
+        "tensors": MODEL_TENSORS,
+        "tensorsTruncated": False,
+    },
     "reason": None,
 }
 

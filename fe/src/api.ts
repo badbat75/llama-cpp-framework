@@ -64,14 +64,25 @@ export function sessionEnded(reply: Reply): boolean {
   return reply.status === 401
 }
 
+/** One tensor of the model file's list, as the model-info route answers it
+ * (brief 21, 21 T.14): its name and its size in bytes. */
+export type ModelTensor = { name: string; bytes: number }
+
 /** The layer facts of one model file, as the model-info route answers them
  * (brief 19 section 0): `blockCount` every block of the file, `moe` whether it
- * has experts, and the two expert counts, 0 when the header carries none. */
+ * has experts, and the two expert counts, 0 when the header carries none. The
+ * tensor list rides on the same read (brief 21, 21 T.14): `tensors` is `null`
+ * when the reply carries none of that shape, and the layer facts stand. */
 export type ModelFacts = {
   blockCount: number
   moe: boolean
   expertCount: number
   expertUsed: number
+  /** The file's tensors, in the reply's order; `null` for no tensor list. */
+  tensors: ModelTensor[] | null
+  /** Whether the manager cut the list (21 T.14): absent, or not a boolean,
+   *  reads false (21 T.14a). */
+  tensorsTruncated: boolean
 }
 
 /** One model-info read: the file's facts, the reason there are none (the key of
@@ -97,6 +108,23 @@ function count(value: unknown): number {
   return n === null || n < 0 ? 0 : n
 }
 
+/** The `tensors` of an `info`, read (brief 21, 21 T.14): the `{name, bytes}`
+ * rows in the reply's order, `bytes` a whole number of 0 or more. `null` for
+ * absent and for anything that is not a list of such rows. The list is a detail
+ * of the read: a shape it does not have leaves the layer facts standing, so
+ * this never fails the read. */
+function modelTensors(value: unknown): ModelTensor[] | null {
+  if (!Array.isArray(value)) return null
+  const rows: ModelTensor[] = []
+  for (const one of value) {
+    if (!isRecord(one)) return null
+    const bytes = whole(one.bytes)
+    if (typeof one.name !== 'string' || bytes === null || bytes < 0) return null
+    rows.push({ name: one.name, bytes })
+  }
+  return rows
+}
+
 /** The `info` of a reply, read: `null` for anything that is not the object of
  * section 0. */
 function modelFacts(value: unknown): ModelFacts | null {
@@ -109,6 +137,8 @@ function modelFacts(value: unknown): ModelFacts | null {
     moe: value.moe,
     expertCount: count(value.expertCount),
     expertUsed: count(value.expertUsed),
+    tensors: modelTensors(value.tensors),
+    tensorsTruncated: value.tensorsTruncated === true,
   }
 }
 

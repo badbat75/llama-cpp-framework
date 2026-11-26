@@ -748,3 +748,29 @@ Choices taken (the user asleep; recommended options):
 
 Tests to amend or add: `api.ts`'s parse tests (the two fields), a new `TensorPlacementCoverage*.test.tsx`
 for 21 T.15a and 21 T.16, `fe/ux/stub.py` `MODEL_INFO` (the tester; the designer runs the state).
+
+## TP3 review (designer, 2026-11-26)
+
+Built code read (`api.ts`, `tensorRules.ts` `coverage` and `fmtBytes`, `TensorPlacement.tsx`
+320-364 and 436-545, `index.css` `.ot-rule-row .ot-coverage`) and measured with
+`build/ux-review/tp3.js` in Chromium, Firefox and WebKit at 1280, 320 and 320 px at 200 % text, on
+`ot=1` with the stub's 64-block list, and with the list cut to 50 rows by a routed reply.
+
+- 21 T.14a met: the facts carry the list; no second request.
+- 21 T.15a met: under each rule, after its controls and inside its row, `--muted`, 14 px
+  (`--fs-sm`): "12 tensors, 12.0 MiB" (rule 1, blocks 20 to 23), "1 tensor, 1.21 GiB" (rule 2),
+  "30 tensors, 30.0 MiB" (rule 3); each control's `aria-describedby` names the line last. Layers
+  of rule 1 typed as `10-23` redraws all three: "42 tensors", rule 3 "every tensor it matches is
+  taken by an earlier rule" (first match wins). At 200 % text two lines wrap to 2 lines, none cut.
+- 21 T.16 met: with `tensorsTruncated` the paragraph "The model has more tensors than the page
+  received: the counts cover the first 50." follows the format paragraph, and the counts cover
+  those rows.
+- 21 T.17 met: no sideways scroll in any case.
+
+Adviser notes (not defects): at 320 px the rule's x sits alone on its own line before the coverage
+line (TP1b's wrap, unchanged); and the line reads as a fact about the rule, not about the device,
+which is right. Nothing to change in this slice.
+
+Screenshots: `build/ux-review/shots/tp3-1280-light.png`, `tp3-320-light.png`.
+
+UX check (222 states per browser, one at a time): 0 failing in Chromium and Firefox; WebKit 1 load timeout on `overview-tiles` (its first state), 0 failing on its rerun.

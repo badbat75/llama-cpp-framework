@@ -769,10 +769,10 @@ framework to 2.99.2 and carry on toward it.
 
 **The release's goal (user, 2026-11-25):** every profile, model and server, assignable and editable from
 the web UI. Order: GT5b and 17e (an instance's model profiles) built 2026-11-25, 17c (create and remove an
-instance) built 2026-11-26, then TP3 (17d needs the whole of 2j), 17d (its server profile switch and the
+instance) and TP3 built 2026-11-26, then 17d (its server profile switch and the
 restart offer), then 22P and 22C (create a model
-profile from a file, a Hugging Face repository or a copy), then L2, brief 24's A3 to A10, K1 and K2,
-TP3 and 22E, all in the release. The release is cut once these are done, not at the end of step 10
+profile from a file, a Hugging Face repository or a copy), then L2, CD (brief 22: the verb of every destructive confirm filled --danger; user, 2026-11-26),
+brief 24's A3 to A10, K1 and K2, and 22E, all in the release. The release is cut once these are done, not at the end of step 10
 (user, same day): the rest of step 10 (model profile tags, R4 and R5, U17d to U17h, milestone 13a, F1
 to F3, M4, M5, 13c, 13d, the router, LAN access, the portal) comes after 2.99.1.
 
@@ -1237,10 +1237,10 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
     already names the GPU), and Server profiles entering the menu with its page (slice 17a).
     In progress: 2j, brief 21 (`fe/briefs/21-tensor-placement.md`, 2026-11-22: a Tensor placement card
     of rule rows, tensor kind, layers, device, the raw rules editable as text; TP1 T.1 to T.9 built
-    2026-11-23; TP2 T.10 to T.13 built 2026-11-23; TP1b T.18 to T.23 (the rule row aligned, an x to remove and a + to add: the user's feedback on the deployed page, 2026-11-23) built 2026-11-23; left TP3 T.14 to T.17, and the designer's D4 (WebKit draws every select 42 px: `height: var(--control-h)` in the global `select` rule); the brief's two questions, a
+    2026-11-23; TP2 T.10 to T.13 built 2026-11-23; TP1b T.18 to T.23 (the rule row aligned, an x to remove and a + to add: the user's feedback on the deployed page, 2026-11-23) built 2026-11-23; TP3 T.14 to T.17 built 2026-11-26; left the designer's D4 (WebKit draws every select 42 px: `height: var(--control-h)` in the global `select` rule); the brief's two questions, a
     tensor picker and Move up/down for rules, taken as recommended: not now). Slice 17 started 2026-11-22 at the user's request, beside 2j: the designer refreshes brief 16 against main first, brief 16 refreshed (60eb2bd); 17a (the Server profiles list and page, the form moved off the instance
     page) built 2026-11-23; 17b (create and delete a server profile) built 2026-11-23; next 17f (instance labels and the
-    504 texts, after IL2) and TP2, one `fe/` user at a time; 17e built 2026-11-25, 17c 2026-11-26; 17d waits for TP3.
+    504 texts, after IL2) and TP2, one `fe/` user at a time; 17e built 2026-11-25, 17c 2026-11-26; 17d next.
     TP1c and 17b2 built 2026-11-24. After 17f (user, 2026-11-23: "the + touches the row above; New server profile should be a + at the end
     of the list"): TP1c (brief 21, 21 T.24, room above the +) and 17b2 (brief 16, 17b2.1 to 17b2.5, a list's
     add is a + after the list, its accessible name unchanged; the same rule amended into 17c.1 and 22 C.1).

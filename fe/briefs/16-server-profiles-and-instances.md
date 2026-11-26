@@ -1547,3 +1547,9 @@ Measured with `build/ux-review/c17r.js` in Chromium, Firefox and WebKit at 1280 
   { margin-top: var(--space-4) }` (the only `h3` that is a form's first child), or a class on that
   `h3` if the coder prefers one.
 - D4 closed: `form > h3:first-child` (`index.css` 328); every `h2` is back at 40 px and the cards' `h3` at 0 (instance page, Overview, model profile page, Node info), the instance create form's `h3` keeps its 16 px and the server profiles' form `h2` its 40 px. UX check, one browser at a time: 0 failing in Chromium and WebKit (222 states); Firefox 1 load timeout on `sign-in-at-home`, 0 failing on its rerun.
+
+### 17c notes 3 and 5: the user's decision (2026-11-26)
+
+Note 3 accepted: the verbs `confirm-delete` (17b) and `confirm-remove` (17c.7) are `.primary.danger`,
+filled `--danger`; the brief is brief 22 "CD" (`fe/briefs/22-model-sources.md`), which covers every
+destructive confirm. Note 5 declined: `instance-remove-stop-first` stays always shown (17c.6a).

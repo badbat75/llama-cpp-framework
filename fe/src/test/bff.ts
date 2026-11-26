@@ -887,6 +887,18 @@ export const EN: Record<string, string> = {
   'model-profile-ot-pattern-separator':
     'A pattern cannot hold , or =: llama.cpp splits the rules on them, and neither can be escaped. Write the pattern without them (a range such as {1,2} as a class or an alternative).',
   'model-profile-ot-device-missing': "Pick where this rule's tensors go.",
+  // Brief 21, sub-slice TP3 (section 2, as the TP3 check amends it): the
+  // coverage line of a rule and the cut list. Every English is the brief's.
+  'model-profile-ot-tensors-one': '1 tensor, {0}',
+  'model-profile-ot-tensors-many': '{0} tensors, {1}',
+  'model-profile-ot-matches-none': 'matches no tensor of this model',
+  'model-profile-ot-all-taken':
+    'every tensor it matches is taken by an earlier rule',
+  'model-profile-ot-more-taken': '; {0} more taken by an earlier rule',
+  'model-profile-ot-unreadable':
+    'this pattern cannot be read here, so its tensors are not counted',
+  'model-profile-ot-truncated':
+    'The model has more tensors than the page received: the counts cover the first {0}.',
   // Brief 19 (fe/briefs/19-layer-sliders.md), section 2, sub-slice LS1: the
   // model facts read and the per-GPU block controls. LS1 adds the keys from
   // model-profile-model-facts-reading to model-profile-gpu-output-layer and
@@ -1413,6 +1425,12 @@ export type ModelFile = {
   moe?: boolean | null
   expertCount?: number | null
   expertUsed?: number | null
+  /** 21 T.14 (brief 21, TP3): the model's tensors, `{name, bytes}` rows, cut by
+   *  the manager at 20 000 rows. `unknown` so a test can name a shape of its
+   *  own: absent, a string, a row with no `bytes`, a negative `bytes`. */
+  tensors?: unknown
+  /** 21 T.14: true when the manager cut the list; absent reads as false. */
+  tensorsTruncated?: unknown
 }
 
 /**

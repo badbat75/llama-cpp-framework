@@ -25,12 +25,20 @@
 // 21 T.11).
 // A Custom rule keeps the text of its Pattern field, which becomes the rule at
 // each input (21 T.6).
+//
+// TP3 adds the coverage line under each rule (21 T.15a): what the rule places on
+// the model the page read, counted by `tensorRules.ts`'s `coverage` from the
+// tensor list of the facts the page already reads for the GPU card (21 T.14a: no
+// second request). The line is not a check: it marks nothing and blocks no Save.
+import { useDeferredValue } from 'react'
 import { Icon } from './Icon.tsx'
 import type { GpuProbe } from './GpuSplit.tsx'
+import type { ModelInfoRead } from './api.ts'
 import {
   KINDS,
   CUSTOM,
   compose,
+  coverage,
   layersText,
   parse,
   parseLayers,
@@ -260,6 +268,12 @@ export function otNewDevice(probe: GpuProbe | null | undefined): string {
 export type TensorCardProps = {
   rows: TensorRow[]
   probe: GpuProbe | null | undefined
+  /** The model file's facts the page reads once per arrival for the GPU card
+   *  (brief 21, 21 T.14a): the card counts each rule over its tensor list, so
+   *  it asks for nothing of its own. `undefined` while the read runs, and a read
+   *  that answered nothing, a reason, or no tensor list leaves every rule with
+   *  no line (21 T.16). */
+  modelInfo: ModelInfoRead | undefined
   onKind: (id: number, kind: string) => void
   onLayersText: (id: number, text: string) => void
   onPatternText: (id: number, text: string) => void
@@ -288,6 +302,7 @@ export type TensorCardProps = {
 export function TensorPlacement({
   rows,
   probe,
+  modelInfo,
   onKind,
   onLayersText,
   onPatternText,
@@ -299,6 +314,25 @@ export function TensorPlacement({
   onApply,
   errors,
 }: TensorCardProps) {
+  // The facts the page reads for the GPU card carry the model's tensors
+  // (21 T.14a): that list is what every rule is counted over, and no list at all
+  // is no line (21 T.16).
+  const facts =
+    modelInfo !== undefined && modelInfo !== null && 'facts' in modelInfo
+      ? modelInfo.facts
+      : null
+  // The rows received when the manager cut the list, `null` when it did not
+  // (21 T.16): the counts then cover only those.
+  const list = facts?.tensors ?? null
+  const tensors = list ?? []
+  const cut =
+    list !== null && facts?.tensorsTruncated === true ? list.length : null
+  // The rules as the save writes them, so a line counts the rule its row stands
+  // for: the kind composed with its layers, the Custom text as typed. The count
+  // runs on a deferred copy of that value (21 T.15, fe/DESIGN.md 5.3), so typing
+  // into a Pattern never waits on the 20 000 names.
+  const value = rowsValue(rows) ?? ''
+  const lines = coverage(useDeferredValue(value), tensors)
   return (
     <>
       <fieldset
@@ -311,6 +345,11 @@ export function TensorPlacement({
           <p className="muted" id={FORMAT_ID}>
             {t('model-profile-ot-format')}
           </p>
+          {/* 21 T.16: the manager cut the list, so the counts below cover only
+              the rows the page received. */}
+          {cut !== null && (
+            <p className="muted">{t('model-profile-ot-truncated', `${cut}`)}</p>
+          )}
           {rows.length === 0 && (
             <p className="muted">{t('model-profile-ot-none')}</p>
           )}
@@ -322,6 +361,7 @@ export function TensorPlacement({
                   row={row}
                   n={i + 1}
                   probe={probe}
+                  line={lines[i] ?? ''}
                   onKind={onKind}
                   onLayersText={onLayersText}
                   onPatternText={onPatternText}
@@ -358,11 +398,17 @@ export function TensorPlacement({
  *  and the control it labels (the TP1 review's D1, 21 T.4): its Tensor select,
  *  its Layers field where the kind has blocks, its Goes on select, its Remove
  *  button and, for a Custom rule, its Pattern field last, on a line of its own
- *  (21 T.4, 21 T.9: the tab path in that order). */
+ *  (21 T.4, 21 T.9: the tab path in that order).
+ *
+ *  TP3: the row ends with its coverage line (21 T.15a), after the Field Errors,
+ *  on a line of its own like they are, named last by the control that describes
+ *  the rule: the Pattern input where the row has one, the Tensor select where it
+ *  has none. The line is no live region, and a mark does not take it. */
 function TensorRuleRow({
   row,
   n,
   probe,
+  line,
   onKind,
   onLayersText,
   onPatternText,
@@ -373,6 +419,8 @@ function TensorRuleRow({
   row: TensorRow
   n: number
   probe: GpuProbe | null | undefined
+  /** What this rule places, as the card counted it; `''` for no line. */
+  line: string
   onKind: TensorCardProps['onKind']
   onLayersText: TensorCardProps['onLayersText']
   onPatternText: TensorCardProps['onPatternText']
@@ -388,6 +436,10 @@ function TensorRuleRow({
   const layersId = otControlId('layers', row.id)
   const goesOnId = otControlId('goes-on', row.id)
   const patternId = otControlId('pattern', row.id)
+  const coverageId = otControlId('coverage', row.id)
+  // The line's id, only while the row shows a line (21 T.15): a control never
+  // names a description that is not there.
+  const described = line === '' ? null : coverageId
   // The marked controls of this row, in the order they are on screen (21 T.11,
   // 21 T.12): each gets its Field Error, at the end of the row, on a line of
   // its own. Only the controls the row shows are looked for.
@@ -409,7 +461,11 @@ function TensorRuleRow({
             <select
               id={tensorId}
               value={row.kind}
-              {...marked([], errors[tensorId], tensorId)}
+              {...marked(
+                described === null || custom ? [] : [described],
+                errors[tensorId],
+                tensorId,
+              )}
               onChange={(e) => onKind(row.id, e.target.value)}
             >
               {KINDS.map((one) => (
@@ -467,7 +523,11 @@ function TensorRuleRow({
                 spellCheck={false}
                 autoCapitalize="off"
                 value={row.customText ?? ''}
-                {...marked([FORMAT_ID], errors[patternId], patternId)}
+                {...marked(
+                  described === null ? [FORMAT_ID] : [FORMAT_ID, described],
+                  errors[patternId],
+                  patternId,
+                )}
                 onChange={(e) => onPatternText(row.id, e.target.value)}
               />
             </span>
@@ -475,6 +535,11 @@ function TensorRuleRow({
           {marks.map(([id, text]) => (
             <FieldError key={id} id={`${id}-error`} text={text} />
           ))}
+          {described !== null && (
+            <p className="ot-coverage" id={coverageId}>
+              {line}
+            </p>
+          )}
         </div>
       </fieldset>
     </li>

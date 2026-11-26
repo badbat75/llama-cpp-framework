@@ -1494,6 +1494,7 @@ function Content({
   const tensor: TensorCardProps = {
     rows: otRows,
     probe,
+    modelInfo,
     onKind: otKind,
     onLayersText: otLayersText,
     onPatternText: otPatternText,
