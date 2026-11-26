@@ -4078,6 +4078,248 @@ in the record).
 **Slice RS3** (docs agent): the packaging guide's instance unit, the 10-min limit, and how another unit
 orders itself after an instance (`After=` only).
 
+## Instance profiles (user, 2026-11-26): accepted (user, 2026-11-26), the recommendations
+
+The request (user, relayed 2026-11-26, for 2.99.1):
+- An **instance profile** is one server profile plus a list of model profiles. Its page adds existing
+  model profiles with a + and removes them with a minus.
+- An instance is assigned one instance profile, so the same bundle can go onto several instances, on
+  several nodes later.
+- The Models list loses its on/off switches and becomes a plain list, and the model profile page
+  loses its switch.
+
+A data model change. The options, every place that reads or writes today's model, the invariants, the
+migration and rollback and the director's view were laid out first; the user accepted the
+recommendation on all six questions on 2026-11-26 (reference; the pool file; P1; O; backups plus a
+documented restore; the migrated instance profile `default`). The decision and the slices close the
+section.
+
+### Today's model (checked 2026-11-26)
+
+- `instances.ini`: one section per instance; `ServerProfile = <s>` names `server@<s>.ini`. It is read
+  in one place, `paths::instance_server_profile`, which launch, `profile_file`, GT5's
+  `instance_devices` and the address checks go through.
+- `assignments.ini`: one section per instance. There is one key per model profile id (`on`, `off`,
+  `inherit`), and `*` stands for the whole pool. `assign::render` cuts the pool into
+  `models@<id>.ini`, and `assign::rows` computes what the page shows.
+- The pool is two files. `models.ini` holds the switched-on profiles and `models.ini.disabled` the
+  switched-off ones. `inherit` follows that switch.
+- Exclusivity: one server profile per instance on a node. `SetServerProfile` refuses
+  `ServerProfileInUse` when another instance holds the profile (`service.rs` ~1730), and
+  `check_binding` refuses two instances on one address.
+- The shipped defaults: the llama.cpp package ships `instances.ini` (`[default] ServerProfile =
+  default`) and `assignments.ini` (`[default] * = inherit`) under `/usr/share/private-ai/llama.cpp/`.
+  Its scripts copy them into `/etc/llama.cpp/` only when missing. llama.cpp's MSI does the same into
+  `%ProgramData%\llama.cpp\config\`.
+
+### What reads or writes today's model
+
+| Place | What touches the model |
+| --- | --- |
+| `pai-core` | `paths.rs` (`instances_ini`, `instance_server_profile`, `instance_models`, the pool paths); `assign.rs` (`render`, `rows`, `assigned`); `checks.rs` (`models_disabled_file`, `model_profile_ids_free` across the two files, `instance-no-model-profiles`, the instance and server profile keys); `launch.rs` (`instance_command` through `instance_server_profile`); `client.rs`, `client/pipe.rs` (the wire of `SetServerProfile`, the assignment methods, the `ModelsDisabled` file kind) |
+| `pai-manager` | `service.rs`: `check_contents` per pool file, `render_all_locked`/`render_of`, `set_server_profile` with `profile_holder`/`profile_in_use`, the assignment writes, `create_model_profile` (lands in `.disabled`), `delete_model_profile` (`model-profile-enabled`, `model-profile-assigned`), `create_instance`/remove, `DeleteServerProfile` (in use by an instance), `check_address`, GT5 `instance_devices`. Also `dbus.rs`, the Windows pipe and `windows/entry.rs` (render at start), `windows/logon.rs` (import), and the tests (`dbus_client`, `pipe_client`, `windows_sync`, `tests/mod.rs`) |
+| `pai-bff` and the contract | `instance_profiles.rs` (17d `PUT /api/instances/{id}/profiles/server`, 17e `GET`/`PUT .../profiles/model[/{profile}]`); `model_profiles.rs` (`PUT .../{id}/enabled`, the `enabled` and `assignments` fields, create and delete); `POST /api/instances` (takes a server profile); tests `instance_profiles`, `model_profiles`, `model_profiles_switch`, `model_profile_read`, `model_profile_save`; `fe/briefs/api-contract.md` rows 84-94 and the association section |
+| web UI | the Models list's switch, the model profile page's switch, brief 17d2 (the instance page's server profile switch, briefed, not built) |
+| `pai` | `cli.rs` `model-profile enable/disable` and the listing's `enabled`, `cli.toml` |
+| `pai-config` | `models_tab.rs` (the switch); `pai-app` `model_profiles.rs` (`set_enabled`, delete and rename across both files), `server_control.rs`, `linked_files.rs`, `migration.rs` (imports `presets.ini.disabled` as `models.ini.disabled`); tests `save_flow`, `control_lint`. macOS keeps its own per-user files and runs llama-server itself, with no instances |
+| packages | `xtask/src/linux/system_files.rs` and `package.rs` (the defaults and the copy-when-missing scripts), `components.rs`; `installer/llama.cpp.wxs`, `xtask/src/common/msi.rs`, `ci_windows.rs`, `msi/tests/two_installers.rs` |
+
+### Options
+
+**Where the instance profile lives.**
+
+| Option | Cost | Risk |
+| --- | --- | --- |
+| **A. A pool file `instance-profiles.ini`**, one section per instance profile: `ServerProfile = <s>`, `Models = a, b` (model ids hold no comma or space). `instances.ini` names it with `InstanceProfile = <p>` | One new `ConfigFile` kind, written only by manager methods under the `writing` lock, like `assignments.ini` today. The migration is a re-key of `assignments.ini` plus one line. `ini::text` helpers reused | Every profile shares one file: no per-profile revision, but every edit is a method under the lock, so none is needed |
+| B. One file per profile, `instance-profile@<p>.ini` (like `server@<s>.ini`) | A directory scan and per-file CRUD, as server profiles have (`DeleteServerProfile`). The director copies one file | More file names in the engine folder; a new file kind with its own path rule and ACL; nothing that A lacks for one node |
+| C. A section in an existing file: `assignments.ini` re-keyed by profile, with the server profile as a key | No new file | `ServerProfile` is a valid model profile id, so the key namespaces collide (a reserved id or a list form is needed); the file's name then lies |
+
+**What an instance holds: a reference or a copy.**
+
+| Option | Cost | Risk |
+| --- | --- | --- |
+| **R. Reference**: `instances.ini` names the instance profile, and every read resolves through it (`instance_server_profile` becomes profile, then server profile; the render reads the profile's `Models`) | One resolution function changes; a save of a profile re-renders every instance that uses it | A save reaches every instance using the profile at its next start; in-use rules for three kinds of profile |
+| T. Template: applying an instance profile copies its server profile name and model list into the instance's own record (today's `ServerProfile` plus an assignment) | Almost no change to the instance side | Edits do not propagate: the reuse the user asks for becomes "apply again" on each instance; two sources of truth after the first edit |
+
+### Invariants (for A + R)
+
+1. **An instance always has exactly one instance profile** (user, 2026-11-26). Creating an instance
+   takes one; the manager refuses to clear it. A record naming none or an unknown one, written by
+   hand, cannot start (today's "names no profile").
+2. An instance profile names exactly one server profile and zero or more model profiles. A start with
+   none is refused, as today (`instance-no-model-profiles`, 409).
+3. **Ports: two instances sharing a profile on one node.** The user's lead (2026-11-26): "the port
+   could perhaps be auto-assigned". Today the address (`Hostname` and `Port`) is in the server profile,
+   and an instance's server profile is exclusive on its node (`ServerProfileInUse`, `check_binding`;
+   `client-address-in-use` is the client's text for the manager's `AddressInUse`, `client.rs` 142).
+   What needs the port:
+   - The router binds `--port` from the launch. Its children are its own business, behind it.
+   - `wait-ready` (RS1) reads `--port` from the launch's argv, so it follows whatever the launch
+     passes.
+   - `save-slots` reads the port the same way.
+   - Strata serves `:8580` and talks to instance `default` on `:8581`, and opencode's provider entry
+     names the same port. Both are fixed in other programs' files, so **a client needs a port that
+     stays the same across restarts**.
+   - `check_binding` compares only the instances' own addresses. It cannot see a foreign listener
+     such as Strata.
+
+   | Option | Cost | Risk |
+   | --- | --- | --- |
+   | **P1. The address moves to the instance record**: `Hostname` and `Port` in the instance's section of `instances.ini`, out of the server profile. At create the manager proposes the lowest port from 8581 that no instance record holds and that nothing listens on at that moment; the administrator may change it. The record is the one truth | The migration moves `Hostname` and `Port` from each instance's server profile into its record; launch, `binding`, `check_address` and `AddressInUse` read the record; the server profile page loses two fields, and the instance page gains them; a new `SetInstanceAddress(As)` | A server profile no longer says where it listens, so the director picks the port per node at deploy (which it must do anyway). A foreign listener that starts later on the same port is still unseen, as today |
+   | P2. Auto-pick only when the profile leaves `Port` unset, recorded in `instances.ini` at create | No page change for profiles that set a port | Two sources for the port (profile or record) and a rule for which wins; a profile with a port is still exclusive on its node, so sharing works only for some profiles |
+   | P3. A free port picked at every start | Nothing recorded | Strata and opencode lose the instance at every restart. Rejected |
+
+   **Decided: P1** (user, 2026-11-26). It makes the address what it is, a property of the instance on its node. It
+   removes the exclusivity rule for profiles altogether: any number of instances on one node may
+   share an instance profile or a server profile, and `AddressInUse` is judged on the records alone.
+   It also gives the director the per-node port it needs. Migrated instance `default` keeps `:8581`,
+   because the migration copies its server profile's `Port`, so Strata and opencode change nothing.
+4. **A save of a profile that running instances use** (an instance profile's model list or server
+   profile, a server profile, a model profile listed in one) takes effect only at each instance's next
+   start (user, 2026-11-26: they must be restarted). The checks run on the render of every affected
+   instance, and one failure refuses the whole save.
+
+   | Option | Cost | Risk |
+   | --- | --- | --- |
+   | M. The manager restarts each running affected instance itself, as part of the save | No new page action | A save becomes a disruptive act that also needs `control`. It cuts in-flight requests and reloads models (minutes; RS's 10-minute limit can fail a start), on every instance at once. A partial failure leaves some restarted and some not, after a write that already landed |
+   | **O. The answer lists the affected running instances; the page offers "Restart" for them, as 17d's restart offer does today** | The save answers `running: [ids]` instead of a bool; the page's offer calls the existing Restart per instance | An administrator who dismisses the offer runs the old settings until the next restart; the offer says so |
+
+   **Decided: O** (user, 2026-11-26), the way every save works today. The administrator chooses when to cut the
+   traffic, and the save stays a `configure` write with no service action. A "restart needed" mark that
+   outlives the page is a later step, not part of this.
+5. Deletable:
+   - a **model profile** when no instance profile lists it (replacing "switched off and unassigned");
+   - a **server profile** when no instance profile names it (today: no instance);
+   - an **instance profile** when no instance names it;
+   - an **instance** by today's rule, its instance profile kept for reuse.
+6. The pool is one file, `models.ini`. `models.ini.disabled` and the switch go. A created model
+   profile lands in `models.ini`, listed in no instance profile, so it renders nowhere. On macOS the
+   configurator keeps its switch over its own per-user files, which have no instances.
+
+### Migration and rollback
+
+- **Upgrade from 2.99.0 files.** At the manager's start, before the renders, idempotent and
+  render-preserving:
+  1. Back up `instances.ini`, `assignments.ini`, `models.ini` and `models.ini.disabled` as
+     `<name>.2.99.0`, once.
+  2. For each instance without `InstanceProfile`, write an instance profile with the instance's own id
+     (`default`). Its `ServerProfile` is the instance's, and its `Models` are the ids that instance's
+     current render holds, computed from both pool files and its assignment. That covers `inherit`,
+     `*` and `off` exactly.
+  3. Write `InstanceProfile = <id>` into the instance's section and drop `ServerProfile`. With P1,
+     also copy the server profile's `Hostname` and `Port` into the section (the effective values, so
+     an unset `Port` becomes `9931`, `server_cfg::DEFAULT_PORT`), then drop them from the server
+     profile.
+  4. Append `models.ini.disabled`'s sections to `models.ini`, after the switched-on ones (the render
+     order is the pool order, so the render keeps its order).
+  5. Remove `assignments.ini` and `models.ini.disabled`.
+  - The order keeps every crash point consistent: steps 2 and 3 resolve through the new profile with
+    the same ids, and a twin left between 4 and 5 renders the first copy, which has the same bytes.
+  - **Done when:** every `models@<id>.ini` is byte-identical before and after, every instance
+    resolves the same `server@<s>.ini`, and every launch passes the same `--host` and `--port`.
+- **The package pitfall.** llama.cpp's package and MSI copy a missing `assignments.ini` back at their
+  next upgrade, because the migration removed it. So the manager must delete a stray
+  `assignments.ini` once every instance names an instance profile, and llama.cpp's package must ship
+  `instance-profiles.ini` (`[default] ServerProfile = default`, `Models =`) and the new
+  `instances.ini` in place of `assignments.ini`. That package change needs a llama.cpp package build
+  and install.
+- **Downgrade.** A 2.99.0 manager would find no `ServerProfile`, so instance `default` would not
+  start. It would also find no `assignments.ini`, so every render would hold `[*]` alone.
+  - Recommended: the backups of step 1 plus one documented restore command. The `.deb` allows a
+    downgrade; the framework's MSI refuses one.
+  - Rejected: keeping `ServerProfile` and `assignments.ini` as mirrors, two sources of truth to keep
+    in step.
+
+### The director (step 14), not built
+
+An instance profile is the unit the director deploys. "Profile P on node N as instance X" means:
+- copy `server@<s>.ini`, the model sections P lists, P's section, and the model files (through the
+  model store);
+- then `CreateInstance(X, P)` on N.
+
+Ids are shared across the director's nodes. A node that already holds the same id with different
+content refuses rather than renames. The single-node pool file of option A copies as sections; option
+B would copy as files. Neither changes this flow.
+
+### Decision (user, 2026-11-26)
+
+A + R + P1 + O:
+- **Storage and reference.** The pool file `instance-profiles.ini` in the engine's config folder, one
+  section per instance profile with `ServerProfile = <s>` and `Models = a, b`. It is written only by
+  manager methods under the `writing` lock. Each instance's section of `instances.ini` holds
+  `InstanceProfile = <p>`, `Hostname` and `Port`, plus `Label` as today. `paths::instance_server_profile`
+  resolves through the instance profile, and the render reads its `Models`.
+- **What goes.** `assignments.ini`, `models.ini.disabled`, the switch, the 17d and 17e methods and
+  routes, and the `Hostname` and `Port` keys of a server profile.
+- **The migration** follows "Migration and rollback", with backups and a documented restore.
+- **The restart** is offered by the page.
+
+Briefs for the designer:
+- **16** (17d and 17d2): the instance page's server profile switch becomes the instance profile picker
+  and the address fields; 17d2 is withdrawn.
+- **22**: the Models list without switches, and the model profile page without its switch.
+- **New, 23**: the instance profile list and page (+ and minus over the model profiles, the server
+  profile picker, delete), and the restart offer listing every affected running instance.
+
+### Slices (smallest first; Windows type-checked only)
+
+1. **IP1** (`pai-core`, pure, no I/O): `instance_profiles` parse and section edit; `assign::render`
+   from an id list; `migrate_model(old texts) -> new texts` (the instance profile per instance, the
+   merged pool, the address moved into the record, `assignments.ini` and `.disabled` gone).
+   Done when: for fixtures covering `inherit`, `on`, `off`, `* = inherit`, `* = on`, a switched-off
+   profile and an unset `Port`, every old render equals the new one byte for byte; the address is the
+   effective one (unset `Port` is 9931); a second run changes nothing; a crash-point fixture (profile
+   written, record not) completes to the same result.
+2. **IP2** (`pai-manager`): the migration at start, before the renders: the `<name>.2.99.0` backups
+   once, then writes in the record's crash-safe order, and a stray `assignments.ini` deleted once every
+   instance names a profile. Launch, `binding`, `check_address` and GT5's `instance_devices` resolve
+   through the record and the instance profile. `WriteFile` of `assignments.ini` and
+   `models.ini.disabled` is refused with a key. Done when: the manager tests' fixture install starts
+   with identical renders and launch argv (`--host`, `--port`, `--models-preset`); the backups exist
+   once; a re-created `assignments.ini` is removed at the next start. **Real-machine check** after the
+   deploy and the user's restart of `llama.cpp@default`: `/etc/llama.cpp` migrated, the backups there,
+   `default` up on `:8581`, Strata still served.
+3. **IP3** (`pai-manager`, `pai-core` client): methods, each with its `As` form, `configure`, one
+   action record:
+   - `ListInstanceProfiles`, `CreateInstanceProfile(p, server)`, `DeleteInstanceProfile(p)`
+     (refused while an instance names it), `SetInstanceProfileServer(p, s)`,
+     `AddInstanceProfileModel(p, m)`, `RemoveInstanceProfileModel(p, m)`;
+   - `SetInstanceProfile(instance, p)` and `SetInstanceAddress(instance, host, port)`;
+   - `CreateInstance(id, p)` with the proposed free port from 8581 (no record holds it, a bind
+     test passes).
+   - The delete rules change: a model profile when no instance profile lists it, a server profile when
+     no instance profile names it.
+   - `CreateModelProfile` writes into `models.ini`; the 17d and 17e methods are removed.
+   - Every save answers the running instances it affects.
+   Done when: each method's success, refusal keys and render effect are tested over D-Bus and the
+   pipe; a save failing one affected instance's check writes nothing; two instances sharing one
+   profile on different ports both render.
+4. **IP4** (`pai-bff`, `fe/briefs/api-contract.md`): `GET|POST /api/profiles/instance`,
+   `GET|DELETE /api/profiles/instance/{p}`, `PUT .../{p}/server`, `PUT|DELETE .../{p}/models/{m}`,
+   `PUT /api/instances/{id}/profile`, `PUT /api/instances/{id}/address`, `POST /api/instances` taking
+   `instanceProfile`. The switch route, `enabled`, the 17d and 17e routes and the server profile's
+   `Hostname` and `Port` fields are dropped. The saves answer `running: [ids]`. Done when: each route's
+   200 and refusal map are pinned in the bff tests; the removed routes answer 404; the contract matches.
+5. **IP5** (`fe`, brief 22): the plain Models list and the model profile page without its switch.
+   Done when: the brief's tests are green and the designer's UX check passes.
+6. **IP6** (`fe`, briefs 23 and 16): the instance profile list and page, the instance page's picker
+   and address, and the restart offer. Done when: the briefs' tests are green and the designer's UX
+   check passes.
+7. **IP7** (`pai-cli`, `pai-app`, `pai-config`): `pai instance-profile list|show|create|delete|server|
+   add|remove` and `pai instance profile|address`; under the manager, `pai model-profile
+   enable|disable` and the Models tab's switch are gone (macOS keeps them on its own files); the
+   import of `presets.ini.disabled` appends to `models.ini`; the Server tab shows the address from the
+   instance. Done when: the CLI and app tests pin each command and the import; the GUI's switch is
+   absent under the manager and present on macOS.
+8. **IP8** (`xtask`, llama.cpp's `.deb`, `.rpm` and MSI): ship `instance-profiles.ini` (`[default]
+   ServerProfile = default`, `Models =`) and the new `instances.ini` (`InstanceProfile = default`,
+   `Hostname`, `Port`); stop shipping `assignments.ini`; the server profile default without
+   `Hostname` and `Port`. Done when: the package tests pin the files and the absence; the MSI text
+   checks pass. **Needs a llama.cpp package build and install** (beyond the framework-only deploy) and
+   then the user's restart.
+9. **IP9** (docs agent): `AGENTS.md`'s file list, `crates/bff/README.md`, the packaging guide and the
+   restore command for a downgrade.
+
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
@@ -4710,6 +4952,18 @@ and offer an endpoint to the hosts to download them locally."
   file on the web"); once on disk a store file is a local file like any other, listed by
   `GET /api/node/model-files` and written as an absolute `model` path. A file already present with the
   same sha256 is not fetched again.
+
+### Instance profiles across nodes (user, 2026-11-26; not built)
+
+The director reuses the node's instance profiles ("Instance profiles", part 1) as the unit it deploys.
+"Profile P on node N as instance X" means:
+- copy `server@<s>.ini`, the model sections P lists, and P's section of `instance-profiles.ini`;
+- pull the model files through the model store;
+- then `CreateInstance(X, P)` on N, the port proposed by N's manager (P1: the address is the
+  instance's, per node).
+
+Ids are shared across the director's nodes. A node holding the same id with different content refuses
+rather than renames. Nothing of this is built before step 14.
 
 ### Slices
 
