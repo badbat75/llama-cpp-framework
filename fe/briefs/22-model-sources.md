@@ -1862,3 +1862,16 @@ What the tester pins first, in 22C1:
 Choices taken (recommended options, the user may overrule): the two-run cut above; the copy
 select keeps the list's file order (not the table's sort), so it does not change when the user
 sorts the table.
+
+### 22C1 combobox clarification (designer, 2026-11-26)
+
+- **Closed until asked (22 P.3, P.4).** The listbox is closed on arrival and stays closed when the
+  folder's reply lands; it opens on Down, on any edit of the text, or on a click in the input
+  (APG Combobox, list autocomplete: https://www.w3.org/WAI/ARIA/apg/patterns/combobox/), and closes
+  on Escape, a pick, or the focus leaving. Opening by itself when the rows land would put content
+  under the reader's eyes and the pointer with no action of theirs. The state line (22 P.6) shows the
+  count whether the list is open or not, so the reply is announced without opening it.
+- **A pick is a selection, not a filter (22 P.3, P.5).** The input holds the picked row's full
+  `path`, which P.5's filter (on the path relative to `dir`) would match nothing with; so text equal
+  to the picked path filters nothing: reopened, the list shows every option (P.5's first 50) with the
+  picked row `aria-selected="true"` and active. Any edit of the text drops the pick and filters again.
