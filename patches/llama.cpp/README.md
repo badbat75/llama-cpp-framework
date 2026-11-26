@@ -19,9 +19,12 @@ them back is open: see "Decide whether to bring back patches 0002 to 0004" in
 
 ## `0001-qwen35-fastmtp-d2t`
 
-sha256 `34db7d82eeb458a6c1e31ec80c2a83c047b484c7b6d2792be32cf75a109c5c91`. Derived from
+sha256 `e5b854fc5fc7f50601f379acc8197f8a7e7ad063ed1ed2e8dbc786aad0a9baf5`. Derived from
 [HauhauCS's patch](https://huggingface.co/HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF/resolve/main/HauhauCS-FastMTP-llama.cpp.patch),
-refreshed locally, so it is no longer the publisher's bytes.
+refreshed locally, so it is no longer the publisher's bytes. Refreshed onto `v1.1.0` (2026-11-26):
+only the `models.h` hunk moved, upstream added `graph_nodes_per_tensor` to `llama_model_qwen35`
+below the line the patch inserts, and the `graph_mtp` constructor now takes only
+`llm_graph_params`. The d2t code is unchanged, the load-time checks and I32 included.
 
 **What it does.** A FastMTP sidecar is an MTP-only GGUF whose head covers fewer rows than the
 target's vocabulary, plus a `d2t` tensor mapping them onto target token ids. Stock `qwen35.cpp`
