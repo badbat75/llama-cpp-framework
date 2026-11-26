@@ -1553,3 +1553,58 @@ Measured with `build/ux-review/c17r.js` in Chromium, Firefox and WebKit at 1280 
 Note 3 accepted: the verbs `confirm-delete` (17b) and `confirm-remove` (17c.7) are `.primary.danger`,
 filled `--danger`; the brief is brief 22 "CD" (`fe/briefs/22-model-sources.md`), which covers every
 destructive confirm. Note 5 declined: `instance-remove-stop-first` stays always shown (17c.6a).
+
+## 17d check (2026-11-26)
+
+Checked 17d.1 to 17d.11 against main at 434c4fe: the instance page (17f2's name and pencil, the head
+with the run row and 17c's Remove, the Server profile section's `dl`, 17e's section and its 17e.7a
+rule), the model and server profile pages (the sticky Save bar holding its confirm and alert as rows
+under its buttons, 22 D4.11), the Models list (its switch status region above the table,
+`ModelProfiles.tsx` 498), decision 8, and the served routes (`PUT /api/instances/{id}/profiles/server`
+`{running}`; the model profile save and switch `{..., running, restart}`). Where this section
+differs from 17d, it wins.
+
+Still true: 17d.2's request and texts, 17d.8, 17d.10, 17d.11.
+
+**17d.1a The offer names instances by their display name.** `restart-offer-button`,
+`restart-offer-running`, `restart-offer-sent`, `save-saved-restart-ids` and the two
+`-restart-ids` texts fill `{0}` (or `{1}`) with each instance as `InstanceLink` names it (22 D4.37:
+the display name, the auto name when there is none, "ID x" added only for duplicates), read from
+the app's instance list; an id the list lacks shows as the id. The button keeps `rotate-cw`, as the
+run row's Restart.
+
+**17d.2a A 504.** A restart answered 504 `client-timeout` shows `write-timeout` and the list is read
+again (17f.10); `instance-no-model-profiles` uses the built `api-instance-no-model-profiles` (17c.9,
+`run.ts` 107).
+
+**17d.3a and 17d.4a The offer inside the Save bar.** On the server and the model profile pages the
+offer is a row of the Save bar under its buttons, as the confirm and the alert are (22 D4.11), not
+after the bar: the bar is sticky, so the offer stays in reach wherever the page is scrolled
+(principle 6). The status keeps `save-saved-restart-ids`; the offer goes at the next edit or save.
+
+**17d.5a The Models list.** The switch status region, its alert, its Sign in and the offer move to
+right after the table, the place `fe/DESIGN.md` Action feedback gives a table's region (17e.12),
+so an offer appearing never pushes the rows under the pointer. The filter's own status
+(`model-profiles-filter-status`) stays above the table, where the filter is.
+
+**17d.6a and 17d.7a The switch on the instance page: no offer.** The instance page carries its own
+Restart in the head, so 17d.7's offer for this instance is dropped (17e.7a, decision 8 where a page
+has no Restart): `running: true` shows `instance-server-switched-restart` only. The switch sits in
+the Server profile section under the current profile's row, its select in the field layout (label
+column `instance-server-switch-label`), the button after the select. The option text is 17c.2's
+`instance-server-option`; at 320 px a long option is cut after the id (17c.11a).
+
+**17d.9a Keyboard.** 17d.9 stands; on the Save bar the offer's buttons follow the bar's status and
+buttons in DOM order, before the page's content.
+
+UX states (the tester adds them to `fe/ux/check.js`): `instance-server-switch` (the instance page
+with a free profile, `pool=long`, the section's select and button at rest) and
+`model-profiles-restart-offer` (the Models list, `open` clicking a row switch with the stub answering
+`restart: ["default"]`, then the offer's button after the table).
+
+Tests that change from 17d's list: `ServerSave`, `ModelProfileSave2` (the offer in the bar),
+`ModelProfilesSwitch` (the region after the table), `InstancePage` (the switch with no offer).
+
+Question for the user, not blocking (recommended first): the Models list's region after the table
+(A, recommended: rows never move, as on the instance page) or kept above the table (B: seen at
+once in a long list, but an offer appearing pushes every row down by a button's height).
