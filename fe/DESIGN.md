@@ -662,9 +662,10 @@ Each is one React component, reused by every page.
     over it and closed by Escape (1.4.13; brief 22, "22D4 amendment", 2026-11-25). Its Confirm
     in place opens in a row of its own under the profile's row. On the thing's own page, Delete is a
     `--danger` text button at the end of the Save bar, after Save changes (`margin-inline-start:
-    auto`); when it cannot act, its reason is a line always shown under Delete, ending at its right
-    edge, the bar's full width at 320 px (user, 2026-11-25, brief 22 D4.30 and L2.A2, reversing
-    the 2026-11-24 "Delete first").
+    auto`; user, 2026-11-25, brief 22 D4.30, reversing the 2026-11-24 "Delete first"); when it
+    cannot act it tells why exactly as the list's trash can does: `aria-disabled`, its reason a
+    visually hidden description and the same `.hint-tip` on hover and focus, opening above it
+    (user, 2026-11-26, brief 22 L2.B2, replacing the always-shown reason line).
 - **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
   (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
   the label on one line, cut with an ellipsis where the row is narrower than it (the chip at most the row's width; the x's name carries the full label; a cut chip, on hover or focus, shows a temporary `.chip-full` pill over it with the whole label, wrapping, leaving the x uncovered, hidden by Escape: WCAG 1.4.13; profile chips are focusable for it), wrapping anywhere only under `@media (max-width: 15em)`, the user's large text on a narrow screen (user, 2026-11-21) and, when it can be removed, a 24 px
@@ -680,7 +681,7 @@ Each is one React component, reused by every page.
   arrows move `aria-activedescendant`, the active option drawn with the inset focus ring; choosing
   one adds it at once ([APG Combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/)). These
   icon-only buttons hold their words in a visually hidden span.
-- **Save bar**: sticky at the top of a form (from brief 22 22D2, user 2026-11-23: the edit commands at the top; before it, at the bottom), right after the page's status row, always rendered on an editable form; its scroll padding and the buttons' negative margin are on the top edge. Left: a status
+- **Save bar**: sticky at the bottom of the viewport (`bottom: 0`), the form's last child after its last card, always rendered on an editable form (user, 2026-11-26, brief 22 L2.B1, reversing 22D2's top of 2026-11-23). Being sticky, it rests after the last card at the end of the scroll and hides nothing there, so the page needs no end padding. Its scroll padding (`scroll-padding-bottom`, the bar's height) keeps a focused field above it ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)), and the buttons' equal negative `scroll-margin-bottom` keeps focusing them from scrolling. Below a `31.98rem` viewport height it is static with no padding. Only its top corners are round, with a top border. Left: a status
   line (`role="status"`); right: **Discard** and **Save changes** (`primary`), then a profile page's Delete (see the list's Delete above). Both use `aria-disabled="true"`,
   not `disabled`, while there is nothing to save, so focus never drops when the form becomes clean
   ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)); a click then does nothing. While a save

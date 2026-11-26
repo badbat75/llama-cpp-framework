@@ -2160,3 +2160,64 @@ thing to pin.
 
 The tests to amend are listed in "Decisions and the slice's tests" and "L2 additions" above. The
 UX check needs no new state: its confirm and page states cover CD and the bar.
+
+### L2 amendments B1 and B2 (user's ruling, 2026-11-26)
+
+These replace items 1 and 2 of the acceptance list above. Items 3 to 12 stand.
+
+**L2.B1 The Save bar sticks to the bottom** (reverses 22 D2.5's top, user 2026-11-23).
+- **a. DOM place.** The bar is the form's last child, after the last card, on the model and the
+  server profile page. Sticky `bottom` only holds an element that comes after the content it
+  floats over, so it must come last. Tab order follows: the fields, then the bar (Discard,
+  Save changes, Delete) ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)). The status line and
+  the alert place stay in the bar, before its buttons.
+- **b. Look.** `position: sticky; bottom: 0`, the same `z-index`, background and shadow. A top
+  border replaces the bottom one, and only the top corners are round (D2.6 flipped).
+- **c. The page's end.** Sticky keeps the bar in the flow, so at the bottom of the scroll it rests
+  after the last card and covers nothing. No padding at the page's end is needed; a test pins that
+  the last card's bottom is at or above the bar's top when the page is scrolled to its end.
+- **d. Focus not hidden** ([2.4.11](https://www.w3.org/TR/WCAG22/#focus-not-obscured-minimum)). The
+  existing rule moves to the bottom edge:
+  - `scroll-padding-bottom` on `html:has(.save-bar)` uses the same
+    `max(var(--save-bar-height, 7rem), 7rem) + --space-3` as today's top padding;
+  - `scroll-margin-bottom` with the same value, negated, on `.save-bar button`;
+  - `scroll-padding-top` and `scroll-margin-top` go.
+  - Test: a field focused by Tab is wholly above the bar's top, and focusing a bar button scrolls
+    nothing (H5c.1, now at the bottom).
+- **e. Short viewports and 320 px.** The existing `max-height: 31.98rem` rule stays and is flipped
+  the same way: the bar becomes static, at the form's end, and both the bottom padding and the
+  margin are 0. That covers landscape phones and 200 % to 400 % zoom
+  ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)). At 320 by 568 px and taller the bar stays
+  sticky. Its buttons wrap as now. Without an alert the bar is at most 2 button rows plus the
+  status line; test: at 320 px the bar's height is at most 40 % of the viewport, with no sideways
+  scroll.
+- **f. The jump list.** "On this page" scrolls a card's heading to the top as before. Nothing
+  covers it there any more, so its offset for the bar goes too.
+- **g. Order and look.** Item 1 still holds: Discard, Save changes (`primary`), then Delete at the
+  bar's end in `--danger`.
+
+**L2.B2 No reason line under Delete; the reason is the list's tip.** The always-shown line
+(22 D4.14, L2.A2's "under Delete") goes. A Delete that cannot act tells why in the same way as a
+list row's switched-off trash can (DESIGN.md "Icon buttons of a list"), so the two Deletes
+behave the same:
+- **a. Focusable.** It stays `aria-disabled="true"` and focusable, and a click sends nothing.
+- **b. The reason, always in the DOM.** The text (the keys as today:
+  `model-profiles-delete-needs-off` at `ModelProfilePage.tsx` 1998, `server-profiles-delete-in-use`
+  at `ServerProfilePage.tsx` 385) sits in a visually hidden element
+  with the id `<deleteId>-reason`. Delete has `aria-describedby` set to it, so a screen reader
+  reads the reason with the button on focus ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships),
+  [4.1.2](https://www.w3.org/TR/WCAG22/#name-role-value)).
+- **c. The tip.** On hover and on focus, the `.hint-tip` shows the same text, using the list
+  rows' component: `position: fixed`, placed by script. Because the bar is at the bottom, it
+  opens above Delete, right-aligned to Delete's right edge near the viewport's right edge. It
+  stays while the pointer is over it and closes on Escape
+  ([1.4.13](https://www.w3.org/TR/WCAG22/#content-on-hover-or-focus)). It changes no size in the
+  bar.
+- **d. Tests.**
+  - No visible `p#<deleteId>-reason` in the bar.
+  - The description is read with Delete (its accessible description equals the key's text).
+  - The tip shows on focus and on hover, is wholly inside the viewport at 1280 and 320 px, and
+    closes on Escape.
+  - `fe/ux/check.js`'s `server-profile-delete-disabled` state changes from "expect the bar's `p`" to
+    the list's pattern: focus Delete, then expect the `.hint-tip`. That reverses the 22D4 rerun's
+    fix.
