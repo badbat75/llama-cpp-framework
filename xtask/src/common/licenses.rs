@@ -66,7 +66,7 @@ const TABLE: &[(&str, Origin)] = &[
     ("hipblas", Origin::RocmDoc("hipblas")),
     ("rocblas", Origin::RocmDoc("rocblas")),
     ("rocsolver", Origin::RocmDoc("rocsolver")),
-    ("origami", Origin::RocmDoc("origami")),
+    ("origami", Origin::Vendored("rocm-origami")),
     ("amd_comgr", Origin::RocmDoc("amd_comgr")),
     ("rocm-core", Origin::RocmDoc("rocm-core")),
     ("amdhip64", Origin::Vendored("rocm-clr")),
@@ -481,6 +481,8 @@ mod tests {
             ("hipblas.dll", Origin::RocmDoc("hipblas")),
             ("libhipblas.so.3", Origin::RocmDoc("hipblas")),
             ("libhipblaslt.dll", Origin::RocmDoc("hipblaslt")),
+            ("liborigami.so.1", Origin::Vendored("rocm-origami")),
+            ("origami.dll", Origin::Vendored("rocm-origami")),
             ("amdhip64_7.dll", Origin::Vendored("rocm-clr")),
             ("libamdhip64.so.7", Origin::Vendored("rocm-clr")),
             ("rocm_kpack.dll", Origin::Vendored("rocm-kpack")),
@@ -527,6 +529,14 @@ mod tests {
                 assert!(dir.join(format!("{name}.txt")).is_file(), "{name}");
             }
         }
+    }
+
+    /// origami's text is vendored in the repo, not read from the dist's
+    /// `share/doc`, like rocroller's.
+    #[test]
+    fn the_origami_text_is_vendored_in_the_repo() {
+        let dir = util::repo_root().join("installer").join("licenses");
+        assert!(dir.join("rocm-origami.txt").is_file(), "rocm-origami.txt");
     }
 
     /// The web UI's own texts, vendored from `installer/licenses/` and staged
