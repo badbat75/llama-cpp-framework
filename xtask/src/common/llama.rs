@@ -231,22 +231,29 @@ pub fn sccache_caches_nvcc(version_line: &str) -> bool {
 /// HuggingFace download (LLAMA_USE_PREBUILT_UI) produced assets it prints a
 /// cmake WARNING and embeds an EMPTY UI, and a llama-server with no chat page
 /// is exactly what this framework must not package (the built-in UI is the
-/// frontend). Both provisioning paths write tools/ui/dist under the build
-/// dir (a dist dir dropped into the SOURCE tree is used as is, so that counts
-/// too), and only the download leaves a .ui-stamp, which is how the report
-/// knows which one ran.
+/// frontend). Both provisioning paths write their dist under the UI's own
+/// cmake dir, `ui/apps/chat`, in the build tree (a dist dir dropped into the
+/// SOURCE tree is used as is, so that counts too), and only the download
+/// leaves a .ui-stamp beside the dist, which is how the report knows which
+/// one ran.
 pub fn check_web_ui(build_dir: &Path, llama: &Path) -> Result<()> {
     let ui_dist = build_dir
-        .join("tools")
         .join("ui")
+        .join("apps")
+        .join("chat")
         .join("dist")
         .join("index.html");
     let ui_src_dist = llama
-        .join("tools")
         .join("ui")
+        .join("apps")
+        .join("chat")
         .join("dist")
         .join("index.html");
-    let ui_stamp = build_dir.join("tools").join("ui").join(".ui-stamp");
+    let ui_stamp = build_dir
+        .join("ui")
+        .join("apps")
+        .join("chat")
+        .join(".ui-stamp");
     if !ui_dist.is_file() && !ui_src_dist.is_file() {
         bail!(
             "the web UI was not embedded ({} is missing). LLAMA_BUILD_UI=ON needs node + npm on PATH (the npm failure is in the configure output above), the prebuilt fallback needs huggingface.co to be reachable. A llama-server without its chat UI is not packaged.",
@@ -373,6 +380,128 @@ mod tests {
             assert!(
                 !sccache_caches_nvcc(line),
                 "an unreadable version keeps nvcc unwrapped: {line:?}"
+            );
+        }
+    }
+    // UI2: llama.cpp v1.1.0 moved its chat UI from tools/ui to ui/apps/chat,
+    // so the check looks at the release's layout. xtask always builds the
+    // newest release, so the old tools/ui path counts for nothing.
+
+    /// The chat UI's `index.html`, and the stamp only the HuggingFace
+    /// download leaves, as the release lays them out.
+    const UI_DIST: &str = "ui/apps/chat/dist/index.html";
+    const UI_STAMP: &str = "ui/apps/chat/.ui-stamp";
+
+    /// The layout llama.cpp v1.0.2 and earlier used.
+    const OLD_UI_DIST: &str = "tools/ui/dist/index.html";
+
+    /// A throwaway pair of trees: the cmake build dir and the llama.cpp
+    /// clone, removed on drop.
+    struct Trees {
+        root: PathBuf,
+        build: PathBuf,
+        src: PathBuf,
+    }
+
+    impl Trees {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("xtask-web-ui-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let trees = Trees {
+                build: root.join("build"),
+                src: root.join("llama.cpp"),
+                root,
+            };
+            std::fs::create_dir_all(&trees.build).unwrap();
+            std::fs::create_dir_all(&trees.src).unwrap();
+            trees
+        }
+
+        /// Writes an `index.html` (or the stamp's content) under one tree.
+        fn write(&self, dir: &Path, rel: &str, bytes: &str) {
+            let p = dir.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, bytes).unwrap();
+        }
+
+        fn in_build(&self, rel: &str) {
+            self.write(&self.build, rel, "<html></html>");
+        }
+
+        fn in_src(&self, rel: &str) {
+            self.write(&self.src, rel, "<html></html>");
+        }
+    }
+
+    impl Drop for Trees {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// The npm build put the assets under the build dir: embedded.
+    #[test]
+    fn ui2_dist_in_the_build_dir_is_ok() {
+        let trees = Trees::new("build-dist");
+        trees.in_build(UI_DIST);
+        assert!(check_web_ui(&trees.build, &trees.src).is_ok());
+    }
+
+    /// A dist dir dropped into the SOURCE tree is used as is: embedded.
+    #[test]
+    fn ui2_dist_in_the_source_tree_is_ok() {
+        let trees = Trees::new("src-dist");
+        trees.in_src(UI_DIST);
+        assert!(check_web_ui(&trees.build, &trees.src).is_ok());
+    }
+
+    /// Neither tree has the assets: the build embedded an empty UI, so the
+    /// package is refused, and the message names the build path it looked at.
+    #[test]
+    fn ui2_no_dist_is_refused_naming_the_build_path() {
+        let trees = Trees::new("no-dist");
+        let err = check_web_ui(&trees.build, &trees.src)
+            .unwrap_err()
+            .to_string();
+        let want = trees
+            .build
+            .join("ui")
+            .join("apps")
+            .join("chat")
+            .join("dist")
+            .join("index.html");
+        assert!(
+            err.contains(&want.display().to_string()),
+            "the refusal names the release's build path ({}, in the message): {err}",
+            want.display()
+        );
+    }
+
+    /// The prebuilt case: the HuggingFace download left its stamp beside the
+    /// assets.
+    #[test]
+    fn ui2_dist_with_the_stamp_is_ok() {
+        let trees = Trees::new("stamp");
+        trees.in_build(UI_DIST);
+        trees.in_build(UI_STAMP);
+        assert!(check_web_ui(&trees.build, &trees.src).is_ok());
+    }
+
+    /// The old `tools/ui` layout, in either tree, is no proof of anything:
+    /// v1.1.0 never writes it, so a dist there alone is refused.
+    #[test]
+    fn ui2_old_tools_ui_layout_is_not_enough() {
+        for src in [false, true] {
+            let trees = Trees::new(if src { "old-src" } else { "old-build" });
+            if src {
+                trees.in_src(OLD_UI_DIST);
+            } else {
+                trees.in_build(OLD_UI_DIST);
+            }
+            assert!(
+                check_web_ui(&trees.build, &trees.src).is_err(),
+                "a dist at the pre-v1.1.0 path does not count (src tree: {src})"
             );
         }
     }

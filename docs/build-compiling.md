@@ -96,9 +96,9 @@ image on `qwen35` and `qwen4exp`).
   provenance and the proving log line are in `patches/llama.cpp/README.md`.
 
 **The chat UI must end up in the binary.** `xtask build` refuses to finish without
-`tools/ui/dist/index.html` under the build directory, or a `dist` in the source tree. It reports
-which path produced the UI, and the download path leaves a `.ui-stamp`. See `LLAMA_BUILD_UI` below
-for why this guard exists.
+`ui/apps/chat/dist/index.html` under the build directory, or a `dist` in the source tree: v1.1.0
+moved the chat UI from `tools/ui/` to `ui/apps/chat/`. It reports which path produced the UI, and the
+download path leaves a `.ui-stamp`. See `LLAMA_BUILD_UI` below for why this guard exists.
 
 ## CMake options
 
@@ -148,6 +148,11 @@ logs "no FlashAttention vector kernel compiled ... (slow)".
 **`LLAMA_BUILD_UI=ON` is pinned because upstream's `OFF` default can ship no UI.** Under `OFF`, the
 UI is downloaded from a HuggingFace bucket at configure time. When that fails, the build proceeds
 with no UI on only a cmake warning.
+
+**On v1.1.0 the npm build fails, so the UI comes from the prebuilt fallback.** Upstream's
+`ui/apps/chat` lock file is out of sync with its `package.json`, so `npm ci` refuses with "Missing:
+@sveltejs/kit@2.70.4 from lock file". The build takes the prebuilt UI of the same build number
+(`b12774`) from HuggingFace and xtask warns that the assets are prebuilt (our build of 2026-11-26).
 
 **The machine-derived half.**
 
