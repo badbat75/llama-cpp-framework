@@ -1689,3 +1689,60 @@ Measured with `build/ux-review/d17r.js` in Chromium, Firefox and WebKit at 1280 
 UX check of `instance-server-switch` and `model-profiles-restart-offer`, one browser at a time:
 0 failing in all three.
 - D3 closed: the button keeps its own width (198 px) right after the select, 12 px apart at 1280 px, and wraps under it at 320 px; the hint sits under both; no sideways scroll (Chromium, light).
+
+## 17d2: the Server profile card, the active profile only (user, 2026-11-26)
+
+The user, on a screenshot of the instance page: "questa andrebbe razionalizzata, terrei solo il
+profilo attivo" (rationalise it: keep only the active profile). Today the card says "Server
+profile" twice (the `h2`, then the `dt`). It shows "Open default", the line "No other server
+profile is free to switch to.", and a "Server profiles" link. This closes the 17d review's note 2
+(above). It is a slice after L2.
+
+**17d2.1 The heading once.** The card keeps its `h2` `instance-server-title` ("Server profile"). The
+`dl.assets` and its `dt` go.
+
+**17d2.2 The active profile is the link.** Right under the `h2`, a `p` holds one link, the profile's
+id (`instance.serverProfile`, say `default`), to `serverProfileHref(id)`. The link's text is
+the id alone: no "Open", no port.
+- The accessible name is the id. Its purpose comes from the heading right before it, "Server
+  profile": [2.4.4](https://www.w3.org/TR/WCAG22/#link-purpose-in-context), sufficient technique
+  [H80](https://www.w3.org/WAI/WCAG22/Techniques/html/H80) (link text plus its preceding heading).
+  The tester pins that the `h2` comes immediately before the `p` in the card, with nothing between.
+- This is the D4.37 rule for instances, applied to profiles: a thing is named by its name.
+- No profile set: the `p` reads the muted `instance-server-none` ("None") instead of a link, as
+  today.
+
+**17d2.3 The switch only when it can act.** `InstanceServerSwitch` renders its field (label
+`instance-server-switch-label`, select, `instance-server-switch` button, hint) only when the pool
+read lists at least one free profile. With none free, it renders nothing: no line, no link. While
+the pool read runs, nothing shows, as today. A failed read keeps its text and Sign in, as today.
+After a switch the profile left behind is free, so the field stays.
+
+**17d2.4 No link to the list.** The card's own "Server profiles" link goes. The nav reaches the
+list, and the active profile's link reaches its page.
+
+**17d2.5 Focus.** In the one case where the field goes away while it holds the focus (a Sign in from
+a failed read, then a reread that finds none free), the focus goes to the active profile's link,
+or to the `h2` (with `tabindex="-1"`) when no profile is set
+([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)).
+
+**17d2.6 Strings.**
+- Removed: `instance-server-open` ("Open {0}") and `instance-server-no-free`.
+- Kept: `instance-new-profiles-link`, which `Instances.tsx` 1163 still uses in the New instance
+  form. Also kept: `instance-server-title`, `instance-server-none`, and every `instance-server-switch*`
+  key.
+
+Tester's acceptance list:
+1. The card has exactly one `instance-server-title` text, its `h2`, and no `dl`/`dt` (17d2.1).
+2. With `serverProfile` `edge box`, the card's first element after the `h2` is a `p` holding a
+   single link named `edge box` to `#/profiles/server/edge%20box` (or the existing
+   `serverProfileHref` result) (17d2.2).
+3. With no server profile, that `p` reads `None`, muted, with no link (17d2.2).
+4. A pool with free profiles shows the switch field as today. A pool with none free shows no text
+   or link after the profile's `p` (17d2.3, 17d2.4).
+5. `instance-server-open` and `instance-server-no-free` are gone from `en_US.json` and from the
+   code (17d2.6).
+6. The focus case of 17d2.5.
+7. Tests to amend: `InstancePage.test.tsx` 1387-1405 and 1489, `RestartOffer17d.test.tsx` 1249-1256
+   and 1340-1346, `Boot.test.tsx` 1043. In `fe/ux/check.js`, `instance-page` (361) and
+   `instance-server-switch` (450) still find the `h2` and need no change.
