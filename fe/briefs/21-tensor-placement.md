@@ -696,3 +696,55 @@ under forced colours (`build/ux-review/17b2.js`, shots in `build/ux-review/17b2/
 **Re-check (2026-11-24): D1 fixed, TP1c accepted.** With no rule, the + is 12 px under the
 `model-profile-ot-none` line in Chromium, Firefox and WebKit, at 1280 and 320 px and at 200 % text,
 with no sideways scroll (`build/ux-review/tp1g.js`). The fix also covers 17b2's empty pool.
+
+## TP3 check (2026-11-26)
+
+Checked 21 T.14 to 21 T.17 against main at 8f239cf: the rule row since TP1b and TP1c
+(`TensorPlacement.tsx` 403-479: a wrapping `.ot-rule-row`, labels above controls, the borderless x,
+the Field Errors last with `flex-basis: 100%`, `index.css` 2179), the model-info read
+(`api.ts` 67-139, read once on the page's arrival, `ModelProfilePage.tsx` 331-334), the Save bar and
+22D4 (no contact: the coverage line is not a check and blocks no Save), and the bff's
+`info.tensors` / `info.tensorsTruncated` (`crates/bff/README.md` 1040-1054: `{name, bytes}` rows,
+cut by the manager at 20 000 rows or 917 504 bytes of JSON, relayed as they come). Where this
+section differs from TP3, it wins.
+
+Still true: 21 T.14's shape rule and 21 T.16 (the format paragraph is still `#model-profile-ot-format`
+inside the Rules fieldset, `TensorPlacement.tsx` 311).
+
+**21 T.14a Where the list is read.** `ModelFacts` (`api.ts` 71) gains `tensors: {name, bytes}[] |
+null` and `tensorsTruncated: boolean`, read in `modelFacts`; a `tensors` not of the shape is
+`null` and the layer facts still stand. The Tensor placement card receives the facts the page
+already reads for the GPU card; no second request.
+
+**21 T.15a The line in today's row.** 21 T.15 stands, with:
+- The line is the last child of `.ot-rule-row`, after the Field Errors, as they are:
+  `flex-basis: 100%`, `--muted`, `font-size: var(--fs-sm)` (the token for 0.875rem, `index.css` 56),
+  `overflow-wrap: anywhere`.
+- The pattern counted is the rule as written into `override-tensor`: the kind's composed pattern
+  (`tensorRules.ts`) for a named kind, the Pattern text for Custom; an edit in "Rules as text" redraws
+  the rows and their lines.
+- The GUI's texts are now under the keys `regex-unreadable`, `matches-no-tensor`,
+  `all-taken-by-earlier`, `tensors-one`, `tensors-many`, `more-taken-by-earlier`
+  (`crates/core/strings/en_US.toml` 843-848); the line numbers in section 2 are stale, the web
+  texts stand as written. `model-profile-ot-unreadable` differs from the GUI's on purpose
+  ("pattern", "counted"): the web shows counts, not a tensor list.
+- The test vectors are `crates/app/src/tensor_picker.rs` 661-683.
+
+**21 T.17a The UX state (section 7 amended).** No new state: `model-profile-placement`
+(`ot=1`) shows the lines once the stub's `MODEL_INFO` carries `tensors`. The list matches the facts
+the stub already serves: **64** blocks (not 32), each with `blk.N.ffn_{up,down,gate}_exps.weight`
+and `blk.N.attn_q.weight`, plus `token_embd.weight` and `output.weight`, and `tensorsTruncated`
+false. On the state's three rules that gives a counted line on rule 1 (blocks 20 to 23), a line on
+rule 2 (`token_embd.weight`, 1 tensor) and a counted line on rule 3 (blocks 10 to 19), so the one
+and many texts render at 320 px and 200 %. The other texts and the cut list are pinned by unit tests.
+
+Choices taken (the user asleep; recommended options):
+1. No new `fe/ux` state; the existing placement state carries the lines.
+2. No coverage under the "Rules as text" field: the rows already show it, and the text field is
+   for pasting.
+3. The facts are not read again after an Assets change of the model; the line then counts the
+   tensors of the model read on arrival until the page is opened again. Out of scope, as the GPU
+   card's facts line already behaves.
+
+Tests to amend or add: `api.ts`'s parse tests (the two fields), a new `TensorPlacementCoverage*.test.tsx`
+for 21 T.15a and 21 T.16, `fe/ux/stub.py` `MODEL_INFO` (the tester; the designer runs the state).
