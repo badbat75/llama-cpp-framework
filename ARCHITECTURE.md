@@ -2267,8 +2267,10 @@ from the bff. Step 14: Prometheus scrapes nodes over its own TLS, again a second
 metrics and journald sources, a pipeline not a store), Netdata 2.13.0 (GPL-3.0; amdgpu with GTT and
 memory activity, NVIDIA; "under 5% of one CPU core and about 200 MB of RAM" by default,
 [resource utilization](https://learn.netdata.cloud/docs/netdata-agent/resource-utilization)) with its
-own dashboard and own access model beside our sign-in; a GPL program can be a dependency but not
-bundled into our MIT packages without its source obligations. Each is a capable fit for an operator
+own dashboard and own access model beside our sign-in; a GPLv3 program can be bundled into the
+framework's AGPL-3.0-or-later packages (AGPLv3 and GPLv3 section 13 let the two be combined,
+https://www.gnu.org/licenses/agpl-3.0.html, https://www.gnu.org/licenses/gpl-3.0.html), its source
+offered as GPLv3 requires; llama.cpp's MIT packages would carry the same source obligation. Each is a capable fit for an operator
 who already runs it, none removes the need for (a)'s on-demand log read through the `pai` check.
 
 #### Recommendation
