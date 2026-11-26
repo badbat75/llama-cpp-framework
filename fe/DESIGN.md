@@ -661,9 +661,10 @@ Each is one React component, reused by every page.
     row or column size and the table's scroll box does not clip it. It is kept while the pointer is
     over it and closed by Escape (1.4.13; brief 22, "22D4 amendment", 2026-11-25). Its Confirm
     in place opens in a row of its own under the profile's row. On the thing's own page, Delete is a
-    text button at the start of the Save bar's buttons, `--space-5` before Discard; when it cannot
-    act, its reason is a line always shown in the bar under the buttons (user, 2026-11-24, brief 22
-    22D4 and its D1 decision, superseding 22D2's status-row minus).
+    `--danger` text button at the end of the Save bar, after Save changes (`margin-inline-start:
+    auto`); when it cannot act, its reason is a line always shown under Delete, ending at its right
+    edge, the bar's full width at 320 px (user, 2026-11-25, brief 22 D4.30 and L2.A2, reversing
+    the 2026-11-24 "Delete first").
 - **Chip** (a short list of labels edited one by one: the instance tags, brief 15): a `ul.chips`
   (`role="list"`) of `li.chip` pills in a wrapping flex row (`.chips-row`, gap `--space-2`), each
   the label on one line, cut with an ellipsis where the row is narrower than it (the chip at most the row's width; the x's name carries the full label; a cut chip, on hover or focus, shows a temporary `.chip-full` pill over it with the whole label, wrapping, leaving the x uncovered, hidden by Escape: WCAG 1.4.13; profile chips are focusable for it), wrapping anywhere only under `@media (max-width: 15em)`, the user's large text on a narrow screen (user, 2026-11-21) and, when it can be removed, a 24 px
@@ -680,7 +681,7 @@ Each is one React component, reused by every page.
   one adds it at once ([APG Combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/)). These
   icon-only buttons hold their words in a visually hidden span.
 - **Save bar**: sticky at the top of a form (from brief 22 22D2, user 2026-11-23: the edit commands at the top; before it, at the bottom), right after the page's status row, always rendered on an editable form; its scroll padding and the buttons' negative margin are on the top edge. Left: a status
-  line (`role="status"`); right: **Discard** and **Save changes**. Both use `aria-disabled="true"`,
+  line (`role="status"`); right: **Discard** and **Save changes** (`primary`), then a profile page's Delete (see the list's Delete above). Both use `aria-disabled="true"`,
   not `disabled`, while there is nothing to save, so focus never drops when the form becomes clean
   ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order)); a click then does nothing. While a save
   runs both are `aria-disabled` (a save cannot be called back); the fields stay editable and what
@@ -801,7 +802,8 @@ Each is one React component, reused by every page.
 
 - **Create form in place** (New server profile, New instance: brief 16; New model profile: brief 22):
   the list's Add icon button ("Icon buttons of a list": a `plus`, its words visually hidden) at the
-  end of the list, `margin-top: var(--space-3)` (user, 2026-11-23, brief 16 17b2), with `aria-expanded`
+  end of the list, `margin-top: var(--space-3)` (user, 2026-11-23, brief 16 17b2; kept on every list
+  by the user's L2.A1 ruling, 2026-11-26), with `aria-expanded`
   ([APG Disclosure](https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/)) reveals right after it a
   `form` named by its heading: the fields, Create (primary) and Cancel, a status line and the alert
   place. Opening moves the focus to the first field; Cancel or the opener closes it, clears it and puts

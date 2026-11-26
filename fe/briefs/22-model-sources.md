@@ -2064,3 +2064,99 @@ text. D2 (A2) met: the text starts 8 px after the radio in both groups, in all t
 Advice (a) met: each radio's centre is the centre of its text's first line, 0 px off in Chromium and
 Firefox and 2 px in WebKit, wrapped labels included. The radio now starts at the legend's and the
 input's left x. UX check in Chromium: 246 states, 0 failing. 22C2 accepted.
+
+## L2 check against main (designer, 2026-11-26)
+
+Read on main at 5d7c6dd9 (22C2), code only, no browser. L2 is D4.29 to D4.33 and D4.35 to D4.37
+(above). None of L2 is built yet. Where each criterion stands:
+
+| Criterion | On main | Verdict |
+|---|---|---|
+| D4.29 labelled New at the top | Both lists put a bare round `+` after the table: `server-profiles-new` (17b2) and `model-profiles-new` (22 C.1a) | Dropped by the user's ruling (L2.A1); the + stays |
+| D4.30 Save first, Delete last | `SaveBar.tsx` 313-339 puts Delete first, `secondary` | Holds. The Save bar was already at the top (22D2, 2026-11-23) when D4.30 was accepted (2026-11-25), so nothing conflicts; see L2.A2 |
+| D4.31 card intros behind About | `ModelProfileCards.tsx` 399 and 428 still show every `introLines` line | Holds as written |
+| D4.32 the page head | `ModelProfilePage.tsx` 1967: the settings `h2` is visible | Holds as written |
+| D4.33 the filter hint | `en_US.json` 381 still has the two-sentence hint | Holds as written. The gap to the table stays `--space-4`; the `+` after the table does not touch it |
+| D4.35 Engine under the name below 480 px | Not built | Holds. The Actions column (D4.23) is the one the 56 px estimate counted |
+| D4.36 keep On/Off | Built (nothing to change) | Holds; a test keeps the words |
+| D4.37 name alone | `Instances.tsx` 381-386 shows `ID <id>` whenever the name differs from the id | Holds as written |
+
+**L2.A1 The create opener stays the + after the list (user's ruling, 2026-11-26).** D4.29 is
+dropped, and 22 C.1a stands.
+- The Models and Server profiles lists keep the round `.ot-add` `+` after the table, as built
+  (17b2, C.1a).
+- New instance follows the same rule ("same as the lists"): its `+` comes after the list of tiles.
+  It already does (`Instances.tsx` 506, after the `ul.tiles` at 498), so nothing changes for it.
+- `fe/DESIGN.md` "Icon buttons of a list" and "Create form in place" keep the `+` rule, with
+  this ruling noted.
+
+**L2.A2 D4.30 with CD.**
+- **Order.** The Save bar reads its status line, then Discard, Save changes (`primary`), and
+  Delete. Delete is pushed to the bar's end (`margin-inline-start: auto`) and drawn as a `--danger`
+  text button.
+- **The reason line.** When Delete cannot act, its reason sits under Delete, right-aligned to
+  Delete's right edge. At 320 px, where the buttons wrap, the line takes the bar's full width.
+- **The confirm.** Delete's Confirm in place opens as now (22 D4.11). Its verb is CD's
+  `.primary.danger`, so a filled red button appears only at the step that destroys.
+- `fe/DESIGN.md` "Icon buttons of a list" (the list's Delete, and the page's Delete) and "Save bar"
+  carry L2.A2.
+
+**CD folds into L2.** It is one CSS rule and the `danger` class on four verbs (CD.1), with no
+strings. Two of the four verbs are the Save bar confirms that D4.30 already moves, so one slice
+keeps their tests in one pass.
+
+### L2 acceptance list for the tester (designer, 2026-11-26)
+
+One slice: D4.30 to D4.37 as amended, with CD folded in. D4.29 is dropped (L2.A1). Each line is one
+thing to pin.
+
+1. **D4.30 / L2.A2, the bar's order.** On the model and the server profile page, the Save bar's
+   buttons in DOM and Tab order are Discard, Save changes, Delete.
+   - Save changes has the class `primary`.
+   - Delete has `margin-inline-start: auto` and the colour `--danger`.
+   - Delete's id, `aria-expanded` and description are unchanged (22 D4.10 to D4.14).
+2. **L2.A2, the reason line.** When Delete cannot act, its `<deleteId>-reason` line comes after the
+   buttons in the bar, its right edge at Delete's right edge (1 px either way) at 1280 px. At
+   320 px it spans the bar's width, with no sideways scroll
+   ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)).
+3. **CD.1, the four verbs.** These four `confirm-*` verbs have both `primary` and `danger`:
+   `RowDelete.tsx` (both lists), `ModelProfilePage.tsx`, `ServerProfilePage.tsx`, and
+   `InstancePage.tsx`'s `confirm-remove`. Save, Create and the name's Save have `primary` without
+   `danger`.
+4. **CD.2, the look.** `.primary.danger` sets `background` and `border-color` to `var(--danger)` and
+   `color` to `var(--on-accent)`, and comes before `.primary[aria-disabled='true']` in the sheet.
+   The contrast is at least 4.5:1 in both themes
+   ([1.4.3](https://www.w3.org/TR/WCAG22/#contrast-minimum)).
+5. **CD.3.** The confirms' texts, order (verb, then Cancel) and focus (on Cancel) are unchanged.
+6. **D4.31, the card intros.** The GPU distribution and Tensor placement cards each show only the
+   first `\n`-separated line of their intro. The rest sits in the card's About panel, behind a
+   toggle with `aria-expanded`, closed at load. Opening it shows every other line. No new key.
+7. **D4.32, the page head.**
+   - The model profile page's settings `h2` (`model-profile-settings-title`) has the class
+     `visually-hidden` and is still found by role.
+   - The switch and its text are `--space-2` apart.
+   - The state line is followed by `--space-5` before the first card.
+8. **D4.33, the filter hint.** `model-profiles-filter-hint` reads
+   `Name or model file; case does not matter.` and shows on one line at 1280 px. The filter sits
+   `--space-4` above the table.
+9. **D4.35, Engine under the name.**
+   - Below 480 px, the Models table's Engine column is not shown, and each row's first cell holds
+     the engine as a `--muted` second line under the name (`model-profiles-engine-not-available`
+     when there is none).
+   - The Engine `th` stays in the DOM as a visually hidden header, so the sort stays reachable.
+   - At 320 px the table needs no sideways scroll inside its box, and the trash can is inside the
+     box's right edge.
+   - At 480 px and wider, nothing changes.
+10. **D4.36, On and Off.** The word beside each row switch stays ("On" / "Off")
+    ([1.4.1](https://www.w3.org/TR/WCAG22/#use-of-color)).
+11. **D4.37, the name alone.**
+    - `InstanceLink` shows the name as the link, with nothing after it.
+    - An instance with no label shows its id as the link.
+    - Two instances with the same name each get a muted `ID <id>` after the link, outside the `a`.
+    - It applies on the server list's Used by and the server profile page's Used by. The instance
+      page and the Overview tile are unchanged.
+12. **L2.A1, unchanged.** The `+` after the table on both lists and after the tiles for New
+    instance: existing tests stay green.
+
+The tests to amend are listed in "Decisions and the slice's tests" and "L2 additions" above. The
+UX check needs no new state: its confirm and page states cover CD and the bar.
