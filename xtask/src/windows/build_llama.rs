@@ -287,10 +287,9 @@ pub fn run() -> Result<()> {
     match &sccache {
         Some(sc) => {
             // HIP is wrapped by the CXX launcher (compiled as CXX here, clang
-            // with `-x hip`). nvcc is intentionally NOT wrapped: sccache
-            // treats nvcc's output-less `ptxas -arch=compute_90` syntax check
-            // as a cacheable step and every .cu dies with `Missing "cubin"
-            // file output` (sccache PR #2809, open). -U clears a stale CUDA
+            // with `-x hip`). nvcc stays unwrapped on Windows: no Windows
+            // build has checked the wrapper here. Why nvcc is gated at all is
+            // in docs/build-compiling.md, "sccache". -U clears a stale CUDA
             // launcher an earlier run left in the cache.
             args.extend([
                 format!("-DCMAKE_C_COMPILER_LAUNCHER={}", sc.display()),

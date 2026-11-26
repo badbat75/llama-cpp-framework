@@ -209,6 +209,23 @@ impl Drop for SccacheDaemon {
     }
 }
 
+/// The oldest sccache release that may wrap nvcc: the one that carries
+/// sccache PR #2809. Why nvcc is gated at all, and which release that is, is
+/// in docs/build-compiling.md, "sccache".
+const SCCACHE_NVCC_MIN: &str = "0.20.0";
+
+/// Whether the sccache that was found may wrap nvcc: `sccache --version`'s
+/// first line as printed ("sccache 0.20.0"). A release at or above
+/// `SCCACHE_NVCC_MIN` is the gate; an older one, and a line with no readable
+/// dotted version in it, keep nvcc unwrapped.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn sccache_caches_nvcc(version_line: &str) -> bool {
+    version_line
+        .split_whitespace()
+        .find(|word| util::is_dotted_version(word))
+        .is_some_and(|v| util::vercmp(v, SCCACHE_NVCC_MIN).is_ge())
+}
+
 /// The chat UI must be IN the binary. llama.cpp's scripts/ui-assets.cmake
 /// never fails: when neither the npm build (LLAMA_BUILD_UI) nor the
 /// HuggingFace download (LLAMA_USE_PREBUILT_UI) produced assets it prints a
@@ -293,4 +310,70 @@ pub fn print_version(exe: &Path, with_stderr: bool) -> Result<()> {
         bail!("{} --version failed ({})", exe.display(), out.status);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // SC: the sccache version gate for wrapping nvcc (sccache PR #2809, in
+    // the release `SCCACHE_NVCC_MIN` names; why and which release:
+    // docs/build-compiling.md, "sccache"). The line is what
+    // `sccache --version` prints.
+
+    #[test]
+    fn sc_caches_nvcc_0_20_1() {
+        assert!(
+            sccache_caches_nvcc("sccache 0.20.1"),
+            "a newer patch of the same minor carries it"
+        );
+    }
+
+    #[test]
+    fn sc_caches_nvcc_0_21_0() {
+        assert!(
+            sccache_caches_nvcc("sccache 0.21.0"),
+            "a newer minor carries it"
+        );
+    }
+
+    #[test]
+    fn sc_caches_nvcc_1_0_0() {
+        assert!(
+            sccache_caches_nvcc("sccache 1.0.0"),
+            "a newer major carries it"
+        );
+    }
+
+    #[test]
+    fn sc_caches_nvcc_0_19_0_no() {
+        assert!(
+            !sccache_caches_nvcc("sccache 0.19.0"),
+            "0.19.0 predates PR #2809"
+        );
+    }
+
+    #[test]
+    fn sc_caches_nvcc_0_20_0() {
+        assert!(
+            sccache_caches_nvcc("sccache 0.20.0"),
+            "0.20.0 is the release that carries PR #2809"
+        );
+    }
+
+    #[test]
+    fn sc_caches_nvcc_unreadable_no() {
+        for line in [
+            "",
+            "sccache",
+            "sccache 0.20",
+            "sccache dev",
+            "not a version",
+        ] {
+            assert!(
+                !sccache_caches_nvcc(line),
+                "an unreadable version keeps nvcc unwrapped: {line:?}"
+            );
+        }
+    }
 }

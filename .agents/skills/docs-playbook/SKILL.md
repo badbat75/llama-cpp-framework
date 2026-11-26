@@ -327,6 +327,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   ("The minimal build"), `crates/bff/README.md`, `installer/AGENTS.md` (the manager bullet too), the
   `release` skill (step 4) and `PLAN.md` R3. The Windows test plan opens with "What CI covers": update it
   with the workflow.
+- The sccache nvcc gate is three lines: the `sccache` section's lead and its gate paragraph of
+  `build-compiling.md` (the full statement, with the "not yet run" line naming the first build through
+  the wrapper), and `build-pipeline.md`'s footgun row, which names the version and goes stale with the
+  gate. The code's gate is `SCCACHE_NVCC_MIN` in `xtask/src/common/llama.rs`, read from
+  `sccache --version`'s first line; the Linux configure prints `nvcc: cached` / `nvcc: not cached`.
 - One run's Windows coverage sits in six sentences: `installer/AGENTS.md`'s Status ("the latest green
   run"), the manager bullet ("only CI has run it"), the group bullet ("Text-checked only"), "What CI
   covers" (the run list, its "no green run has executed them"), the Open checks' `PaiGroup` item ("have

@@ -147,7 +147,7 @@ On Windows, `$buildRoot` in `scripts\common.ps1` names `build\windows`.
 | Delete a line from `xtask/cmake/` to restore a default | CACHE entries keep their value. Set it explicitly or wipe the directory. [CMake options](build-compiling.md#cmake-options) |
 | Pass a global `-march` | It leaks AVX2 code into the fallback CPU variants, which ggml still picks on pre-AVX2 CPUs. [LTO and `-march`](build-compiling.md#lto-and--march) |
 | Pass a global `CMAKE_INTERPROCEDURAL_OPTIMIZATION` | It reaches the CUDA target. [LTO and `-march`](build-compiling.md#lto-and--march) |
-| Wrap nvcc in sccache, or drop `90-virtual` to allow it | Every `.cu` fails, or the shipped `ggml-cuda.dll` covers less. [sccache](build-compiling.md#sccache) |
+| Wrap nvcc in sccache on an sccache older than 0.20.0, or drop `90-virtual` to allow it | Every `.cu` fails, or the shipped `ggml-cuda.dll` covers less. [sccache](build-compiling.md#sccache) |
 | Set `CMAKE_*_LINKER_FLAGS` on Windows | They reach the CUDA link and outlive the experiment in the cache. [lld](build-compiling.md#lld) |
 | Use `CMAKE_LINKER_TYPE=LLD` on Linux | The configure dies in the HIP compiler check. [lld](build-compiling.md#lld) |
 | Link Linux clang objects without lld | llama.cpp drops LTO silently. [lld](build-compiling.md#lld) |

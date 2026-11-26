@@ -1852,9 +1852,7 @@ mod tests {
         // the engine carries, the core below the workspace version.
         assert_eq!(
             breaks,
-            format!(
-                "llama.cpp-rocm (<< 10.1.0), llama.cpp-rocm (>> 10.1.0), {core} (<< {v})"
-            )
+            format!("llama.cpp-rocm (<< 10.1.0), llama.cpp-rocm (>> 10.1.0), {core} (<< {v})")
         );
         assert_eq!(conflicts, format!("{OLD}, {OLD}-llama, llama.cpp-tools"));
         let rpm = rpm_relations(&f);

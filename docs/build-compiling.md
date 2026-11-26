@@ -205,9 +205,9 @@ links none of it.
 
 ## sccache
 
-**sccache caches the C, C++ and HIP compiles, and never nvcc.** `xtask build` looks for it at the
-fixed install path first, then on PATH, so a console with a stale PATH still finds the right copy.
-The launcher path is part of every compile command, so it must not move.
+**sccache caches the C, C++ and HIP compiles, and nvcc on Linux from sccache 0.20.0.** `xtask build`
+looks for it at the fixed install path first, then on PATH, so a console with a stale PATH still
+finds the right copy. The launcher path is part of every compile command, so it must not move.
 
 | Setting | Value | Why |
 | --- | --- | --- |
@@ -223,14 +223,22 @@ environment. A daemon left on the default port by another process would therefor
 build from its own cache, silently. So `xtask build` stops any leftover on port 4227 and starts its
 own. It prints the stats and stops the daemon once the build ends, failed builds included.
 
-**nvcc is intentionally not wrapped.** For the PTX-only `compute_90` gencode (ggml's default
+**nvcc is wrapped by a version gate.** For the PTX-only `compute_90` gencode (ggml's default
 `90-virtual`), nvcc runs `ptxas -arch=compute_90` with no `-o`. sccache treats that as cacheable,
-and every `.cu` dies with `Missing "cubin" file output`.
+and every `.cu` dies with `Missing "cubin" file output`. [sccache PR #2809, "Don't cache ptxas
+PTX-verification passes"](https://github.com/mozilla/sccache/pull/2809), merged 2026-11-02, stops
+that, and the release that carries it is 0.20.0 (the repository's compare of `f71a7dce` to
+`v0.20.0` is ahead of the merge). So `xtask build` reads `sccache --version` and passes
+`CMAKE_CUDA_COMPILER_LAUNCHER` only at 0.20.0 or newer (`SCCACHE_NVCC_MIN` in
+`xtask/src/common/llama.rs`), and prints `nvcc: cached` or `nvcc: not cached` with the line it read.
+An older sccache, and a version line with no readable version in it, keep nvcc unwrapped. Windows
+keeps it unwrapped for now: the gate has not been checked in a Windows build. Do not drop
+`90-virtual` to dodge the old failure, because that changes what the shipped `ggml-cuda.dll` covers.
 
-The fix is [sccache's pending pull request that stops caching ptxas verification passes
-(#2809)](https://github.com/mozilla/sccache/pull/2809). Until a release carries it, nvcc stays
-uncached. Do not drop `90-virtual` to dodge it, because that changes what the shipped
-`ggml-cuda.dll` covers.
+**Not yet run: no full CUDA build has gone through the wrapper.** The build machine's sccache is
+0.20.1, so the next build, of llama.cpp v1.1.0, is the first. A launcher added changes every compile
+command of the language it wraps, so that build recompiles all of ggml-cuda once, and the cache only
+pays off from the build after it.
 
 **HIP is cached on Windows and Linux, by different launchers.**
 

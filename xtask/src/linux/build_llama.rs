@@ -8,7 +8,8 @@ use super::dists::vulkan_loader;
 use crate::common::cmake_options::cmake_options;
 use crate::common::dists::Dists;
 use crate::common::llama::{
-    cache_get, check_web_ui, checkout, print_version, reset_cuda_detection, SccacheDaemon,
+    cache_get, check_web_ui, checkout, print_version, reset_cuda_detection, sccache_caches_nvcc,
+    SccacheDaemon,
 };
 use crate::common::ui;
 use crate::common::util::{self, cmd, run as run_cmd};
@@ -294,13 +295,13 @@ pub fn run() -> Result<()> {
     // The fixed path the prerequisites install to comes first (it is part of
     // every compile command, so it must not move), PATH second. HIP is
     // wrapped too: it is clang with `-x hip`, which sccache caches as the HIP
-    // language, --offload-arch list included (checked on 0.18.0: a repeat
-    // compile of one ggml-cuda object was a cache hit). nvcc is intentionally
-    // NOT wrapped, for the reason given in windows/build_llama.rs (the PTX-only
-    // compute_90 step, pending sccache PR #2809); -U clears a stale launcher
-    // left in the cache. Adding or removing a launcher changes every HIP
-    // compile command, so the first build after the switch rebuilds all of
-    // ggml-hip once.
+    // language, --offload-arch list included. nvcc is wrapped only when the
+    // sccache that was found is new enough to keep nvcc's PTX verification
+    // passes out of the cache (`sccache_caches_nvcc`): docs/build-compiling.md,
+    // "sccache", is why the gate is there and which release it is. -U clears a
+    // stale launcher left in the cache. Adding or removing a launcher changes
+    // every compile command of the language it wraps, so the first build after
+    // the switch rebuilds that backend once.
     // The build gets its own daemon on SCCACHE_SERVER_PORT, started here with
     // the settings below: a daemon already running on the default port would
     // otherwise serve every compile with ITS cache dir and settings, which win
@@ -317,25 +318,17 @@ pub fn run() -> Result<()> {
     match &sccache {
         Some(sc) => {
             daemon = Some(SccacheDaemon::start(sc)?);
-            let s = sc.display();
-            args.extend([
-                format!("-DCMAKE_C_COMPILER_LAUNCHER={s}"),
-                format!("-DCMAKE_CXX_COMPILER_LAUNCHER={s}"),
-                format!("-DCMAKE_HIP_COMPILER_LAUNCHER={s}"),
-                "-UCMAKE_CUDA_COMPILER_LAUNCHER".into(),
-            ]);
+            let version = sccache_version(sc);
+            let nvcc_ok = sccache_caches_nvcc(&version);
+            ui::dim(format!(
+                "nvcc: {} (sccache --version: {version})",
+                if nvcc_ok { "cached" } else { "not cached" }
+            ));
+            args.extend(sccache_launcher_args(Some(sc), nvcc_ok));
         }
         None => {
             ui::dim("sccache not found, building without compiler cache");
-            args.extend(
-                [
-                    "-UCMAKE_C_COMPILER_LAUNCHER",
-                    "-UCMAKE_CXX_COMPILER_LAUNCHER",
-                    "-UCMAKE_HIP_COMPILER_LAUNCHER",
-                    "-UCMAKE_CUDA_COMPILER_LAUNCHER",
-                ]
-                .map(String::from),
-            );
+            args.extend(sccache_launcher_args(None, false));
         }
     }
 
@@ -365,4 +358,99 @@ pub fn run() -> Result<()> {
         .context("the freshly built llama-server does not start")?;
     ui::say("");
     Ok(())
+}
+
+/// `sccache --version`'s first line, as printed; empty when it does not
+/// answer.
+fn sccache_version(sc: &Path) -> String {
+    util::output(cmd(sc).arg("--version"))
+        .map(|out| out.lines().next().unwrap_or_default().to_string())
+        .unwrap_or_default()
+}
+
+/// The launcher args of the Linux configure line, for the sccache that was
+/// found (`None` for none) and whether it may wrap nvcc (`sccache_caches_nvcc`).
+fn sccache_launcher_args(sccache: Option<&Path>, nvcc_ok: bool) -> Vec<String> {
+    match sccache {
+        Some(sc) => {
+            let s = sc.display();
+            let cuda = if nvcc_ok {
+                format!("-DCMAKE_CUDA_COMPILER_LAUNCHER={s}")
+            } else {
+                "-UCMAKE_CUDA_COMPILER_LAUNCHER".into()
+            };
+            vec![
+                format!("-DCMAKE_C_COMPILER_LAUNCHER={s}"),
+                format!("-DCMAKE_CXX_COMPILER_LAUNCHER={s}"),
+                format!("-DCMAKE_HIP_COMPILER_LAUNCHER={s}"),
+                cuda,
+            ]
+        }
+        None => [
+            "-UCMAKE_C_COMPILER_LAUNCHER",
+            "-UCMAKE_CXX_COMPILER_LAUNCHER",
+            "-UCMAKE_HIP_COMPILER_LAUNCHER",
+            "-UCMAKE_CUDA_COMPILER_LAUNCHER",
+        ]
+        .map(String::from)
+        .to_vec(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // SC: the launcher args of the Linux configure line. The order pinned here
+    // is today's (C, CXX, HIP, CUDA).
+
+    const SC: &str = "/usr/local/bin/sccache";
+
+    #[test]
+    fn sc_launcher_args_new_sccache_wraps_nvcc() {
+        assert_eq!(
+            sccache_launcher_args(Some(Path::new(SC)), true),
+            [
+                "-DCMAKE_C_COMPILER_LAUNCHER=/usr/local/bin/sccache",
+                "-DCMAKE_CXX_COMPILER_LAUNCHER=/usr/local/bin/sccache",
+                "-DCMAKE_HIP_COMPILER_LAUNCHER=/usr/local/bin/sccache",
+                "-DCMAKE_CUDA_COMPILER_LAUNCHER=/usr/local/bin/sccache",
+            ],
+            "a sccache that caches nvcc's PTX passes wraps nvcc too"
+        );
+    }
+
+    #[test]
+    fn sc_launcher_args_old_sccache_keeps_cuda_unwrapped() {
+        assert_eq!(
+            sccache_launcher_args(Some(Path::new(SC)), false),
+            [
+                "-DCMAKE_C_COMPILER_LAUNCHER=/usr/local/bin/sccache",
+                "-DCMAKE_CXX_COMPILER_LAUNCHER=/usr/local/bin/sccache",
+                "-DCMAKE_HIP_COMPILER_LAUNCHER=/usr/local/bin/sccache",
+                "-UCMAKE_CUDA_COMPILER_LAUNCHER",
+            ],
+            "an older sccache: C, CXX and HIP wrapped, CUDA cleared"
+        );
+    }
+
+    #[test]
+    fn sc_launcher_args_no_sccache_clears_all_four() {
+        let cleared = [
+            "-UCMAKE_C_COMPILER_LAUNCHER",
+            "-UCMAKE_CXX_COMPILER_LAUNCHER",
+            "-UCMAKE_HIP_COMPILER_LAUNCHER",
+            "-UCMAKE_CUDA_COMPILER_LAUNCHER",
+        ];
+        assert_eq!(
+            sccache_launcher_args(None, false),
+            cleared,
+            "no sccache: every launcher cleared"
+        );
+        assert_eq!(
+            sccache_launcher_args(None, true),
+            cleared,
+            "with no sccache the version gate changes nothing"
+        );
+    }
 }
