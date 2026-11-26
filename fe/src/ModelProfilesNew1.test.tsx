@@ -233,13 +233,19 @@ test('22 C.1a, C.1: the Models list puts the model-profiles-new + after the mode
   // The picker, with the file choice checked on opening (22 C.1).
   const group = picker(form)
   const file = radioIn(form, 'model-source-file')
+  const hf = radioIn(form, 'model-source-hf')
   const copy = radioIn(form, 'model-source-copy')
   expect(file.checked, '22 C.1: A model file is checked on opening').toBe(true)
+  expect(hf.checked, 'the Hugging Face choice is not').toBe(false)
   expect(copy.checked, 'the copy choice is not').toBe(false)
   expect(before(picker(form), name), 'the picker is not above Name').toBe(false)
-  expect(within(group).getAllByRole('radio'), 'two choices today').toHaveLength(
-    2,
-  )
+  // 22C2 adds the Hugging Face radio, between the other two (the slice cut).
+  const radios = within(group).getAllByRole('radio')
+  expect(radios, 'three choices today').toHaveLength(3)
+  expect(
+    radios.indexOf(hf),
+    '22 P.1, the slice cut: A Hugging Face repo is the second choice',
+  ).toBe(1)
   // The buttons, the status line, the alert place.
   const create = buttonIn(form, 'create-button')
   const cancel = buttonIn(form, 'create-cancel')
@@ -322,8 +328,9 @@ test('22 C.1: the + is shown when the list is empty, and the form then holds no 
   const form = await openForm(main)
   expect(
     within(form).queryAllByRole('radio'),
-    '22 C.1: nothing to copy, so no copy radio',
-  ).toHaveLength(1)
+    '22 C.1: nothing to copy, so no copy radio (the file and the Hugging Face ' +
+      'choices remain, 22C2)',
+  ).toHaveLength(2)
   expect(
     radioIn(form, 'model-source-file').checked,
     'A model file is checked',

@@ -79,7 +79,8 @@ const DEFAULT_ID = 'default'
 // The label stub.py `list=many` gives the `MANY_ID` row (16 17f.12): the longest
 // the rule allows, 64 characters with no break point, so the nav pill and the
 // tile have to break the name inside them.
-const LONG_LABEL = 'QWEN327BTHIRTYCHARACTERSTILELABEL0123456789012345678901234567890'
+const LONG_LABEL =
+  'QWEN327BTHIRTYCHARACTERSTILELABEL0123456789012345678901234567890'
 // The label stub.py `list=many` gives the `default` row: a plain one with
 // spaces, the shape a name has when it is read.
 const OWNED_LABEL = 'Coding assistant'
@@ -431,7 +432,7 @@ const STATES = [
       {
         selector: 'main input[type="checkbox"]',
         count: 2,
-        message: 'the section\'s checkbox, beside Start at boot',
+        message: "the section's checkbox, beside Start at boot",
       },
     ],
   },
@@ -622,13 +623,47 @@ const STATES = [
       { selector: '#page-heading', text: S['model-profiles-title'] },
       {
         selector: 'main #model-profiles-new',
-        message: 'the opener of the create form: the + after the note (22 C.1a)',
+        message:
+          'the opener of the create form: the + after the note (22 C.1a)',
       },
     ],
     open: {
       click: 'main #model-profiles-new',
       then: 'main form',
     },
+  },
+  {
+    // Brief 22, slice 22C2 (22 C.10a): the New model profile form on the
+    // Hugging Face choice, with a repo listed, so the check reads the repo
+    // field, the Show quants button and the quants fieldset of 12 radios (one
+    // of them split in 3 parts, one under 0.1 GiB, one llama.cpp's default) at
+    // 320 px and at 200 % text, where 22 P.12 asks that they wrap with no
+    // sideways scroll. The stub answers the listing (stub.py `HF_FILES`).
+    // The chain is the opener, the radio, the repo written, Show quants: the
+    // keys the steps name are the ones 22 P.12 adds, so a missing key names a
+    // control of the text "undefined" and the state fails, as it asks.
+    name: 'model-profiles-new-hf',
+    set: 'session=admin',
+    hash: '#/profiles/model',
+    // 22C2 review D1: the expect list is read on the loaded page, before the
+    // chain runs (rendered() then the opens below), so the quants fieldset is
+    // not here yet: the chain's last step awaits it (22 P.9).
+    expect: [{ selector: '#page-heading', text: S['model-profiles-title'] }],
+    opens: [
+      { click: 'main #model-profiles-new', then: 'main form' },
+      {
+        click: `main form label:has-text("${S['model-source-hf']}")`,
+        then: `main form input:below(label:has-text("${S['model-profile-hf-repo']}"))`,
+      },
+      {
+        fill: `main form input:below(label:has-text("${S['model-profile-hf-repo']}"))`,
+        value: 'ggml-org/gemma-3-1b-it-GGUF',
+      },
+      {
+        click: `main form button:has-text("${S['hf-show-quants']}")`,
+        then: `main form fieldset:has(legend:has-text("${S['hf-quant-legend']}"))`,
+      },
+    ],
   },
   {
     // Brief 22, slice 22D4 (22 D4.1, 22 D4.4): the Models list with the confirm
@@ -1026,6 +1061,34 @@ async function opened(page, state) {
   return []
 }
 
+/** The state's `opens`: the steps of it run in order, each `click` one control
+ *  clicked and the element its click brings awaited, each `fill` one input
+ *  written. It is `open` for a chain: the New model profile form's Hugging Face
+ *  half needs the opener, the radio, the repo and Show quants in a row
+ *  (22 C.10a, the state `model-profiles-new-hf`). A control that is not visible
+ *  at this width ends the chain; one that is visible and brings nothing is a
+ *  finding, and the chain stops there. */
+async function openedChain(page, state) {
+  const found = []
+  for (const step of state.opens ?? []) {
+    const sel = step.click ?? step.fill
+    const loc = page.locator(sel).first()
+    if (!(await loc.isVisible())) return found
+    try {
+      if (step.fill !== undefined) await loc.fill(step.value)
+      else {
+        await loc.click()
+        await page.locator(step.then).first().waitFor({ timeout: RENDER_MS })
+      }
+    } catch {
+      return [
+        `opens: "${sel}" visible, "${step.then ?? step.value}" never used`,
+      ]
+    }
+  }
+  return found
+}
+
 /** The state's `hover`: the pointer enters `on` and `then` is awaited. The cut
  *  is measured the way 15 section 10 R5 measures it (`scrollWidth >
  *  clientWidth` on the chip's text), because it is the only moment the pill
@@ -1194,6 +1257,7 @@ async function textPass(browser, name, base, lines) {
         } else {
           found.push(...(await clicked(page, state)))
           found.push(...(await opened(page, state)))
+          found.push(...(await openedChain(page, state)))
           found.push(...(await hovered(page, state)))
           found.push(...(await focused(page, state)))
           await sleep(SETTLE_MS)
@@ -1264,6 +1328,7 @@ async function check(browser, name, base, lines) {
               // page at rest is read with them done.
               found.push(...(await clicked(page, state)))
               found.push(...(await opened(page, state)))
+              found.push(...(await openedChain(page, state)))
               found.push(...(await hovered(page, state)))
               found.push(...(await focused(page, state)))
               await sleep(SETTLE_MS)

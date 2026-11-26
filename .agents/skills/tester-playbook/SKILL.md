@@ -285,6 +285,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - Write a source lint knowing it reads production code with whole-line comments dropped and that a name it
   matches is the lint's data; over the files of a package split, pin only the OWNERSHIP rule it names.
+- A script that strips comments to find which identifiers a file uses (a source lint, a file split's
+  helper closure) strips STRINGS FIRST, in ONE pass with the strings listed before the comment patterns:
+  `re.sub(r'//[^\n]*')` run before the string pass reads the `//` of a `https://` inside a string as a
+  comment and swallows the rest of the file, so the script reports every name after it as unused and a
+  split silently drops the helpers its tests call. And read a callee's body with its comments gone and
+  its strings KEPT: a call inside a template literal (`` `${size(x)}` ``) is stripped with the string, so
+  a full clean() hides a real dependency.
 - A source lint that reads a CALL's arguments reuses the file's paren-counting argument parser (the
   `call_flags`-style reader): a naive `split(')')` truncates at a nested call's paren (a `c.product()`
   argument reads as `c.product(`), so the lint reds on the very fix it pins. A doc comment the pin walks
@@ -344,10 +351,23 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   harness its own log prefix: two harnesses writing `r$i.log` overwrite each other's runs. The known
   full-run flaky set (2026-11-25, green solo x3): `ModelProfileGpu3/4/6`, `TensorPlacement1/2` (the
   Tensor placement card, the suite's heaviest files).
+- The focus-after-`findByText` flake is not only the h1 arrival: a refusal's alert→focus pins (the verb,
+  a not-found paragraph) flake the same way (ModelProfileDelete 22 D.6/D.7, full run 2026-11-26); harden
+  with `await waitFor(() => expect(document.activeElement).toBe(el))`, the suite's precedent in
+  `App.test.tsx`.
+- A control closed under a `[hidden]` ancestor answers no role query: pin the closure as `queryByRole`
+  null (the ModelProfilesNew1 convention) and take the element only after the choice shows it;
+  `isHidden(el)` pins only an element already in hand.
+- `strings.test.ts` pins that every value of `en_US.json` is used by the code: a key added ahead of the
+  sub-slice that shows it (22C2 carried `hf-repo-kept` for 22E) reds there, so the key goes into `EN`
+  and the file with its own slice.
 
 ### The web UI (fe/): the fake bff and fixtures
 
 - Run the whole fe suite ONCE after changing the shared fake (`src/test/bff.ts`).
+- To answer one route twice with different replies, count the calls in a closure in the route's `Answer`
+  (`let n = 0; hfFiles: () => (++n === 1 ? reply(401, …) : reply(200, …))`): an `Answer` gets no call index
+  (only `modelProfileCreate` does), and a mid-test `vi.spyOn(globalThis, 'fetch')` clobbers the WHOLE fake.
 - A GET list option of the fake (`serverProfiles`) is `Rows | Answer` and `Answer`'s fn takes only `init`,
   so a fixture that must answer 401 on the first read and the rows on the next (the re-read after a
   sign-in) needs a closure counter in the test: `() => (++reads === 1 ? 401 : reply(200, ROWS))`, as
@@ -616,7 +636,14 @@ frozen list.
   OUTSIDE the rule (the pin stays red on a correct fix): anchor inside, and read the rule back. Insert
   it WITH its trailing `;`: the reader splits the body on `;`, so a bare `position: sticky` before the
   rule's `}` merges with the declaration above into `position: sticky left: 0` and the full fix reads
-  RED, which looks like a broken pin and is a broken mutant.
+  RED, which looks like a broken pin and is a broken mutant. Inserting a whole NEW rule anchors the
+  snippet at the target rule's closing `}` too: an anchor that ends mid-rule nests the new rule, the
+  reader's brace count gives it depth 1, `TOP` hides it, and the "fix" mutant reads red as if the pin
+  had no teeth.
+- A selector naming a control only inside `:has(...)` styles the ANCESTOR (`.field-control
+  label:has(> input[type='radio'])` is the label's rule), so a pin of a declaration on the input
+  (D2's `margin: 0`) strips `:has\([^()]*\)` from `r.flat` first: a fix that puts the declaration on
+  the label rule is a no-op on the input and must stay red.
 - Send a test that cannot fail in jsdom (real layout, focus movement, `fireEvent.click` moving no focus,
   clipping) to the UX check, or state it as unproven.
 - Pin a script's PLACEMENT (a floating tip's `top`/`left`) in jsdom by stubbing the geometry it reads:
@@ -900,6 +927,11 @@ frozen list.
 
 ### The web UI (fe/)
 
+- `fe/ux/stub.py` answers at module level (`SERVER.serve_forever()`, no `__main__` guard): a
+  `python3 -c "import stub"` written to read its fixture dicts binds a port and never returns, and the
+  shell jobs queued behind it in the same session print nothing at all, which reads as a broken script.
+  Read the file's dicts, and drive the routes only as `python3 fe/ux/stub.py <abs fe/dist>` in the
+  background, killed by pid.
 - `npx vitest` from the repo root resolves another config and the node environment: every test reds with
   `window is not defined`. `npx --prefix fe vitest run src/x.test.tsx` is the same trap: the reds are
   `TypeError: Cannot read properties of undefined (reading 'restore')` in every file's `afterEach`

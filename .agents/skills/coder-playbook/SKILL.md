@@ -271,10 +271,21 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   nothing and exits 1 `No test files found`, write `-- src/X.test.tsx`. `format:check` writes nothing: fix the named files with `npx prettier --write <file>` run from
   `fe/` (from the repo root `npx --prefix fe prettier --write src/x.tsx` answers "No files matching the
   pattern": the paths resolve against the cwd, not the prefix; it lists
-  every file it processes: check `git status --porcelain` after). The full suite under load reddens
-  scores of files with `Test timed out in 5000ms` (vitest spawns one worker per file, 116 here): rerun
+  every file it processes: check `git status --porcelain` after). Prove a prettier rewrite of an
+  UNTRACKED file with a copy INSIDE `fe/src/` (config resolves): expand your edit, `npx prettier
+  --write src/probe-tmp.tsx`, `diff` it with the real file, delete the probe: a copy outside `fe/` is
+  formatted with prettier's DEFAULTS and rewrites every quote and semicolon. The full suite under load
+  reddens scores of files with `Test timed out in 5000ms` (vitest spawns one worker per file, 139
+  here): rerun
   with `npm --prefix fe test -- --maxWorkers=4` (user, 2026-11-24: back to 4 after Strata hung under RAM and disk pressure; 12 was tried that day), and rerun a named file solo, before
-  believing any of it.
+  believing any of it. Green baseline today: 3487 tests, 139 files, ~13 min at `--maxWorkers=2` (22C2,
+  2026-11-26). There is no `basic` reporter here (`--reporter=basic` exits 1 `Failed to load custom
+  Reporter`): the default reporter's `×` lines list the reds.
+- The package is `fe/package.json`, there is no root one: a copy of the tree runs as
+  `npm --prefix <copy>/fe test -- src/X.test.tsx` (`--prefix <copy>` exits 254 `ENOENT package.json`).
+- A picked quant writes its tagged value (`<repo>:TAG`) into the repo field (22 P.9), so a test that
+  reads that field after a pick expects the row's `hf-repo`, never the bare `HF_REPO` (22 C.7 line 526
+  against C.6 line 463, one witness pair, the pick's own pin wins).
 - New CSS is a test edit: `Reflow.test.ts` (`CLASSES`, `overflow-wrap`, `box-shadow`),
   `HearthTokens.test.ts` (`min-height`/`min-width` per rule, an exact ordered list), `HearthFonts.test.ts`
   (`font-family`) are exhaustive per property; a CSS test pins the SELECTOR as a string and a rule's
@@ -290,6 +301,19 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `Set` and its class list allows a card's own namespace: a new rule naming an id
   the sheet already selects, or a class of that namespace, is free; a new id
   outside it is red.
+  `gap`, `display`, `flex-basis` and `align-items` have NO sheet-wide list: a spacing rule goes in the
+  sheet, never an inline style (no test reads `element.style`, so an inline gap answers no CSS pin and
+  the geometry test stays red, 22C2 A2). A radio label's "text wraps to the right of the radio" is
+  `display: grid; grid-template-columns: auto minmax(0, 1fr)`, and one label per line inside the
+  wrapping flex `.field-control` is `flex-basis: 100%` on a class of the allowed namespace (22C2 A1:
+  the sheet's `hf-` classes are free, R1.8's `ofQuants`).
+  The browser's own margin on a native radio adds to the label's gap (the text lands 10 to 11 px after
+  the box, not 8): zero it on a rule whose subject IS the input, `.field-control label >
+  input[type='radio'] { margin: 0 }` (the checkbox's precedent), NOT inside `:has(...)`, which styles
+  the label. `font-size: inherit` there is red in HearthTokens H1a.7 (every `font-size` outside `:root`
+  is a `var(--fs-*)`), and `1lh` on a native input is ITS UA font's line box, not the label's text
+  line: a first-line offset for the radio is `margin-top: calc((var(--lh) * var(--fs-body) - 1em) / 2)`
+  (22C2 re-check D2 and adviser note a).
 - A field child the 720 px grid must place in the control column (22C1 review D1): wrap the children in
   ONE element and add one rule placing it INSIDE the one 720 px block that styles `.field` (the sheet's
   LS1 and TP1 rules are there). Two of the sheet's own pins bind that rule: 19 LS1 D1 takes
@@ -623,6 +647,22 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   witness pair, the tester's to retarget. Prove it by moving the page's `<section>` after `<Body>`
   in a copy: that test goes green, 73 of those two files go red.
 - `fireEvent.click` does not move focus like a real click.
+- A test's `type` (`fireEvent.change`) moves NO focus, and the tests' `press` (`el.focus()` + click)
+  leaves the focus on what it clicked: an "the focus did not move" assertion after a `type` lands on the
+  LAST `press`, so a helper that pressed Show quants and then typed in a field can never read the field
+  as focused (`ModelProfilesNew5` 22 P.11, line 382). No production shape moves the focus on a change
+  event without breaking the brief's own "the edit moves no focus".
+- A `deferred()` gate wired to a READ option (`hfFiles: () => gate.promise`) never answers that read, so
+  every assertion that its rows arrived is unsatisfiable; the gate belongs on the WRITE option
+  (`modelProfileCreate`, whose default is 201). `ModelProfilesNew4` 22 P.9/C.5, line 543.
+- A key the tester added to `EN` (`fe/src/test/bff.ts`) must join `en_US.json` for `1a strings`, and if
+  no source file calls `t('<key>')` yet (its use is a later slice, as `hf-repo-kept` is 22 E.2),
+  `strings.test.ts` "every value is used" is red with NO production fix: report the pair, the key leaves
+  `EN` and the file, or its use lands in the same slice.
+- A new fieldset of radios needs no new class and no id: `<fieldset className="field">` +
+  `<legend className="field-label">` + `<div className="field-control">` (the `GroupField` shape) takes
+  the 720 px grid placement the sheet already gives `.field-control`, and `Reflow.test.ts` 10 R1.8 and
+  `HearthTokens.test.ts` H1a.12 stay green (22 P.9's quants).
 - A cell pin that finds a text by "the first element in the cell whose `textContent` is X"
   (`ModelProfilesSwitch.test.tsx` 2c.39) returns the OUTERMOST wrapper carrying that text, so a brief
   that wraps a cell's controls in a `span` (22 D4.25) leaves it red: the wrapper is not the

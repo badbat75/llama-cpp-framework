@@ -456,7 +456,7 @@ const CLASSES =
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8, brief 21 TP1 review D1, brief 22 22D4 and brief 16 17d review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there, and the confirm-row, hint-tip and status-cell of brief 22 22D4 (22 D4.4, 22 D4.3, 22 D4.1) with the hint-box and inactive its 22D4 review adds (D1, D2), page-status gone with the status row (22 D4.9), and the create form’s field wrapper of brief 22 22C1 review D1', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8, brief 21 TP1 review D1, brief 22 22D4 and brief 16 17d review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there, and the confirm-row, hint-tip and status-cell of brief 22 22D4 (22 D4.4, 22 D4.3, 22 D4.1) with the hint-box and inactive its 22D4 review adds (D1, D2), page-status gone with the status row (22 D4.9), the create form’s field wrapper of brief 22 22C1 review D1, and the quants field of brief 22 22C2 review A1', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -494,6 +494,12 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
     /^(field-after|model-profiles-new|model-files?|model-source|create)[-a-z0-9]*$/.test(
       c,
     )
+  // Brief 22, its 22C2 review (the designer, 2026-11-26, A1): the quants field
+  // is laid one label per line by classes the review describes and does not
+  // name, so they are kept in the namespace of the field's strings keys
+  // (`hf-show-quants`, `hf-quants-loading`, `hf-quant-legend`,
+  // `hf-quant-default`), as 17f review D3 keeps the rename form.
+  const ofQuants = (c: string) => /^hf[-a-z0-9]*$/.test(c)
   const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
     [...used]
@@ -503,10 +509,11 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
           !ofRename(c) &&
           !ofModels(c) &&
           !ofOffer(c) &&
-          !ofCreate(c),
+          !ofCreate(c) &&
+          !ofQuants(c),
       )
       .sort(),
-    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the confirm-row and hint-tip of brief 22 22D4 with the hint-box and inactive of its 22D4 review, page-status gone with the status row of 22D2 (22 D4.9), tags-save gone, and nothing else outside the Tensor placement namespace, the rename form of brief 16 17f review D3 and the restart offer of brief 16 17d review D1 (R1.8: a class the designer did not brief is a look nothing asked for)',
+    'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the confirm-row and hint-tip of brief 22 22D4 with the hint-box and inactive of its 22D4 review, page-status gone with the status row of 22D2 (22 D4.9), tags-save gone, and nothing else outside the Tensor placement namespace, the rename form of brief 16 17f review D3, the restart offer of brief 16 17d review D1 and the quants field of brief 22 22C2 review A1 (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())
   expect(
     [...used].filter(ofRename).sort(),
@@ -965,4 +972,203 @@ test('16 17a.11 as its 17a review D1 amends it: the sheet styles .server-profile
         part.trim(),
         '16 17a review D1: "the id keeps `anywhere`": no rule takes the base break away from the Server profiles id cell',
       ).not.toBe('.server-profiles td:nth-child(1)')
+})
+
+// ── 22 22C2 review (the designer, 2026-11-26): A1 the quants one per line,
+//    A2 the radio and its text ──────────────────────────────────────────────
+
+// A label token in a selector: the word `label` as an element tag, not the
+// tail of `.field-label` or `.hf-quant-label`.
+const labelTag = (flat: string): boolean =>
+  /(^|[\s>+(,])label($|[\s>+:,])/.test(flat)
+
+test('22 22C2 review A1: one top-level rule of the quants namespace lays the quant labels one per line (flex-basis: 100% on the label, or flex-direction: column on their control), the --space-2 row gap that spaces the labels stays, and no full-width rule reaches the Start from labels', () => {
+  // The quants fieldset (22 P.9) is a wrapping flex `.field-control`, so today
+  // the 12 radios flow several per line in uneven rows (the adviser note the
+  // review takes up). A1 wants one per line at every width: each label takes a
+  // row of its own (the `.tag-options` basis of 15 C2 review D1) or the
+  // control stacks (the `.stacked` direction), and the 8 px between two labels
+  // is the field control's own row gap, already --space-2. The review names
+  // the rule, not the class (brief 22 section 6): the coder names it in the
+  // hf- namespace, the field's strings keys. What jsdom cannot see, the left
+  // edges and the 24 px height, is for the UX check.
+  const placing = TOP.filter(
+    (r) =>
+      /\.hf[-a-z0-9]*/.test(r.flat) &&
+      (norm(prop(r.body, 'flex-basis')) === '100%' ||
+        norm(prop(r.body, 'flex-direction')) === 'column'),
+  )
+  expect(
+    placing.map((r) => r.flat),
+    'A1: one top-level rule of the quants namespace (an hf- class) puts one quant label per line: flex-basis: 100% on the label, or flex-direction: column on the control. Today none: the labels flow several per line',
+  ).not.toEqual([])
+  expect(
+    norm(prop(topBy('.field-control', 'the field control').body, 'gap')).split(
+      /\s+/,
+    )[0],
+    "A1: two quant labels are 8 px apart: the field control's row gap stays --space-2 (a new gap on the quants that drops it is the other way; the row gap is the sheet's shape today)",
+  ).toBe('var(--space-2)')
+  // The Start from radios keep their layout (A1, "the other radios"): a
+  // full-width rule naming a bare label would stack them one per line too.
+  for (const r of TOP.filter(
+    (r) => norm(prop(r.body, 'flex-basis')) === '100%' && labelTag(r.flat),
+  ))
+    expect(
+      r.flat,
+      'A1: the Start from radios wrap in a row as now: a full-width rule naming a bare label stacks them too, so it must name a quants class',
+    ).toMatch(/\.hf[-a-z0-9]*/)
+})
+
+test('22 22C2 review A2: a rule makes every radio label a box (display: flex or grid) with 8 px (--space-2) between the radio and its text (gap on the label, or padding/margin on the radio), scoped so it reaches no checkbox label, and a --space-2 gap on a label names the field control or the radio', () => {
+  // Today the radio sits against its text (the adviser note, seen on the
+  // screenshot): no rule in the sheet styles the labels of a `.field-control`.
+  // A2 wants 8 px inside every radio label, as padding or flex gap, the label
+  // staying one native click target (the click half is jsdom-visible and
+  // pinned in ModelProfilesNew5; the gap measurement is for the UX check).
+  // The box is also what A1's long labels need: the text is an item beside
+  // the input, so every line of a wrapped label keeps to the right of the
+  // radio, never under it. Scope: the two fieldsets of NewModelProfile.tsx
+  // today, 22E's picker inherits; checkboxes and switches (the `.check`
+  // rows, the switches) keep their own layout (fe/DESIGN.md 5.2).
+  const inScope = (r: Rule) =>
+    labelTag(r.flat) &&
+    (r.flat.includes('.field-control') ||
+      /input\[type=['"]?radio['"]?\]/.test(r.flat))
+  const boxed = TOP.filter((r) =>
+    inScope(r)
+      ? ['flex', 'inline-flex', 'grid', 'inline-grid'].includes(
+          norm(prop(r.body, 'display')),
+        )
+      : false,
+  )
+  expect(
+    boxed.map((r) => r.flat),
+    'A2 (and A1 long labels): a top-level rule names a radio label (scoped to .field-control, or :has a radio input) and makes it a box (display: flex/grid), so the text sits beside the radio and a wrapped label wraps to the right of it. Today none',
+  ).not.toEqual([])
+  const padded = TOP.some(
+    (r) =>
+      inScope(r) &&
+      /input\[type=['"]?radio['"]?\]/.test(r.flat) &&
+      [
+        'padding-left',
+        'padding-inline-start',
+        'margin-left',
+        'margin-inline-start',
+      ].some((n) => norm(prop(r.body, n)) === 'var(--space-2)'),
+  )
+  expect(
+    boxed.some((r) => norm(prop(r.body, 'gap')) === 'var(--space-2)') || padded,
+    'A2: the 8 px between the radio and its text: gap: var(--space-2) on the label box, or padding-left / margin-left: var(--space-2) on the radio inside the label',
+  ).toBe(true)
+  for (const r of TOP.filter(
+    (r) => labelTag(r.flat) && norm(prop(r.body, 'gap')) === 'var(--space-2)',
+  ))
+    expect(
+      r.flat,
+      "A2: checkboxes and switches are out of scope: a --space-2 gap on a label that names neither .field-control nor a radio input reaches the GPU list's .check rows and the switches, whose rows keep their own layout (fe/DESIGN.md 5.2)",
+    ).toMatch(/\.field-control|input\[type=['"]?radio['"]?\]/)
+})
+
+// ── 22 22C2 re-check (the designer, 2026-11-26): D2 the browser's own margin
+//    on the radio, and the adviser note: the radio on the label's first line ─
+
+// A rule that reaches a radio's label, the A2 scope: the label of a
+// `.field-control`, or a label naming a radio input.
+const radioLabel = (r: Rule): boolean =>
+  labelTag(r.flat) &&
+  (r.flat.includes('.field-control') || /radio/.test(r.flat))
+
+// A rule whose subject is the radio input itself. A selector that names the
+// radio only inside `:has(...)` styles the LABEL (`:has(> input[type='radio'])`
+// is the A2 rule), so a declaration there does not reach the input.
+const radioInput = (r: Rule): boolean =>
+  /input\[type=['"]?radio['"]?\]/.test(r.flat.replace(/:has\([^()]*\)/g, ''))
+
+test("22 22C2 re-check D2: a top-level rule whose subject is the radio input zeroes the browser's own margin (margin: 0, the shorthand or the four sides), and it reaches a radio of every field control, so the label measures the 8 px gap alone", () => {
+  // The gap is on the label (the A2 rule, index.css 1553-1558: `gap:
+  // var(--space-2)`), so the label should measure 8 px between the input's
+  // right edge and the text's left. It measures 11 px in Chromium and Firefox
+  // and 10 in WebKit, because the browser's own margin on the radio (Chromium's
+  // UA `margin: 3px 3px 0 5px`) adds to it. The sheet's `*` reset carries
+  // box-sizing alone (index.css 261), so nothing zeroes the radio's today; the
+  // drawn checkbox is already handled that way (`input[type='checkbox'] {
+  // margin: 0 }`, index.css 1794), the sheet's precedent for the fix.
+  const zeroed = TOP.filter(
+    (r) =>
+      radioInput(r) &&
+      (norm(prop(r.body, 'margin')) === '0' ||
+        ['top', 'right', 'bottom', 'left'].every(
+          (side) => norm(prop(r.body, `margin-${side}`)) === '0',
+        )),
+  )
+  expect(
+    zeroed.map((r) => r.flat),
+    "D2: a top-level rule whose subject is input[type='radio'] declares margin: 0 (the shorthand, or the four sides at 0). Today none names a radio, so the browser's 5 px left margin and 3 px top margin add to the label's gap and the text starts 10 to 11 px after the radio",
+  ).not.toEqual([])
+  // Both radio groups are affected (D2), and both sit in a `.field-control`
+  // (NewModelProfile.tsx 840 for "Start from", 1029 for the quants), so a rule
+  // scoped to a quants class fixes one group and leaves the other at 11 px.
+  for (const r of zeroed)
+    expect(
+      r.flat,
+      'D2: both radio groups are affected: a rule scoped to a quants class (.hf-, the quants fieldset alone) leaves the "Start from" radio with its browser margin; `.field-control input[type=\'radio\']` reaches both',
+    ).not.toMatch(/\.hf[-a-z0-9]*/)
+})
+
+test("22 22C2 re-check (adviser note a): the radio sits on its label's first line: the radio label box aligns its items at the start (align-items: start on the box, or align-self: start on the radio, the sheet shapes), the box no longer centres them, and the radio carries a first-line offset (a margin-top or padding-top on the radio)", () => {
+  // A label too long for its line is two lines, and the A2 grid centres its
+  // items on the whole box (`align-items: center`, index.css 1556), so the
+  // radio sits between the two lines, seen at 320 px on "Q4_K_M, 2.2 GiB,
+  // llama.cpp's default". The usual pattern puts it on the first line: the box
+  // aligns at the start and the radio carries the rest, half a line over its
+  // own box, the way `.notice > .icon` does (index.css 1018 `margin-top:
+  // calc((1lh - 1.25em) / 2)`). The measurement itself, the radio's centre the
+  // centre of the text's first line give or take 2 px, is for the UX check:
+  // jsdom lays out nothing.
+  const atStart = ['start', 'flex-start', 'grid-start']
+  expect(
+    TOP.some(
+      (r) =>
+        radioLabel(r) && atStart.includes(norm(prop(r.body, 'align-items'))),
+    ) ||
+      TOP.some(
+        (r) =>
+          radioInput(r) && atStart.includes(norm(prop(r.body, 'align-self'))),
+      ),
+    "Adviser note (a): the radio is aligned at the start of its label's line, one of the two sheet shapes: align-items: start on the radio label box (the A2 rule), or align-self: start on the radio input. Today neither: the box says align-items: center",
+  ).toBe(true)
+  expect(
+    TOP.filter(
+      (r) =>
+        radioInput(r) &&
+        ['margin-top', 'padding-top'].some((name) => {
+          const v = norm(prop(r.body, name))
+          return v !== '' && v !== '0' && v !== 'auto'
+        }),
+    ).map((r) => r.flat),
+    "Adviser note (a): the radio carries the first-line offset that centres it on the first line (a margin-top, as the notice's icon at index.css 1018, or a padding-top): aligning at the start alone leaves the radio's centre half the leading above the line's centre, over the 2 px the note gives. Today no rule names a radio at all",
+  ).not.toEqual([])
+  // The centring that sits the radio between the lines goes, in one of the two
+  // shapes: the box stops declaring it, or the radio overrides it for itself
+  // (`align-self` wins over `align-items`, CSS Grid 8.3).
+  const selfStart = TOP.some(
+    (r) => radioInput(r) && atStart.includes(norm(prop(r.body, 'align-self'))),
+  )
+  for (const r of TOP.filter(
+    (r) => radioLabel(r) && norm(prop(r.body, 'align-items')) === 'center',
+  ))
+    expect(
+      selfStart,
+      `${r.flat}: adviser note (a): a radio label box that still centres its items is the unmet case (index.css 1556 \`align-items: center\`, the declaration this note takes away): the fix is align-items: start on the box, or align-self: start on the radio, which overrides it for the radio alone`,
+    ).toBe(true)
+  // The fix is inside the label, not on the control row: `.field-control` is
+  // the wrapping row of every field, and its `align-items: center` centres the
+  // selects, the checkboxes and the switches in it (out of scope, DESIGN.md
+  // 5.2), so it keeps its centring.
+  expect(
+    norm(
+      prop(topBy('.field-control', 'the field control').body, 'align-items'),
+    ),
+    'Adviser note (a): the field control keeps align-items: center: the fix belongs to the radio label, not to the row that centres every control of every field',
+  ).toBe('center')
 })

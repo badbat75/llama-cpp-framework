@@ -473,6 +473,9 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
   // its own switch, so the two sentences that pointed at the list and at the
   // Delete leave with it (model-profile-on-short and model-profile-off-short
   // are their short forms).
+  // 22 P.9a adds one more: the bff answers a repo with no GGUF 502
+  // hf-bad-answer, never a 200 with no files, so the text that named an empty
+  // listing leaves the strings list with it.
   const removed = [
     'server-read-only',
     'server-api-key-withheld',
@@ -491,6 +494,7 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
     'instance-label-saving',
     'instance-label-saved',
     'instance-label-cleared',
+    'hf-quants-empty',
   ]
   expect(
     Object.keys(table).filter((key) => removed.includes(key)),

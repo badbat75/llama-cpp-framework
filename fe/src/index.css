@@ -1541,6 +1541,51 @@ legend.field-label {
   min-width: 0;
 }
 
+/* A radio and its text (brief 22, its 22C2 review A2, 2026-11-26, DESIGN.md 5.2
+   "Radio group"): the label stays the one click target wrapping the input, and
+   is a box with the radio and its text `--space-2` apart. The text is an item
+   BESIDE the radio, so a label too long for its line wraps inside itself and
+   every line of the text keeps to the right of the radio, never under it (22
+   P.12, its 22C2 review A1): `minmax(0, 1fr)` is what lets the text column go
+   below its min-content (CSS Grid 11), the way `min-width: 0` does for a flex
+   item (15 section 11 C2 review D2). Its items start at the top of the box, so
+   a label of two lines keeps its radio on the FIRST of them (22 22C2 re-check,
+   the adviser note a), the radio carrying the room that centres it on that
+   line. Only the radios: a checkbox row (`.check`) and a switch name their own
+   layout. */
+.field-control label:has(> input[type='radio']) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+}
+
+/* The radio itself, in every field control (brief 22, its 22C2 re-check D2 and
+   the adviser note a, 2026-11-26): `margin: 0` takes away the margin the
+   browser puts on the input itself, which adds to the label's gap and puts the
+   text further from the radio than the 8 px A2 gives (the drawn checkbox is
+   zeroed the same way below). `.field-control`, not the quants class: both
+   radio groups carry the browser's margin. The top margin is the room above the
+   radio that centres it on the text's FIRST line, the way `.notice > .icon`
+   sits on its line: the line box is the body size at the body leading
+   (`--lh * --fs-body`) and the native radio is about `1em` high, so half the
+   difference is the room above it, the radio's centre landing on the centre of
+   the line. */
+.field-control label > input[type='radio'] {
+  margin: 0;
+  margin-top: calc((var(--lh) * var(--fs-body) - 1em) / 2);
+}
+
+/* The quants a listing gives (brief 22, 22 P.9, its 22C2 review A1): each label
+   takes a line of its own, in the reply's order, at every width; the room
+   between two of them is the field control's own `--space-2` row gap. The class
+   is the coder's, in the field's strings namespace (brief 22 section 6): naming
+   a bare label would stack the "Start from" radios one per line too, and they
+   keep their row. */
+.hf-quants label {
+  flex-basis: 100%;
+}
+
 .field-hint {
   color: var(--muted);
   font-size: var(--fs-sm);

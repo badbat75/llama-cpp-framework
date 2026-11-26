@@ -587,6 +587,37 @@ export const EN: Record<string, string> = {
   'model-files-failed':
     'The list of model files could not be read, so no file can be picked now. Read it again later, or use a Hugging Face repo.',
   'model-file-parts': '{0} parts',
+  // 22P: the picker's Hugging Face half (slice 22C2). `api-hf-bad-answer` is the
+  // 2026-11-25 check's P.9a text, which replaces the 22P table's, and
+  // `hf-quants-empty` is out of the strings list with it (the bff answers a repo
+  // with no GGUF 502 `hf-bad-answer`, never a 200 with no files).
+  // `hf-repo-kept` is NOT here: it is the text of 22 E.2, and the strings check
+  // refuses a value no code uses; the 22E slice adds it to both files.
+  'model-source-hf': 'A Hugging Face repo',
+  'model-profile-hf-repo': 'Hugging Face repo',
+  'model-profile-hf-repo-hint':
+    'The repo as owner/name, such as ggml-org/gemma-3-1b-it-GGUF, or its huggingface.co address. Show quants lists its GGUF files: pick one. The instance downloads it the first time it loads this profile. Only public repos can be listed for now.',
+  'hf-show-quants': 'Show quants',
+  'hf-quants-loading': 'Reading the files of {0} from Hugging Face…',
+  'hf-quant-legend': 'Quant',
+  'hf-quant-default': "llama.cpp's default",
+  'field-error-pick-quant': 'Show the quants of a repo, then pick one.',
+  'field-error-hf-repo':
+    'Enter the repo as owner/name, such as ggml-org/gemma-3-1b-it-GGUF.',
+  'api-hf-repo-invalid':
+    'Enter the repo as owner/name, such as ggml-org/gemma-3-1b-it-GGUF.',
+  'api-hf-repo-unavailable':
+    'Hugging Face shows no public repo {0}. Check the name; gated and private repos cannot be added from here yet.',
+  'api-hf-repo-moved':
+    'The repo {0} has moved on Hugging Face: enter its new name.',
+  'api-hf-unreachable':
+    "Hugging Face did not answer in time. Check this machine's network, then try again.",
+  'api-hf-bad-answer':
+    "Hugging Face's answer lists no GGUF file llama.cpp can load: the repo may hold none, or the answer could not be read. Check the repo's name, or try again later.",
+  'api-hf-tool-missing':
+    'This machine has no curl, which the web service needs to ask Hugging Face.',
+  'api-hf-busy':
+    'Two lists are already being read from Hugging Face. Try again in a moment.',
   // Slice 2b (fe/briefs/02-models.md, section 2b.9): the list's filter.
   'model-profiles-filter-label': 'Filter model profiles',
   'model-profiles-filter-hint':
@@ -1782,6 +1813,97 @@ export const MODEL_FILES: ModelFileRow[] = [
 ]
 
 /**
+ * One row of GET /api/hf/files (fe/briefs/api-contract.md 736-741): the quant's
+ * `tag`, the first shard's `file` and `sha256`, the total `size` and the shard
+ * `shards`, the vision projector the repo carries beside it, the `value` a save
+ * sends (`hf-repo` is `<repo>:<tag>`, `hf-file` only when several candidates
+ * share the tag), and `default` for the row the picker opens on.
+ */
+export type HfFileRow = {
+  tag: string
+  file: string
+  shards: number
+  size: number
+  sha256: string
+  sidecars: { mmproj: string | null }
+  value: { 'hf-repo': string; 'hf-file'?: string }
+  default: boolean
+}
+
+/** The repo the fixture spells (the hint's own example). */
+export const HF_REPO = 'ggml-org/gemma-3-1b-it-GGUF'
+
+/** The first shard's oid the fixture carries on every row. */
+const HF_OID = 'a'.repeat(40)
+
+/**
+ * One quant of `HF_REPO`. `extra` replaces members: the row that is
+ * `default`, the one with an `mmproj` sidecar, the split one, the one whose
+ * tag is shared so its `value` names a `hf-file`.
+ */
+function hfFile(
+  tag: string,
+  size: number,
+  shards = 1,
+  extra: Partial<HfFileRow> = {},
+): HfFileRow {
+  return {
+    tag,
+    file: `gemma-3-1b-it-${tag}.gguf`,
+    shards,
+    size,
+    sha256: HF_OID,
+    sidecars: { mmproj: null },
+    value: { 'hf-repo': `${HF_REPO}:${tag}` },
+    default: false,
+    ...extra,
+  }
+}
+
+/**
+ * The listing one press of Show quants reads (brief 22, 22 P.9): a row under
+ * 0.1 GiB (the ` MiB` spelling), a plain quant, the row that is llama.cpp's
+ * default and carries a vision projector, a wide quant, a model split in four
+ * parts, and one whose tag is shared by two files, so its `value` names the
+ * first shard.
+ */
+export const HF_FILES: HfFileRow[] = [
+  hfFile('Q2_K', 52_943_360),
+  hfFile('Q4_K_S', 2_200_000_000),
+  hfFile('Q4_K_M', 2_400_000_000, 1, {
+    sidecars: { mmproj: 'mmproj-F16.gguf' },
+    default: true,
+  }),
+  hfFile('Q8_0', 4_100_000_000),
+  hfFile('F16', 5_300_000_000, 4),
+  hfFile('BF16', 5_300_000_000, 1, {
+    file: 'gemma-3-1b-it-BF16-00001-of-00002.gguf',
+    value: {
+      'hf-repo': `${HF_REPO}:BF16`,
+      'hf-file': 'gemma-3-1b-it-BF16-00001-of-00002.gguf',
+    },
+  }),
+]
+
+/**
+ * One GET /api/hf/files answer (brief 22, 22 P.8 to P.10a): `files` the rows,
+ * `extra` replacing the top-level members (a body spelling `repo` or `files`
+ * otherwise).
+ */
+export function hfFilesBody(
+  files: HfFileRow[] = HF_FILES,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    source: 'hf',
+    repo: HF_REPO,
+    revision: HF_OID,
+    files,
+    ...extra,
+  }
+}
+
+/**
  * A server document (GET /api/instances/{id}/server) with every kind of value.
  * `extra` adds or replaces top-level members, such as `withheld`.
  */
@@ -1898,6 +2020,13 @@ export type BffOptions = {
    * says nothing reads a folder with main models and the files P.5a leaves out.
    */
   modelFiles?: ModelFileRow[] | Answer
+  /**
+   * GET /api/hf/files?repo=<id> (brief 22, 22 P.8): the quants to answer 200
+   * with, or the reply. Default HF_FILES (the fixture of 22 P.9), so a form
+   * that says nothing lists six quants, one of them llama.cpp's default, one
+   * split in four parts and one naming a `hf-file`.
+   */
+  hfFiles?: HfFileRow[] | Answer
   /**
    * POST /api/profiles/model (brief 22, 22 C.5): the reply to the n-th create
    * (from 1), given the parsed body. Default 201 `{"id": <the body's id>}`.
@@ -2236,6 +2365,16 @@ export function fakeBff(options: BffOptions = {}) {
       if (Array.isArray(p))
         return Promise.resolve(reply(200, modelFilesBody(p)))
       return answer(p, init)
+    }
+    // Brief 22, 22 P.8: the quants of one Hugging Face repo. The rows answer 200
+    // as the bff spells them; a test names the reply for a refusal. The query
+    // string is part of the route, so a listing sent without a `repo` is the
+    // rejection of an unknown route, and the repo the page encodes is the
+    // test's to read off `calls`.
+    if (/^GET \/api\/hf\/files\?/.test(route)) {
+      const f = options.hfFiles ?? HF_FILES
+      if (Array.isArray(f)) return Promise.resolve(reply(200, hfFilesBody(f)))
+      return answer(f, init)
     }
     // Brief 22, 22 C.5: the create. 201 carries the id, as the bff does.
     if (route === 'POST /api/profiles/model') {

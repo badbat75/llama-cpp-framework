@@ -1937,3 +1937,130 @@ browser at a time.
   `model-profiles-delete` passes on its own (18), as does `model-profiles-delete-tip` on its own.
 
 22C1 accepted.
+
+## 22C2 review (designer, 2026-11-26)
+
+Built code (`npm --prefix fe run build`); `build/ux-review/c22hf.js` in Chromium, Firefox and WebKit at
+1280 and 320 px, light and dark (12 runs, all alike). Screenshots:
+`build/ux-review/shots/22c2-hf-1280-light.png`, `22c2-hf-320-light.png`.
+
+Met in all 12 runs:
+- P.1 (cut): the radios read A model file, A Hugging Face repo, A copy of another model profile.
+- P.7: the field is labelled `model-profile-hf-repo`, with `autocomplete="off"` and `spellcheck` off. Tab
+  goes from the input to Show quants, and Enter in the input sends no listing.
+- P.8:
+  - "not a repo" gives `field-error-hf-repo` under the field, with `aria-invalid` and the focus on the
+    field, and sends nothing.
+  - A `https://huggingface.co/<repo>/tree/main` address sends `repo=ggml-org/gemma-3-1b-it-GGUF`.
+  - While the listing runs, `hf-quants-loading` shows 12 px under the button and the button is
+    `aria-disabled`. A second press sends nothing.
+- P.9: 12 radios in the reply's order. F16 reads "F16, 4.9 GiB, 3 parts", and Q4_K_M "llama.cpp's
+  default", which is checked on arrival. The field then reads `...:Q4_K_M` and the focus stays on the
+  button. Checking another quant writes its value into the field. A `:q8_0` end checks Q8_0 on
+  arrival.
+- P.9a, P.10, P.10a: every refusal shows its own text with the repo, the focus on the button: 404,
+  both 502s, 504, 503, 429, an unknown key (`request-failed`), and a 200 with no files
+  (`api-hf-bad-answer`). A 400 goes under the field, with the focus there.
+- P.11: an edit drops the quants and the alert, and the focus stays in the field.
+- C.4: with no quant picked, `field-error-pick-quant` shows and the focus goes to the field.
+- C.5: the body is `{"id":"hf-new","values":{"hf-repo":"...:BF16","hf-file":"gemma-3-1b-it-BF16-00001-of-00002.gguf"}}`
+  and the page goes to `#/profiles/model/hf-new`. Create stays plain `primary` (C.5b).
+- P.12:
+  - No sideways scroll.
+  - Every non-radio control is at least 24 px, and every radio label at least 24 px high.
+  - `hf-quants-empty` is gone.
+  - `hf-repo-kept` is not added; it belongs to 22E, which has the kept value.
+
+**D1, not met (the check, not the page).** The state `model-profiles-new-hf` fails in all three
+browsers ("not rendered", 6 per browser). The cause: its `expect` asks for the quants fieldset
+(`fe/ux/check.js` 648-651), and `rendered()` reads `expect` before `openedChain()` runs (1253 then 1259,
+1322 then 1330). Fix: drop that entry from `expect`; the chain's last `then` already awaits the
+fieldset. With that one change, the state passes in Chromium, Firefox and WebKit (18 each).
+Otherwise the UX check passes: Chromium and WebKit fail only that state, and Firefox (run without
+`model-profiles-delete`, the known 22D4 pair) fails only that state too.
+
+Adviser notes (preferences, ranked):
+1. **The quants read as a ragged flow.** At 1280 px the 12 radios wrap into four uneven rows. At
+   320 px some lines hold two, and "llama.cpp's default" breaks under its radio. A list you choose
+   from by scanning sizes reads faster as a column. Proposed criteria for a next slice:
+   - (a) one quant per line;
+   - (b) the default mark in `--muted` after the size;
+   - (c) at 720 px and wider, two columns in reply order down each column, if the user prefers
+     a shorter form.
+2. **The radio touches its label text** (seen on the screenshot, not measured), here and in "Start
+   from": the 22C1 note still stands. Proposed: a gap of `--space-1` between the input and its text in
+   every `.field-control > label`.
+
+## 22C2 review amendments (coordinator's decision, 2026-11-26)
+
+Both adviser notes go into 22C2. Advice 1(b) and 1(c) (muted default mark, two columns) are left out.
+
+**22C2 review A1 The quants, one per line.** The quants fieldset (22 P.9) shows each quant's label
+on a line of its own, in the reply's order, at every width.
+- **Row gap.** Two quant labels next to each other are `--space-2` (8 px) apart: each label's top
+  is the previous label's bottom plus 8 px, give or take 1 px.
+- **Left edges.** All labels start at the same left x.
+- **Long labels.** A label too long for its line (320 px at 200 % text) wraps inside its own row.
+  Its text stays to the right of the radio: every line of the text starts at the same x, never
+  under the radio. The next quant starts on a new line.
+- **What stays.** The target size stays: each label at least 24 px high
+  ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)). P.12's no sideways scroll applies,
+  as at 320 px and at 200 % text ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow)).
+- **The other radios.** The "Start from" radios keep their layout: in a row where they fit,
+  wrapping as now.
+
+**22C2 review A2 The radio and its text.** In every radio's label in the web UI (today the two
+fieldsets of `NewModelProfile.tsx`; 22E's picker inherits it), the radio and the label's text are
+`--space-2` (8 px) apart: the text's left x is the input's right x plus 8 px, give or take 1 px.
+- The label stays a single click target, radio and text together, as a native `label` wrapping the
+  input ([1.3.1](https://www.w3.org/TR/WCAG22/#info-and-relationships)). The gap is padding or
+  flex gap inside the label, so a click on it still checks the radio.
+- Checkboxes and switches are out of scope: their rows already have their own layout (Checkbox
+  list, GPU list, Switch in `fe/DESIGN.md` 5.2).
+- `fe/DESIGN.md` 5.2 records the rule under "Radio group".
+
+**22C2 review A3 The field after a pick (ruling, reading (a)).** After a pick, the repo field holds
+the picked row's `value["hf-repo"]`, tag included (`ggml-org/gemma-3-1b-it-GGUF:Q4_K_M`). That is
+what 22 P.9 says, and decision 6 too: the field holds exactly what `hf-repo` will hold.
+- 22 P.11's "edit" is the visitor's own input in the field. The page writing the picked value is
+  not an edit, so the quants, the pick and the focus stay.
+- Nothing that leaves the form open resets the field to what was typed: not a Create refusal, and
+  not a 401 followed by a sign-in (22 C.7). After the sign-in, the field still reads
+  `...:Q4_K_M`, the quants are still listed with the same one checked, and a second Create sends
+  the same `values`.
+- A test that expects the typed text back after a sign-in is wrong (the new C.7 case,
+  `ModelProfilesNew5.test.tsx` 526). The C.6 case at 463 is right.
+
+### 22C2 re-check (designer, 2026-11-26)
+
+Built code; `build/ux-review/c22a.js` in Chromium, Firefox and WebKit at 1280 px, 320 px and 320 px
+with 200 % text. The screenshots `22c2-hf-{1280,320}-light.png` are retaken.
+
+- D1 met. `model-profiles-new-hf` passes. UX check: Chromium 246 and WebKit 246, 0 failing; Firefox
+  240, 0 failing, run without `model-profiles-delete` (the known 22D4 pair).
+- A1 met.
+  - 12 quants, one per line, 8 px apart, with one left x (480 px at 1280, 16 px at 320).
+  - A wrapped label keeps every line of its text at one x, right of the radio.
+  - Each label is at least 26 px high, with no sideways scroll.
+- A3 met (as built before).
+- **D2, A2 not met.** The text starts 11 px after the radio in Chromium and Firefox, and 10 px in
+  WebKit, against 8 ± 1. Both radio groups are affected.
+  - Cause: the browser's own margin on the radio (Chromium's default `margin: 3px 3px 0 5px`, read
+    in the UA stylesheet, not verified here), added to the grid's gap (`fe/src/index.css`
+    1553-1558).
+  - Fix: `margin: 0` on `.field-control label > input[type='radio']`. The label then measures the
+    gap alone.
+- Adviser note (a preference): in a wrapped label the radio is centred on the whole label
+  (`align-items: center`, index.css 1556), so on "Q4_K_M, 2.2 GiB, llama.cpp's default" at 320 px it
+  sits between the two lines. The usual pattern puts it on the first line. Proposed criterion:
+  - the radio's centre is the centre of the text's first line, give or take 2 px, at every width;
+  - one way to get it: `align-items: start`, plus a top margin on the radio of half the line
+    height minus half the radio's size.
+
+### 22C2 second re-check (designer, 2026-11-26)
+
+`build/ux-review/c22a.js` in Chromium, Firefox and WebKit at 1280 px, 320 px and 320 px with 200 %
+text. D2 (A2) met: the text starts 8 px after the radio in both groups, in all three browsers.
+Advice (a) met: each radio's centre is the centre of its text's first line, 0 px off in Chromium and
+Firefox and 2 px in WebKit, wrapped labels included. The radio now starts at the legend's and the
+input's left x. UX check in Chromium: 246 states, 0 failing. 22C2 accepted.

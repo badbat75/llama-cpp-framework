@@ -34,6 +34,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -715,7 +716,10 @@ test('22 D.6: a 404 no-model-profile-named shows its text in the group’s alert
   const gone = await within(main).findByText(en('model-profile-not-found', ID))
   expect(gone.tagName, 'one paragraph').toBe('P')
   expect(gone.getAttribute('tabindex'), 'a place the focus can take').toBe('-1')
-  expect(document.activeElement, 'it has the focus').toBe(gone)
+  // The focus is an effect after the render the finder resolves on (as D.7).
+  await waitFor(() =>
+    expect(document.activeElement, 'it has the focus').toBe(gone),
+  )
   expect(document.activeElement, 'the focus did not drop to body').not.toBe(
     document.body,
   )
@@ -751,7 +755,11 @@ test('22 D.7: a 504 client-timeout shows delete-unknown in the group’s alert a
   ).not.toContain(en('request-failed'))
   const gone = await within(main).findByText(en('model-profile-not-found', ID))
   expect(gone.getAttribute('tabindex'), 'the not-found paragraph').toBe('-1')
-  expect(document.activeElement, 'and it has the focus').toBe(gone)
+  // The paragraph's focus arrives with the effect after the render the finder
+  // resolves on: a synchronous activeElement read reds only under load.
+  await waitFor(() =>
+    expect(document.activeElement, 'and it has the focus').toBe(gone),
+  )
   expect(reads(bff), 'the document was read again').toBe(2)
   cleanup()
   vi.unstubAllGlobals()
@@ -835,8 +843,12 @@ test('22 D.7: 503, a 403 session-not-administrator, a 422 with a key the page do
       confirmIn(group, 'confirm-delete').getAttribute('aria-disabled'),
       `${what}: Delete is active again`,
     ).not.toBe('true')
-    expect(document.activeElement, `${what}: the focus is on the verb`).toBe(
-      del,
+    // The reply's focus to the verb is an effect after the render the alert
+    // finder resolves on: poll it, a synchronous read reds only under load.
+    await waitFor(() =>
+      expect(document.activeElement, `${what}: the focus is on the verb`).toBe(
+        del,
+      ),
     )
     expect(reads(bff), `${what}: nothing is read again`).toBe(1)
     expect(bff.to('DELETE', ROUTE), `${what}: one delete sent`).toHaveLength(1)

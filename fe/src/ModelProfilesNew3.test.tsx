@@ -30,6 +30,7 @@ import {
   en,
   fakeBff,
   modelFilesBody,
+  quiet,
   reply,
   startAt,
   stubDialog,
@@ -790,6 +791,7 @@ test('22 C.8: the Tab path is the opener, Name and its About toggle, the radios,
   const create = buttonIn(form, 'create-button')
   const cancel = buttonIn(form, 'create-cancel')
   const fileRadio = radioIn(form, 'model-source-file')
+  const hfRadio = radioIn(form, 'model-source-hf')
   const copyRadio = radioIn(form, 'model-source-copy')
   // Every async element is taken before the list (the shell lands with the
   // session, the table with the read).
@@ -799,6 +801,7 @@ test('22 C.8: the Tab path is the opener, Name and its About toggle, the radios,
     name,
     nameAbout,
     fileRadio,
+    hfRadio,
     copyRadio,
     file,
     fileAbout,
@@ -821,8 +824,12 @@ test('22 C.8: the Tab path is the opener, Name and its About toggle, the radios,
     at(fileRadio),
     'the radios come after Name and its About',
   ).toBeGreaterThan(Math.max(at(name), at(nameAbout)))
-  expect(at(copyRadio), 'the copy radio follows the file radio').toBe(
+  // 22C2 puts A Hugging Face repo between the file and the copy choices.
+  expect(at(hfRadio), 'the Hugging Face radio follows the file radio').toBe(
     at(fileRadio) + 1,
+  )
+  expect(at(copyRadio), 'the copy radio follows the Hugging Face radio').toBe(
+    at(hfRadio) + 1,
   )
   expect(
     at(file),
@@ -834,7 +841,7 @@ test('22 C.8: the Tab path is the opener, Name and its About toggle, the radios,
   )
   expect(at(cancel), 'Cancel follows Create').toBe(at(create) + 1)
   // One tab stop for the radios: a native group with one name.
-  expect(fileRadio.name, 'the radios are one native group').toBe(copyRadio.name)
+  expect(fileRadio.name, 'the radios are one native group').toBe(hfRadio.name)
   expect(fileRadio.type, 'native radio inputs').toBe('radio')
   // Enter submits: Create is the form's submit button, and the keydown of a
   // text field is not cancelled, so the browser submits.
@@ -847,8 +854,17 @@ test('22 C.8: the Tab path is the opener, Name and its About toggle, the radios,
     fireEvent.keyDown(file, { key: 'Enter', code: 'Enter' }),
     '22 C.8: Enter in the file field with the list closed is left to the form',
   ).toBe(true)
-  // With the list open, Enter picks the option instead of submitting.
+  // With the list open, Enter picks the option instead of submitting. The
+  // list's options arrive with the folder read, which the form sends when it
+  // opens: a key sent while that read is open races it, and ArrowDown with no
+  // options leaves the list closed, so Enter is not cancelled (red once in
+  // four full runs). Let the read land, open, and await the open before the
+  // key, as D.7 awaits the focus effect that follows its render.
+  await quiet(bff)
   key(file, 'ArrowDown')
+  await waitFor(() =>
+    expect(file.getAttribute('aria-expanded'), 'the list is open').toBe('true'),
+  )
   expect(
     fireEvent.keyDown(file, { key: 'Enter', code: 'Enter' }),
     '22 C.8: Enter with the list open picks, it does not submit',

@@ -187,6 +187,61 @@ MODEL_FILES = {
     "error": None,
 }
 
+# GET /api/hf/files?repo=<id> (brief 22, slice 22C2, 22 C.10a, the state
+# `model-profiles-new-hf` of check.js): the quants the New model profile form's
+# Hugging Face half lists. 12 quants, one of them split in 3 parts (22 C.10a),
+# one llama.cpp's default with a vision projector beside it, one under 0.1 GiB
+# (the ` MiB` spelling) and one carrying a `hf-file`, so the radio's text, the
+# size and the parts line are all read at 320 px and at 200 % text.
+HF_REPO = "ggml-org/gemma-3-1b-it-GGUF"
+HF_OID = "a" * 40
+
+
+def hf_quant(tag, size, shards=1, default=False, mmproj=None, hf_file=None):
+    value = {"hf-repo": f"{HF_REPO}:{tag}"}
+    if hf_file:
+        value["hf-file"] = hf_file
+    return {
+        "tag": tag,
+        "file": f"gemma-3-1b-it-{tag}.gguf",
+        "shards": shards,
+        "size": size,
+        "sha256": HF_OID,
+        "sidecars": {"mmproj": mmproj},
+        "value": value,
+        "default": default,
+    }
+
+
+HF_FILES = {
+    "source": "hf",
+    "repo": HF_REPO,
+    "revision": HF_OID,
+    "files": [
+        hf_quant("Q2_K", 52_943_360),
+        hf_quant("Q3_K_S", 1_100_000_000),
+        hf_quant("Q3_K_M", 1_300_000_000),
+        hf_quant("Q4_K_S", 2_200_000_000),
+        hf_quant(
+            "Q4_K_M",
+            2_400_000_000,
+            default=True,
+            mmproj="mmproj-F16.gguf",
+        ),
+        hf_quant("Q4_K_XL", 2_600_000_000),
+        hf_quant("Q5_K_S", 2_700_000_000),
+        hf_quant("Q5_K_M", 2_900_000_000),
+        hf_quant("Q6_K", 3_400_000_000),
+        hf_quant("Q8_0", 4_100_000_000),
+        hf_quant("F16", 5_300_000_000, shards=3),
+        hf_quant(
+            "BF16",
+            5_300_000_000,
+            hf_file="gemma-3-1b-it-BF16-00001-of-00002.gguf",
+        ),
+    ],
+}
+
 # GET /api/instances/<id>/profiles/model (brief 16, slice 17e, the state
 # `instance-models` of check.js): the pool's rows with the words of the
 # instance's record. The list's own switch is on (`all` inherit), so one profile
@@ -519,6 +574,12 @@ class Handler(SimpleHTTPRequestHandler):
         # check.js): the folder the Model file picker reads.
         if p == "/api/node/model-files":
             return self.json(200, MODEL_FILES)
+        # Brief 22 slice 22C2 (22 C.10a, the state `model-profiles-new-hf` of
+        # check.js): the quants of the repo the Hugging Face half reads. The
+        # stub answers the repo the fixture spells, whatever the page asks for,
+        # so the state needs no query of its own.
+        if p == "/api/hf/files":
+            return self.json(200, HF_FILES)
         # The facts of a model file (brief 19, section 0): the block counts and the
         # experts, read by the manager from the GGUF.
         if p.startswith("/api/profiles/model/") and p.count("/") == 5:

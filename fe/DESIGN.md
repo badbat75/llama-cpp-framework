@@ -815,6 +815,12 @@ Each is one React component, reused by every page.
   the `h1` is replaced by one paragraph (`tabindex="-1"`, focused) saying it was done and a link to
   the list; no message travels to another page **(preference: no modal for a two-button question; it
   reflows at 320 px)**.
+- **Radio group**: a `<fieldset>` whose `legend` names the question, and native radios each
+  wrapped in its own `label`. The radio and its text sit `--space-2` apart inside the label, and a
+  wrapped text keeps to the right of the radio (brief 22, "22C2 review A2"). A short group of a few
+  words each runs in a row and wraps (Start from). A list the visitor picks from by scanning (the
+  quants) puts one label per line, `--space-2` apart ("22C2 review A1"). Each label is at least
+  24 px high ([2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)).
 - **Model source picker** (`ModelSource`, brief 22: the New model profile form and the Assets card):
   a `fieldset` of radios, "A model file" and "A Hugging Face repo" (the create form adds "A copy of
   another model profile"), then only the checked choice's controls; switching keeps each choice's
