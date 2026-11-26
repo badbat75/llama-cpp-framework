@@ -599,13 +599,11 @@ test('16 17b2.4: the pool list add is the + (the rule of every list add), named 
   ).toBe(NEW)
 })
 
-test('16 17b2.4: the Overview and the Models list hold no add at all today (17c.1 and 22 C.1 are not built), and a button that is not a list add keeps its words', async () => {
-  // The two lists whose add is not built yet are pinned as holding no add at
-  // all: when 17c.1 (New instance) and 22 C.1 (New model profile) land, this
-  // test moves to their + at the end of their list (the Models one after the
-  // table, outside the filter). The create form buttons are not a list add, so
-  // they keep their words: 17b2.4 narrows the rule to a list add, it does not
-  // strip words from every button.
+test('16 17b2.4: the Overview list ends with its + (17c.1a landed), the Models list holds no add at all today (22 C.1 is not built), and a button that is not a list add keeps its words', async () => {
+  // 17b2.4's rule: each list add is the + after its list, named by its existing
+  // key. The create form buttons are not a list add, so they keep their words:
+  // 17b2.4 narrows the rule to a list add, it does not strip words from every
+  // button.
   const { main } = await loaded({ serverProfiles: ROWS })
   const form = await openForm(main)
   for (const key of ['create-button', 'create-cancel'])
@@ -615,15 +613,25 @@ test('16 17b2.4: the Overview and the Models list hold no add at all today (17c.
     ).toBe(en(key))
   cleanup()
   vi.unstubAllGlobals()
-  // The Overview: 17c.1 (New instance) is not built, so the tiles carry no
-  // add today. A plus button landing there moves this pin to the + after the
-  // tiles.
+  // The Overview: 17c.1a landed, so this pin moved, as the earlier version of
+  // this test said it would, from "no add today" to the + at the end of the
+  // tiles: the plus glyph, named by the slice's key, after the list, inside the
+  // instances section, and not inside a tile.
   const overview = renderAt('#/', { instances: OVERVIEW })
   const tiles = await within(overview).findByRole('list')
+  const adds = plusButtons(overview)
+  expect(adds, '17b2.4: the Overview list ends with one add').toHaveLength(1)
+  const add = adds[0]!
+  plusOf(add)
   expect(
-    plusButtons(overview),
-    '17b2.4: the Overview has no list add today (17c.1 not built)',
-  ).toHaveLength(0)
+    hiddenSpan(add).textContent?.replace(/\s+/g, ' ').trim(),
+    '17b2.4: the Overview add is named by its existing key',
+  ).toBe(en('instances-new'))
+  expect(before(tiles, add), '17b2.4: the add comes after the tiles').toBe(true)
+  expect(
+    add.closest('section'),
+    'and it sits in the instances section, beside the list',
+  ).toBe(tiles.closest('section'))
   expect(plusButtons(tiles), 'and none inside the tiles').toHaveLength(0)
   cleanup()
   vi.unstubAllGlobals()
@@ -676,7 +684,7 @@ test('16 17b2.5: the ux check server-profiles-new state opens the form through t
   expect(plusOf(opener), 'and the glyph is the plus').toBeTruthy()
 })
 
-// ── Fixtures for the two lists whose add is not built ──────────────────────
+// ── Fixtures for the two lists of 17b2.4 ────────────────────────────────────
 
 const OVERVIEW: Instance[] = [
   { id: 'default', engine: 'llama.cpp', state: 'running' },

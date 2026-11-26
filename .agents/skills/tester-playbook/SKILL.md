@@ -335,6 +335,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 ### The web UI (fe/): the fake bff and fixtures
 
 - Run the whole fe suite ONCE after changing the shared fake (`src/test/bff.ts`).
+- A GET list option of the fake (`serverProfiles`) is `Rows | Answer` and `Answer`'s fn takes only `init`,
+  so a fixture that must answer 401 on the first read and the rows on the next (the re-read after a
+  sign-in) needs a closure counter in the test: `() => (++reads === 1 ? 401 : reply(200, ROWS))`, as
+  `ServerProfilesDelete1.test.tsx:769` does.
+- Changing a key's ENGLISH in the mirror `EN` reddens every test that looks a control up by that text, not
+  just the strings test: the 17e.14 label (`instance-models-all-label` to `Served profiles`) put 11 reds in
+  `InstanceModels17e.test.tsx` at once, all reading `Unable to find … group "Served profiles"`. Count them
+  and say the one cause in the report; the coder's one `en_US.json` line clears them.
 - A key added to the shared `serverDoc()` reddens every strict body pin of the server form: `UNCHANGED`
   (compared with `toEqual` in eleven places of `ServerSave.test.tsx`), the explicit value lists of its
   `1b.32 (5.4)` pair, and the maps `SWITCHES_UNSET`, `SWITCHES` and `CARDS`/`FIELDS` of
@@ -402,7 +410,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   page's h1 settles on the list read, so settle the boot group/checkbox with `findByRole` before querying
   it synchronously or taking the snapshot. A tab-order name map of `aria-label ?? textContent` never sees
   an input (its name comes from its label): map the element to the wanted name by identity, as
-  `Boot.test.tsx` does.
+  `Boot.test.tsx` does. Never start a page's slice list at `SHELL.length`: the shell's stop count grows
+   (11 today, the nav's About link last), so that list starts one off. Take
+   `names.indexOf(<the slice's first control>)` and slice from that.
 - Read a state-dependent list (devices, a select that shows a placeholder while pending) only after the
   page's `landed()` helper, the deliberate pending case excepted. The probe also gates ACTIONS that read
   it (Add rule seeds the first probed GPU): clicking one before `landed()` seeds the pending-case value
@@ -521,10 +531,32 @@ frozen list.
 - Pin a spacing the brief states as a token gap ("a `--space-5` gap after it") loosely: exactly one
   top-level rule naming the element carries the value in a spacing property (`gap`,
   `margin-right`/`margin-inline-end`), zero on its neighbours. The coder picks flex gap or a margin, and
-  a strict cascade pin would write one of the two into the contract.
+  a strict cascade pin would write one of the two into the contract. Where the brief states the gap as
+  BEFORE the control and the row's shared `gap` drives the neighbours too (the run row's `--space-2` also
+  spaces the Overview's tiles), the only fix that moves one control is a margin on it: name
+  `margin-inline-start: var(--space-5)` on the verb as the accepted shape in the report.
+- Pin a column's narrowness (17e.13: `width: 1%`, `white-space: nowrap`) with no class assumption: find
+  the cell by its column index in the `columnheader`s, read its `classList` off the page, join the bodies
+  of the top-level `.class { … }` rules it names, and assert the two declarations. Today's cell carries
+  `muted`, so the red reads "expected ' color: var(--muted); ' to contain 'width: 1%'", and any class the
+  coder adds goes green.
+- A tile's link name carries the reader-only id of 17f.3 (`instance-id-said` in a `.visually-hidden`
+  span), so `getByRole('link', { name })` with the visible name alone misses it, and `link.textContent`
+  is "llama.cpp :9090, instance lab". Pin the VISIBLE words by joining the link's child nodes that are
+  not `.visually-hidden`, and pin the href by identity.
 - Pin "the two controls share one rule" (a brief: share the class or the rule, not a copy) by reading the
   selector GROUP of the rule that styles the existing class and asserting the new control carries one of
   its parts: a comma group and a shared class both pass, a copy of the declarations does not.
+- Pin "ONE rule styles both" (a review asks for one rule, not two that drift apart) by the RULE'S
+  IDENTITY: collect the top-level rules that declare the value AND reach each element, assert one each,
+  then assert the two lists name the same rule (its offset in the sheet). The selector text is the coder's,
+  so pinning the text writes the fix into the contract.
+- Pin a narrow-width override (a review: "below 480 px it keeps no start margin") by merging the top-level
+  rules AND the rules of the `@media (max-width: 479.98px)` block, ordered by specificity then by OFFSET IN
+  THE SHEET: a rule of the same specificity inside the block sits BEFORE the top-level rule it must beat
+  (the block is at `index.css` 648, `.run-remove` at 2698) and LOSES. Name that in the assertion message,
+  the coder writes the obvious rule first. Read the block's rules by range (the at-rule header's
+  `[open, close]` offsets, the rules at depth 1 inside), never by a flat regex over the sheet.
 - Pin a hover-reveal that must sit in the flow (not a popover) by what only the flow shape answers: the
   box's `mouseleave` hides it, a `mouseover` of the box (not only of the control) shows it, and no rule
   reaching it declares `position: absolute`/`fixed`. A popover that is a child of the same wrapper passes
@@ -577,6 +609,12 @@ frozen list.
   an old pin (a refusal that gains a control), delete that row from the old table and cite the new test
   file in a comment; where the prior sub-slice pinned an absence structurally (`nextElementSibling` is
   null), retarget the same selector onto the thing this slice adds.
+- The nav is a SIBLING of `main` (App.tsx): a nav link read with `within(main)` answers `found 0`, so take
+  `screen.findByRole('navigation', { name: en('nav-label') })` and `within(nav)`, as NodesMenu1/2 do.
+- A tab-order name map built from `textContent` IS the accessible name of a link or a button, so a tile's
+  stops read `llama.cpp :9090, instance lab` and `Start llama.cpp :9090` (17f.3's reader-only id, 24 A1.3's
+  hidden instance): spell the expected names as `` `${name}${en('instance-id-said', id)}` `` and
+  `` `${en(key)} ${name}` ``, the way OverviewRun's `tileButton` names the verb.
 - Amend `MODEL_PROFILE_CARDS` in `fe/src/test/modelProfileCards.ts` when a card gains always-visible
   controls (`extraStops`: a strings key is a button, `{about: key}` its Field's About toggle,
   `{input: key}` a text input, no button), and `EDITABLE_BY_ID` in `ModelProfileSave1.test.tsx` 2h.130,
@@ -771,6 +809,11 @@ frozen list.
   a fixture handing ONE `Response` to every call starves the second reader.
 - A red assertion in the middle of a test hides every assertion AFTER it (they never run): put the
   day-one guards of a multi-page test in their own test and run it, before reporting the split.
+- When the halves of one test must be COMPARED (one rule styling two pages) and cannot be split, read both
+  halves into locals BEFORE the first assertion, and prove the later half is red for the defect's reason by
+  temporarily flipping the earlier expectation to today's value, running with `-t`, and restoring from a
+  `cp` copy proved with `cmp -s`. A helper that throws (a page-open helper that forgot `render(<App />)`
+  after `cleanup()`) is otherwise invisible behind the first red.
 - A helper that answers a BOOLEAN (`el.getAttribute('aria-disabled') === 'true'`) pinned `.toBe('true')`
   is a test-side red: the suite's `.toBe('true')` idiom is for a raw `getAttribute` string. Compare like
   with like, and sweep the helper's CALL SITES, not only the reported one (a red hides its twins below).

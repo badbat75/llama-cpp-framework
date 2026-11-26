@@ -190,3 +190,7 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
   change first. The profile document has no `assignments`; only the list rows do.
 - The user had to ask for the + spacing, list icons, delete beside the status and actions on top: a
   brief that passes axe-core can still fail the user; check the brief against principles 6 to 14.
+- A filtered copy of `fe/ux/check.js` made with line numbers breaks when the states move: find the end
+  of `const STATES = [` by pattern (the first `^]$` after it) each time. Playwright's `click` waits
+  forever on an `aria-disabled` button; use `click({ force: true })` to check that a switched-off
+  control sends nothing.

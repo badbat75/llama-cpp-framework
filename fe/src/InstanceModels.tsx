@@ -438,24 +438,6 @@ export function InstanceModels({
               </label>
             </div>
           </fieldset>
-          <p role="status" className="instance-models-status">
-            {status}
-          </p>
-          {shown !== null && (
-            <p role="alert" className="instance-models-alert">
-              {shown.text}
-            </p>
-          )}
-          {shown?.signIn && (
-            <button
-              id={`${fieldId}-sign-in`}
-              type="button"
-              className="secondary"
-              onClick={() => onSignIn(used.current)}
-            >
-              {t('session-sign-in')}
-            </button>
-          )}
           {rows.length === 0 ? (
             <p>{t('instance-models-empty')}</p>
           ) : (
@@ -479,7 +461,10 @@ export function InstanceModels({
                           <a href={modelProfileHref(row.id)}>{row.id}</a>
                         </span>
                       </td>
-                      <td className="muted">
+                      {/* The state columns sit together at the right (16 17e.13):
+                          the cell is as narrow as its content and one line, as
+                          the switch's cell is, so the Name column takes the rest. */}
+                      <td className="muted status-cell">
                         {row.enabled
                           ? t('model-profiles-status-on')
                           : t('model-profiles-status-off')}
@@ -514,6 +499,27 @@ export function InstanceModels({
                 </tbody>
               </table>
             </div>
+          )}
+          {/* The write's answer lands after the table (16 17e.12): a line above
+              it pushed every row down when it filled, under the pointer and the
+              focus. */}
+          <p role="status" className="instance-models-status">
+            {status}
+          </p>
+          {shown !== null && (
+            <p role="alert" className="instance-models-alert">
+              {shown.text}
+            </p>
+          )}
+          {shown?.signIn && (
+            <button
+              id={`${fieldId}-sign-in`}
+              type="button"
+              className="secondary"
+              onClick={() => onSignIn(used.current)}
+            >
+              {t('session-sign-in')}
+            </button>
           )}
         </>
       )}

@@ -726,7 +726,14 @@ function Page({
   if (route.page === 'overview' || route.page === 'sign-in') {
     // Signed in, #/sign-in is an alias of #/ (09 S1a.10); the alias effect
     // follows with the address.
-    return <Overview store={store} host={host} onSignedOut={onSignedOut} />
+    return (
+      <Overview
+        store={store}
+        host={host}
+        onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
+      />
+    )
   }
   if (route.page === 'not-found') {
     return <NotFound />

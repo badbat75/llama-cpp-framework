@@ -621,11 +621,68 @@ test('16 17e.4a: the Served here cell is a .status-cell whose switch and word ar
   )
 })
 
-test('16 17e.4a, 17e.4: the table is inside a .table-scroll box, and the section’s one status line sits above the table', async () => {
+test('16 17e.4a, 17e.12: the table is inside a .table-scroll box, and the section’s one status line sits right after that box', async () => {
   const { section } = await loadedModels()
   const t = table(section)
-  expect(t.closest('.table-scroll'), 'the box that scrolls').not.toBeNull()
-  expect(before(statusLine(section), t), 'above the table').toBe(true)
+  const scroll = t.closest('.table-scroll')
+  expect(scroll, 'the box that scrolls').not.toBeNull()
+  expect(before(scroll!, statusLine(section)), 'after the table').toBe(true)
+})
+
+test('16 17e.12: the alert and its Sign in land after the table too, and the sheet gives the status line margin-top --space-2 and no min-height', async () => {
+  const css = readFileSync(join(import.meta.dirname, 'index.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\s+/g, ' ')
+  const rule = /\.instance-models-status \{([^}]*)\}/.exec(css)
+  expect(rule, 'the sheet styles the status line').not.toBeNull()
+  expect(rule![1]!, 'the space above the line').toContain(
+    'margin-top: var(--space-2)',
+  )
+  expect(
+    rule![1]!,
+    'no line is reserved: text landing below the table moves nothing above it',
+  ).not.toContain('min-height')
+  // The alert and the Sign in of a write that ended the session.
+  const { section } = await loadedModels({
+    instanceModelsProfile: SESSION_ENDED,
+  })
+  const scroll = table(section).closest('.table-scroll')!
+  press(switchOf(section, 'Qwen3-27B'))
+  await flush()
+  const alert = within(section).getByRole('alert')
+  expect(before(scroll, alert), 'the alert is after the table').toBe(true)
+  const signIn = signIns(section)[0]!
+  expect(before(scroll, signIn), 'the Sign in is after the table').toBe(true)
+  expect(before(statusLine(section), alert), 'the status, then the alert').toBe(
+    true,
+  )
+})
+
+test('16 17e.13: the "In the list" column is as narrow as its content, so it sits beside the state column at the right', async () => {
+  const css = readFileSync(join(import.meta.dirname, 'index.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\s+/g, ' ')
+  const { section } = await loadedModels()
+  const t = table(section)
+  const heads = within(t).getAllByRole('columnheader')
+  const at = heads.findIndex(
+    (h) => (h.textContent ?? '').trim() === en('instance-models-column-pool'),
+  )
+  expect(at, 'the table has the In the list column').toBeGreaterThan(-1)
+  const cell = dataRows(section)[0]!.querySelectorAll('td, th')[at]!
+  // The declarations that reach the cell: the sheet styles it through a class,
+  // so the pin follows whatever name the coder gives it.
+  const classes = [...cell.classList]
+  expect(classes, 'the cell names a class the sheet styles').not.toEqual([])
+  const body = classes
+    .map((c) => new RegExp(`\\.${c} \\{([^}]*)\\}`).exec(css)?.[1] ?? '')
+    .filter((b) => b !== '')
+    .join('; ')
+  expect(body, 'the sheet styles the cell').not.toBe('')
+  expect(body, 'as narrow as its content').toContain('width: 1%')
+  expect(body, 'one line, so the two state columns sit together').toContain(
+    'white-space: nowrap',
+  )
 })
 
 test('16 17e.4: profiles [] shows instance-models-empty and no table, with the checkbox kept', async () => {

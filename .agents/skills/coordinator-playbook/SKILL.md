@@ -58,7 +58,8 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
   (bb-auth, 2026-11-24), so to stop a stalled one: `opencode api session.active` (running ids),
   `opencode api session.get --param sessionID=<id>` (its title), then `opencode api session.interrupt
   --param sessionID=<id> --param resume=false`, and kill the client; after a chain, interrupt any of
-  yours the service still lists as running. Service log: `~/.local/share/opencode/log/opencode.log`.
+  yours the service still lists as running. The service log stamps time in UTC; a store error while
+  another `--standalone` run is alive is that run's lock: wait for it to exit, then relaunch. Service log: `~/.local/share/opencode/log/opencode.log`.
 - RAM is the other limit: one cargo build at a time, and one npm user in `fe/`, so pair a crate run with
   an `fe/` run or a docs run, not two crate builds. Never the designer's browsers (the UX check) and a
   Vitest run together.

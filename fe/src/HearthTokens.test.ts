@@ -880,11 +880,11 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     // below its min-content and a 32-character label breaks inside 320 px at
     // 200 % text. Last: the rule sits after .tag-new button in the sheet.
     '.tag-options: min-width: 0',
-    // Brief 16, slice 17e (17e.4, the 17e check): the section's one status
-    // line keeps the height of a line while empty, so the table under it does
-    // not jump when a write's answer lands, as the model profile list's
-    // switch status does. Last in the sheet.
-    '.instance-models-status: min-height: 1lh',
+    // Brief 16, slice 17e (17e.4, the 17e check) reserved a line for the
+    // section's status so the table under it would not jump; the 17e amendment
+    // 17e.12 moved that status AFTER the table and took the `min-height` away,
+    // since text landing below a table moves no row. So no entry here: the rule
+    // carries a margin, which this pin does not collect.
   ])
   const used = new Set<string>()
   for (const r of RULES)

@@ -425,6 +425,51 @@ const STATES = [
     ],
   },
   {
+    // Brief 16, slice 17c (17c.1a, as the 17c check of 2026-11-25 amends it):
+    // the Overview's create form, opened from the `+` that ends the instances
+    // list. The opener carries the plus of Icon.tsx, so its selector names the
+    // icon and not a text the strings file does not carry yet (the tile's run
+    // verbs are text buttons, so the vertical stroke is the `+`'s own);
+    // `main form` is the form 17c.1a asks for, the page's only form.
+    name: 'instances-new',
+    set: 'session=admin',
+    hash: '#/',
+    expect: [
+      { selector: '#page-heading', text: S['overview-title'] },
+      {
+        selector: 'main button:has(svg path[d="M12 5v14"])',
+        message: 'the opener of the create form: the button with the plus',
+      },
+    ],
+    open: {
+      click: 'main button:has(svg path[d="M12 5v14"])',
+      then: 'main form',
+    },
+  },
+  {
+    // Brief 16, slice 17c (17c.6a and 17c.7a, as the 17c check amends them):
+    // the instance page of a stopped instance whose record can be removed
+    // (stub.py `inst=inactive&removable=1`), with the Confirm in place of the
+    // remove open. The verb is the last button of the head's run row, and the
+    // group opens on the line under it: its markers are the ids 17c.7a gives
+    // the two buttons, so no state names a class of the slice.
+    name: 'instance-remove',
+    set: 'session=admin&inst=inactive&removable=1',
+    hash: '#/instances/default',
+    expect: [
+      { selector: '#page-heading', text: DEFAULT_NAME },
+      {
+        selector: 'main .run-actions button',
+        count: 4,
+        message: 'Start, Stop, Restart and the remove verb, last (17c.6a)',
+      },
+    ],
+    open: {
+      click: 'main .run-actions button:last-of-type',
+      then: '#confirm-cancel',
+    },
+  },
+  {
     // Brief 16, slice 17a (17a.11): the pool list at its widest row, so the
     // check reads the table box and the tags cell with a 32-character id and
     // 8 tags of 32 characters in it.

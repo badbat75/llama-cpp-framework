@@ -1,15 +1,32 @@
 // The manager's instances and the state of each, read from the bff's
-// /api/instances.
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+// /api/instances. The list ends with the + of 17c, which opens the create form
+// in place of a new instance (fe/briefs/16-server-profiles-and-instances.md,
+// 17c.1a and 17c.2, as the 17c check of 2026-11-25 amends them).
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { flushSync } from 'react-dom'
 import {
   apiError,
   call,
   isRecord,
   sessionEnded,
   sessionRevoked,
+  type Reply,
 } from './api.ts'
 import { Chip, ChipList } from './Chip.tsx'
+import Dialog from './Dialog.tsx'
+import { FieldError, Hint } from './Field.tsx'
 import { Icon } from './Icon.tsx'
+import { refusalOf, type RefusalTable } from './refusal.ts'
+import { instanceHref } from './route.ts'
+import SignIn from './SignIn.tsx'
+import type { Session, SignedOut } from './session.ts'
 import {
   ACTIONS,
   failureText,
@@ -21,8 +38,6 @@ import {
   settledText,
   type Action,
 } from './run.ts'
-import { instanceHref } from './route.ts'
-import type { SignedOut } from './session.ts'
 import { Loading, Lines } from './Skeleton.tsx'
 import { StateShape, stateLabel } from './StateBadge.tsx'
 import { t } from './strings.ts'
@@ -50,6 +65,10 @@ export type Instance = {
   /** The free label the user gave the instance (fe/briefs/16-server-profiles-and-instances.md,
    * 16 17f.1), null when it has none: `instanceName` is what every place shows. */
   label: string | null
+  /** Whether the record can be removed (16 17c.6a): the page offers Remove
+   * only when the list says `true`, so an answer that leaves the key out, or
+   * spells it badly, offers nothing. */
+  removable: boolean
 }
 
 /**
@@ -150,6 +169,11 @@ function labelIn(item: Item): string | null {
   return typeof item.label === 'string' && item.label !== '' ? item.label : null
 }
 
+/** `removable` of an item: true only when the item says so (16 17c.6a). */
+function removableIn(item: Item): boolean {
+  return item.removable === true
+}
+
 /** The instance an item of the reply describes. */
 function instanceOf(item: Item): Instance {
   return {
@@ -162,6 +186,7 @@ function instanceOf(item: Item): Instance {
     boot: bootIn(item),
     serverProfile: serverProfileIn(item),
     label: labelIn(item),
+    removable: removableIn(item),
   }
 }
 
@@ -367,6 +392,7 @@ export default function Instances({
   store,
   host,
   onSignedOut,
+  onRenewed,
 }: {
   store: InstancesStore
   /** The host the shell read (fe/briefs/13-node-about.md, 13 N.5): it names
@@ -375,6 +401,9 @@ export default function Instances({
   host: string | null
   /** Raised when the read answers 401, the session being gone (09 S1b.1). */
   onSignedOut: (reason: SignedOut) => void
+  /** A sign-in in the create form's dialog (16 17c.5, as 17b.5): true when the
+   * form stays. */
+  onRenewed: (session: Session) => boolean
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -409,7 +438,7 @@ export default function Instances({
   return (
     <section>
       <h2>{host ?? t('instances-title')}</h2>
-      <Body answer={answer} store={store} />
+      <Body answer={answer} store={store} onRenewed={onRenewed} />
     </section>
   )
 }
@@ -419,14 +448,18 @@ function manyEngines(instances: Instance[]): boolean {
   return new Set(instances.map((i) => i.engine)).size > 1
 }
 
-/** The instances as a list of tiles, or the message in their place. */
+/** The instances as a list of tiles, or the message in their place, and the +
+ * that ends the list (16 17c.1a). */
 function Body({
   answer,
   store,
+  onRenewed,
 }: {
   answer: Answer | undefined
   /** The app's list, so a tile's write settles on its fresh read (23 A1.2). */
   store: InstancesStore
+  /** A sign-in in the create form's dialog (16 17c.5). */
+  onRenewed: (session: Session) => boolean
 }) {
   if (answer === undefined) {
     // The tiles' skeleton (17a.3): the shape of the list to come, two tiles of
@@ -453,19 +486,25 @@ function Body({
   if (!Array.isArray(answer)) {
     return <p>{errorText(answer.error)}</p>
   }
-  if (answer.length === 0) {
-    return <p>{t('instances-empty')}</p>
-  }
   const engines = manyEngines(answer)
   return (
-    // role="list": WebKit drops the list semantics of a ul whose list-style is
-    // none, on purpose, and advises the explicit role (the follow-up of H6,
-    // 08-hearth-h6-overview.md section 4). The count of instances is the fact.
-    <ul className="tiles" role="list">
-      {answer.map((i) => (
-        <Tile key={i.id} instance={i} engines={engines} store={store} />
-      ))}
-    </ul>
+    <>
+      {/* role="list": WebKit drops the list semantics of a ul whose list-style is
+          none, on purpose, and advises the explicit role (the follow-up of H6,
+          08-hearth-h6-overview.md section 4). The count of instances is the fact. */}
+      {answer.length === 0 ? (
+        <p>{t('instances-empty')}</p>
+      ) : (
+        <ul className="tiles" role="list">
+          {answer.map((i) => (
+            <Tile key={i.id} instance={i} engines={engines} store={store} />
+          ))}
+        </ul>
+      )}
+      {/* The list's + (16 17c.1a): never while the list loads or after it
+          failed, both returning above. */}
+      <Create store={store} onRenewed={onRenewed} />
+    </>
   )
 }
 
@@ -701,6 +740,496 @@ export function RunButtons({
       ))}
       {children}
     </div>
+  )
+}
+
+/** One row of the pool, as the create form reads it: the id, the port (null
+ * when the reply's is no number) and the instance that runs it (null when
+ * none does). */
+type PoolRow = { id: string; port: number | null; instance: string | null }
+
+/** The pool the form's select lists: the rows, or the words of a read that
+ * failed, with the Sign in when the read says the session is gone (16 17c.2:
+ * a 401 is answered in the form, not by a sign-out). */
+type Pool = { rows: PoolRow[] } | { failed: string; signIn: boolean }
+
+/** The rows of a pool reply: an item that names no id names nothing to pick,
+ * so it is left out, as on the pool's own page (16 17a.4). */
+function poolRows(body: unknown): PoolRow[] {
+  if (!Array.isArray(body)) return []
+  const rows: PoolRow[] = []
+  for (const item of body) {
+    if (typeof item !== 'object' || item === null) continue
+    const { id, port, instance } = item as Record<string, unknown>
+    if (typeof id !== 'string' || id === '') continue
+    rows.push({
+      id,
+      port: typeof port === 'number' ? port : null,
+      instance:
+        typeof instance === 'string' && instance !== '' ? instance : null,
+    })
+  }
+  return rows
+}
+
+/** `GET /api/profiles/server` for the create form (16 17c.2). */
+async function readPool(): Promise<Pool> {
+  try {
+    const reply = await call('/api/profiles/server')
+    if (reply.status === 401)
+      return { failed: t('session-ended-retry'), signIn: true }
+    if (sessionRevoked(reply))
+      return { failed: t('session-revoked'), signIn: false }
+    if (!reply.ok || !Array.isArray(reply.body))
+      return {
+        failed:
+          apiError(reply.body)?.key === 'client-unavailable'
+            ? t('api-client-unavailable')
+            : t('server-profiles-failed'),
+        signIn: false,
+      }
+    return { rows: poolRows(reply.body) }
+  } catch {
+    return { failed: t('server-profiles-failed'), signIn: false }
+  }
+}
+
+/** The create refusals of 16 17c.5, the brief's table: the keys whose text
+ * goes under a field, and the field a key names when the reply does not. */
+const CREATE_REFUSALS: RefusalTable = {
+  text: (key, args) => {
+    switch (key) {
+      case 'instance-bad-id':
+        return t('api-instance-bad-id', ...args)
+      case 'instance-exists':
+        return t('api-instance-exists', ...args)
+      case 'unknown-engine':
+        return t('api-unknown-engine', ...args)
+      case 'client-address-in-use':
+        return t('api-client-address-in-use', ...args)
+      case 'client-unresolvable-host':
+        return t('api-client-unresolvable-host', ...args)
+      case 'client-server-profile-in-use':
+        return t('api-client-server-profile-in-use', ...args)
+      case 'client-no-server-profile':
+        return t('api-client-no-server-profile', ...args)
+      case 'client-service-failed':
+        // The service manager answered an error (17c.5, as `run.ts` reads it).
+        return t('api-client-service-failed')
+      default:
+        return undefined
+    }
+  },
+  field: (key) =>
+    key === 'instance-bad-id'
+      ? 'id'
+      : key === 'client-address-in-use' || key === 'client-unresolvable-host'
+        ? 'serverProfile'
+        : undefined,
+}
+
+/** The create form's opener: the list's + after the tiles, drawn and named as
+ * 17b2.2 (16 17c.1a). The form it opens is its own, so closing it clears
+ * everything the reader typed. */
+function Create({
+  store,
+  onRenewed,
+}: {
+  store: InstancesStore
+  onRenewed: (session: Session) => boolean
+}) {
+  const opener = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  // A create is in flight: the form stays open with it, as 17b's does.
+  const sendingRef = useRef(false)
+
+  /** Cancel, or the opener pressed again: the form goes and the focus returns
+   * to the opener (17b.2). */
+  function close() {
+    if (sendingRef.current) return
+    setOpen(false)
+    opener.current?.focus()
+  }
+
+  return (
+    <>
+      <button
+        ref={opener}
+        type="button"
+        className="ot-add"
+        aria-expanded={open}
+        onClick={() => (open ? close() : setOpen(true))}
+      >
+        <Icon name="plus" />
+        <span className="visually-hidden">{t('instances-new')}</span>
+      </button>
+      {open && (
+        <CreateForm
+          store={store}
+          sendingRef={sendingRef}
+          onClose={close}
+          onRenewed={onRenewed}
+        />
+      )}
+    </>
+  )
+}
+
+/** The field of the create form: its label, its control, and the hint written
+ * under them (16 17c.1: the form's two fields say all there is to say, so the
+ * hint is a line, not a toggle the Tab order gains). The hint is undefined for
+ * a control that is not there: no line describes a select the field does not
+ * show (17c review A4). */
+function NewField({
+  id,
+  label,
+  hint,
+  error,
+  children,
+}: {
+  id: string
+  label: string
+  hint: string | undefined
+  /** The refusal's text under the control, when there is one. */
+  error: string | undefined
+  children: ReactNode
+}) {
+  return (
+    <div className="field">
+      <div className="field-label">
+        <label htmlFor={id}>{label}</label>
+      </div>
+      <div className="field-control">{children}</div>
+      {hint === undefined ? null : <Hint id={`${id}-hint`} text={hint} open />}
+      {error !== undefined && <FieldError id={`${id}-error`} text={error} />}
+    </div>
+  )
+}
+
+/** What a create form's control's tree names: its hint, then its error. */
+function fieldDescribed(id: string, error: string | undefined): string {
+  return error === undefined ? `${id}-hint` : `${id}-hint ${id}-error`
+}
+
+/** The form itself, mounted while it is open (16 17c.1a, 17c.2 to 17c.5): the
+ * ID, the Server profile the pool leaves free, the note, Create and Cancel,
+ * the status line and the alert place. */
+function CreateForm({
+  store,
+  sendingRef,
+  onClose,
+  onRenewed,
+}: {
+  store: InstancesStore
+  /** Set while the POST runs, read by the close. */
+  sendingRef: { current: boolean }
+  onClose: () => void
+  onRenewed: (session: Session) => boolean
+}) {
+  const uid = useId()
+  const titleId = `${uid}-title`
+  const idField = `${uid}-id`
+  const serverField = `${uid}-server`
+  // undefined while the pool read is awaited (17c.2).
+  const [pool, setPool] = useState<Pool | undefined>(undefined)
+  const [id, setId] = useState('')
+  const [server, setServer] = useState('')
+  const [errors, setErrors] = useState<{ id?: string; server?: string }>({})
+  const [status, setStatus] = useState('')
+  const [sending, setSending] = useState(false)
+  const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
+    null,
+  )
+  // The sign-in in the form's dialog (17c.5, as 17b.5).
+  const [asking, setAsking] = useState(false)
+
+  // The pool the select lists, read once when the form opens, and the focus to
+  // the ID (17c.1).
+  useEffect(() => {
+    let live = true
+    document.getElementById(idField)?.focus()
+    void readPool().then((p) => {
+      if (live) setPool(p)
+    })
+    return () => {
+      live = false
+    }
+  }, [idField])
+
+  /** The rows no instance runs, in the reply's order (17c.2). */
+  const free =
+    pool !== undefined && 'rows' in pool
+      ? pool.rows.filter((row) => row.instance === null)
+      : []
+  /** Nothing to pick: the select is not there, so Create cannot act. */
+  const pickable = free.length > 0
+
+  function readPoolAgain() {
+    void readPool().then(setPool)
+  }
+
+  /** Create, the client checks first (17c.3): an empty ID and the empty option
+   * answer under their field, and nothing is sent. */
+  function create() {
+    if (sendingRef.current) return
+    const trimmed = id.trim()
+    const next: { id?: string; server?: string } = {}
+    if (trimmed === '') next.id = t('field-error-required')
+    if (server === '') next.server = t('field-error-required')
+    if (next.id !== undefined || next.server !== undefined) {
+      // The error is in the DOM, and names the field, before the focus lands.
+      flushSync(() => setErrors(next))
+      document
+        .getElementById(next.id !== undefined ? idField : serverField)
+        ?.focus()
+      return
+    }
+    setErrors({})
+    void send(trimmed, server)
+  }
+
+  async function send(trimmed: string, profile: string) {
+    sendingRef.current = true
+    setSending(true)
+    setAlert(null)
+    setStatus(t('create-creating'))
+    let answer: Reply | undefined
+    try {
+      answer = await call('/api/instances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          engine: 'llama.cpp',
+          id: trimmed,
+          serverProfile: profile,
+        }),
+      })
+    } catch {
+      answer = undefined
+    }
+    sendingRef.current = false
+    setSending(false)
+    setStatus('')
+    const reply = answer
+    if (reply === undefined) {
+      setAlert({ text: t('request-failed'), signIn: false })
+      return
+    }
+    if (reply.ok) {
+      // The list read again, then the new instance's page, whatever that read
+      // answers (17c.4).
+      await store.fresh()
+      window.location.hash = instanceHref(trimmed)
+      return
+    }
+    if (sessionEnded(reply)) {
+      setAlert({ text: t('session-ended-retry'), signIn: true })
+      return
+    }
+    if (sessionRevoked(reply)) {
+      setAlert({ text: t('session-revoked'), signIn: false })
+      return
+    }
+    const key = apiError(reply.body)?.key
+    if (key === 'client-unavailable' || key === 'client-timeout') {
+      // The manager did not answer: the list read again says whether the
+      // instance is there (17c.5).
+      setAlert({ text: t('create-unknown'), signIn: false })
+      void store.fresh()
+      return
+    }
+    const refusal = refusalOf(reply.body, CREATE_REFUSALS)
+    if (refusal !== undefined && refusal.field === 'id') {
+      flushSync(() => setErrors({ id: refusal.text }))
+      document.getElementById(idField)?.focus()
+      return
+    }
+    if (refusal !== undefined && refusal.field === 'serverProfile') {
+      flushSync(() => setErrors({ server: refusal.text }))
+      document.getElementById(serverField)?.focus()
+      // The profile that was chosen may have left the pool (17c.5).
+      if (
+        key === 'client-server-profile-in-use' ||
+        key === 'client-no-server-profile'
+      )
+        readPoolAgain()
+      return
+    }
+    setAlert({
+      text:
+        refusal?.text ??
+        (reply.status === 422 && key !== undefined
+          ? t('api-other', key)
+          : t('request-failed')),
+      signIn: false,
+    })
+    if (
+      key === 'client-server-profile-in-use' ||
+      key === 'client-no-server-profile'
+    )
+      readPoolAgain()
+  }
+
+  /** A sign-in in the form's dialog: the form keeps what was typed and the
+   * focus returns to Create; nothing is sent again (17b.5). The pool the new
+   * session can read is read again, so the select arrives with it
+   * (17c.2, 17c review R2). */
+  function renewed(session: Session) {
+    const kept = onRenewed(session)
+    if (kept) readPoolAgain()
+    flushSync(() => {
+      setAsking(false)
+      if (kept) setAlert(null)
+    })
+    if (!kept) return
+    document.getElementById(serverField)?.focus()
+  }
+
+  function closeAsking() {
+    flushSync(() => setAsking(false))
+    document.getElementById(serverField)?.focus()
+  }
+
+  return (
+    <>
+      <form
+        aria-labelledby={titleId}
+        onSubmit={(e) => {
+          e.preventDefault()
+          create()
+        }}
+        onKeyDown={(e) => {
+          // Escape closes the form, as Cancel does; not while a create runs.
+          if (e.key === 'Escape' && !sendingRef.current) onClose()
+        }}
+      >
+        <h3 id={titleId}>{t('instances-new-title')}</h3>
+        <NewField
+          id={idField}
+          label={t('instance-name')}
+          hint={t('instance-new-id-hint')}
+          error={errors.id}
+        >
+          <input
+            id={idField}
+            type="text"
+            className="mono"
+            value={id}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            autoComplete="off"
+            aria-describedby={fieldDescribed(idField, errors.id)}
+            aria-invalid={errors.id === undefined ? undefined : true}
+            onChange={(e) => {
+              setId(e.target.value)
+              setErrors((prev) =>
+                prev.id === undefined ? prev : { ...prev, id: undefined },
+              )
+            }}
+          />
+        </NewField>
+        <NewField
+          id={serverField}
+          label={t('instance-new-server')}
+          hint={pickable ? t('instance-new-server-hint') : undefined}
+          error={errors.server}
+        >
+          {pool === undefined ? (
+            <p role="status">{t('instance-new-loading')}</p>
+          ) : 'failed' in pool ? (
+            <>
+              <p>{pool.failed}</p>
+              {pool.signIn && (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setAsking(true)}
+                >
+                  {t('session-sign-in')}
+                </button>
+              )}
+            </>
+          ) : free.length === 0 ? (
+            <>
+              <p>{t('instance-new-no-free')}</p>
+              <p>
+                <a href="#/profiles/server">
+                  {t('instance-new-profiles-link')}
+                </a>
+              </p>
+            </>
+          ) : (
+            <select
+              id={serverField}
+              value={server}
+              aria-describedby={fieldDescribed(serverField, errors.server)}
+              aria-invalid={errors.server === undefined ? undefined : true}
+              onChange={(e) => {
+                setServer(e.target.value)
+                setErrors((prev) =>
+                  prev.server === undefined
+                    ? prev
+                    : { ...prev, server: undefined },
+                )
+              }}
+            >
+              <option value="">{t('instance-new-server-choose')}</option>
+              {free.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.port !== null && row.port > 0
+                    ? t('instance-server-option', row.id, String(row.port))
+                    : row.id}
+                </option>
+              ))}
+            </select>
+          )}
+        </NewField>
+        <p>{t('instance-new-note')}</p>
+        {status !== '' && (
+          <p role="status" className="save-status">
+            {status}
+          </p>
+        )}
+        {alert !== null && <p role="alert">{alert.text}</p>}
+        {alert?.signIn && (
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setAsking(true)}
+          >
+            {t('session-sign-in')}
+          </button>
+        )}
+        <div className="save-actions">
+          <button
+            type="submit"
+            className="primary"
+            aria-disabled={sending || !pickable ? 'true' : undefined}
+          >
+            {t('create-button')}
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            aria-disabled={sending ? 'true' : undefined}
+            onClick={onClose}
+          >
+            {t('create-cancel')}
+          </button>
+        </div>
+      </form>
+      {asking && (
+        <Dialog title={t('signin-title')} onClose={closeAsking}>
+          <SignIn
+            required={false}
+            inDialog
+            onSignedIn={renewed}
+            onCancel={closeAsking}
+          />
+        </Dialog>
+      )}
+    </>
   )
 }
 

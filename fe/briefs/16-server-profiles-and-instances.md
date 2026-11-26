@@ -1469,3 +1469,81 @@ Tests that change from 17c's list: `InstancePage` (Remove at the end of the run 
 line, the confirm under the row; not after the sections), `Instances` (the + after the tiles),
 `RunControls` loses the 409 test (built); a check.js state for the open create form and one for
 the open confirm.
+
+## 17c review (designer, 2026-11-26)
+
+Built code read (`Instances.tsx`, `InstancePage.tsx`, `index.css`, `Instances17c.test.tsx`) and
+measured with `build/ux-review/c17.js` and `c17b.js` in Chromium, Firefox and WebKit at 1280 and
+320 px, light and dark, one browser at a time.
+
+Met:
+- 17c.1a: the + is a 40 px `.ot-add` named `New instance`, `aria-expanded`, left-aligned 12 px
+  under the tiles; the form is named by its `h3` and the focus lands on ID. Escape puts the focus
+  back on the +.
+- 17c.2 and 17c.3: the free profiles listed as `id (port N)`; with none free, `instance-new-no-free`,
+  the link and Create `aria-disabled`; empty fields both say `field-error-required`, focus on ID.
+- 17c.6a: Remove is last in the run row, `--space-5` (32 px) after Restart, `--danger` when it can
+  act; while running it is `aria-disabled`, drawn muted, with `instance-remove-stop-first` as a line
+  8 px under the row and its description. 17c.7a: the group opens 12 px under the row, above Start
+  at boot, the focus on Cancel, Shift+Tab to Remove, Escape back to the opener.
+- 17c.10a and 17c.11a: Tab order as written; no sideways scroll anywhere; at 320 px the 44-character
+  option is cut after the id, as accepted.
+- 17e.12 to 17e.14: the status follows the table; "In the list" is 79 to 81 px wide beside "Served
+  here"; `Served profiles` is one line at 1280 px.
+
+**Defects:**
+- **D1. A switched-off Remove opens the confirm.** `InstancePage.tsx` 441:
+  `onClick={() => setRemoving(true)}` does not check `removableNow`; clicking the `aria-disabled`
+  Remove of a running instance opens the group in all three engines (17c.6a: switched off sends
+  nothing, as 17e.5 and the Save bar's Delete). The group's verb is then `aria-disabled` (888), so
+  nothing is removed, but the question shows for an action that cannot run. Fix: return while
+  `!removableNow`; a test clicking the switched-off Remove expects no group.
+- **D2. Remove's 504 and 502.** `InstancePage.tsx` 773-820 (`deleteInstance`): a 504
+  `client-timeout` falls to `request-failed`; 17f.10 asks `delete-unknown` and the list read again.
+  A 502 `client-service-failed` falls to `request-failed`; 17c.8 asks its text
+  (`api-client-service-failed`, as `run.ts` 111).
+- **D3. Create's 502.** `Instances.tsx` 799-826 (`CREATE_REFUSALS`): `client-service-failed` has no
+  case, so the alert says `request-failed`; 17c.5 lists it in the alert with its text.
+
+Adviser notes, ranked by how much they help the user (for a next slice):
+1. The create form's `h3` sits right under the + with no room (the + reads as part of the
+   heading), and at 1280 px Create and Cancel sit at the right edge, 880 px from where the reader
+   typed. Give the `h3` `margin-top: var(--space-4)`; the server profiles' create form has the
+   same shape, so fix both in one rule.
+2. At 320 px Remove wraps to its own line and keeps its 32 px start margin, so it sits indented
+   under Start (`index.css` `.run-remove`). Drop the margin below 480 px, where the row wraps
+   anyway.
+3. The confirm's verb is the purple primary `Remove` under a red opener; the server profile's
+   `confirm-delete` is the same. A `--danger` filled verb in every Confirm in place would say
+   "this destroys" at the last step (preference; a `fe/DESIGN.md` change, so the user's call).
+4. With no free server profile the field's hint still describes a select that is not there;
+   show the hint only with the select.
+5. A running instance's page always shows "Stop it first to remove it." under the run row: one line
+   on every page for a rare task. It is the Save bar's rule, so it stays unless the user wants the
+   reason only on hover and focus, as the list's trash can.
+
+Screenshots: `build/ux-review/shots/17c-create-1280-light.png`, `17c-create-320-light.png` (the form
+with its errors), `17c-remove-1280-light.png`, `17c-remove-320-light.png` (the confirm open),
+`17e2-1280.png`.
+
+UX check (222 states per browser, `instances-new` and `instance-remove` among them), one browser at a time: 0 failing in Chromium, Firefox and WebKit.
+
+### 17c re-check (designer, 2026-11-26)
+
+Measured with `build/ux-review/c17r.js` in Chromium, Firefox and WebKit at 1280 and 320 px.
+
+- D1 closed: a forced click on the switched-off Remove opens nothing (`InstancePage.tsx` 443).
+- D2 and D3 closed by reading the code (the stub cannot answer them): `InstancePage.tsx` 821-836
+  (`api-client-service-failed`; `delete-unknown` with the list read again) and `Instances.tsx` 816.
+- Note 2 met: at 320 px Remove fits beside Restart with no extra start margin (`index.css` 692).
+  Note 4 met: no free profile, no hint (`Instances.tsx` 1135).
+- **D4. Note 1 moved every heading.** `index.css` 328-331, a bare `h2, h3 { margin-top:
+  var(--space-4) }`, sets every `h2` on every page from 40 px (`--space-6`, 305-308) to 16 px
+  (measured: the instance page's Server profile and Model profiles, the Overview's host heading,
+  the server profiles' form heading), and gives every `h3` 16 px it did not have (the model profile
+  page's card headings among them). The server profiles' form `h2` had its 40 px already, so it
+  never needed the fix; only the instances' `h3` did. Fix: remove the bare rule, and give room
+  only to the instance create form's heading, scoped by its place: `form > h3:first-child
+  { margin-top: var(--space-4) }` (the only `h3` that is a form's first child), or a class on that
+  `h3` if the coder prefers one.
+- D4 closed: `form > h3:first-child` (`index.css` 328); every `h2` is back at 40 px and the cards' `h3` at 0 (instance page, Overview, model profile page, Node info), the instance create form's `h3` keeps its 16 px and the server profiles' form `h2` its 40 px. UX check, one browser at a time: 0 failing in Chromium and WebKit (222 states); Firefox 1 load timeout on `sign-in-at-home`, 0 failing on its rerun.

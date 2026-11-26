@@ -148,7 +148,9 @@ export const EN: Record<string, string> = {
   'instance-models-empty': 'There are no model profiles yet.',
   'instance-models-all':
     'serve every model profile switched on in the list, including new ones',
-  'instance-models-all-label': 'All switched-on model profiles',
+  // 16 17e.14 (the 17e amendment of 2026-11-25): the group label is the short
+  // word, which fits the field's label column on one line.
+  'instance-models-all-label': 'Served profiles',
   'instance-models-column-pool': 'In the list',
   'instance-models-column-here': 'Served here',
   'instance-models-saving': 'Saving…',
@@ -195,6 +197,42 @@ export const EN: Record<string, string> = {
     "invalid server profile id `{0}`: use lowercase letters, digits and '-', starting with a letter or digit, up to 32 characters",
   'api-unknown-engine':
     'unknown engine `{0}`: this manager serves the engine llama.cpp',
+  // Brief 16 slice 17c (as its 17c check of 2026-11-25 amends it): the create
+  // form of the Overview, and the Remove of the instance page. `1a strings` in
+  // App.test.tsx pins these against strings/en_US.json, so the sheet gains
+  // exactly 17c.12. The ID field's hint is `instance-new-id-hint`: 17c.1 names
+  // it `instance-name-hint`, a key 17f2.10 took for the display name's hint, so
+  // the create form's hint needs a key of its own.
+  'instances-new': 'New instance',
+  'instances-new-title': 'New instance',
+  'instance-name': 'ID',
+  'instance-new-id-hint':
+    "1 to 32 characters: a-z, 0-9 and -, starting with a letter or a digit. It names the instance's service and cannot be changed later.",
+  'instance-new-server': 'Server profile',
+  'instance-new-server-hint':
+    'The server profile it runs: its port, addresses and settings. Only server profiles no other instance uses are listed.',
+  'instance-new-server-choose': 'Choose a server profile',
+  'instance-server-option': '{0} (port {1})',
+  'instance-new-loading': 'Loading the server profiles…',
+  'instance-new-no-free':
+    'Every server profile is in use, or there is none. Create a server profile first.',
+  'instance-new-profiles-link': 'Server profiles',
+  'instance-new-note':
+    'The new instance serves no model profile and does not start at boot until you set them on its page.',
+  'instance-remove': 'Remove instance',
+  'instance-remove-stop-first': 'Stop it first to remove it.',
+  'instance-remove-question':
+    'Remove the instance {0}? Its service and its model profile choices are removed; its server profile stays in the list of server profiles. This cannot be undone.',
+  'confirm-remove': 'Remove',
+  'confirm-removing': 'Removing…',
+  'instance-removed': 'The instance {0} was removed.',
+  'api-instance-bad-id':
+    "invalid instance id `{0}`: use lowercase letters, digits and '-', starting with a letter or digit, up to 32 characters",
+  'api-instance-exists': 'an instance named `{0}` already exists',
+  'api-instance-protected':
+    'the instance `{0}` cannot be removed: it is the instance the configurator and the web UI use',
+  'api-instance-running':
+    'the instance `{0}` is running: stop it before removing it',
   'api-client-not-authorized':
     'Not authorized: the system refused this request.',
   'api-client-unavailable':
@@ -1118,6 +1156,12 @@ export type Instance = {
    * is then the id, so every test that finds an instance link by the name
    * `default` stays green. */
   label?: string | null | number
+  /** Whether the record lets the instance be removed (brief 16, 16 17c.6a):
+   * the instance page offers Remove only when this is `true`. The default
+   * fixtures leave it out, as they leave `serverProfile` and `label`: no test
+   * that has not asked for the verb sees it, and a test that wants Remove
+   * writes it. */
+  removable?: boolean | string | number
 }
 
 /**
@@ -1841,6 +1885,25 @@ export type BffOptions = {
     init?: RequestInit,
   ) => Response | Promise<Response>
   /**
+   * POST /api/instances (brief 16, 16 17c.4): the reply to the n-th create
+   * (from 1), given the parsed body `{"engine","id","serverProfile"}`.
+   * Default 201 `{"id": <the body's id>}`, the reply the app lands on.
+   */
+  instanceCreate?: (
+    body: unknown,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * DELETE /api/instances/{id} (brief 16, 16 17c.7): the reply to the n-th
+   * delete (from 1) of the decoded id. Default 204.
+   */
+  instanceDelete?: (
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
    * GET /api/instances/{id}/profiles/model (brief 16, 17e.1): the document to
    * answer 200 with, or the reply. Default `INSTANCE_MODELS`.
    */
@@ -1954,6 +2017,28 @@ export function fakeBff(options: BffOptions = {}) {
       const i = instances ?? INSTANCES
       if (Array.isArray(i)) return Promise.resolve(reply(200, i))
       return answer(i, init)
+    }
+    if (route === 'POST /api/instances') {
+      const n = calls.filter(
+        (c) => c.method === 'POST' && c.path === '/api/instances',
+      ).length
+      return Promise.resolve(
+        options.instanceCreate
+          ? options.instanceCreate(body, n, init)
+          : reply(201, { id: (body as { id?: string })?.id ?? '' }),
+      )
+    }
+    const instanceDelete = /^DELETE \/api\/instances\/([^/]+)$/.exec(route)
+    if (instanceDelete) {
+      const id = decodeURIComponent(instanceDelete[1]!)
+      const n = calls.filter(
+        (c) => c.method === 'DELETE' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.instanceDelete
+          ? options.instanceDelete(id, n, init)
+          : reply(204),
+      )
     }
     if (route === 'GET /api/profiles/model') {
       const p = options.modelProfiles ?? MODEL_PROFILES

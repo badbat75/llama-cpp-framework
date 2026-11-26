@@ -15,7 +15,14 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+import {
+  apiError,
+  call,
+  isRecord,
+  sessionEnded,
+  sessionRevoked,
+  type Reply,
+} from './api.ts'
 import { Chip, ChipList } from './Chip.tsx'
 import Dialog from './Dialog.tsx'
 import {
@@ -151,9 +158,13 @@ export default function InstancePage({
   const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
     null,
   )
+  // The record's removal (16 17c.6a, 17c.7a): the confirm open, and the page
+  // past the 204, where everything after the heading is the one paragraph.
+  const [removing, setRemoving] = useState(false)
+  const [removed, setRemoved] = useState(false)
   // The Sign in whose dialog is open (43a, 45e).
   const [asking, setAsking] = useState<
-    'run' | 'boot' | 'tags' | 'label' | 'models' | null
+    'run' | 'boot' | 'tags' | 'label' | 'models' | 'remove' | null
   >(null)
   // The Model profiles control a write was made with, so the page puts the
   // focus back on it when its dialog answers (17e.10a).
@@ -321,7 +332,9 @@ export default function InstancePage({
             ? `${uid}-name-sign-in`
             : from === 'models'
               ? modelsControl.current
-              : `${uid}-sign-in`
+              : from === 'remove'
+                ? `${uid}-remove-sign-in`
+                : `${uid}-sign-in`
     document.getElementById(signIn)?.focus()
   }
 
@@ -334,7 +347,8 @@ export default function InstancePage({
     // clicked, Start at boot's checkbox, in the tags field the New tag box
     // while its pill is open, else the Add tag button (15 C1.10), and in the
     // display name form Save with what was typed kept (16 17f2.6). The box is
-    // in the document only while the pill is open.
+    // in the document only while the pill is open. The removal's sign-in goes
+    // back to the verb of its confirm (16 17c.8).
     const pillOpen = document.getElementById(`${uid}-tags-box`) !== null
     const control =
       from === 'boot'
@@ -345,7 +359,9 @@ export default function InstancePage({
             ? `${uid}-name-save`
             : from === 'models'
               ? modelsControl.current
-              : `${uid}-${clicked.current}`
+              : from === 'remove'
+                ? 'confirm-remove'
+                : `${uid}-${clicked.current}`
     document.getElementById(control)?.focus()
   }
 
@@ -357,6 +373,28 @@ export default function InstancePage({
     onSignIn: () => setAsking('label'),
     onSaved: reread,
   })
+
+  // The removal (16 17c.6a): the record's own `removable` offers it, and only
+  // an instance that stands still can be removed. The state is the polled one,
+  // so a Stop switches the verb on with no reload.
+  const canRemove = instance !== undefined && instance.removable
+  const removableNow =
+    instance !== undefined &&
+    (instance.state === 'inactive' || instance.state === 'failed')
+
+  if (removed) {
+    // Past the 204: everything after the heading is gone, the pencil and the
+    // run row included, and the page says so and leads home (16 17c.7a). The
+    // list no longer holds the id, and the page does not say it is missing.
+    return (
+      <>
+        <PageHeading
+          text={instance === undefined ? id : instanceName(instance)}
+        />
+        <Removed id={id} />
+      </>
+    )
+  }
 
   return (
     <>
@@ -387,7 +425,36 @@ export default function InstancePage({
                 busy={busy}
                 ids={(action) => `${uid}-${action}`}
                 onRun={(action) => void run(action)}
-              />
+              >
+                {/* The destructive verb of the page, last in the row and drawn
+                    in --danger (16 17c.6a, 22 D4.30). */}
+                {canRemove && (
+                  <button
+                    id={`${uid}-remove`}
+                    type="button"
+                    className="secondary run-remove"
+                    aria-expanded={removing}
+                    aria-disabled={removableNow ? undefined : 'true'}
+                    aria-describedby={
+                      removableNow ? undefined : `${uid}-remove-reason`
+                    }
+                    onClick={() => {
+                      // A switched-off verb opens nothing (17c.6a, 17c review D1).
+                      if (!removableNow) return
+                      setRemoving(true)
+                    }}
+                  >
+                    {t('instance-remove')}
+                  </button>
+                )}
+              </RunButtons>
+              {/* Why the verb cannot act, its line while it cannot (16 17c.6a,
+                  1.3.1): the same line the button names as its description. */}
+              {canRemove && !removableNow && (
+                <p id={`${uid}-remove-reason`}>
+                  {t('instance-remove-stop-first')}
+                </p>
+              )}
               <p role="status" className="run-status">
                 {status}
               </p>
@@ -405,6 +472,26 @@ export default function InstancePage({
                 >
                   {t('session-sign-in')}
                 </button>
+              )}
+              {/* The confirm the Remove opens, on its own line under the row
+                  and above Start at boot (16 17c.7a). */}
+              {removing && (
+                <ConfirmRemove
+                  id={id}
+                  signInId={`${uid}-remove-sign-in`}
+                  onDone={() => {
+                    setRemoving(false)
+                    setRemoved(true)
+                    // The nav drops the link, the host label stays (20 N.6).
+                    void store.fresh()
+                  }}
+                  onCancel={() => {
+                    flushSync(() => setRemoving(false))
+                    document.getElementById(`${uid}-remove`)?.focus()
+                  }}
+                  onSignIn={() => setAsking('remove')}
+                  onReread={reread}
+                />
               )}
               <Boot
                 id={id}
@@ -677,6 +764,206 @@ function Boot({
         </button>
       )}
     </CheckboxField>
+  )
+}
+
+/** The answer of the removal (16 17c.8): `done` is the 204, the page ends;
+ *  `group` keeps the words in the open confirm, the verb active again, and
+ *  `reread` says the list is read again, for a write whose outcome is unknown
+ *  (17f.10, the 17c review's D2). */
+type RemoveAnswer =
+  | { kind: 'done' }
+  | { kind: 'group'; text: string; signIn: boolean; reread?: boolean }
+
+/** The DELETE of the record, its answers read into the group (16 17c.8): the
+ *  two refusals of the record itself, a record that is no longer there, and
+ *  the manager that did not answer. */
+async function deleteInstance(id: string): Promise<RemoveAnswer> {
+  let answer: Reply | undefined
+  try {
+    answer = await call(`/api/instances/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+  } catch {
+    answer = undefined
+  }
+  if (answer === undefined)
+    return { kind: 'group', text: t('request-failed'), signIn: false }
+  if (answer.ok) return { kind: 'done' }
+  if (sessionEnded(answer))
+    return { kind: 'group', text: t('session-ended-retry'), signIn: true }
+  if (sessionRevoked(answer))
+    return { kind: 'group', text: t('session-revoked'), signIn: true }
+  const error = apiError(answer.body)
+  const key = error?.key ?? ''
+  const args = error?.args ?? []
+  switch (key) {
+    case 'instance-running':
+      return {
+        kind: 'group',
+        text: t('api-instance-running', ...args),
+        signIn: false,
+      }
+    case 'instance-protected':
+      return {
+        kind: 'group',
+        text: t('api-instance-protected', ...args),
+        signIn: false,
+      }
+    case 'client-no-instance':
+      return { kind: 'group', text: t('instance-not-found', id), signIn: false }
+    case 'client-unavailable':
+      return {
+        kind: 'group',
+        text: t('api-client-unavailable'),
+        signIn: false,
+      }
+    case 'client-service-failed':
+      // The service manager answered an error (17c.8, as `run.ts` reads it).
+      return {
+        kind: 'group',
+        text: t('api-client-service-failed'),
+        signIn: false,
+      }
+    case 'client-timeout':
+      // Not confirmed: the words say so and the list is read again to show
+      // whether the record is still there (17f.10, 17c review D2).
+      return {
+        kind: 'group',
+        text: t('delete-unknown'),
+        signIn: false,
+        reread: true,
+      }
+    default:
+      return {
+        kind: 'group',
+        text:
+          answer.status === 422 && key !== ''
+            ? t('api-other', key)
+            : t('request-failed'),
+        signIn: false,
+      }
+  }
+}
+
+/** The confirm the page's Remove opens (16 17c.7a, as 22 D.2 to D.7 has it on
+ *  a model profile): the question that names the instance, the verb and Cancel,
+ *  the status line and the alert place. It is mounted while the removal is
+ *  asked, so its words and its alert are its own: closing it clears them all. */
+function ConfirmRemove({
+  id,
+  signInId,
+  onDone,
+  onCancel,
+  onSignIn,
+  onReread,
+}: {
+  /** The instance's id, named in the question. */
+  id: string
+  /** The id of the Sign in the alert offers, for the focus a sign-in in the
+   *  page's dialog returns (16 17c.8). */
+  signInId: string
+  onDone: () => void
+  onCancel: () => void
+  onSignIn: () => void
+  /** The list read again, for a write whose outcome the manager did not
+   *  confirm (17f.10, 17c review D2). */
+  onReread: () => void
+}) {
+  const uid = useId()
+  const questionId = `${uid}-question`
+  const [running, setRunning] = useState(false)
+  const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
+    null,
+  )
+
+  // The focus moves to Cancel, the verb is one Tab away (22 D.2).
+  useEffect(() => {
+    document.getElementById('confirm-cancel')?.focus()
+  }, [])
+
+  async function remove() {
+    if (running) return
+    setRunning(true)
+    setAlert(null)
+    const answer = await deleteInstance(id)
+    setRunning(false)
+    if (answer.kind === 'done') {
+      onDone()
+      return
+    }
+    // The group stays open with its words and the verb active again (17c.8):
+    // the focus goes back to the verb, where the reader reads the answer.
+    flushSync(() => setAlert({ text: answer.text, signIn: answer.signIn }))
+    document.getElementById('confirm-remove')?.focus()
+    // A write the manager did not answer: the list read again shows whether
+    // the instance is there (17f.10, 17c review D2).
+    if (answer.reread === true) onReread()
+  }
+
+  return (
+    <div
+      role="group"
+      className="confirm-group"
+      aria-labelledby={questionId}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && !running) onCancel()
+      }}
+    >
+      <p id={questionId}>{t('instance-remove-question', id)}</p>
+      <div className="save-actions">
+        <button
+          type="button"
+          id="confirm-remove"
+          className="primary"
+          aria-disabled={running || undefined}
+          onClick={() => void remove()}
+        >
+          {t('confirm-remove')}
+        </button>
+        <button
+          type="button"
+          id="confirm-cancel"
+          className="secondary"
+          aria-disabled={running || undefined}
+          onClick={onCancel}
+        >
+          {t('confirm-cancel')}
+        </button>
+      </div>
+      <p role="status" className="save-status" aria-live="polite">
+        {running ? t('confirm-removing') : ''}
+      </p>
+      {alert !== null && <p role="alert">{alert.text}</p>}
+      {alert?.signIn && (
+        <button
+          type="button"
+          id={signInId}
+          className="secondary"
+          onClick={onSignIn}
+        >
+          {t('session-sign-in')}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** The page past the 204 (16 17c.7a): the one paragraph, which takes the focus
+ *  as an arrival does, and the way home. */
+function Removed({ id }: { id: string }) {
+  useEffect(() => {
+    document.getElementById('instance-removed')?.focus()
+  }, [])
+  return (
+    <>
+      <p id="instance-removed" tabIndex={-1}>
+        {t('instance-removed', id)}
+      </p>
+      <p>
+        <a href="#/">{t('not-found-home')}</a>
+      </p>
+    </>
   )
 }
 

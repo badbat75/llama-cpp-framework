@@ -54,6 +54,10 @@ STATE = {
     # Brief 22 slice 22D (22 D.1, the state `model-profile-delete` of check.js):
     # `off=1` reads the model profile switched off, where the delete is offered.
     "off": "0",
+    # Brief 16 slice 17c (17c.6a, the state `instance-remove` of check.js):
+    # `removable=1` says the instance's record can be removed, where the page
+    # offers the remove verb.
+    "removable": "0",
 }
 
 # How long a held read stays open, for the loading states of brief 17 U17a:
@@ -402,9 +406,10 @@ class Handler(SimpleHTTPRequestHandler):
             # its server profile (brief 20 section 6). 16 17f.12: no label, so
             # the name the page's heading, the nav's link and the tile show is
             # `instance-name-auto` with the engine and the port, "llama.cpp :9931",
-            # and the nav says nothing beside it (17f.2).
+            # and the nav says nothing beside it (17f.2). 16 17c.6a: `removable=1`
+            # says the record can be removed, where the page offers the verb.
             tags, profile = OWN_TAGS[STATE["tags"]]
-            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 9931, "tags": tags, "instanceTags": profile, "boot": True, "serverProfile": "qwen-27b", "label": None}])
+            return self.json(200, [{"id": "default", "engine": "llama.cpp", "state": STATE["inst"], "port": 9931, "tags": tags, "instanceTags": profile, "boot": True, "serverProfile": "qwen-27b", "label": None, "removable": STATE["removable"] == "1"}])
         # The boot row of the tiles and the instance page's boot field
         # (08-hearth-h6-overview.md section 3): on for default, off for every
         # other instance.
@@ -549,6 +554,16 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, KeyError):
                 return self.json(400, {"key": "server-profile-malformed", "args": []})
             return self.json(201, {"id": new_id})
+        # Brief 16 slice 17c (17c.4, the state `instances-new` of check.js): the
+        # Overview's list creates an instance here, and the bff's reply is 201
+        # with the new id. The check opens the form and reads it; it never
+        # presses Create, so the answer is a plain 201.
+        if p == "/api/instances":
+            try:
+                new_id = json.loads(body)["id"]
+            except (ValueError, KeyError):
+                return self.json(400, {"key": "instance-bad-id", "args": [""]})
+            return self.json(201, {"id": new_id})
         return self.send_error(404, "no POST of " + p)
 
     def do_DELETE(self):
@@ -575,6 +590,16 @@ class Handler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
             return self.json(404, {"key": "no-model-profile-named", "args": [pid]})
+        # Brief 16 slice 17c (17c.7a, the state `instance-remove` of check.js):
+        # the instance page removes the record here, and the bff's reply is 204.
+        # The check opens the confirm and reads it; it never presses the verb,
+        # so the instance stays.
+        if p.startswith("/api/instances/") and p.count("/") == 4:
+            if unquote(p.split("/")[4]) == "default":
+                self.send_response(204)
+                self.end_headers()
+                return
+            return self.json(404, {"key": "client-no-instance", "args": []})
         return self.send_error(404, "no DELETE of " + p)
 
 

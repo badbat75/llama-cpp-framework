@@ -269,6 +269,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   splits each rule's selector list on `,` and compares a part to `sel` EXACTLY never matches an
   argument with a comma: `declsOf('th, td')` is `[]` while `declsOf('td')` returns the `th, td` rule,
   so such an assertion is unsatisfiable by any sheet (22 D4.27: `ListColumns.test.tsx` 663).
+- A heading's room scoped as `form > h3:first-child` is free of every sheet pin: the
+  cascade readers drop pseudo-classes (`compounds` reads `form` then `h3`), the rule names
+  no class (R1.8's class list untouched) and declares only `margin-top` (no exhaustive
+  property list reads it). A bare `h2, h3 { margin-top }` pair is not: it outranks the
+  sheet's heading rules, which declare the `margin` SHORTHAND, so it moves every h2 on
+  every page and gives every h3 a room it never had (17c re-check D4).
 - `box-shadow: var(--shadow)` is pinned as an EXHAUSTIVE list in two places at once
   (`HearthH2b.test.ts` H2b.6, `Reflow.test.ts` 10 R1.6): a new lifted box needs its selector added to
   both lists, so a brief that lifts a new box leaves those two reds for the tester.
@@ -680,6 +686,12 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 - A test that aborts at its first bad assertion hides every pin that follows it. To prove the rest of the
   file without touching the tester's, copy it beside itself (`fe/src/ZzProbe.test.tsx`), fix the defect in
   the copy, run that one filter, delete the copy.
+- The fake bff's GET answer options (`serverProfiles`, `modelProfiles`, `instances`, …) are functions of
+  `init` ONLY, with no call number (unlike the write options' `(body, n, init)`), so a test that pins a
+  read failing and a re-read of the SAME path succeeding is unsatisfiable with a stateless
+  `() => reply(401, …)`: every read answers 401 and the re-read's rows never arrive (the 17c review's R2).
+  The counter belongs in the test's closure, so it is the tester's fix; prove the production arm (the
+  re-read fires) in the copy with `let n = 0; () => (++n === 1 ? reply(401, …) : reply(200, ROWS))`.
 
 ### The UX check
 

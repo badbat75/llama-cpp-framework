@@ -351,7 +351,8 @@ test('H6a.4 with H6b.5: the three table-header keys are gone, only the two boot 
   // the tile says the same things the table said, with the keys the table had:
   // the section, its messages, the engine line and the state labels. H6b adds
   // exactly two keys, the words of the boot row (H6b.5); brief 17a.1 adds the
-  // Overview's own loading word. No other.
+  // Overview's own loading word; brief 16 17c.1a adds the two of the list's +
+  // and its form's heading. No other.
   const overview = keys.filter((key) => key.startsWith('instances-')).sort()
   expect(overview).toEqual(
     [
@@ -361,6 +362,8 @@ test('H6a.4 with H6b.5: the three table-header keys are gone, only the two boot 
       'instances-loading',
       'instances-failed',
       'instances-manager-unavailable',
+      'instances-new',
+      'instances-new-title',
       'instances-not-authorized',
       'instances-title',
     ].sort(),
