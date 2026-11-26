@@ -4320,6 +4320,171 @@ Briefs for the designer:
 9. **IP9** (docs agent): `AGENTS.md`'s file list, `crates/bff/README.md`, the packaging guide and the
    restore command for a downgrade.
 
+### Amendment: placement and memory per model inside the instance profile (user, 2026-11-26): accepted (user, 2026-11-26)
+
+The user's extension (relayed 2026-11-26): layer distribution, split type and tensor assignment are set
+per model inside the instance profile, because an instance profile depends on the hardware it runs on.
+They leave the model profiles, which become hardware-independent. IP1 was stopped before it built
+anything, so the slices above are revised here once this is accepted.
+
+**The decisions (user, 2026-11-26).** K2: the memory-sized keys move with placement. Unassigned
+models' placement goes to a migration-made instance profile `unassigned`. `pai-config` hides its
+placement controls under the manager, with a pointer to the web UI (macOS keeps them). The relaxed
+migration check is accepted: the same keys and values per model, in the same section order.
+
+**The key split** (every key of `checks::WEB_MODEL_PROFILE_KEYS` and `MODEL_PROFILE_KEYS_NOT_ON_WEB`,
+2026-11-26). A key moves when it says where the weights go or is sized by the memory of the hardware.
+- **Moves to the entry `[<p>/<m>]`:**
+  - placement: `device`, `split-mode`, `tensor-split`, `main-gpu`, `override-tensor`, `n-gpu-layers`,
+    `n-cpu-moe`, `n-cpu-ffn`, `moe-cache-mib`, `op-offload`, `repack`, `no-host`, `lazy-mode`,
+    `load-mode`, `fit`, `fit-ctx`, `fit-target`, `device-draft`, `n-gpu-layers-draft`,
+    `mmproj-device`, `mmproj-offload`;
+  - memory-sized: `ctx-size`, `parallel`, `kv-unified`, `kv-unified-per-slot`, `batch-size`,
+    `ubatch-size`, `cache-type-k`, `cache-type-v`, `flash-attn`, `cache-ram`, `ctx-checkpoints`,
+    `checkpoint-min-step`, `spec-draft-n-ubatch`, `spec-draft-type-k`, `spec-draft-type-v`;
+  - `load-on-startup`: which models an instance preloads is a decision of that deployment, judged
+    against its server profile's `ModelsMax` (`load-on-startup-over-max`). This one is my call, not
+    stated by the user; it follows their rule (the model profile keeps the file, sampling and
+    behaviour).
+- **Stays in the model profile:**
+  - the file and the assets: `model`, `hf-repo`, `hf-file`, `mmproj`, `model-draft`;
+  - sampling: `temp`, `top-k`, `top-p`, `min-p`, `repeat-penalty`, `presence-penalty`,
+    `backend-sampling`, `n-predict`;
+  - behaviour:
+    - chat and reasoning: `jinja`, `chat-template-kwargs`, `prefill-assistant`, `reasoning`,
+      `reasoning-format`, `reasoning-effort`, `reasoning-preserve`, `reasoning-budget`,
+      `reasoning-budget-message`;
+    - embeddings: `embeddings`, `pooling`;
+    - caching: `cache-reuse` (a reuse chunk, not a size);
+    - vision: `image-min-tokens`, `image-max-tokens` (they size the vision buffer too, but they
+      set what the model sees: kept as behaviour);
+    - speculation: `spec-type`, `spec-draft-n-max`, `spec-draft-n-min`, `spec-draft-p-min` and
+      every `spec-ngram-*` key.
+- A key added to the lists later is classed in the same commit as its control (`checks.rs` gains the
+  two lists, `PLACEMENT_KEYS` and the rest, and a test that their union is the whole key set).
+
+**File shape.** Options:
+- **S1 (decided): sections in `instance-profiles.ini`**, `[<p>]` with `ServerProfile`, and one
+  `[<p>/<m>]` section per model entry holding that model's P keys. The id rules of both kinds exclude
+  `/`, so the name cannot be misread. Membership is the presence of the entry section, empty when the
+  model has no placement. The `Models` key of the accepted design goes, because the sections are the
+  list, in their order, and one truth is better than two. + adds an empty `[<p>/<m>]`; minus removes
+  it. The director copies `[<p>]` and every `[<p>/*]` together, one file, adjacent sections.
+- S2: a second pool, `placements.ini`. Two files to keep in step on every create, delete and copy, for
+  nothing S1 lacks. Rejected.
+- S3: inline lists in `[<p>]`. Unreadable and unparseable by the INI reader. Rejected.
+
+**The render.** For each entry `[<p>/<m>]`, the section of `models@<id>.ini` is the model profile's
+section from `models.ini` (bytes kept) followed by the entry's key lines. The model profile no longer
+holds a P key: after the migration the manager refuses a `models.ini` write carrying one
+(`model-profile-placement-key [key]`), so no precedence rule is needed. GT5's ROCm `load-mode` default
+stays a render rule for an entry that leaves it unset.
+- **Byte identity cannot hold.** Moving keys out and appending them changes the key order inside a
+  section, and a comment line above a moved key stays behind in `models.ini`. The relaxed check below
+  is accepted (user, 2026-11-26).
+- llama-server reads a section as a set of keys (`tools/server/README.md`, presets; a duplicate key is
+  what order would change, and the refusal above excludes it). So the migration's done-when becomes:
+  every rendered section parses to the same key and value set as before (`ini::parse_sections`), and
+  the sections come in the same order.
+
+**The migration** extends IP1's function:
+1. For each migrated instance profile (one per instance, `default` today) and each model its render
+   holds, move that model's P keys from its `models.ini` section into `[<p>/<m>]`.
+2. A model held by two instances' renders gets the keys in both entries (copies).
+3. A model that no render holds has placement keys that fit no instance profile. Options:
+   - (a) drop them, kept only in the `models.ini.2.99.0` backup and named in the journal;
+   - **(b, decided)** collect them in a migration-made instance profile `unassigned`
+     (`ServerProfile = default`, the only server profile they could have been set against), one entry
+     per such model. It is visible, deletable when no instance names it, and keeps tuned but
+     switched-off presets usable by copying the entry;
+   - (c) keep them in `models.ini`, which breaks the placement-key refusal. Rejected.
+   `unassigned` is created only when such a model exists.
+4. P keys then leave every `models.ini` section.
+
+**The checks.**
+- The device-bound check (`model-profile-device-outside`) becomes local: an entry's device keys
+  against its own profile's server profile `Devices`, in the same file. A server switch of the profile
+  re-checks every entry.
+- The memory check (`check_profile_memory`) keeps judging renders. It now reads the entry's
+  placement with the model profile's size and V keys.
+- The `n-cpu-moe` range and the tensor-rule checks (`checks.rs`) move with their keys to the entry
+  write.
+- The model-info read stays on the model profile (it is the model file's facts), so the entry page
+  reads `GET /api/profiles/model/{m}/model-info` as the model page does today.
+
+**What changes beyond the accepted slices.**
+- **Manager:** `SetInstanceProfileModel(p, m, values, revision)` for an entry's P keys, with its `As`
+  form and the checks above. `AddInstanceProfileModel` adds an empty entry. `CreateModelProfile` with
+  `from` copies B and V keys only.
+- **bff:** `GET|PUT /api/profiles/instance/{p}/models/{m}` (the P keys and a revision). `PUT
+  /api/profiles/model/{id}` refuses a P key with 422 and `field`.
+- **Web UI:**
+  - The model profile page loses the GPU distribution, Tensor placement and Hardware cards and the
+    vision placement keys (briefs 02e and 22).
+  - A per-model entry page under the instance profile, `#/profiles/instance/<p>/models/<m>`, takes
+    those cards (briefs 14 GPU distribution, 19 layer sliders and 21 tensor placement move there).
+  - The new instance profile brief is **26**, since 23 is "collapsible cards".
+- **`pai-config` and `pai`:** under the manager, the Models tab's placement controls (the GPU split
+  table) leave the model profile. Recommended: hidden there, with a hint that placement is set on the
+  instance profile in the web UI (or `pai instance-profile placement <p> <m> key=value`). macOS keeps
+  them on its own `models.ini`, which has no instances. Decided (user, 2026-11-26): hidden, with the
+  pointer.
+- **Benchmark sweeps.** `pai-app` `bench/sweep.rs` writes the swept key into `models.ini`. A sweep of a
+  P key (`tensor-split`, `n-cpu-moe`, `override-tensor`) must write the instance profile's entry
+  instead, through the manager, and put it back. The `optimize-preset` skill then tunes an entry, not
+  a model profile section.
+
+**Slices** (these replace IP1 to IP9 above; smallest first; Windows type-checked only):
+1. **IP1** (`pai-core`, pure):
+   - `instance_profiles` with the `[<p>]` and `[<p>/<m>]` shape;
+   - `PLACEMENT_KEYS` and the stay list, their union tested to be the whole key set;
+   - the render: the model section followed by the entry;
+   - the migration function: the instance profile per instance, the moved keys per held model,
+     copies for a model held twice, `unassigned` for the rest, the merged pool, the address moved
+     into the record.
+   Done when: each rendered section parses to the same key and value set as before, in the same
+   section order; a second run changes nothing; a crash-point fixture completes.
+2. **IP2** (`pai-manager`):
+   - the migration at start, with the backups and the stray `assignments.ini` rule;
+   - the resolution through the record (launch, binding, GT5);
+   - `WriteFile` of `assignments.ini` and `.disabled` refused, and a `models.ini` write carrying a
+     moved key refused (`model-profile-placement-key [key]`).
+   Done when: the fixture install starts with equal renders and launch argv. **Real-machine check**
+   after the deploy and the user's restart: `default` up on `:8581`, Strata served, the backups and
+   `unassigned` present.
+3. **IP3** (`pai-manager`, client):
+   - the instance profile methods; `SetInstanceProfileModel(p, m, values, revision)` with the moved
+     keys' checks (ranges, tensor rules, the local device check against the profile's `Devices`,
+     memory on every affected render); `SetInstanceProfile`, `SetInstanceAddress`;
+   - `CreateInstance` with a free port from 8581; the delete rules; `CreateModelProfile` into
+     `models.ini`, copying the stay keys only; saves answer the affected running instances.
+   Done when: each method's success, refusals and render effect are tested over D-Bus and the pipe.
+4. **IP4** (`pai-bff`, contract):
+   - the instance profile, entry, instance profile-of-instance and address routes;
+   - `PUT /api/profiles/model/{id}` refusing a moved key with 422 and `field`;
+   - the switch, `enabled` and the 17d and 17e routes removed; `running` as a list.
+   Done when: the routes' answers and refusals are pinned; removed routes answer 404.
+5. **IP5** (`fe`, briefs 22 and 02e): the plain Models list; the model profile page without the
+   switch and without the moved keys' cards and fields. Done when: the brief's tests are green and
+   the designer's UX check passes.
+6. **IP6** (`fe`, new brief 26 and brief 16, with 14, 19 and 21 moved): the instance profile list and
+   page, the per-model entry page with the placement and memory cards, the instance page's picker,
+   address and restart offer. Done when: the briefs' tests are green and the UX check passes.
+7. **IP7** (`pai-cli`, `pai-app`, `pai-config`):
+   - `pai instance-profile ...` including `placement <p> <m> key=value`;
+   - under the manager, the switch and the moved keys' controls hidden with the pointer to the web
+     UI, macOS unchanged;
+   - the import appending to `models.ini`.
+   Done when: the CLI and app tests pin the commands and the import, and the GUI lint shows the
+   controls absent under the manager.
+8. **IP7b** (`pai-app` bench): a sweep of a moved key writes and restores the instance profile entry
+   through the manager and leaves `models.ini` untouched. Done when: the sweep tests pin it.
+   **Real-machine check**: one short sweep on the GPUs with the user's go-ahead.
+9. **IP8** (`xtask`, llama.cpp's packages and MSI): the new default files and no `assignments.ini`.
+   **Needs a llama.cpp package build and install**, then the user's restart.
+10. **IP9** (docs agent): `AGENTS.md`, `crates/bff/README.md`, the packaging guide, the restore
+    command, and the `optimize-preset` skill (it tunes an entry now).
+
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
 The user's words (2026-11-15): "Ci potrebbe essere un componente super partes tipo un supermanager,
