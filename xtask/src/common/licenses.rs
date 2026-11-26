@@ -67,6 +67,7 @@ const TABLE: &[(&str, Origin)] = &[
     ("rocblas", Origin::RocmDoc("rocblas")),
     ("rocsolver", Origin::RocmDoc("rocsolver")),
     ("origami", Origin::Vendored("rocm-origami")),
+    ("tensilelite-host", Origin::Vendored("rocm-tensilelite")),
     ("amd_comgr", Origin::RocmDoc("amd_comgr")),
     ("rocm-core", Origin::RocmDoc("rocm-core")),
     ("amdhip64", Origin::Vendored("rocm-clr")),
@@ -374,6 +375,7 @@ fn spdx(file: &str) -> Option<&'static str> {
         | "rocm-hipblas.txt"
         | "rocm-hipblaslt.txt"
         | "rocm-origami.txt"
+        | "rocm-tensilelite.txt"
         | "rocm-rocm-core.txt"
         | "rocm-clr.txt"
         | "rocm-kpack.txt"
@@ -483,6 +485,11 @@ mod tests {
             ("libhipblaslt.dll", Origin::RocmDoc("hipblaslt")),
             ("liborigami.so.1", Origin::Vendored("rocm-origami")),
             ("origami.dll", Origin::Vendored("rocm-origami")),
+            (
+                "libtensilelite-host.so.1",
+                Origin::Vendored("rocm-tensilelite"),
+            ),
+            ("tensilelite-host.dll", Origin::Vendored("rocm-tensilelite")),
             ("amdhip64_7.dll", Origin::Vendored("rocm-clr")),
             ("libamdhip64.so.7", Origin::Vendored("rocm-clr")),
             ("rocm_kpack.dll", Origin::Vendored("rocm-kpack")),
@@ -537,6 +544,18 @@ mod tests {
     fn the_origami_text_is_vendored_in_the_repo() {
         let dir = util::repo_root().join("installer").join("licenses");
         assert!(dir.join("rocm-origami.txt").is_file(), "rocm-origami.txt");
+    }
+
+    /// tensilelite-host's text (hipBLASLt's `libtensilelite-host.so.1`, which
+    /// `libhipblaslt.so.1` needs) is vendored in the repo, not read from the
+    /// dist's `share/doc`, like origami's and rocroller's.
+    #[test]
+    fn the_tensilelite_host_text_is_vendored_in_the_repo() {
+        let dir = util::repo_root().join("installer").join("licenses");
+        assert!(
+            dir.join("rocm-tensilelite.txt").is_file(),
+            "rocm-tensilelite.txt"
+        );
     }
 
     /// The web UI's own texts, vendored from `installer/licenses/` and staged

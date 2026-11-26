@@ -13,6 +13,7 @@ The licences of libraries a package bundles whose text the dist does not carry. 
 | `rocm-rccl.txt` | `rccl` | `ROCm/rocm-systems`, `projects/rccl` |
 | `rocm-rocroller.txt` | `rocroller` | `ROCm/rocm-libraries`, `shared/rocroller/LICENSE.md` |
 | `rocm-origami.txt` | `origami` | `ROCm/rocm-libraries`, `shared/origami/LICENSE.md` |
+| `rocm-tensilelite.txt` | `tensilelite-host` (`libhipblaslt.so.1`'s host library) | `ROCm/rocm-libraries`, `projects/hipblaslt/tensilelite/LICENSE.md` |
 | `nccl.txt` | NCCL | `NVIDIA/nccl`, `LICENSE.txt` |
 | `vulkan-loader.txt` | Vulkan loader: `vulkan-1.dll` on Windows, `libvulkan.so.1` on Linux | `KhronosGroup/Vulkan-Loader`, `LICENSE.txt` |
 | `moltenvk.txt` | MoltenVK | `KhronosGroup/MoltenVK`, `LICENSE` |
