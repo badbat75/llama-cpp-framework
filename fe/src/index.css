@@ -1581,6 +1581,18 @@ legend.field-label {
     grid-column: 2;
   }
 
+  /* The New model profile form's Model file field (brief 22, its 22C1 review
+     D1, 2026-11-26): the same fix as the two below. The field wraps what the
+     box adds under it (the list of files, the folder's line, Read again) in one
+     `.field-after`, so from 720 px that one element goes to the control column
+     and the list sits under the input: left as the field's own children it took
+     the 200 px label column, its options wrapping to three lines, with the
+     status line beside it. Nothing names a grid-row: the line and the button
+     come and go with the folder's state, so the cells are placed by the flow. */
+  .field-after {
+    grid-column: 2;
+  }
+
   /* The GPU list's fieldset (brief 19, its LS1 review D1, 2026-11-22): the
      fieldset is a `.field`, so its children place themselves in these two
      columns. The budget, Auto and malformed line of 19 G.4 and 19 G.5 come and

@@ -951,6 +951,9 @@ test('2a.20, 2b.35, 2c.53, 2d.60, 22 D4.1: Tab goes skip link, banner, nav (Over
     'gemma-3-12b-it',
     'gemma-3-12b-it',
     en('model-profiles-delete-row', 'gemma-3-12b-it'),
+    // 22 C.1: the list's + ("New model profile"), the last stop, after the
+    // table.
+    en('model-profiles-new'),
   ])
 })
 

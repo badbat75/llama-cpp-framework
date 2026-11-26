@@ -599,7 +599,7 @@ test('16 17b2.4: the pool list add is the + (the rule of every list add), named 
   ).toBe(NEW)
 })
 
-test('16 17b2.4: the Overview list ends with its + (17c.1a landed), the Models list holds no add at all today (22 C.1 is not built), and a button that is not a list add keeps its words', async () => {
+test('16 17b2.4: the Overview list ends with its + (17c.1a landed), the Models list ends with its + after the table (22 C.1), and a button that is not a list add keeps its words', async () => {
   // 17b2.4's rule: each list add is the + after its list, named by its existing
   // key. The create form buttons are not a list add, so they keep their words:
   // 17b2.4 narrows the rule to a list add, it does not strip words from every
@@ -635,14 +635,21 @@ test('16 17b2.4: the Overview list ends with its + (17c.1a landed), the Models l
   expect(plusButtons(tiles), 'and none inside the tiles').toHaveLength(0)
   cleanup()
   vi.unstubAllGlobals()
-  // The Models list: 22 C.1 (New model profile) is not built, and the add will
-  // sit after the table, outside the filter.
+  // The Models list: 22 C.1 (New model profile) is built, so the list ends
+  // with its + after the table, outside the filter, named by its key.
   const models = renderAt('#/profiles/model', { modelProfiles: MODELS })
-  await within(models).findByRole('table')
+  const t = await within(models).findByRole('table')
+  const modelAdds = plusButtons(models)
+  expect(modelAdds, '17b2.4: the Models list ends with one add').toHaveLength(1)
+  const modelAdd = modelAdds[0]!
+  plusOf(modelAdd)
   expect(
-    plusButtons(models),
-    '17b2.4: the Models list has no list add today (22 C.1 not built)',
-  ).toHaveLength(0)
+    hiddenSpan(modelAdd).textContent?.replace(/\s+/g, ' ').trim(),
+    '17b2.4: the Models add is named by its key',
+  ).toBe(en('model-profiles-new'))
+  expect(before(t, modelAdd), '17b2.4: the add comes after the table').toBe(
+    true,
+  )
 })
 
 // ── 17b2.5: the ux check state ─────────────────────────────────────────────

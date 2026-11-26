@@ -770,8 +770,8 @@ framework to 2.99.2 and carry on toward it.
 **The release's goal (user, 2026-11-25):** every profile, model and server, assignable and editable from
 the web UI. Order: GT5b and 17e (an instance's model profiles) built 2026-11-25, 17c (create and remove an
 instance), TP3 and 17d (its server profile switch and the restart offer; left the designer's advice that
-"Server profile" repeats as heading and row label, not blocking) built 2026-11-26, then 22P and 22C (create a model
-profile from a file, a Hugging Face repository or a copy), then L2, CD (brief 22: the verb of every destructive confirm filled --danger; user, 2026-11-26),
+"Server profile" repeats as heading and row label, not blocking) built 2026-11-26, 22C1 (the New model profile form: from a model file or a copy) built 2026-11-26, then 22C2 (the same from a Hugging Face
+repository), then L2, CD (brief 22: the verb of every destructive confirm filled --danger; user, 2026-11-26),
 brief 24's A3 to A10, K1 and K2, and 22E, then LIC2 (the About page names the framework's licence, GNU AGPL v3 or later, and links its source repository, for AGPL section 13; user, 2026-11-26: the framework is relicensed from MIT to AGPL-3.0-or-later, slice LIC, llama.cpp staying MIT), all in the release. The release is cut once these are done, not at the end of step 10
 (user, same day): the rest of step 10 (model profile tags, R4 and R5, U17d to U17h, milestone 13a, F1
 to F3, M4, M5, 13c, 13d, the router, LAN access, the portal) comes after 2.99.1.

@@ -456,7 +456,7 @@ const CLASSES =
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8, brief 21 TP1 review D1, brief 22 22D4 and brief 16 17d review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there, and the confirm-row, hint-tip and status-cell of brief 22 22D4 (22 D4.4, 22 D4.3, 22 D4.1) with the hint-box and inactive its 22D4 review adds (D1, D2), page-status gone with the status row (22 D4.9)', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8, brief 21 TP1 review D1, brief 22 22D4 and brief 16 17d review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there, and the confirm-row, hint-tip and status-cell of brief 22 22D4 (22 D4.4, 22 D4.3, 22 D4.1) with the hint-box and inactive its 22D4 review adds (D1, D2), page-status gone with the status row (22 D4.9), and the create form’s field wrapper of brief 22 22C1 review D1', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -483,10 +483,28 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
   // button row shares the run row's rules, so the offer's classes are kept in
   // the namespace of the slice's strings keys (`restart-offer-*`).
   const ofOffer = (c: string) => /^restart-offer[-a-z0-9]*$/.test(c)
+  // Brief 22, slice 22C1's review (the designer, 2026-11-26, D1): the Model
+  // file field wraps what the box adds under it (the list, the folder's line,
+  // the retry) in one element the 720 px rule places in the control column. The
+  // brief describes that element and does not name its class, so it is kept in
+  // the namespace of the form's strings keys (`model-files-*`,
+  // `model-profiles-new-*`, `model-source-*`, `create-*`) and the field
+  // family's `field-after`, as 17f review D3 keeps the rename form.
+  const ofCreate = (c: string) =>
+    /^(field-after|model-profiles-new|model-files?|model-source|create)[-a-z0-9]*$/.test(
+      c,
+    )
   const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
     [...used]
-      .filter((c) => !ofCard(c) && !ofRename(c) && !ofModels(c) && !ofOffer(c))
+      .filter(
+        (c) =>
+          !ofCard(c) &&
+          !ofRename(c) &&
+          !ofModels(c) &&
+          !ofOffer(c) &&
+          !ofCreate(c),
+      )
       .sort(),
     'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the confirm-row and hint-tip of brief 22 22D4 with the hint-box and inactive of its 22D4 review, page-status gone with the status row of 22D2 (22 D4.9), tags-save gone, and nothing else outside the Tensor placement namespace, the rename form of brief 16 17f review D3 and the restart offer of brief 16 17d review D1 (R1.8: a class the designer did not brief is a look nothing asked for)',
   ).toEqual([...CLASSES, 'table-scroll'].sort())

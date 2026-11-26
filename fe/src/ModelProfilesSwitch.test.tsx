@@ -1039,7 +1039,15 @@ test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops),
     id,
     en('model-profiles-delete-row', id),
   ])
-  expect(tabbable().map(stopName)).toEqual([...head, ...cols, ...rowsThrice])
+  // 22 C.1: the list's + ("New model profile"), the last stop, after the
+  // table.
+  const plus = en('model-profiles-new')
+  expect(tabbable().map(stopName)).toEqual([
+    ...head,
+    ...cols,
+    ...rowsThrice,
+    plus,
+  ])
   // "e" is in every id, so the filter shows Clear and keeps every row.
   type(filterField(main), 'e')
   expect(tabbable().map(stopName)).toEqual([
@@ -1047,6 +1055,7 @@ test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops),
     en('model-profiles-filter-clear'),
     ...cols,
     ...rowsThrice,
+    plus,
   ])
   press(switchOf(main, 'Qwen3-27B'))
   await flush()
@@ -1056,6 +1065,7 @@ test('2c.53, 2d.60 (as 17c.2 amends it: the two sortable headers are tab stops),
     en('session-sign-in'),
     ...cols,
     ...rowsThrice,
+    plus,
   ])
 })
 

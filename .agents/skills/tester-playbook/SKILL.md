@@ -151,7 +151,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `awk '/^---- /{name=$2} /panicked at/{print name" | "$0}'` for one line per red; then run the untouched
   binaries in a second invocation to show them green.
 - Filter test names with `cargo test -p <crate> <word>` (never target names); reach a file with
-  `--test <name>`, and filter inside a target with `-- <filter>` after `--test`/`--lib`. Account for
+  `--test <name>`, and filter inside a target with `-- <filter>` after `--test`/`--lib`. Cargo takes ONE
+  positional TESTNAME: a second bare word is `error: unexpected argument ... found`, so several filters
+  all go after `--`. Account for
   every `N filtered out` line. Say which invocation covers a `#[test] #[serial]` in a lib (not
   `--test <name>`). `--lib` of a binary crate runs unit tests, `--bins` the built binary.
 - Write a long cargo log to a file, grep `test result|Running|^error`, then `sed -n` each block.
@@ -179,6 +181,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Prove each later red of a test that masks its own reds by cutting the earlier block out of the real
   source (a python line-range delete that asserts its two anchor lines first), running
   `--lib data_root_e2e` (~7 s incremental), and restoring with `cp` + `cmp -s`.
+- A gate script that walks up from a message marker to its `assert` must also stop at `assert_eq!` (a
+  value pin), and its marker must be the assert's MESSAGE, not an expected literal a sibling pin shares:
+  a marker with two hits aborts the gate, and gating every assert of a test to prove it green needs each
+  statement's exact range (up to the macro, down to its `);`).
 - Prove the several reds of ONE phase one at a time by wrapping each assert in `if false { // X-PIN-BEGIN`
   and `} // X-PIN-END` (a script that finds the message, walks up to its `assert`, down to its `);`, and
   asserts each walk is short): run, gate the red, run again, repeat. Then gate the feature's asserts ALL:
@@ -279,9 +285,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - Write a source lint knowing it reads production code with whole-line comments dropped and that a name it
   matches is the lint's data; over the files of a package split, pin only the OWNERSHIP rule it names.
+- A source lint that reads a CALL's arguments reuses the file's paren-counting argument parser (the
+  `call_flags`-style reader): a naive `split(')')` truncates at a nested call's paren (a `c.product()`
+  argument reads as `c.product(`), so the lint reds on the very fix it pins. A doc comment the pin walks
+  must be joined across lines: prose wraps.
 - A source lint that walks `read_dir(<crate>/src)` is non-recursive, so it skips that crate's `src/tests/`
   (the lib's own unit tests): for a rule about the production code that is exactly the scope, and the
   test's comment says so.
+- A source lint reading `include_str!` of a SIBLING file scans that file's test module too, so a new test
+  of yours that calls the seam adds a call site and reddens the lint as collateral: split the read at
+  `"\n#[cfg(test)]\nmod tests"` (the repo's own idiom) before parsing, and say so in the amended lint.
 - Pin a decision as a pure function over its inputs and test the function, not a run that happens to
   reach it. Pin a reader over a fixture root with the fixture's exact names (the case rules compare
   exactly, and `write_file` refuses a `[*]` section).
@@ -577,6 +590,11 @@ frozen list.
   (the block is at `index.css` 648, `.run-remove` at 2698) and LOSES. Name that in the assertion message,
   the coder writes the obvious rule first. Read the block's rules by range (the at-rule header's
   `[open, close]` offsets, the rules at depth 1 inside), never by a flat regex over the sheet.
+- Pin a `grid-column` placement as the WINNING rule's value AND the block it sits in (`depth > 0` and its
+  offset inside the at-rule's `[open, end]`): a top-level `.x { grid-column: 2 }` satisfies a value-only pin
+  while the review named the `@media (min-width: 720px)` block that makes the parent a grid (22C1 D1, the
+  block the 19 LS1 D1 and 21 TP1 D1 pins sit in). Prove the teeth with a mutant that moves the declaration
+  out of the block: the value stays `2`, the pin goes red naming the offsets.
 - Pin a hover-reveal that must sit in the flow (not a popover) by what only the flow shape answers: the
   box's `mouseleave` hides it, a `mouseover` of the box (not only of the control) shows it, and no rule
   reaching it declares `position: absolute`/`fixed`. A popover that is a child of the same wrapper passes
@@ -710,6 +728,11 @@ frozen list.
 - `open.click` must match EXACTLY ONE element: `isVisible()` throws a strict-mode violation on a selector
   with several matches (a row switch: scope it `main tbody tr:first-child .model-profiles-switch input`),
   and the throw aborts the whole state in every browser, width and theme, which reads as a broken harness.
+- Probe a new stub route by hand before trusting it: `python3 fe/ux/stub.py <abs fe/dist>` (no argv[1] is
+  `IndexError: list index out of range`) prints its bound port on stdout. `/__set` is a GET: a
+  `curl -X POST /__set?session=out` 404s, the session stays at its default, and the route you meant to
+  probe signed-out answers 200, which reads as a missing gate. The stub's POST routes carry no session
+  gate at all (the 17b/17c creates), so a signed-out POST answering 201 is the stub's shape, not a hole.
 - Prove which UX-check failures are pre-existing by stashing the state edits
   (`git stash push -- fe/ux/check.js fe/ux/stub.py`), running the check, and popping: the skeleton states
   (`loading-node`, `loading-overview`) flake in one browser, and the count of 18 lines per new state is
@@ -834,12 +857,46 @@ frozen list.
 
 - xtask is a BINARY crate: `cargo test -p xtask` runs `--bin xtask`, and `linux/` is
   `#[cfg(target_os = "linux")]`, `windows/` `#[cfg(windows)]`, so a phase's tests exist on one OS only
-  (the shared code's, in `common/`, run everywhere): state which OS can prove a pin.
+  (the shared code's, in `common/`, run everywhere): state which OS can prove a pin. `--lib` answers
+  `no library targets found`; reach the unit tests with `--bins` and filter after `--`.
+- A new bundled library's licence is pinned inside `common/licenses.rs`'s own tests: two rows (the `.so`
+  and the `.dll`) in `a_library_finds_its_licence_under_any_os_s_name` (its loop panics at the FIRST bad
+  row, so the `.dll` row's red is masked by the `.so` row and they share one cause), and a
+  `<name>_text_is_vendored_in_the_repo` presence pin over `installer/licenses/`. The SPDX half needs no
+  new test: `the_rpm_field_names_every_text_a_linux_package_can_carry` walks TABLE and reds a row whose
+  staged file has no `spdx` arm. `stem` strips `lib` and cuts at the first `.`, so
+  `libtensilelite-host.so.1` maps under the prefix `tensilelite-host`.
 - A stub seam in a binary crate needs `#[allow(dead_code)]` (a `pub fn` of a bin is dead until wired)
   AND `let _ = arg;` for each unused argument, else `cargo clippy -p xtask --all-targets -- -D warnings`
   reds the stub, not the tests.
-- `cargo fmt -p xtask --check` answers a diff in `xtask/src/linux/package.rs` at HEAD (pre-existing):
-  hand-apply only your own hunks, prove with `git diff --stat` naming your files alone.
+- The licence seams' LAST argument is the web UI flag, which `call_flags` pops: a new seam argument
+  (`product`) goes BEFORE it, or every `every_licence_call_passes_*` lint reds on the wiring.
+- A rule about `windows/package.rs` / `macos/package.rs` is pinned as a source lint in
+  `common/licenses.rs` (the file's own precedent, `include_str!("../windows/package.rs")`), since those
+  phases compile on their OS only; prove the Windows phase still compiles with
+  `cargo check -p xtask --all-targets --target x86_64-pc-windows-gnu` (the target and mingw gcc are
+  installed here), and say a macOS-only edit cannot be compiled on this box.
+- A package's `README.txt` is `licenses::stage_in`'s output, and the Linux copyright files embed that
+  file, so a rule about a copyright's words is pinned by staging the product into a temp dir and feeding
+  `README.txt` to `runtime_copyright`, never by rewriting the composition (`run()` builds it inline).
+- A temp-dir fixture here is `std::env::temp_dir().join(format!("xtask-<name>-{pid}"))` + `remove_dir_all`
+  on drop (no tempfile dep), with a `name` unique per test since `pid` is shared across parallel tests;
+  relative paths written with `/` join fine on Windows, so a fixture's rel path is OS-free.
+- A path a check PRINTS in its `bail!` is pinned by joining the components one by one
+  (`dir.join("ui").join("apps")..`), never a `/`-joined literal: the literal reds on Windows' separators.
+- `ui::warn`/`ui::dim`/`ui::say` go to the process stdout, uncapturable in a unit test, so a check's
+  report branch (which provisioning path ran) has no teeth here: pin only the `Ok`/`Err` outcome and the
+  `bail!` message, and say so in the report.
+- `linux/package.rs` tests read `run()` as the text from `pub fn run(` to the NEXT `\nfn ` in the file, so
+  a seam extracted from inside `run()` goes OUTSIDE that slice (before `pub fn run(`, beside `place` and
+  `runpath`): a helper inserted after it truncates `run()` for four source-text pins. Prove the extraction
+  with `cargo test -p xtask linux::package`.
+- The staged-path bases in `linux/package.rs`: `LIB_DIR` is `usr/lib/private-ai`, `RT_DIR` is
+  `usr/lib/private-ai/lib` and a dist-relative path starts with `lib/` too, so an expected
+  `format!("{RT_DIR}/lib/llvm/lib/x.so")` reads `lib/lib/` and reddens a correct fix: base the expected
+  staged path on `LIB_DIR`. `components::of` answers the owning package for a staged path
+  (`lib/llvm/lib/libomp.so` is the engine's, its deep twin under a `x86_64-unknown-linux-gnu/` dir is the
+  ROCm package's), so a placement rule pins the owner beside the path.
 
 ### The web UI (fe/)
 

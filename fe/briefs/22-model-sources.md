@@ -1875,3 +1875,65 @@ sorts the table.
   `path`, which P.5's filter (on the path relative to `dir`) would match nothing with; so text equal
   to the picked path filters nothing: reopened, the list shows every option (P.5's first 50) with the
   picked row `aria-selected="true"` and active. Any edit of the text drops the pick and filters again.
+
+## 22C1 review (designer, 2026-11-26)
+
+Built code read (`ModelProfiles.tsx` 853-1700: `NewProfile`, `NewProfileForm`, `CreateField`) and
+measured with `build/ux-review/c22.js` in Chromium, Firefox and WebKit at 1280 and 320 px, light and
+dark.
+
+Met:
+- C.1a: the + (40 px, "New model profile", `aria-expanded`) 12 px after the off-note; the form's
+  `h2`, the note, Name focused on opening, "A model file" checked.
+- P.1 and P.2 (two radios), C.2: the copy choice shows its select (the list's ids in file order) and
+  hides the file field (`hidden`); switching back keeps the typed text and moves no focus.
+- P.3 and the clarification: closed on arrival and when the folder lands; Down opens it; Enter picks
+  (full path in the box, list closed); Down again shows every option with the pick `aria-selected`;
+  Escape closes the list and keeps the form; typing filters ("coder": 1 option; "zzz": none and
+  `model-files-no-match`).
+- C.4: Create with nothing: `field-error-required` under Name and `field-error-pick-file` under Model
+  file, both `aria-invalid`, the focus on Name; copy with no choice: `field-error-choose`.
+- C.3: Escape closes the form, the focus on the +, `aria-expanded` false. No sideways scroll anywhere.
+- C.5 to C.7a by reading the code (1240-1300): 201 to the page, 504 `create-unknown` and the list
+  read again, 503 `api-client-unavailable`, field refusals under their fields, the rest in the alert.
+
+**Defects:**
+- **D1. At 720 px and wider the listbox falls into the label column.** `CreateField`
+  (`ModelProfiles.tsx` 1665) renders `after` (the listbox, the folder's status line, Read again) as
+  direct children of the `.field` grid, which carry no `grid-column`: the listbox takes the 200 px
+  label column under "Model file" (its options wrap to three lines) and the status line sits beside it
+  (`22c1-form-1280-light.png`). P.3 asks the list under the input. Fix: wrap `after` in one element
+  placed in the control column (`grid-column: 2` in the 720 px rule, `index.css` 1576-1581, as the
+  hint and the error are), so the list, the status and the button stack under the input.
+- **D2 (the brief's, not the code's). "1 files in the models folder match."** Section 2 gave
+  `model-files-count` one plural text. Add `model-files-count-one`: `1 file in the models folder
+  matches.`, used when the count is 1 (P.6). One key, one test.
+
+Adviser note: the radios "A model file" and "A copy of another model profile" sit closer to their
+circles than the checkboxes' labels do (`.check`, `gap: var(--space-2)`, `index.css` 1850; read on
+the screenshot, not measured); the same gap would match them (preference, the next pass on
+the picker, 22C2).
+
+Screenshots: `build/ux-review/shots/22c1-form-1280-light.png`, `22c1-form-320-light.png` (list open),
+`22c1-copy-1280-light.png`, `22c1-copy-320-light.png`.
+- **D3. The UX check stops on the new +.** `fe/ux/check.js` 647 and 652 (state
+  `model-profiles-delete`) select `main .ot-add:not([aria-disabled="true"])`, which now finds two
+  buttons, the row's trash and the new +; Playwright's strict mode throws and the whole run stops
+  (Chromium, Firefox and WebKit alike), so the states after it are not checked. Fix: scope both to the
+  table (`main tbody .ot-add:not([aria-disabled="true"])`), then rerun the full check.
+
+## 22C1 re-check (designer, 2026-11-26)
+
+Built code (`npm --prefix fe run build`); `build/ux-review/c22r.js` in Chromium, and the UX check one
+browser at a time.
+
+- D1 met. The listbox and the count line sit in the control column, under the input: at 1280 px the
+  input, the list and the status all start at x 480 (list 480 to 1144, 4 px below the input); at
+  720 px all start at x 232. No sideways scroll.
+- D2 met. Typing "coder" reads "1 file in the models folder matches." (`model-files-count-one`).
+- D3 met. Chromium and WebKit: 240 states each, 0 failing. Firefox: the full run stops on its known
+  22D4 engine crash (the pair `model-profiles-delete` then `model-profiles-delete-tip` at 320 px
+  light, 3 runs out of 3, see "22D4 UX check rerun"); every other state (234) passes, and
+  `model-profiles-delete` passes on its own (18), as does `model-profiles-delete-tip` on its own.
+
+22C1 accepted.

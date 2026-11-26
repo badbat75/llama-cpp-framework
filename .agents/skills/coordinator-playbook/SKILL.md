@@ -135,6 +135,7 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 
 ## Pitfalls
 
+- `xtask build framework` runs `npm ci` and `npm run build` in `fe/`, so a deploy while the designer's UX check or a Vitest run is going pulls `fe/node_modules` and `fe/dist` from under it: deploy only when no web UI agent is running (2026-11-26).
 - An interrupted `xtask install` of llama.cpp leaves dpkg half-configured and `apt-get` then refuses on the `Breaks:` between the engine and its runtimes; `sudo dpkg -i` of the engine, rocm and cuda debs together repairs it (2026-11-26). Before installing a new engine, check `ldd /usr/bin/llama-server` and the ggml libraries for "not found" in the staged tree.
 - An OpenCode run that ends its report and then prints `waiting for 1 background job` never exits (2026-11-25, twice): read its report from the log, kill the run by PID and start the next agent of the chain by hand (the `&&` chain stops on the kill). Briefs say: every command in the foreground.
 

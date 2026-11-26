@@ -606,6 +606,31 @@ const STATES = [
     ],
   },
   {
+    // Brief 22, slice 22C1 (22 C.10a): the Models list's New model profile form,
+    // opened on the file choice, so the check reads the picker, the Model file
+    // combobox and its options at 320 px and at 200 % text. The stub answers the
+    // folder read with the 40-character path 22 C.10a names (stub.py
+    // `MODEL_FILES`), beside a model in a subfolder and a split model.
+    // The opener is the + the brief names `model-profiles-new` (22 C.1a), after
+    // the note under the table; `main form` is the form C.1 asks for, the page's
+    // only form. The state names the opener by its id, so it fails until the
+    // slice lands, as 22 C.10a asks.
+    name: 'model-profiles-new',
+    set: 'session=admin',
+    hash: '#/profiles/model',
+    expect: [
+      { selector: '#page-heading', text: S['model-profiles-title'] },
+      {
+        selector: 'main #model-profiles-new',
+        message: 'the opener of the create form: the + after the note (22 C.1a)',
+      },
+    ],
+    open: {
+      click: 'main #model-profiles-new',
+      then: 'main form',
+    },
+  },
+  {
     // Brief 22, slice 22D4 (22 D4.1, 22 D4.4): the Models list with the confirm
     // row of a switched-off profile open. The pool at rest has one profile
     // reading `enabled` false (stub.py `MODEL_PROFILES`), so its − can act with
@@ -613,18 +638,21 @@ const STATES = [
     // React's own counter (no id of the brief), so the state names it by the
     // cell's box: the − that can act carries no `aria-disabled`. Its confirm is
     // a `tr` of the table, its group named by the list's question.
+    // 22C1 review D3: the list's + for a new profile (22 C.1) carries `ot-add`
+    // too and sits after the table, so both selectors are scoped to `tbody`,
+    // which holds the rows' − only.
     name: 'model-profiles-delete',
     set: 'session=admin',
     hash: '#/profiles/model',
     expect: [
       { selector: '#page-heading', text: S['model-profiles-title'] },
       {
-        selector: 'main .ot-add:not([aria-disabled="true"])',
+        selector: 'main tbody .ot-add:not([aria-disabled="true"])',
         message: 'the − of a switched-off row (22 D4.1)',
       },
     ],
     open: {
-      click: 'main .ot-add:not([aria-disabled="true"])',
+      click: 'main tbody .ot-add:not([aria-disabled="true"])',
       then: 'main tr.confirm-row [role="group"]',
     },
   },

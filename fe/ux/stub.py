@@ -153,6 +153,40 @@ MODEL_PROFILES = [
     {"id": "Old-Coder", "engine": "llama.cpp", "engineAvailable": True, "enabled": False, "model": ""},
 ]
 
+# GET /api/node/model-files (brief 22, slice 22C1, 22 C.10a, the state
+# `model-profiles-new` of check.js): the folder the New model profile form's
+# Model file picker reads. The fixture carries the 40-character path 22 C.10a
+# names (the file sitting in the folder itself, `category` null), a model in a
+# subfolder, and a split model listed once as its first shard (4 shards), so the
+# option's text, its size and its parts line are all read at 320 px.
+MODELS_DIR = "/var/lib/llama.cpp/models"
+MODEL_FILES = {
+    "source": "local",
+    "dir": MODELS_DIR,
+    "files": [
+        {
+            "path": f"{MODELS_DIR}/qwen3-27b.gguf",  # 40 characters (22 C.10a)
+            "size": 17_400_000_000,
+            "shards": 1,
+            "category": None,
+        },
+        {
+            "path": f"{MODELS_DIR}/qwen/qwen2.5-coder-7b-q5_k_m.gguf",
+            "size": 5_300_000_000,
+            "shards": 1,
+            "category": "qwen",
+        },
+        {
+            "path": f"{MODELS_DIR}/deepseek/DeepSeek-R1-Q4_K_M.gguf",
+            "size": 5_000_000_000,
+            "shards": 4,
+            "category": "deepseek",
+        },
+    ],
+    "truncated": False,
+    "error": None,
+}
+
 # GET /api/instances/<id>/profiles/model (brief 16, slice 17e, the state
 # `instance-models` of check.js): the pool's rows with the words of the
 # instance's record. The list's own switch is on (`all` inherit), so one profile
@@ -481,6 +515,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
         if p == "/api/profiles/model":
             return self.json(200, MODEL_PROFILES)
+        # Brief 22 slice 22C1 (22 C.10a, the state `model-profiles-new` of
+        # check.js): the folder the Model file picker reads.
+        if p == "/api/node/model-files":
+            return self.json(200, MODEL_FILES)
         # The facts of a model file (brief 19, section 0): the block counts and the
         # experts, read by the manager from the GGUF.
         if p.startswith("/api/profiles/model/") and p.count("/") == 5:
@@ -596,6 +634,16 @@ class Handler(SimpleHTTPRequestHandler):
                 new_id = json.loads(body)["id"]
             except (ValueError, KeyError):
                 return self.json(400, {"key": "instance-bad-id", "args": [""]})
+            return self.json(201, {"id": new_id})
+        # Brief 22 slice 22C1 (22 C.5, the state `model-profiles-new` of
+        # check.js): the Models list creates a model profile here, and the bff's
+        # reply is 201 with the new id. The check opens the form and reads it; it
+        # never presses Create, so the answer is a plain 201.
+        if p == "/api/profiles/model":
+            try:
+                new_id = json.loads(body)["id"]
+            except (ValueError, KeyError):
+                return self.json(400, {"key": "model-profiles-malformed", "args": []})
             return self.json(201, {"id": new_id})
         return self.send_error(404, "no POST of " + p)
 

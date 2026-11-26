@@ -90,6 +90,23 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Arithmetic with a ceiling: "saturating, divide last" is `checked_mul(..).and_then(..).map_or(MAX, |x|
   x / d)`, not a `saturating_mul` chain.
 
+### Refreshing the llama.cpp patches
+
+- Never touch `build/<os>/llama.cpp` (xtask owns it, it carries the applied patches and its revert
+  stashes): `git -C build/linux/llama.cpp worktree add /tmp/<x> <tag>`, work there, `git -C
+  build/linux/llama.cpp worktree remove --force /tmp/<x>` at the end.
+- `git apply --check` every `.patch` on the pristine tag first: the ones that pass need nothing, and
+  their sha256 in `patches/llama.cpp/README.md` stays. A hunk usually fails because upstream added a
+  member BELOW the inserted line, so the hunk's trailing context moved, not because the code changed:
+  read the target region before rewriting anything.
+- A bare `git diff` patch splits: `git apply --include='src/models/x.cpp'` applies the part that still
+  fits, edit the header by hand, regenerate the whole file with `git diff` (the index lines and the
+  hunk numbers come out right). Keep each patch's own format: `0001` is a bare `git diff`, `0005` and
+  `0006` are `git format-patch` bodies.
+- xtask applies every `*.patch` in the folder sorted by name (the extension filter skips README.md and
+  candidates.md), so prove the sequence in that order: check, apply, check, apply, then
+  `git diff --stat`. Nothing pins a patch's sha256 in code, the README is the record.
+
 ### Source lints and renames
 
 - Before renaming anything the GUI binds, check the `.slint` files. A source-text pin reads code without
@@ -99,6 +116,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   literal first. Apply the map to comment text only, not to code tokens, and fix pointers to a renamed
   identifier in the same slice. `.slint` comments cap at 80 columns. Prove a comment-only pass: every
   added diff line trimmed of `&*-` starts with `//`.
+- A test that pins a phrase written inside a multi-line string literal reads the RENDERED text: keep the
+  phrase contiguous and rewrap around it (a trailing space before `\` is kept, the newline and the next
+  line's indent are stripped), and count the RENDERED line widths, not the source's, when the file is a
+  wrapped text (the `readme()` of `xtask/src/common/licenses.rs`, a staged README.txt at ~79 columns).
+  Case matters: a pin of an ALL-CAPS licence title is not met by the mixed-case name in prose.
 - A strings-file VALUE is pinned by its callers' tests (and is a region's accessible name in the web UI).
   A refusal a client decodes must be a key of `checks::KEYS` with a `text()` arm; a `checks` refusal text
   is pinned by core tests over BOTH strings files. Prose in a constant whose bytes are DATA is data.
@@ -172,6 +194,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (the wire phase lists `(args, kind, needle)` rows). Change the rule and those rows are the last reds of
   `data_root_e2e`, one row at a time, and a row that pins the case the new rule accepts is a witness pair
   with the phase that pins the new rule: report the pair, change no test.
+- Linux bundle loop (the GPU runtimes): every directory of a dist that is mirrored under
+  `RT_DIR` needs its own `RUNPATH` entry, and a runtime the dist reaches through a symlink
+  of its own (`lib/llvm/lib/libomp.so` naming the file in `x86_64-unknown-linux-gnu/`) stages
+  in the LINK's directory with the file's bytes (`rocm_stage_path`): the file's own directory
+  is off the RUNPATH, and the installed engine fails with "libomp.so: cannot open shared
+  object file". The link counts only when it canonicalizes to that file (a dangling one
+  leaves the file's own place). `components::of` hands `llvm/lib/libomp.so` to llama.cpp,
+  and the bundle loop accepts an owner of Llama beside the dist's.
 - Packaging: `components::of` is a PREFIX ladder (a rule for a file inside an owned folder must come
   first); `windows/package.rs`'s `bundled` map is keyed by the dist label; the engine revision is
   `components::LLAMA_CPP_REVISION` and a bump moves the packages' Depends. Pin a file that must land in
@@ -260,6 +290,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `Set` and its class list allows a card's own namespace: a new rule naming an id
   the sheet already selects, or a class of that namespace, is free; a new id
   outside it is red.
+- A field child the 720 px grid must place in the control column (22C1 review D1): wrap the children in
+  ONE element and add one rule placing it INSIDE the one 720 px block that styles `.field` (the sheet's
+  LS1 and TP1 rules are there). Two of the sheet's own pins bind that rule: 19 LS1 D1 takes
+  `single(...)` of the rules whose compact selector is `.field` (no second `.field` rule), and 21 TP1 D1
+  takes `single(...)` of the block's rules that declare `grid-column` and whose selector names `div`
+  (name the new rule by a CLASS: `div.x` is the second one and reddens it). Render the wrapper only when
+  it has content (an always-rendered empty one is a grid item: a 0-high row plus two gaps under the
+  control), and a new class the brief does not name is allowed by R1.8 only inside a namespace the
+  tester's `of…` regex carries.
 - The sheet readers come in two shapes and each has a trap: `values(decls, 'x')` STRIPS the property
   (`d.slice(prop.length + 1)`), so its expectation is `['v']`, and an expectation written
   `['x: v']` is unsatisfiable by any CSS (22D4 amendment: `ListDeleteTip.test.tsx` 333, 601). A
@@ -385,6 +424,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A Save check keyed by a control id must gate on that control being rendered (a Layers text the row
   keeps while its kind hides the field): a mark on an id with no element is invisible and `focusMarked`
   has nothing to focus.
+- The in-flow combobox (brief 22 P.3, the 22C1 clarification): `listOpen` starts FALSE and the folder's
+  reply lands without opening it; open on Down, an edit, a click in the box, close on Escape, a pick,
+  `onBlur`. A pick-as-selection survives a reopen (`shown` keeps the whole list while the text equals
+  the picked path). A real click on an option never blurs the box (its `onMouseDown` preventDefault),
+  and a test's `focus(); click()` pair does blur it and still picks: React dispatches the click on the
+  now-`hidden` option.
+- A Create check that must block the send and mark nothing (an empty Model file box, 22 C.4 pinned
+  against a marked one two tests apart) needs its own flag beside the marks: gate `send` on the flag,
+  not on the mark, and focus the field. A manager 409 that names no `field` (409
+  `model-profile-name-taken` marking Name) is the refusal table's `field:` arm, not a new alert arm.
 
 ### The web UI (fe/): React and the harness
 
@@ -503,9 +552,6 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `mod windows` is `#[cfg(windows)]`, so no file under `xtask/src/windows/` is compiled on Linux. A
   `pub fn` only Linux code calls is `dead_code` on windows-gnu. `cargo clippy -p xtask` prints two
   `xtask (manifest)` warnings that are not yours.
-- `cargo fmt -p xtask --check` is red at HEAD in `xtask/src/linux/package.rs` (rustfmt joins a
-  `format!` of a test assertion): `git status --porcelain -- '*.rs'` shows that file unmodified, so
-  report it and reformat nothing.
 - Every phase of the manager's e2e sets the process-wide `PRIVATE_AI_DATA_ROOT`, so several probes in one
   run MUST use `--test-threads=1`: in parallel they read each other's temp dirs, and a probe that fails
   at an early assertion of a phase it never reached is that cross-talk, not a red.
@@ -685,6 +731,22 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   `span.visually-hidden` passes "nothing is written on the box" (WCAG 2.5.3) and keeps its name.
   The same helper's `isHidden` is `closest('[hidden]')`, so a span a test pins as NOT SHOWN needs the
   `hidden` attribute: `.visually-hidden` alone is visible to it.
+- A `[hidden]` ancestor takes a control out of EVERY `getByRole` / `queryByRole` (in
+  `@testing-library/dom` `isSubtreeInaccessible` reads `element.hidden` and `isInaccessible` walks
+  `parentElement`): no implementation lets a test name the Model file box while the copy radio is
+  checked (`ModelProfilesNew1` 22 P.1, line 475, asks for that combobox and pins it hidden at line 460),
+  and a helper that counts options filtering `!isHidden` sees none in a CLOSED listbox, so a test that
+  counts options must open the list first (`ModelProfilesNew2` 22 P.3, line 249).
+- A `<dialog>` rendered INSIDE a `<form>`: jsdom bubbles the sign-in form's `submit` up to the outer
+  form, so clicking Sign in runs the outer form's action as well (`ModelProfilesNew3` 22 C.7 counted a
+  second create until the Dialog became a SIBLING of the form).
+- The react-hooks `set-state-in-effect` lint follows a setState through a component function the effect
+  calls, even past its first `await` (it reddens `void readFolder()`): the read `useCallback` ANSWERS a
+  value and writes nothing, and the effect's own `.then` writes the state, as `ServerProfiles.tsx` 124.
+- A `role="status"` line a test compares with `.toBe` carries ONLY its text: a retry and a Sign in
+  belong beside it, not in it (brief 22, 22 P.6). A create field's About toggle is named
+  `${field-about} ${label}` by `aria-label` with the key as its visible words: the field's label may not
+  be repeated in a `span.visually-hidden`, which `getByText(label)` pins as one match.
 - The older list tests read a cell's RAW `textContent` (`rows()` in `ModelProfilesSwitch`,
   `ModelProfilesFilter`, `ModelProfiles.test.tsx`; only `cellText` clones drop `button` children), so a
   new icon button whose name is a `span.visually-hidden` lands in every one of those pins: one − in the

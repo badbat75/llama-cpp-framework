@@ -520,7 +520,7 @@ test('2b.35, 2c.53, 2d.60, 22 D4.1 (as 17c.2 amends it: the two sortable headers
   // Clear and before the first row's link.
   // 22 D4.1: the row's minus follows its switch.
   const order = tabbable().map(nameOf)
-  expect(order.slice(-11)).toEqual([
+  expect(order.slice(-12)).toEqual([
     // 20 N.10: Node info rides the host list so it comes with the instances,
     // then, brief 16 (17a.2), Server profiles and Model profiles, then About,
     // all before the filter.
@@ -535,6 +535,9 @@ test('2b.35, 2c.53, 2d.60, 22 D4.1 (as 17c.2 amends it: the two sortable headers
     'Qwen3-27B',
     'Qwen3-27B',
     en('model-profiles-delete-row', 'Qwen3-27B'),
+    // 22 C.1: the list's + ("New model profile"), the last stop, after the
+    // table.
+    en('model-profiles-new'),
   ])
   const t = await table(main)
   // 22 D4.1: the row's minus is a button in the row, so the table's stops are

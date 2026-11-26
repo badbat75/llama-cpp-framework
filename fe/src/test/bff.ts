@@ -426,9 +426,12 @@ export const EN: Record<string, string> = {
     'tensor override {0} has a space at the ends of its pattern or its device: llama.cpp keeps it, so the pattern matches no tensor and the device names none. Remove the space',
   'api-override-bad-device':
     'tensor override {0} names `{1}`: a device is a card name of letters, digits and `_` (CPU, ROCm0, CUDA1), and llama.cpp spells the CPU device CPU',
+  // Brief 22, 22C (section 2): the two texts change to name the field the way
+  // the form shows it (the manager's words stand behind them).
   'api-invalid-model-profile-id':
-    "invalid model profile id `{0}`: use letters, digits, '.', '-', '_'",
-  'api-model-profile-name-taken': 'a model profile named `{0}` already exists',
+    "{0} cannot be a model profile name: use letters, digits, '.', '-' and '_'.",
+  'api-model-profile-name-taken':
+    'There is already a model profile named {0} (names are compared without letter case). Pick another name.',
   // Brief 11 (fe/briefs/11-resource-refusals.md, slice M1): the two resource
   // refusals of a model profile. Each English is section 2 and section 7's,
   // verbatim, backticks included (the GUI's sentence plus the web's next step).
@@ -543,6 +546,47 @@ export const EN: Record<string, string> = {
   'model-profiles-load-failed': 'The model profiles could not be read.',
   'model-profiles-off-note':
     'A model profile switched off is kept, but its engine does not serve it and OpenCode does not offer it.',
+  // Brief 22 slice 22C1 (fe/briefs/22-model-sources.md, section 2 22C): the New
+  // model profile form on the Models list, and the file half of its picker
+  // (22 P.1 to P.6, as the 2026-11-26 check amends). The Hugging Face keys
+  // (22 P.7 to P.12) come with slice 22C2.
+  'model-profiles-new': 'New model profile',
+  'model-profiles-new-title': 'New model profile',
+  'model-profiles-new-note':
+    'A new model profile starts switched off and given to no instance.',
+  'model-profile-name': 'Name',
+  'model-profile-name-hint':
+    "Letters, digits, '.', '-' and '_'. It is the model's name for clients such as OpenCode, and cannot be changed here later.",
+  'model-profile-start-from': 'Start from',
+  'model-source-file': 'A model file',
+  'model-source-copy': 'A copy of another model profile',
+  'model-profile-copy-from': 'Model profile to copy',
+  'model-profile-copy-hint':
+    'Every setting of that profile is copied, comments included. Its instances are not: the copy is given to no instance and starts switched off.',
+  'model-profile-copy-choose': 'Choose a model profile',
+  'field-error-choose': 'Choose one.',
+  // 22P: the picker's file half. `model-files-truncated` is the 2026-11-25
+  // check's P.6a text, which replaces the 22P table's.
+  'model-file-hint':
+    "A .gguf file in this machine's models folder: type part of its name to narrow the list, then pick it. For a model split in parts, the list shows the first part, which loads them all.",
+  'model-files-loading': 'Reading the models folder…',
+  'model-files-count': '{0} files in the models folder match.',
+  // 22C1 review D2: one file is said as one, never "1 files".
+  'model-files-count-one': '1 file in the models folder matches.',
+  'model-files-more':
+    'Showing {0} of {1} matching files: type more of the name to narrow the list.',
+  'model-files-no-match': 'No file in the models folder matches.',
+  'model-files-retry': 'Read the folder again',
+  'field-error-pick-file': 'Pick a file from the list.',
+  'model-files-empty':
+    'The models folder {0} holds no .gguf file yet. Put one there (pai-config can download one), then read the folder again; or use a Hugging Face repo.',
+  'model-files-truncated':
+    'The models folder holds more than the list can read, so some files are missing from it. Move the files no profile uses out of it.',
+  'model-files-unreadable':
+    'The models folder {0} could not be read, so no file can be picked now. Read it again later, or use a Hugging Face repo.',
+  'model-files-failed':
+    'The list of model files could not be read, so no file can be picked now. Read it again later, or use a Hugging Face repo.',
+  'model-file-parts': '{0} parts',
   // Slice 2b (fe/briefs/02-models.md, section 2b.9): the list's filter.
   'model-profiles-filter-label': 'Filter model profiles',
   'model-profiles-filter-hint':
@@ -1667,6 +1711,77 @@ export function modelProfileDoc(
 }
 
 /**
+ * One row of GET /api/node/model-files (fe/briefs/api-contract.md 226-245, as
+ * the 22P check reads it): the full `path` the manager's walk spells, the bytes
+ * of a split model's first shard and its shard count, and the first subfolder
+ * under `dir` (`null` for a file sitting in it).
+ */
+export type ModelFileRow = {
+  path: string
+  size: number
+  shards: number
+  category: string | null
+}
+
+/** The models folder `modelFilesBody` answers as `dir`. */
+export const MODELS_DIR = '/var/lib/llama.cpp/models'
+
+/**
+ * One GET /api/node/model-files answer (brief 22, 22 P.4 to P.6a): `files` the
+ * rows, `extra` replacing the top-level members (`truncated`, `error`).
+ */
+export function modelFilesBody(
+  files: ModelFileRow[] = MODEL_FILES,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    source: 'local',
+    dir: MODELS_DIR,
+    files,
+    truncated: false,
+    error: null,
+    ...extra,
+  }
+}
+
+/** A row of `dir`. `category` defaults to the first subfolder, `null` for a
+ *  file sitting in `dir` (fe/briefs/api-contract.md 239). */
+function modelFile(
+  rel: string,
+  size: number,
+  shards = 1,
+  category: string | null = rel.includes('/') ? rel.split('/')[0]! : null,
+): ModelFileRow {
+  return {
+    path: `${MODELS_DIR}/${rel}`,
+    size,
+    shards,
+    category,
+  }
+}
+
+/**
+ * The folder the picker reads when a test says nothing (brief 22, 22 P.5a):
+ * main models, a split model listed once as its first shard, a file sitting in
+ * `dir`, one under two folders, and one file of each kind P.5a leaves out (a
+ * projector, an imatrix, a MTP, an eagle3, a dflash and a dspark draft).
+ */
+export const MODEL_FILES: ModelFileRow[] = [
+  modelFile('qwen/Qwen3-27B-Q8_0.gguf', 17_400_000_000),
+  modelFile('qwen/qwen2.5-coder-7b-q5_k_m.gguf', 5_300_000_000),
+  modelFile('gemma/gemma-3-12b-it-Q4_K_M.gguf', 8_000_000_000),
+  modelFile('deepseek/DeepSeek-R1-Q4_K_M.gguf', 5_000_000_000, 4),
+  modelFile('tiny/tiny-openai-f16.gguf', 52_943_360),
+  modelFile('models/plain-model.gguf', 3_000_000_000),
+  modelFile('Qwen3-27B-Q8_0-mmproj-BF16.gguf', 700_000_000, 1, null),
+  modelFile('qwen/Qwen3-27B-IQ4_XS-imatrix.gguf', 17_000_000_000),
+  modelFile('qwen/Qwen3-27B-mtp-draft.gguf', 1_200_000_000),
+  modelFile('swift/Swift-Flash-Next-eagle3-f16.gguf', 900_000_000),
+  modelFile('swift/Swift-Flash-Next-dflash-f16.gguf', 900_000_000),
+  modelFile('swift/Swift-Flash-Next-dspark-f16.gguf', 900_000_000),
+]
+
+/**
  * A server document (GET /api/instances/{id}/server) with every kind of value.
  * `extra` adds or replaces top-level members, such as `withheld`.
  */
@@ -1777,6 +1892,21 @@ export type BffOptions = {
   instances?: Instance[] | Answer
   /** GET /api/profiles/model: the model profiles, or the reply. Default MODEL_PROFILES. */
   modelProfiles?: ModelProfile[] | Answer
+  /**
+   * GET /api/node/model-files (brief 22, 22 P.4): the rows to answer 200 with,
+   * or the reply. Default MODEL_FILES (the fixture of 22 P.5a), so a form that
+   * says nothing reads a folder with main models and the files P.5a leaves out.
+   */
+  modelFiles?: ModelFileRow[] | Answer
+  /**
+   * POST /api/profiles/model (brief 22, 22 C.5): the reply to the n-th create
+   * (from 1), given the parsed body. Default 201 `{"id": <the body's id>}`.
+   */
+  modelProfileCreate?: (
+    body: unknown,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
   /**
    * GET /api/profiles/server (brief 15 C2): the server profiles, or the reply.
    * Default SERVER_PROFILES, the `default` profile with no tags, so a test that
@@ -2097,6 +2227,26 @@ export function fakeBff(options: BffOptions = {}) {
       const p = options.modelProfiles ?? MODEL_PROFILES
       if (Array.isArray(p)) return Promise.resolve(reply(200, p))
       return answer(p, init)
+    }
+    // Brief 22, 22 P.4: the models folder the picker reads. The rows answer 200
+    // as the bff spells them; a test names the reply for a failure, an empty
+    // folder, an unreadable folder or a truncated walk.
+    if (route === 'GET /api/node/model-files') {
+      const p = options.modelFiles ?? MODEL_FILES
+      if (Array.isArray(p))
+        return Promise.resolve(reply(200, modelFilesBody(p)))
+      return answer(p, init)
+    }
+    // Brief 22, 22 C.5: the create. 201 carries the id, as the bff does.
+    if (route === 'POST /api/profiles/model') {
+      const n = calls.filter(
+        (c) => c.method === 'POST' && c.path === '/api/profiles/model',
+      ).length
+      return Promise.resolve(
+        options.modelProfileCreate
+          ? options.modelProfileCreate(body, n, init)
+          : reply(201, { id: (body as { id?: string })?.id ?? '' }),
+      )
     }
     if (route === 'GET /api/profiles/server') {
       const p = options.serverProfiles ?? SERVER_PROFILES
