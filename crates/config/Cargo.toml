@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 build = "build.rs"
 description = "GUI configurator for the Private AI Framework"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 publish = false
 
 # The modules live in the library, the binary only dispatches. Its doc comments

@@ -3,7 +3,7 @@ name = "pai-bff"
 version.workspace = true
 edition = "2021"
 description = "pai-bff: the backend-for-frontend service of the Private AI Framework"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 publish = false
 
 # The modules live in the library, the binary only calls `bff::main`. Its doc

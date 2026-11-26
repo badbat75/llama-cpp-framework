@@ -369,6 +369,7 @@ pub fn run(product: Option<Product>, keep_staging: bool) -> Result<()> {
                 llama_cpp: llama.clone(),
                 ..Default::default()
             },
+            c.product(),
             false,
         )?;
         let version = macos_pkg::version(c, &fw_version, &llama_build, &vulkan_version);

@@ -3,7 +3,7 @@ name = "pai-core"
 version.workspace = true
 edition = "2021"
 description = "Shared library of private-ai-framework: paths, INI and server config, the llama-server launch, strings"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 publish = false
 
 # Its doc comments are not doctests: none was written as one.

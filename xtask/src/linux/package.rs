@@ -849,11 +849,12 @@ pub fn run(
                 cuda: dists.find_cuda(),
                 ..Default::default()
             },
+            c.product(),
             licenses::component_ships_web_ui(*c),
         )?;
         licence_fields.push((
             *c,
-            licenses::rpm_license(&entries, licenses::component_ships_web_ui(*c)),
+            licenses::rpm_license(&entries, c.product(), licenses::component_ships_web_ui(*c)),
         ));
 
         let doc = root.join("usr/share/doc").join(c.package());
@@ -881,7 +882,8 @@ pub fn run(
             )?;
         } else {
             let mut copyright = format!(
-                "{} {} is part of {} {fw_version}, distributed under the MIT licence:\n\n",
+                "{} {} is part of {} {fw_version}, distributed under the GNU Affero General \
+                 Public License, version 3 or later:\n\n",
                 c.package(),
                 version_of(*c),
                 components::BASE_NAME
@@ -2980,7 +2982,14 @@ mod tests {
             put(&config, rel, ELF, 0o644);
         }
         let f = fields_v(Component::Config, FW, &[], Some(ENGINE_MIN));
-        let spec = rpm_spec(&f, "MIT", "libggml", &config);
+        // A framework package: the field is the value `rpm_license` answers for
+        // `Product::Framework`, AGPL first, MIT kept for llama.cpp.
+        let spec = rpm_spec(&f, "AGPL-3.0-or-later AND MIT", "libggml", &config);
+        assert!(
+            spec.lines()
+                .any(|l| l == "License:        AGPL-3.0-or-later AND MIT"),
+            "the framework's spec does not carry the field:\n{spec}"
+        );
         check_files(&spec, &config);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -3719,7 +3728,8 @@ mod tests {
     /// libraries, at the SDK's version, for the llama.cpp engine, where the
     /// licence texts are (its own directory under /usr/share/private-ai/
     /// licenses), and the README of that directory. It is not part of the
-    /// framework: it neither says so nor carries the framework's MIT text.
+    /// framework: it neither says so nor carries the framework's own licence
+    /// text.
     #[test]
     fn a_runtimes_copyright_describes_the_runtime_not_the_framework() {
         let readme = "libamdhip64.so.7: MIT, see rocm.txt\n";
@@ -3745,10 +3755,90 @@ mod tests {
             assert!(!text.contains("private-ai-framework"), "{c:?}:\n{text}");
             assert!(!text.contains("part of"), "{c:?}:\n{text}");
             assert!(
-                !text.contains("Permission is hereby granted"),
-                "{c:?}: the framework's MIT text:\n{text}"
+                !text.contains("Permission is hereby granted")
+                    && !text.contains("GNU AFFERO GENERAL PUBLIC LICENSE"),
+                "{c:?}: the framework's own licence text:\n{text}"
             );
             assert!(!text.contains('\u{2014}'), "{c:?}:\n{text}");
+        }
+    }
+
+    /// The `README.txt` a llama.cpp product package stages (its engine, its
+    /// runtimes): the text the engine's copyright embeds verbatim, and the
+    /// text every runtime's copyright ends with.
+    fn staged_llama_readme(name: &str) -> String {
+        let dir = scratch(name);
+        let llama = dir.join("llama");
+        std::fs::create_dir_all(&llama).unwrap();
+        std::fs::write(llama.join("LICENSE"), "MIT").unwrap();
+        let licenses = dir.join("licenses");
+        licenses::stage_in(
+            &licenses,
+            &[],
+            &licenses::Sources {
+                llama_cpp: llama,
+                ..Default::default()
+            },
+            Product::Llama,
+            false,
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(licenses.join("README.txt")).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        text
+    }
+
+    /// `text` names the framework's licence, in any casing, as a word
+    /// ("AGPL") or in full ("Affero").
+    fn names_agpl(text: &str) -> bool {
+        text.to_ascii_uppercase().contains("AGPL") || text.to_ascii_lowercase().contains("affero")
+    }
+
+    /// The engine's copyright is its own MIT words, llama.cpp's LICENSE and
+    /// the staged `README.txt` (the branch below embeds that file verbatim):
+    /// none of it names the framework's AGPL, which is not the engine's
+    /// licence.
+    #[test]
+    fn the_engine_copyright_names_no_affero() {
+        let readme = staged_llama_readme("lic-engine-copyright");
+        assert!(
+            !names_agpl(&readme),
+            "the engine copyright embeds an AGPL readme"
+        );
+        let code = include_str!("package.rs")
+            .split("\n#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap();
+        let engine = code
+            .split("if *c == Component::Llama {")
+            .nth(1)
+            .expect("the engine's copyright branch")
+            .split("} else if")
+            .next()
+            .unwrap();
+        assert!(
+            engine.contains("README.txt"),
+            "the engine copyright does not embed README.txt:\n{engine}"
+        );
+        assert!(
+            engine.contains("MIT") && !names_agpl(engine),
+            "the engine copyright words: no MIT, or name the AGPL:\n{engine}"
+        );
+    }
+
+    /// A runtime's copyright ends with its staged `README.txt`: built from that
+    /// real text it names no Affero. A runtime is a llama.cpp product package
+    /// (`Component::product`), which is what gives it that text.
+    #[test]
+    fn the_runtime_copyright_of_the_staged_readme_names_no_affero() {
+        let readme = staged_llama_readme("lic-runtime-copyright");
+        for c in [Component::Rocm, Component::Cuda, Component::Vulkan] {
+            assert_eq!(c.product(), Product::Llama, "{c:?}");
+            let text = runtime_copyright(c, "10.1.0", &readme);
+            assert!(
+                !names_agpl(&text),
+                "{c:?}: the runtime copyright names the AGPL"
+            );
         }
     }
 

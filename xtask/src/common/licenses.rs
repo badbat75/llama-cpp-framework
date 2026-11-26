@@ -11,7 +11,6 @@
 use super::{ui, util};
 #[cfg(target_os = "linux")]
 use crate::common::components::Component;
-#[cfg(any(windows, test))]
 use crate::Product;
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
@@ -249,15 +248,18 @@ fn copy(from: &Path, to: &Path) -> Result<()> {
 
 /// Stage every text into `<share>/licenses`. `libraries` is what the package
 /// bundles, by file name; llama.cpp's own files in it are accepted as they are.
-/// `web_ui` says the package ships the web UI, and so carries its texts.
+/// `product` says which product's package this is: only the framework's carries
+/// the framework's own text. `web_ui` says the package ships the web UI, and so
+/// carries its texts.
 #[cfg(any(windows, test))]
 pub fn stage(
     share: &Path,
     libraries: &[String],
     sources: &Sources,
+    product: Product,
     web_ui: bool,
 ) -> Result<Vec<Entry>> {
-    stage_in(&share.join("licenses"), libraries, sources, web_ui)
+    stage_in(&share.join("licenses"), libraries, sources, product, web_ui)
 }
 
 /// [`stage`] into `dir` itself: split packages each keep their own directory,
@@ -266,11 +268,14 @@ pub fn stage_in(
     dir: &Path,
     libraries: &[String],
     sources: &Sources,
+    product: Product,
     web_ui: bool,
 ) -> Result<Vec<Entry>> {
     std::fs::create_dir_all(dir)?;
     let repo = util::repo_root();
-    copy(&repo.join("LICENSE"), &dir.join("private-ai-framework.txt"))?;
+    if product == Product::Framework {
+        copy(&repo.join("LICENSE"), &dir.join("private-ai-framework.txt"))?;
+    }
     copy(
         &repo
             .join("crates")
@@ -317,7 +322,7 @@ pub fn stage_in(
         pairs.push((library.clone(), file));
     }
     let entries = group(pairs);
-    std::fs::write(dir.join("README.txt"), readme(&entries, web_ui))?;
+    std::fs::write(dir.join("README.txt"), readme(&entries, product, web_ui))?;
     ui::dim(format!(
         "Licences of {} libraries in share/licenses",
         libraries.len()
@@ -332,13 +337,26 @@ fn listing(entries: &[Entry]) -> String {
         .collect()
 }
 
-fn readme(entries: &[Entry], web_ui: bool) -> String {
-    let mut text = String::from(
-        "The Private AI Framework is distributed under the MIT licence (private-ai-framework.txt).\n\
-         llama.cpp is under llama.cpp.txt, the icon font of the configurator under\n\
-         fluent-system-icons.txt. The bundled libraries are redistributed under their own\n\
-         licences, and this project's MIT licence does not cover them:\n\n",
-    );
+fn readme(entries: &[Entry], product: Product, web_ui: bool) -> String {
+    // The two products speak for themselves: the framework names its AGPL
+    // and the file holding it; a llama.cpp package names llama.cpp's MIT,
+    // and says nothing of a licence it does not ship.
+    let mut text = if product == Product::Framework {
+        String::from(
+            "The Private AI Framework is under the GNU Affero General Public License,\n\
+             version 3 or later (private-ai-framework.txt).\n\n\
+             llama.cpp is under llama.cpp.txt, the icon font of the configurator under\n\
+             fluent-system-icons.txt. The bundled libraries are redistributed under\n\
+             their own licences: the GNU Affero General Public License does not cover\n\
+             them, and neither does the MIT licence of llama.cpp:\n\n",
+        )
+    } else {
+        String::from(
+            "llama.cpp is under the MIT licence (llama.cpp.txt).\n\n\
+             The bundled libraries are redistributed under their own licences, which\n\
+             the MIT licence of llama.cpp does not cover:\n\n",
+        )
+    };
     text.push_str(&listing(entries));
     if web_ui {
         text.push_str(
@@ -405,11 +423,17 @@ fn spdx(file: &str) -> Option<&'static str> {
     })
 }
 
-/// The RPM `License:` value: this project and llama.cpp (both MIT), then what
-/// the package bundles, and the web UI's texts when the package ships it.
+/// The RPM `License:` value: the framework's own licence, AGPL-3.0-or-later,
+/// when the package is one of the framework's; llama.cpp's MIT, which every
+/// package carries; then what the package bundles, and the web UI's texts when
+/// the package ships it.
 #[cfg(any(target_os = "linux", test))]
-pub fn rpm_license(entries: &[Entry], web_ui: bool) -> String {
-    let mut parts: Vec<&'static str> = vec!["MIT"];
+pub fn rpm_license(entries: &[Entry], product: Product, web_ui: bool) -> String {
+    let mut parts: Vec<&'static str> = Vec::new();
+    if product == Product::Framework {
+        parts.push("AGPL-3.0-or-later");
+    }
+    parts.push("MIT");
     let mut add = |part: &'static str| {
         if !parts.contains(&part) {
             parts.push(part);
@@ -454,14 +478,25 @@ fn rtf_paragraphs(text: &str) -> String {
 }
 
 /// The license page of the MSI: what is under which terms, this project's
-/// licence, and NVIDIA's terms in full since those restrict what the MIT does
-/// not. The other texts are installed. `web_ui` says this MSI ships the web UI,
-/// and so names its texts.
+/// licence text, and NVIDIA's terms in full since those carry obligations of
+/// their own. The other texts are installed. `product` is the MSI's product,
+/// whose own licence heads the page. `web_ui` says this MSI ships the
+/// web UI, and so names its texts.
 #[cfg(any(windows, test))]
-pub fn installer_page(entries: &[Entry], own: &str, eula: Option<&str>, web_ui: bool) -> String {
-    let mut text = readme(entries, web_ui);
+pub fn installer_page(
+    entries: &[Entry],
+    own: &str,
+    eula: Option<&str>,
+    product: Product,
+    web_ui: bool,
+) -> String {
+    let mut text = readme(entries, product, web_ui);
     text.push_str("\nThe full texts are installed in share\\licenses, beside bin.\n\n");
-    text.push_str("---- Private AI Framework: MIT licence ----\n\n");
+    if product == Product::Llama {
+        text.push_str("---- llama.cpp: MIT ----\n\n");
+    } else {
+        text.push_str("---- Private AI Framework: GNU AGPL v3 or later ----\n\n");
+    }
     text.push_str(own);
     if let Some(eula) = eula {
         text.push_str("\n\n---- The NVIDIA libraries: NVIDIA's terms ----\n\n");
@@ -581,7 +616,7 @@ mod tests {
         // A missing text stops the package naming it, as the other vendored
         // texts do: an Ok that skipped them and an Err that named none are
         // both refusals here.
-        let staged = stage(&share, &[], &sources, true);
+        let staged = stage(&share, &[], &sources, Product::Framework, true);
         let licenses = share.join("licenses");
         let entries = match staged {
             Ok(entries) => entries,
@@ -671,7 +706,7 @@ mod tests {
             ("the package that does not", false),
         ] {
             let licenses = dir.join(if web_ui { "web" } else { "plain" });
-            stage_in(&licenses, &[], &sources, web_ui).unwrap();
+            stage_in(&licenses, &[], &sources, Product::Framework, web_ui).unwrap();
             let readme = std::fs::read_to_string(licenses.join("README.txt")).unwrap();
             for file in files {
                 assert_eq!(
@@ -718,15 +753,52 @@ mod tests {
             web_ui_licenses: Some(texts),
             ..Default::default()
         };
-        stage_in(&dir.join("plain"), &[], &sources, false)
+        stage_in(&dir.join("plain"), &[], &sources, Product::Framework, false)
             .expect("a package without the web UI stops over a web UI text");
-        let stopped = stage_in(&dir.join("web"), &[], &sources, true)
+        let stopped = stage_in(&dir.join("web"), &[], &sources, Product::Framework, true)
             .expect_err("a package shipping the web UI was packaged without its text");
         assert!(
             stopped.to_string().contains(missing),
             "the refusal does not name {missing}: {stopped}"
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The framework is AGPL-3.0-or-later (llama.cpp stays MIT): `README.txt`
+    /// names that licence beside the file holding it, says the bundled
+    /// libraries sit outside it, and never calls the framework's own text MIT.
+    #[test]
+    fn the_readme_names_the_framework_s_agpl_licence() {
+        let text = readme(&[], Product::Framework, false);
+        let paragraphs: Vec<&str> = text.split("\n\n").collect();
+        assert!(
+            paragraphs
+                .iter()
+                .any(|p| p.contains("GNU Affero General Public License")
+                    && p.contains("private-ai-framework.txt")
+                    && p.contains("3")
+                    && p.contains("later")),
+            "README.txt does not name the framework's licence as the GNU Affero\n\
+             General Public License, version 3 or later, in private-ai-framework.txt:\n{text}"
+        );
+        assert!(
+            paragraphs.iter().any(|p| p.contains("librar")
+                && p.contains("cover")
+                && p.contains("not")
+                && (p.contains("Affero") || p.contains("AGPL"))),
+            "README.txt does not say the bundled libraries are outside the framework's\n\
+             licence:\n{text}"
+        );
+        for paragraph in &paragraphs {
+            assert!(
+                !paragraph.contains("private-ai-framework.txt") || !paragraph.contains("MIT"),
+                "README.txt calls the framework's own text MIT:\n{text}"
+            );
+        }
+        assert!(
+            !text.contains("this project's MIT licence"),
+            "README.txt still says this project's MIT licence:\n{text}"
+        );
     }
 
     /// The SPDX identifier of each web UI text, as its own vendored file says:
@@ -743,9 +815,10 @@ mod tests {
         }
     }
 
-    /// The `.rpm` `License:` field of the package that ships the web UI declares
-    /// OFL-1.1 and ISC beside MIT; every other component's field is byte for
-    /// byte what it is today.
+    /// The `.rpm` `License:` field of the package that ships the web UI (the
+    /// bff, a framework package) starts with the framework's AGPL and keeps MIT
+    /// beside it, for llama.cpp and its MIT libraries, and adds OFL-1.1 and ISC.
+    /// The engine's field names MIT alone: the framework is not in that package.
     #[test]
     fn the_rpm_field_of_the_web_ui_package_adds_the_font_and_icon_licences() {
         let entries = |files: &[&str]| -> Vec<Entry> {
@@ -757,23 +830,30 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(rpm_license(&[], true), "MIT AND OFL-1.1 AND ISC");
-        assert_eq!(rpm_license(&[], false), "MIT");
+        assert_eq!(
+            rpm_license(&[], Product::Framework, true),
+            "AGPL-3.0-or-later AND MIT AND OFL-1.1 AND ISC"
+        );
+        assert_eq!(
+            rpm_license(&[], Product::Framework, false),
+            "AGPL-3.0-or-later AND MIT"
+        );
         assert_eq!(
             rpm_license(
                 &entries(&["rocm-clr.txt", CUDA_EULA_FILE, "numactl.txt"]),
+                Product::Llama,
                 false
             ),
             "MIT AND LicenseRef-NVIDIA-CUDA-EULA AND LGPL-2.1-only"
         );
     }
 
-    /// The web UI flag of every call to `what` in `src` (which ends with its
-    /// `(`): the last argument, up to the `)` that closes the call, split at
-    /// the commas of the call's own nesting level. Reads every call, not the
+    /// The arguments of every call to `what` in `src` (which ends with its
+    /// `(`): each argument up to the `)` that closes the call, split at the
+    /// commas of the call's own nesting level. Reads every call, not the
     /// first.
-    fn call_flags(src: &str, what: &str) -> Vec<String> {
-        let mut flags = Vec::new();
+    fn call_args(src: &str, what: &str) -> Vec<Vec<String>> {
+        let mut calls = Vec::new();
         let mut from = 0;
         while let Some(at) = src[from..].find(what) {
             let args = &src[from + at + what.len()..];
@@ -815,9 +895,17 @@ mod tests {
                 parts.pop();
             }
             assert!(parts.len() > 1, "{what} is called with no arguments");
-            flags.push(parts.pop().unwrap());
+            calls.push(parts);
         }
-        flags
+        calls
+    }
+
+    /// The web UI flag of every call of `what`: its last argument.
+    fn call_flags(src: &str, what: &str) -> Vec<String> {
+        call_args(src, what)
+            .into_iter()
+            .map(|mut args| args.pop().unwrap())
+            .collect()
     }
 
     /// The decision for a Linux component, one assert per variant: a new
@@ -888,6 +976,9 @@ mod tests {
                 "product_ships_web_ui(",
             ),
         ] {
+            // Production code: a test that stages licences for a fixture adds
+            // call sites of its own, which are not the phase's decision.
+            let src = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
             let flags = call_flags(src, what);
             assert!(!flags.is_empty(), "{what} is not called");
             for flag in &flags {
@@ -929,13 +1020,26 @@ mod tests {
             ..Default::default()
         };
 
-        let unknown =
-            stage(&share, &["somethingnew.dll".to_string()], &sources, false).unwrap_err();
+        let unknown = stage(
+            &share,
+            &["somethingnew.dll".to_string()],
+            &sources,
+            Product::Framework,
+            false,
+        )
+        .unwrap_err();
         assert!(
             unknown.to_string().contains("somethingnew.dll"),
             "{unknown}"
         );
-        let absent = stage(&share, &["hipblas.dll".to_string()], &sources, false).unwrap_err();
+        let absent = stage(
+            &share,
+            &["hipblas.dll".to_string()],
+            &sources,
+            Product::Framework,
+            false,
+        )
+        .unwrap_err();
         assert!(absent.to_string().contains("hipblas.dll"), "{absent}");
 
         let libraries = [
@@ -945,7 +1049,7 @@ mod tests {
             "amdhip64_7.dll",
         ]
         .map(str::to_string);
-        let entries = stage(&share, &libraries, &sources, false).unwrap();
+        let entries = stage(&share, &libraries, &sources, Product::Framework, false).unwrap();
         assert_eq!(
             entries,
             [
@@ -1002,13 +1106,18 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(rpm_license(&[], false), "MIT");
+        assert_eq!(rpm_license(&[], Product::Llama, false), "MIT");
+        assert_eq!(
+            rpm_license(&[], Product::Framework, false),
+            "AGPL-3.0-or-later AND MIT"
+        );
         assert_eq!(
             rpm_license(
                 &entries(&["rocm-clr.txt", CUDA_EULA_FILE, "numactl.txt", "libnl.txt"]),
+                Product::Framework,
                 false
             ),
-            "MIT AND LicenseRef-NVIDIA-CUDA-EULA AND LGPL-2.1-only"
+            "AGPL-3.0-or-later AND MIT AND LicenseRef-NVIDIA-CUDA-EULA AND LGPL-2.1-only"
         );
     }
 
@@ -1042,13 +1151,261 @@ mod tests {
             file: CUDA_EULA_FILE.to_string(),
             libraries: vec!["cublas.dll".to_string()],
         }];
-        let page = installer_page(&entries, "MIT text", Some("EULA text"), true);
+        let page = installer_page(
+            &entries,
+            "AGPL text",
+            Some("EULA text"),
+            Product::Framework,
+            true,
+        );
         assert!(page.starts_with("{\\rtf1"), "{page}");
         assert!(page.trim_end().ends_with('}'), "{page}");
         assert!(
-            page.contains("MIT text") && page.contains("EULA text") && page.contains("cublas.dll"),
+            page.contains("AGPL text") && page.contains("EULA text") && page.contains("cublas.dll"),
             "{page}"
         );
-        assert!(!installer_page(&entries, "MIT text", None, true).contains("NVIDIA's terms ----"));
+        assert!(
+            !installer_page(&entries, "AGPL text", None, Product::Framework, true,)
+                .contains("NVIDIA's terms ----")
+        );
+    }
+
+    /// The page heads the framework's own text with its licence, the GNU AGPL
+    /// v3 or later, and says no MIT about it.
+    #[test]
+    fn the_installer_page_heads_the_framework_s_agpl_text() {
+        let page = installer_page(&[], "AGPL text", None, Product::Framework, false);
+        assert!(
+            page.contains("Private AI Framework: GNU AGPL v3 or later"),
+            "the page does not head the framework's text with its licence:\n{page}"
+        );
+        assert!(
+            !page.contains("Private AI Framework: MIT"),
+            "the page still calls the framework MIT:\n{page}"
+        );
+    }
+
+    /// The production comments of this file, joined in order with their `//`
+    /// markers stripped, so a phrase wrapped across two doc lines reads as one.
+    fn comments(src: &str) -> String {
+        src.lines()
+            .filter(|l| l.trim_start().starts_with("//"))
+            .map(|l| l.trim_start().trim_start_matches('/').trim())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The framework is AGPL, not MIT: the note on the MSI page's NVIDIA
+    /// section no longer measures those terms against "what the MIT does not".
+    #[test]
+    fn the_nvidia_note_no_longer_names_the_mit() {
+        let src = include_str!("licenses.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        let notes = comments(code);
+        assert!(
+            !notes.contains("what the MIT does not"),
+            "the NVIDIA note says what the MIT does not:\n{notes}"
+        );
+    }
+
+    /// `text` names the framework's licence, in any casing, as a word
+    /// ("AGPL") or in full ("Affero").
+    fn names_agpl(text: &str) -> bool {
+        text.to_ascii_uppercase().contains("AGPL") || text.to_ascii_lowercase().contains("affero")
+    }
+
+    /// The two products present their licences apart: `README.txt` of a
+    /// llama.cpp package (the engine, its runtimes, llama.cpp's MSI) says
+    /// llama.cpp is under MIT in `llama.cpp.txt` and that the bundled
+    /// libraries keep their own licences, and names the framework's AGPL
+    /// nowhere, not even as a file it does not ship. The framework's keeps the
+    /// AGPL text beside the file holding it. The messages stay short, so the
+    /// red reason reads on one line.
+    #[test]
+    fn the_readme_of_the_llama_product_names_mit_and_no_agpl() {
+        let llama = readme(&[], Product::Llama, false);
+        assert!(!names_agpl(&llama), "a llama.cpp readme names the AGPL");
+        assert!(
+            !llama.contains("private-ai-framework.txt"),
+            "a llama.cpp readme names private-ai-framework.txt"
+        );
+        let paragraphs: Vec<&str> = llama.split("\n\n").collect();
+        assert!(
+            paragraphs
+                .iter()
+                .any(|p| p.contains("llama.cpp.txt") && p.contains("MIT")),
+            "the llama.cpp readme does not name MIT in llama.cpp.txt"
+        );
+        assert!(
+            paragraphs
+                .iter()
+                .any(|p| p.contains("librar") && p.contains("licenc") && p.contains("own")),
+            "the llama.cpp readme omits the libraries' own licences"
+        );
+        let framework = readme(&[], Product::Framework, false);
+        assert!(
+            names_agpl(&framework)
+                && framework.contains("GNU Affero General Public License")
+                && framework.contains("private-ai-framework.txt"),
+            "the framework readme lost its AGPL text"
+        );
+    }
+
+    /// The framework's own licence text is staged for the framework's packages
+    /// only: a llama.cpp package (the engine, its runtimes, llama.cpp's MSI)
+    /// carries llama.cpp's text and says nothing about a file it does not
+    /// ship. The messages stay short.
+    #[test]
+    fn the_framework_s_own_text_is_staged_only_for_the_framework() {
+        let dir =
+            std::env::temp_dir().join(format!("xtask-licences-product-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let llama = dir.join("llama");
+        std::fs::create_dir_all(&llama).unwrap();
+        std::fs::write(llama.join("LICENSE"), "MIT").unwrap();
+        let sources = Sources {
+            llama_cpp: llama,
+            ..Default::default()
+        };
+        for product in [Product::Framework, Product::Llama] {
+            let licenses = dir.join(if product == Product::Framework {
+                "framework"
+            } else {
+                "llama"
+            });
+            stage_in(&licenses, &[], &sources, product, false).unwrap();
+            let own = product == Product::Framework;
+            assert_eq!(
+                licenses.join("private-ai-framework.txt").is_file(),
+                own,
+                "{product:?}: private-ai-framework.txt staged"
+            );
+            assert!(
+                licenses.join("llama.cpp.txt").is_file(),
+                "{product:?}: llama.cpp.txt is not staged"
+            );
+            let readme = std::fs::read_to_string(licenses.join("README.txt")).unwrap();
+            assert_eq!(
+                readme.contains("private-ai-framework.txt"),
+                own,
+                "{product:?}: readme names private-ai-framework.txt it does not ship"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The licence page of the MSI: the llama.cpp MSI heads llama.cpp's own
+    /// LICENSE as MIT and carries no AGPL text at all, since the framework is
+    /// not in that package. The framework's MSI keeps the AGPL heading. The messages stay short.
+    #[test]
+    fn the_installer_page_of_the_llama_msi_heads_llama_cpp_as_mit() {
+        let page = installer_page(&[], "MIT licence text", None, Product::Llama, false);
+        assert!(!names_agpl(&page), "the llama.cpp MSI page names the AGPL");
+        assert!(
+            page.contains("MIT licence text"),
+            "the llama.cpp MSI page lacks llama.cpp's own text"
+        );
+        assert!(
+            page.lines()
+                .any(|l| l.contains("----") && l.contains("llama.cpp") && l.contains("MIT")),
+            "the llama.cpp MSI page has no MIT heading"
+        );
+        let framework = installer_page(&[], "AGPL text", None, Product::Framework, false);
+        assert!(
+            framework.contains("Private AI Framework: GNU AGPL v3 or later"),
+            "the framework MSI page lost its AGPL heading"
+        );
+    }
+
+    /// The MSI's own text: the Windows package phase reads llama.cpp's LICENSE
+    /// for llama.cpp's MSI and the repo's for the framework's, so the page
+    /// heads the text the MSI actually ships. Read from the code, since the
+    /// Windows phase compiles on Windows only.
+    #[test]
+    fn the_msi_s_own_text_is_picked_by_the_product() {
+        let code = include_str!("../windows/package.rs")
+            .split("\n#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap();
+        let from = code
+            .find("let own =")
+            .expect("the MSI page's own text is never read");
+        let to = code[from..]
+            .find("licenses::installer_page(")
+            .expect("installer_page is not called after the own text");
+        let picks = &code[from..from + to];
+        assert!(
+            picks.contains("llama_cpp"),
+            "the MSI page never reads llama.cpp's LICENSE:\n{picks}"
+        );
+        assert!(
+            picks.contains("product"),
+            "the MSI page's own text is not picked by product:\n{picks}"
+        );
+    }
+
+    /// What behaviour cannot reach: every licence seam of the three package
+    /// phases is handed the product of the package being built, as its own
+    /// argument, never a literal: the answer is the component's / the MSI's,
+    /// not the caller's.
+    #[test]
+    fn every_licence_call_passes_the_product() {
+        for (src, what, want) in [
+            (
+                include_str!("../linux/package.rs"),
+                "licenses::stage_in(",
+                ".product()",
+            ),
+            (
+                include_str!("../macos/package.rs"),
+                "licenses::stage_in(",
+                ".product()",
+            ),
+            (
+                include_str!("../windows/package.rs"),
+                "licenses::stage(",
+                "product",
+            ),
+            (
+                include_str!("../windows/package.rs"),
+                "licenses::installer_page(",
+                "product",
+            ),
+        ] {
+            let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+            let calls = call_args(code, what);
+            assert!(!calls.is_empty(), "{what} is not called");
+            for args in &calls {
+                assert!(
+                    args.iter().any(|a| a.contains(want)),
+                    "{what} is called with no product: {args:?}"
+                );
+                assert!(
+                    !args.iter().any(|a| a.contains("Product::")),
+                    "{what} is called with a literal product: {args:?}"
+                );
+            }
+        }
+    }
+
+    /// The RPM field's product: every `rpm_license` call of the Linux package
+    /// phase hands it the component's own product, never a literal: the answer
+    /// is the component's, not the caller's.
+    #[test]
+    fn every_rpm_licence_call_passes_the_component_product() {
+        let src = include_str!("../linux/package.rs");
+        let code = src.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+        let calls = call_args(code, "licenses::rpm_license(");
+        assert!(!calls.is_empty(), "licenses::rpm_license is not called");
+        for args in &calls {
+            assert!(
+                args.iter().any(|a| a.contains(".product()")),
+                "no component product passed: {args:?}"
+            );
+            assert!(
+                !args.iter().any(|a| a.contains("Product::")),
+                "a literal product: {args:?}"
+            );
+        }
     }
 }

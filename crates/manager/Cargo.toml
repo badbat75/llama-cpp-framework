@@ -3,7 +3,7 @@ name = "pai-manager"
 version.workspace = true
 edition = "2021"
 description = "pai-manager: runs llama-server instances as services"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 publish = false
 
 # The modules live in the library, the binary only calls `manager::main`. Its

@@ -711,13 +711,20 @@ pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf
             &share,
             &licenses::libraries_under(&stage),
             &sources,
+            product,
             licenses::product_ships_web_ui(product),
         )?;
         let read_text = |p: &Path| -> Result<String> {
             let bytes = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
             Ok(String::from_utf8_lossy(&bytes).into_owned())
         };
-        let own = read_text(&repo.join("LICENSE"))?;
+        // The page's own text is the product's licence: llama.cpp's LICENSE
+        // for the engine's MSI, the repo's for the framework's.
+        let own = if product == Product::Llama {
+            read_text(&sources.llama_cpp.join("LICENSE"))?
+        } else {
+            read_text(&repo.join("LICENSE"))?
+        };
         let bundles_cuda = entries.iter().any(|e| e.file == licenses::CUDA_EULA_FILE);
         let eula = if bundles_cuda {
             Some(read_text(
@@ -734,6 +741,7 @@ pub fn run(product: Option<Product>, keep_staging: bool, wix_arg: Option<PathBuf
                 &entries,
                 &own,
                 eula.as_deref(),
+                product,
                 licenses::product_ships_web_ui(product),
             ),
         )?;
