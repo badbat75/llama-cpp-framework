@@ -133,6 +133,7 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 
 ## Pitfalls
 
+- An interrupted `xtask install` of llama.cpp leaves dpkg half-configured and `apt-get` then refuses on the `Breaks:` between the engine and its runtimes; `sudo dpkg -i` of the engine, rocm and cuda debs together repairs it (2026-11-26). Before installing a new engine, check `ldd /usr/bin/llama-server` and the ggml libraries for "not found" in the staged tree.
 - An OpenCode run that ends its report and then prints `waiting for 1 background job` never exits (2026-11-25, twice): read its report from the log, kill the run by PID and start the next agent of the chain by hand (the `&&` chain stops on the kill). Briefs say: every command in the foreground.
 
 - A designer review that names a CSS fix as a guess ("try X", "about 7rem"): ask the designer to measure it first by injecting it with `page.addStyleTag` in its three browsers, then brief the tester with the measured CSS (2026-11-24: 22D4 D5 to D8 took four tester-coder rounds, D7's untried `contain: inline-size` broke the text).
