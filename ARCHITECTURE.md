@@ -4305,7 +4305,7 @@ Briefs for the designer:
 6. **IP6** (`fe`, briefs 23 and 16): the instance profile list and page, the instance page's picker
    and address, and the restart offer. Done when: the briefs' tests are green and the designer's UX
    check passes.
-7. **IP7** (`pai-cli`, `pai-app`, `pai-config`): `pai instance-profile list|show|create|delete|server|
+7. **IP7** (`pai-cli`, `pai-app`; superseded by the amendment's IP7): `pai instance-profile list|show|create|delete|server|
    add|remove` and `pai instance profile|address`; under the manager, `pai model-profile
    enable|disable` and the Models tab's switch are gone (macOS keeps them on its own files); the
    import of `presets.ini.disabled` appends to `models.ini`; the Server tab shows the address from the
@@ -4329,7 +4329,8 @@ anything, so the slices above are revised here once this is accepted.
 
 **The decisions (user, 2026-11-26).** K2: the memory-sized keys move with placement. Unassigned
 models' placement goes to a migration-made instance profile `unassigned`. `pai-config` hides its
-placement controls under the manager, with a pointer to the web UI (macOS keeps them). The relaxed
+placement controls under the manager, with a pointer to the web UI (macOS keeps them); superseded the
+same day by the GUI's removal. The relaxed
 migration check is accepted: the same keys and values per model, in the same section order.
 
 **The key split** (every key of `checks::WEB_MODEL_PROFILE_KEYS` and `MODEL_PROFILE_KEYS_NOT_ON_WEB`,
@@ -4424,7 +4425,8 @@ stays a render rule for an entry that leaves it unset.
   - A per-model entry page under the instance profile, `#/profiles/instance/<p>/models/<m>`, takes
     those cards (briefs 14 GPU distribution, 19 layer sliders and 21 tensor placement move there).
   - The new instance profile brief is **26**, since 23 is "collapsible cards".
-- **`pai-config` and `pai`:** under the manager, the Models tab's placement controls (the GPU split
+- **`pai-config` and `pai`** (superseded 2026-11-26: `pai-config` is removed in 2.99.1, so nothing is
+  hidden or kept on macOS; "Removing pai-config"): under the manager, the Models tab's placement controls (the GPU split
   table) leave the model profile. Recommended: hidden there, with a hint that placement is set on the
   instance profile in the web UI (or `pai instance-profile placement <p> <m> key=value`). macOS keeps
   them on its own `models.ini`, which has no instances. Decided (user, 2026-11-26): hidden, with the
@@ -4470,13 +4472,12 @@ stays a render rule for an entry that leaves it unset.
 6. **IP6** (`fe`, new brief 26 and brief 16, with 14, 19 and 21 moved): the instance profile list and
    page, the per-model entry page with the placement and memory cards, the instance page's picker,
    address and restart offer. Done when: the briefs' tests are green and the UX check passes.
-7. **IP7** (`pai-cli`, `pai-app`, `pai-config`):
+7. **IP7** (`pai-cli`, `pai-app`; the GUI part dropped, user 2026-11-26: `pai-config` is removed in
+   2.99.1, "Removing pai-config"):
    - `pai instance-profile ...` including `placement <p> <m> key=value`;
-   - under the manager, the switch and the moved keys' controls hidden with the pointer to the web
-     UI, macOS unchanged;
+   - `pai model-profile enable|disable` removed;
    - the import appending to `models.ini`.
-   Done when: the CLI and app tests pin the commands and the import, and the GUI lint shows the
-   controls absent under the manager.
+   Done when: the CLI and app tests pin the commands and the import.
 8. **IP7b** (`pai-app` bench): a sweep of a moved key writes and restores the instance profile entry
    through the manager and leaves `models.ini` untouched. Done when: the sweep tests pin it.
    **Real-machine check**: one short sweep on the GPUs with the user's go-ahead.
@@ -4484,6 +4485,132 @@ stays a render rule for an entry that leaves it unset.
    **Needs a llama.cpp package build and install**, then the user's restart.
 10. **IP9** (docs agent): `AGENTS.md`, `crates/bff/README.md`, the packaging guide, the restore
     command, and the `optimize-preset` skill (it tunes an entry now).
+
+## Removing pai-config (user, 2026-11-26/27): accepted (user, 2026-11-27)
+
+The requirement (user, relayed 2026-11-26, narrowed 2026-11-27): the native GUI `pai-config` is
+deprecated and removed from every OS in 2.99.1. The release follows Linux first and Windows second.
+macOS is an advanced placeholder: after the removal it keeps only `pai`, which still runs llama-server
+itself there over per-user files, until the manager and bff port lands. The port is sketched at the
+end of this section and blocks no release.
+
+### What exists (checked 2026-11-27)
+
+- **Workspace**: `crates/config` (`pai-config`, Slint, the tray, the e2e tests that need Slint debug
+  info) is a member in `Cargo.toml`, and only it links Slint. `crates/config/README.md` holds every
+  crate's source map and conventions; `crates/config/AGENTS.md` the GUI's checklists.
+- **Shared code**: `pai-app` holds the configurator's logic for the GUI and the CLI. `pai-core`'s
+  `crates/core/strings/en_US.toml` is the GUI's strings file, shipped as
+  `share/strings/en_US.toml` with the GUI component (`components.rs` 401); `cli.toml` is the CLI's.
+- **The icon**: `resources/llama.ico` is generated by `crates/config`'s `build.rs` (README "The build
+  script"), and both MSIs use it.
+- **xtask**: `Component::Config` (`components.rs`), `common/configurator.rs` (builds the four
+  binaries), the Linux, Windows and macOS package and install code, `licenses.rs`, `names_lint.rs`,
+  `ci_macos.rs` and the MSI tests all name it.
+- **Windows**: the framework MSI ships `pai-config.exe`, a Start Menu shortcut feature
+  (`private-ai-framework.wxs` 300-327), and dialog text naming the configurator (462).
+- **Per-user state the GUI made**: the start-at-login entries (HKCU Run `org.privateai.Config`,
+  `~/.config/autostart/org.privateai.Config.desktop`), `settings.ini` (which `pai` also reads:
+  `BenchDb`, `BenchPromptFile`), and `bench/`.
+- **macOS CI** (`installers-macos.yml`, `ci_macos.rs`) checks four `.pkg` receipts and that a
+  reinstall restores a removed `pai-config`.
+
+### Decisions (user, 2026-11-27)
+
+The user accepted the removal and answered the three questions: `pai` removes the stale start-at-login
+entries it can see; the Windows Start Menu opens the web UI at the bff's configured address; the user
+starts the Windows and macOS CI runs for GR4 and GR5.
+
+- **The Start Menu shortcut** targets `pai.exe web` (`Show="minimized"`, so the console never covers
+  the desktop). The MSI does not learn the address: an address read at install (an `IniFileSearch`
+  of `bff.ini`) goes stale when an administrator changes `[Bff] Listen`, and a wildcard host
+  (`0.0.0.0`, `[::]`) is no address a browser should open. `pai web` reads `[Bff] Listen` from the
+  framework's `bff.ini` at each click (`bff_cfg::listen`). The default is `127.0.0.1:8590`, and a
+  wildcard host becomes loopback with the same port. It opens `http://<address>/` with the system's
+  handler (`ShellExecuteW` on Windows, `xdg-open` on Linux), so the same command serves Linux too.
+
+- **What `pai-app` keeps**: what `pai` reads (`model_profiles`, `server_control`, `migration` and the
+  import, `bench`, `settings`, and whatever else a reference audit finds); everything only the GUI
+  reads goes. On macOS `pai` keeps its own llama-server path untouched.
+- **Strings**: every `en_US.toml` key a non-GUI reader fills moves to `cli.toml`; then
+  `en_US.toml`, its shipped copy, `Reader::Gui` and the AGENTS.md em-dash exception (`gpu_split.rs`,
+  `components.slint`, `binding_lint.rs`) go.
+- **The icon**: generated by xtask (the same script, `resources/generate-llama-ico.mjs`) before the
+  crate goes, since both MSIs still need it.
+- **Upgrades remove the old GUI**:
+  - Linux: `-config` is no longer built; `-core` gains `Conflicts:` plus `Replaces:` (deb) and
+    `Obsoletes:` (rpm) on `private-ai-framework-config`, so the package manager removes it (Debian
+    Policy 7.4 and 7.6, https://www.debian.org/doc/debian-policy/ch-relationships.html; RPM
+    dependencies, https://rpm-software-management.github.io/rpm/manual/dependencies.html).
+  - Windows: MajorUpgrade removes the previous version's files first, so the new MSI simply
+    carries no `pai-config.exe` and no shortcut feature.
+- **Start-at-login entries left behind**: `pai` removes the ones it can see (user, 2026-11-27): at
+  each start, the running user's `~/.config/autostart/org.privateai.Config.desktop` (under
+  `$XDG_CONFIG_HOME` when set) on Linux, and the HKCU Run value `org.privateai.Config` on Windows.
+  Each is removed only when it names `pai-config`. A missing entry or a failed removal is silent and
+  never stops the command. Other users' entries stay until they run `pai`; the release notes say so.
+
+### Slices (smallest first; L = checked on Linux, W = Windows CI, C = macOS CI)
+
+1. **GR1** (L, docs agent and xtask): move the crate source map and conventions from
+   `crates/config/README.md` to `crates/README.md`; move the icon generation into xtask. Done when:
+   `xtask build framework` regenerates a missing `llama.ico` with no `crates/config`, and the map is
+   in its new place.
+2. **GR2** (L, `pai-core`, `pai-app`, `pai-cli`): the reference audit. GUI-only modules out of
+   `pai-app`, the shared keys moved to `cli.toml`, `en_US.toml` and `Reader::Gui` out of `pai-core`.
+   Done when: `pai-app`, `pai-cli`, `pai-core`, `pai-manager` and `pai-bff` build and their tests pass
+   with no `en_US.toml`; the strings tests pin that every key a remaining reader fills is in
+   `cli.toml`.
+   - **GR2b** (L, `pai-cli`, test first): the stale-entry removal above and `pai web`. The tests
+     redirect the data tree (`PRIVATE_AI_DATA_ROOT`, `XDG_CONFIG_HOME`) and put the registry behind a
+     seam. Done when:
+     - an autostart file naming `pai-config` is removed, one naming anything else is kept, and a
+       missing one is silent;
+     - the Windows path is type-checked with its seam tested;
+     - `pai web`'s address is pinned for the default, a set `Listen`, `0.0.0.0:p` and `[::]:p`, with
+       the opener behind a seam.
+3. **GR3** (L, workspace and xtask Linux): `crates/config` and Slint out of the workspace;
+   `Component::Config` out; `configurator.rs` builds three binaries; the Linux packages without
+   `-config`, `-core` with the relations above; `names_lint`, `licenses` and the package tests
+   updated. Done when: the xtask tests pin the three binaries, the absent package and the relations.
+   The coordinator's deploy then installs the core, bff and cli packages only. **Real-machine
+   check** on this machine at that deploy: the old `-config` package is removed by the upgrade.
+4. **GR4** (L then W, xtask Windows and the MSI): the `pai-config.exe` file and the dialog text out of
+   `private-ai-framework.wxs`; the Start Menu shortcut kept, now targeting `[BINFOLDER]pai.exe` with
+   `Arguments="web"` and `Show="minimized"`, named for the web UI; the MSI text tests and
+   `two_installers` updated. Done when: the MSI text and type checks pass on Linux, and the Windows
+   CI's silent install, repair and uninstall pass (the user starts the run).
+5. **GR5** (L then C, xtask macOS): the `-config` component out of the `.pkg` set (three receipts),
+   `ci_macos.rs` and `installers-macos.yml` checking that a reinstall restores `pai` instead of
+   `pai-config`. Done when: the text tests pass on Linux and the macOS CI run is green (the user
+   starts it).
+6. **GR6** (docs agent): AGENTS.md (overview, map, Commands: `pai-config` no longer a crate, the
+   Slint debug-info and Windows-check notes), `docs/build-*.md`, `docs/build-macos.md`, the release
+   skill's package list, the playbooks' GUI notes, and the release notes line about the
+   start-at-login entries.
+
+GR1 and GR2 can run beside the instance profile slices; GR3 should follow IP7, so the CLI holds the
+instance profile commands before the GUI goes.
+
+### Sketch: the manager and the bff on macOS (Proposed, not accepted; no slices in the release order)
+
+A placeholder for later, nothing scheduled:
+- **Instances**: one launchd job per instance, written by the manager
+  (`/Library/LaunchDaemons/org.privateai.llama.<id>.plist`, `UserName _privateai`, `pai-manager
+  run-instance <id>`), behind a `ServiceControl` over `launchctl`. `Stop` saves the slots itself,
+  since launchd has no `ExecStop`.
+- **Daemons**: `org.privateai.manager` (root at first) and `org.privateai.bff` (`_paibff`).
+- **Paths**: `/Library/Application Support/llama.cpp/config/` for the engine,
+  `/Library/Application Support/private-ai/` for the framework and the models, and
+  `/Library/Logs/llama.cpp/` for the logs.
+- **Permission**: the Windows pipe's framing over a Unix socket. The manager judges `getpeereid`'s
+  uid by group membership through `mbr_check_membership`: `control` for `admin` or `pai`,
+  `configure` for `pai`, `As` only from `_paibff`.
+- **Sign-in**: PAM through `libpam.2.dylib`.
+- **Devices**: Metal rows (`MTL0`) through the existing probe parse; NodeInfo from `sw_vers` and
+  `sysctl`.
+- **Unverified until a macOS CI run**: every launchctl flag, PAM and Metal on the runner. A real Mac
+  is needed for a model on Metal.
 
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
