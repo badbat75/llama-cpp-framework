@@ -384,15 +384,16 @@ function profileReads(p: Page) {
 
 // ── 15 C2.1: the list is read once per opening, and by nothing else ─────
 
-test('15 C2.1: the page reads /api/profiles/server no time before the pill opens, exactly once for each click of Add tag, and no time on typing, adding or the polls', async () => {
+test('15 C2.1: the page reads /api/profiles/server once when it opens (17d.6a) and exactly once for each further click of Add tag, and no time on typing, adding or the polls', async () => {
   const p = await openPage()
-  expect(
-    profileReads(p),
-    'the list is read when the pill opens, not when the page loads',
-  ).toHaveLength(0)
+  // 16 17d.6a: the Server profile section's switch reads the pool when the
+  // page opens, so the count starts there: what matters for the suggestions is
+  // that each opening of the pill adds exactly one read.
+  const atOpen = profileReads(p).length
+  expect(atOpen, 'the page reads the pool once when it opens (17d.6a)').toBe(1)
 
   const box = await openPill(p)
-  expect(profileReads(p), 'one read for the opening').toHaveLength(1)
+  expect(profileReads(p), 'one read for the opening').toHaveLength(atOpen + 1)
   typeIn(box, 'a')
   pressKey(box, 'ArrowDown')
   pressEnter(box)
@@ -400,14 +401,14 @@ test('15 C2.1: the page reads /api/profiles/server no time before the pill opens
   expect(
     profileReads(p),
     'typing, walking and an add read the list again',
-  ).toHaveLength(1)
+  ).toHaveLength(atOpen + 1)
 
   fireEvent.click(addButton(p))
   await flushTasks()
   expect(
     profileReads(p),
     'a second opening reads it once more (decision 10: once at each opening)',
-  ).toHaveLength(2)
+  ).toHaveLength(atOpen + 2)
 })
 
 // ── 15 C2.2: the combobox and its list, and the filter ──────────────────

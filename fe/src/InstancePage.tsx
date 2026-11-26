@@ -34,6 +34,7 @@ import {
 } from './Field.tsx'
 import { Icon } from './Icon.tsx'
 import { InstanceModels } from './InstanceModels.tsx'
+import { InstanceServerSwitch } from './InstanceServerSwitch.tsx'
 import {
   errorText,
   findInstance,
@@ -164,11 +165,13 @@ export default function InstancePage({
   const [removed, setRemoved] = useState(false)
   // The Sign in whose dialog is open (43a, 45e).
   const [asking, setAsking] = useState<
-    'run' | 'boot' | 'tags' | 'label' | 'models' | 'remove' | null
+    'run' | 'boot' | 'tags' | 'label' | 'models' | 'server' | 'remove' | null
   >(null)
   // The Model profiles control a write was made with, so the page puts the
   // focus back on it when its dialog answers (17e.10a).
   const modelsControl = useRef('')
+  // The same for the Server profile switch (16 17d.8).
+  const serverControl = useRef('')
   const [runs, setRuns] = useState<Runs>({ started: 0, settled: 0 })
   // Sign-ins in the page's dialogs (43b): after each one as another session, the
   // tags field is remounted (keyed by `rereads`), so it shows what the page reads
@@ -332,9 +335,11 @@ export default function InstancePage({
             ? `${uid}-name-sign-in`
             : from === 'models'
               ? modelsControl.current
-              : from === 'remove'
-                ? `${uid}-remove-sign-in`
-                : `${uid}-sign-in`
+              : from === 'server'
+                ? serverControl.current
+                : from === 'remove'
+                  ? `${uid}-remove-sign-in`
+                  : `${uid}-sign-in`
     document.getElementById(signIn)?.focus()
   }
 
@@ -359,9 +364,11 @@ export default function InstancePage({
             ? `${uid}-name-save`
             : from === 'models'
               ? modelsControl.current
-              : from === 'remove'
-                ? 'confirm-remove'
-                : `${uid}-${clicked.current}`
+              : from === 'server'
+                ? serverControl.current
+                : from === 'remove'
+                  ? 'confirm-remove'
+                  : `${uid}-${clicked.current}`
     document.getElementById(control)?.focus()
   }
 
@@ -521,13 +528,27 @@ export default function InstancePage({
                 {instance.serverProfile ? (
                   <dd>
                     <a href={serverProfileHref(instance.serverProfile)}>
-                      {instance.serverProfile}
+                      {t('instance-server-open', instance.serverProfile)}
                     </a>
                   </dd>
                 ) : (
                   <dd className="muted">{t('instance-server-none')}</dd>
                 )}
               </dl>
+              {/* The switch to another server profile of the pool (16 17d.6a):
+                  the free profiles, read when the section appears and after
+                  each switch. The page carries its own Restart in its head, so
+                  the switch shows no offer (17d.6a). */}
+              <InstanceServerSwitch
+                id={id}
+                fieldId={`${uid}-server`}
+                renewals={signIns.rereads + signIns.kept}
+                onSignIn={(control) => {
+                  serverControl.current = control
+                  setAsking('server')
+                }}
+                onSwitched={reread}
+              />
             </section>
             {/* The model profiles the instance serves (16 17e): its own read,
                 never the page's poll, and read again for every sign-in the page

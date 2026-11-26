@@ -14,10 +14,17 @@ import { flushSync } from 'react-dom'
 import { t } from './strings.ts'
 
 /** What the status line says. `saving` while a save runs; `unsaved` while
- * there is something to save; `saved` and `saved-restart` are what a save
- * left behind, kept until the next save; `idle` shows nothing. */
+ * there is something to save; `saved`, `saved-restart` and `saved-restart-ids`
+ * are what a save left behind, kept until the next save; `idle` shows nothing.
+ * `saved-restart-ids` names the instances a restart is needed for, in
+ * `restartNames`. */
 export type SaveStatus =
-  'idle' | 'saving' | 'saved' | 'saved-restart' | 'unsaved'
+  | 'idle'
+  | 'saving'
+  | 'saved'
+  | 'saved-restart'
+  | 'saved-restart-ids'
+  | 'unsaved'
 
 /** The bar's alert, with the button that answers it when there is one. */
 export type SaveAlert = {
@@ -27,14 +34,16 @@ export type SaveAlert = {
   at?: number
 }
 
-/** The status line's text: empty for `idle`. */
-function statusLine(status: SaveStatus): string {
+/** The status line's text: empty for `idle`. `restartNames` are the instances
+ * `saved-restart-ids` names, joined for the text. */
+function statusLine(status: SaveStatus, restartNames: string): string {
   return {
     idle: '',
     saving: t('save-saving'),
     unsaved: t('save-unsaved'),
     saved: t('save-saved'),
     'saved-restart': t('save-saved-restart'),
+    'saved-restart-ids': t('save-saved-restart-ids', restartNames),
   }[status]
 }
 
@@ -228,6 +237,7 @@ export function SaveBar({
   deleteDisabled,
   deleteExpanded,
   deleteHint,
+  restartNames,
   children,
 }: {
   bar: RefObject<HTMLDivElement | null>
@@ -251,6 +261,8 @@ export function SaveBar({
   deleteExpanded?: boolean
   /** The reason it cannot act, the line the bar shows under its buttons. */
   deleteHint?: string
+  /** The instances `saved-restart-ids` names, as the page joins them. */
+  restartNames?: string
   children?: ReactNode
 }) {
   const disabled = !dirty || saving || undefined
@@ -263,12 +275,14 @@ export function SaveBar({
         <p
           role="status"
           className={
-            status === 'saved' || status === 'saved-restart'
+            status === 'saved' ||
+            status === 'saved-restart' ||
+            status === 'saved-restart-ids'
               ? `save-status ${status}`
               : 'save-status'
           }
         >
-          {statusLine(status)}
+          {statusLine(status, restartNames ?? '')}
         </p>
         {alert !== null && (
           <p role="alert" className="save-alert">

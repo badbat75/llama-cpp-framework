@@ -121,6 +121,11 @@ export default function App() {
   // The name of every instance of that list, for a page that names an instance
   // it did not read (16 17f.4).
   const nameOf = useInstanceNames(store)
+  // The app's instance list read again: a restart sent from a page's offer
+  // moves the state the nav and the Overview show (16 17d.2a).
+  const readInstances = useCallback(() => {
+    void store.fresh()
+  }, [store])
   // The host's name, from the one read of /api/node a session brings
   // (fe/briefs/13-node-about.md, 13 N.3): the nav's instance group and the
   // Overview's heading. null while the read is open and after any failure,
@@ -567,6 +572,7 @@ export default function App() {
               session={session}
               host={host}
               nameOf={nameOf}
+              onInstances={readInstances}
               filterText={filter?.text ?? ''}
               onFilterText={typedFilter}
               sort={sort}
@@ -683,6 +689,7 @@ function Page({
   session,
   host,
   nameOf,
+  onInstances,
   filterText,
   onFilterText,
   sort,
@@ -698,6 +705,8 @@ function Page({
   host: string | null
   /** The name of an instance by its id, from the app's list (16 17f.4). */
   nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
   filterText: string
   onFilterText: (text: string) => void
   /** The Model profiles list's sort, kept for the tab's life (U17c). */
@@ -747,6 +756,8 @@ function Page({
         onSort={onSort}
         onSignedOut={onSignedOut}
         onRenewed={onRenewed}
+        nameOf={nameOf}
+        onInstances={onInstances}
       />
     )
   }
@@ -757,6 +768,8 @@ function Page({
         onSignedOut={onSignedOut}
         onRenewed={onRenewed}
         onDirty={onDirty}
+        nameOf={nameOf}
+        onInstances={onInstances}
       />
     )
   }
@@ -780,6 +793,7 @@ function Page({
         onRenewed={onRenewed}
         onDirty={onDirty}
         nameOf={nameOf}
+        onInstances={onInstances}
       />
     )
   }

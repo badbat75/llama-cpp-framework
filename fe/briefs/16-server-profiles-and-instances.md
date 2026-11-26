@@ -1587,6 +1587,19 @@ right after the table, the place `fe/DESIGN.md` Action feedback gives a table's 
 so an offer appearing never pushes the rows under the pointer. The filter's own status
 (`model-profiles-filter-status`) stays above the table, where the filter is.
 
+**17d.5b The Models list: above the table (user, 2026-11-26, choice B; supersedes 17d.5a).** The
+switch status region, its alert, its Sign in and the offer stay where the region is today, between
+the filter and the table (`ModelProfiles.tsx` 498), so they are seen at once in a long list; the
+user declined a Restart/Ignore modal (a restart is optional, and a modal per switch would break a run
+of toggles). What keeps the push of the rows tolerable:
+- the focus never moves: it stays on the switch used, which moves with its row
+  ([2.4.3](https://www.w3.org/TR/WCAG22/#focus-order));
+- the status line keeps its reserved line as today, so only the offer's row of buttons can push;
+- the next switch replaces the offer when its answer lands, and does not clear it while the request
+  runs, so the rows move at most once per switch, not down and back up;
+- an answer with `restart: []` shows no offer, so a list of stopped instances never moves.
+`fe/DESIGN.md` Action feedback names this exception.
+
 **17d.6a and 17d.7a The switch on the instance page: no offer.** The instance page carries its own
 Restart in the head, so 17d.7's offer for this instance is dropped (17e.7a, decision 8 where a page
 has no Restart): `running: true` shows `instance-server-switched-restart` only. The switch sits in
@@ -1600,11 +1613,79 @@ buttons in DOM order, before the page's content.
 UX states (the tester adds them to `fe/ux/check.js`): `instance-server-switch` (the instance page
 with a free profile, `pool=long`, the section's select and button at rest) and
 `model-profiles-restart-offer` (the Models list, `open` clicking a row switch with the stub answering
-`restart: ["default"]`, then the offer's button after the table).
+`restart: ["default"]`, then the offer's button above the table, 17d.5b).
 
 Tests that change from 17d's list: `ServerSave`, `ModelProfileSave2` (the offer in the bar),
-`ModelProfilesSwitch` (the region after the table), `InstancePage` (the switch with no offer).
+`ModelProfilesSwitch` (the offer above the table, 17d.5b), `InstancePage` (the switch with no offer).
 
-Question for the user, not blocking (recommended first): the Models list's region after the table
-(A, recommended: rows never move, as on the instance page) or kept above the table (B: seen at
-once in a long list, but an offer appearing pushes every row down by a button's height).
+The user answered the question on the Models list's region: B, above the table (17d.5b).
+
+## 17d review (designer, 2026-11-26)
+
+Built code read (`RestartOffer.tsx`, `InstanceServerSwitch.tsx`, the offer's places in
+`ModelProfiles.tsx` 569, `ModelProfilePage.tsx` 1999, `ServerForm.tsx` 715) and measured with
+`build/ux-review/d17.js` and `d17b.js` in Chromium, Firefox and WebKit at 1280 and 320 px, light and
+dark; the saves, the switch and the restart answered by routed replies, since the stub serves none of
+them.
+
+Met:
+- 17d.1a: the offer names the instance as `InstanceLink` does ("Restart llama.cpp :9931"), with
+  `rotate-cw`; the texts carry the same name.
+- 17d.2: a 204 says `restart-offer-sent` with the name, the focus stays on the button.
+- 17d.3a and 17d.4a: on both profile pages the status reads `save-saved-restart-ids` and the offer is
+  inside the sticky Save bar.
+- 17d.5b: the Models list's status and offer sit above the table; the rows move down 52 px at 1280
+  and 105 px at 320 (one button row; at 320 the status wraps), once; the focus stays on the switch.
+- 17d.6a and 17d.7a: the link reads `Open qwen-27b`, the select `Switch to` lists the free profile,
+  the button is `aria-disabled` on the empty option; a switch with `running: true` says
+  `instance-server-switched-restart`, shows no offer, puts the select back on its empty option and
+  keeps the focus on the button.
+- 17d.10: no sideways scroll anywhere.
+
+**Defects:**
+- **D1. The offer's button is not laid out as a button with an icon.** `index.css` has no rule for
+  `.restart-offer` (`RestartOffer.tsx` 67-83): the button is a plain `secondary`, so the
+  `rotate-cw` touches "Restart" and sits above the text's centre (screenshots). Fix: give
+  `.restart-offer-buttons` the run row's rules (`index.css` 2709-2723: a wrapping flex row with
+  `gap: var(--space-2)`, and each button `inline-flex`, `align-items: center`, `gap: var(--space-2)`),
+  by sharing the selector, not a copy; and `margin-bottom: var(--space-2)` before the table.
+- **D2. After the offer's Sign in, the focus does not come back to the button clicked (17d.2).** The
+  offer's buttons have no id (`RestartOffer.tsx` 70), `onSignIn` is given the Sign in's own id (99),
+  and the pages ignore it (`ModelProfiles.tsx` 573, `ModelProfilePage.tsx` 2003, `ServerForm.tsx`
+  719); on the Models list the dialog's close then focuses the last row switch (475). The test at
+  `RestartOffer17d.test.tsx` 388 checks the focus before the dialog only. Fix: an id per offer
+  button, passed to `onSignIn`, and each page focusing it when its dialog closes.
+
+Adviser notes, ranked:
+1. On the instance page the switch's button "Use this server profile" sits under the label column
+   at 1280 px, while its select is in the control column, so the pair reads as two separate things.
+   Put the button in the control column under the select (preference).
+2. The Server profile section repeats its heading as the row's label ("Server profile" twice). The
+   row label could be `Current` (a new key) or dropped (preference).
+
+UX check (234 states per browser, `instance-server-switch` and `model-profiles-restart-offer` among
+them), one browser at a time: 0 failing in Chromium, Firefox and WebKit.
+
+Screenshots: `build/ux-review/shots/17d-models-1280-light.png`, `17d-models-320-light.png`,
+`17d-switch-1280-light.png`, `17d-switch-320-light.png`, `17d-serverbar-1280-light.png`,
+`17d-serverbar-320-light.png`.
+
+### 17d re-check (designer, 2026-11-26)
+
+Measured with `build/ux-review/d17r.js` in Chromium, Firefox and WebKit at 1280 and 320 px.
+- D1 closed: the offer row shares `run-actions` (`RestartOffer.tsx` 88); 8 px between icon and
+  text, the icon on the button's centre, 13 px before the table.
+- D2 closed by reading the code: each offer button has an id (`RestartOffer.tsx` 92), given to
+  `onSignIn` (120), and the three pages put the focus back on it when their dialog closes
+  (`ModelProfiles.tsx` 478, `ModelProfilePage.tsx` 1777, `ServerForm.tsx` 675).
+- **D3 (from the A1 fix).** `index.css` 2787-2789, `.field-control select + button { flex-basis:
+  100% }`, stretches "Use this server profile" across the whole control column (wider than its
+  select, 17d-switch-1280-light.png), and the button now stands between the select and the hint
+  that describes the select. Fix: remove that rule, so the button keeps its own width and sits
+  right after the select on the same line (it wraps under it at 320 px, `.field-control` wraps), with
+  the hint under both. Beside the select at its own width reads as one field and its action.
+- The repeated "Server profile" (heading and row label, note 2) does not block: a wording
+  preference for a later slice.
+UX check of `instance-server-switch` and `model-profiles-restart-offer`, one browser at a time:
+0 failing in all three.
+- D3 closed: the button keeps its own width (198 px) right after the select, 12 px apart at 1280 px, and wraps under it at 320 px; the hint sits under both; no sideways scroll (Chromium, light).

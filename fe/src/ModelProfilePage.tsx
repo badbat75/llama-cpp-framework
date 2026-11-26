@@ -115,6 +115,7 @@ import {
 import { CUSTOM as OT_CUSTOM } from './tensorRules.ts'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
 import { deleteRow } from './RowDelete.tsx'
+import { RestartOffer } from './RestartOffer.tsx'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
 import {
   SaveBar,
@@ -264,6 +265,8 @@ export default function ModelProfilePage({
   onSignedOut,
   onRenewed,
   onDirty,
+  nameOf,
+  onInstances,
 }: {
   /** The id from the address, while the read has not answered. */
   id: string
@@ -272,6 +275,10 @@ export default function ModelProfilePage({
   onRenewed: (session: Session) => boolean
   /** Told whether the form holds unsaved changes; false when it goes. */
   onDirty: (dirty: boolean) => void
+  /** The name of an instance by its id, for the restart offer (16 17d.1a). */
+  nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -437,6 +444,8 @@ export default function ModelProfilePage({
         onDeleted={() => setDeleted(true)}
         onMissing={() => setFocusMissing(true)}
         onReread={reread}
+        nameOf={nameOf}
+        onInstances={onInstances}
       />
     </>
   )
@@ -455,6 +464,8 @@ function Body({
   onDeleted,
   onMissing,
   onReread,
+  nameOf,
+  onInstances,
 }: {
   id: string
   answer: Answer | undefined
@@ -474,6 +485,10 @@ function Body({
   onMissing: () => void
   /** The model profile is read again beside the form (22 D.4, 22 D.6, 22 D.7). */
   onReread: () => void
+  /** The name of an instance by its id, for the restart offer (16 17d.1a). */
+  nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   if (modelProfileIdUnreadable(id)) {
     return <p>{t('model-profile-not-found', id)}</p>
@@ -508,6 +523,8 @@ function Body({
         onDeleted={onDeleted}
         onMissing={onMissing}
         onReread={onReread}
+        nameOf={nameOf}
+        onInstances={onInstances}
       />
     )
   if (answer.error === 'client-not-authorized') {
@@ -831,6 +848,8 @@ function Content({
   onDeleted,
   onMissing,
   onReread,
+  nameOf,
+  onInstances,
 }: {
   doc: ModelProfileDoc
   /** The model file's layer facts of this arrival, read by the page (19 G.1). */
@@ -851,6 +870,10 @@ function Content({
   onMissing: () => void
   /** The model profile is read again beside the form (22 D.4, 22 D.6, 22 D.7). */
   onReread: () => void
+  /** The name of an instance by its id, for the restart offer (16 17d.1a). */
+  nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   const fid = useId()
   // H11a.1: the model file the summary line names, as the read gave it.
@@ -876,8 +899,11 @@ function Content({
     numberStates(doc.values),
   )
   const [phase, setPhase] = useState<
-    'idle' | 'saving' | 'saved' | 'saved-restart'
+    'idle' | 'saving' | 'saved' | 'saved-restart' | 'saved-restart-ids'
   >('idle')
+  // The instances the last save left needing a restart (16 17d.4a): the offer
+  // of the Save bar names them, and the next edit or save takes it away.
+  const [restart, setRestart] = useState<string[]>([])
   // H10.2 (fe/briefs/08-hearth-h10-h11.md): the jump list is closed every time
   // the form mounts, and a save keeps the state it is in: no storage, no
   // memory of a page that is gone.
@@ -930,6 +956,9 @@ function Content({
   const saveId = 'model-profile-save'
   const signInId = `${fid}-sign-in`
   const askSignIn = useSignInDialog(signInId)
+  // The restart offer's button that asked for the sign-in (17d review D1): the
+  // dialog gives the focus back to it, not to Save changes.
+  const offerControl = useRef<string | null>(null)
 
   // 132: a field is changed when its control's state is not the state the read
   // gave it, so picking the same option, or the extra option of 87 that a read
@@ -1664,7 +1693,14 @@ function Content({
       // empty (156).
       setDraft((d) => (d === sent ? next.values : d))
       setBoxed((b) => (b === sentBoxed ? numberStates(next.values) : b))
-      setPhase(answer.running ? 'saved-restart' : 'saved')
+      setRestart(answer.restart)
+      setPhase(
+        answer.restart.length > 0
+          ? 'saved-restart-ids'
+          : answer.running
+            ? 'saved-restart'
+            : 'saved',
+      )
       return
     }
     setPhase('idle')
@@ -1732,11 +1768,15 @@ function Content({
 
   /** A sign-in in the bar's dialog (152): the dialog closes, the alert goes,
    * focus on Save changes, the edits stay. For another session the page reads
-   * the model profile again and this form goes with it. */
+   * the model profile again and this form goes with it. The restart offer's
+   * Sign in is the exception: the focus goes back to the button whose restart
+   * was refused (17d review D1). */
   function signedIn(session: Session) {
     if (!onRenewed(session)) return
     alerts.setAlert(null)
-    askSignIn.close(saveId)
+    const offer = offerControl.current
+    offerControl.current = null
+    askSignIn.close(offer ?? saveId)
   }
 
   /** Cancel, or Escape: the group goes and the focus returns to the opener.
@@ -1957,7 +1997,23 @@ function Content({
           deleteHint={
             canDelete ? undefined : t('model-profiles-delete-needs-off')
           }
+          restartNames={restart.map((id) => nameOf(id)).join(', ')}
         >
+          {/* 16 17d.4a: the restart the save left to make, a row of the bar
+              under its buttons, the bar being sticky so the offer stays in
+              reach. An edit answers it, as it answers the status line. */}
+          {phase === 'saved-restart-ids' && !dirty && !switching && (
+            <RestartOffer
+              ids={restart}
+              nameOf={nameOf}
+              renewals={renewals}
+              onChanged={onInstances}
+              onSignIn={(control) => {
+                offerControl.current = control
+                askSignIn.open()
+              }}
+            />
+          )}
           {canDelete && confirming && (
             <ConfirmDelete
               id={doc.id}

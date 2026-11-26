@@ -19,10 +19,12 @@ import {
 import { afterEach, beforeEach, expect, it, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  INSTANCES,
   before,
   deferred,
   en,
   fakeBff,
+  instanceName,
   isHidden,
   reply,
   serverDoc,
@@ -1819,7 +1821,19 @@ test('1b.33: 200 makes the sent values and the new revision the loaded ones; run
     revision: 'r-2',
     values: { ...UNCHANGED, Port: 8580 },
   })
-  await waitFor(() => expect(line.textContent).toBe(en('save-saved-restart')))
+  // 17d.3a: the profile's instance is `default` (serverProfileDoc), so the bar
+  // names it, and the offer for it is a row of the bar under its buttons.
+  const name = instanceName(INSTANCES[0]!)
+  await waitFor(() =>
+    expect(line.textContent).toBe(en('save-saved-restart-ids', name)),
+  )
+  const offer = within(main).getByRole('button', {
+    name: en('restart-offer-button', name),
+  })
+  expect(offer.closest('.save-bar'), 'a row of the sticky bar').not.toBeNull()
+  const actions = main.querySelector('.save-actions')
+  expect(actions, 'the bar has its buttons').not.toBeNull()
+  expect(before(actions!, offer), 'under the buttons').toBe(true)
   // A save never restarts the server, and the file is not read again.
   expect(bff.calls.filter((c) => c.method === 'POST')).toEqual([])
   expect(bff.to('GET', '/api/profiles/server/default')).toHaveLength(1)

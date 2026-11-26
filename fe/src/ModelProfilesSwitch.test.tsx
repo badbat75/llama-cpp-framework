@@ -556,7 +556,9 @@ test('2c.48, 2c.50: a 401 shows session-ended-retry and a Sign in after it; the 
   expect(buttons, 'one Sign in').toHaveLength(1)
   const alert = within(main).getByRole('alert')
   expect(before(alert, buttons[0]!), 'Sign in after the alert').toBe(true)
-  expect(before(buttons[0]!, table(main)), 'before the table').toBe(true)
+  expect(before(buttons[0]!, table(main)), 'above the table (17d.5b)').toBe(
+    true,
+  )
   expect(switchOf(main, 'Qwen3-27B').checked, 'the value before').toBe(true)
   expect(modelProfilesReads(bff), 'nothing read again').toBe(1)
   expect(switches(main).map(inactive)).toEqual([false, false, false])
@@ -914,13 +916,18 @@ test('2c.47: after a success the row keeps its place, nothing is read, the filte
 
 // ── Feedback region (44, 50) ────────────────────────────────────────────
 
-test('2c.50: the status is in the page, empty, after the filter status and before the table; no alert until there is text; with the no-match text too', async () => {
+test('2c.50 (as 17d.5b amends it): the status is in the page, empty, above the table, the filter’s own above it; no alert until there is text; with the no-match text too', async () => {
   const { main } = await open()
   const status = switchStatus(main)
   expect(status.tagName).toBe('P')
   expect(status.textContent).toBe('')
-  expect(before(filterStatus(main), status)).toBe(true)
-  expect(before(status, table(main))).toBe(true)
+  expect(
+    before(filterStatus(main), table(main)),
+    'the filter’s status stays above the table',
+  ).toBe(true)
+  expect(before(status, table(main)), 'the switch status is above it').toBe(
+    true,
+  )
   expect(alerts(main)).toEqual([])
   expect(within(main).queryAllByRole('alert')).toHaveLength(0)
   type(filterField(main), 'nothing-like-it')
@@ -929,7 +936,7 @@ test('2c.50: the status is in the page, empty, after the filter status and befor
   expect(status.isConnected).toBe(true)
 })
 
-test('2c.50: the alert comes after the status and before the table', async () => {
+test('2c.50 (as 17d.5b amends it): the alert comes after the status, both above the table', async () => {
   const { main } = await open({
     modelProfileSwitch: () =>
       reply(503, { key: 'client-unavailable', args: [] }),

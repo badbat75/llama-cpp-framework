@@ -21,6 +21,7 @@ import {
   TextField,
 } from './Field.tsx'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
+import { RestartOffer } from './RestartOffer.tsx'
 import { sendFailure, saveAnswer, type SaveAnswer } from './save.ts'
 import {
   SaveBar,
@@ -439,15 +440,21 @@ export type PageDelete = {
 export default function ServerForm({
   id,
   doc,
+  instance,
   renewals,
   runs,
   pageDelete,
   onDirty,
   onReload,
   onRenewed,
+  nameOf,
+  onInstances,
 }: {
   id: string
   doc: ServerDoc
+  /** The instance that runs this profile, null when none does (16 17a.5): the
+   * save's restart offer is for it (16 17d.3a). */
+  instance: string | null
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
   renewals: number
   /** A settled action started after a save-saved-restart ends it (44a). */
@@ -460,6 +467,10 @@ export default function ServerForm({
   onReload: () => void
   /** A sign-in in the dialog: true when the edits belong to it and stay. */
   onRenewed: (session: Session) => boolean
+  /** The name of an instance by its id, for the restart offer (16 17d.1a). */
+  nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   const fid = useId()
   const [rows] = useState(() => bindRows(doc.values.Hostname, doc.interfaces))
@@ -472,7 +483,7 @@ export default function ServerForm({
   )
   const { errors, set: setErrors, clear: clearError } = useFieldErrors<Key>()
   const [phase, setPhase] = useState<
-    'idle' | 'saving' | 'saved' | 'saved-restart'
+    'idle' | 'saving' | 'saved' | 'saved-restart' | 'saved-restart-ids'
   >('idle')
   // The run actions started when the last save-saved-restart answered.
   const [restartAt, setRestartAt] = useState(0)
@@ -483,6 +494,9 @@ export default function ServerForm({
   const signInId = `${fid}-sign-in`
   const saveId = `${fid}-save`
   const askSignIn = useSignInDialog(signInId)
+  // The restart offer's button that asked for the sign-in (17d review D1): the
+  // dialog gives the focus back to it, not to Save changes.
+  const offerControl = useRef<string | null>(null)
 
   // A save sends the whole document: every key the read returned with the
   // form's edits over it, because a key absent from the body is written
@@ -606,7 +620,16 @@ export default function ServerForm({
       setLoaded({ revision: answer.revision, values })
       // What the user typed while it ran is kept (33b).
       setDraft((d) => (d === sent ? fromValues(values, doc.defaults, rows) : d))
-      setPhase(answer.running ? 'saved-restart' : 'saved')
+      // 16 17d.3a: the save needs a restart, and the profile's own instance is
+      // the one to restart: the bar offers it. No instance runs the profile:
+      // the words of today, with nothing to offer.
+      setPhase(
+        !answer.running
+          ? 'saved'
+          : instance === null
+            ? 'saved-restart'
+            : 'saved-restart-ids',
+      )
       setRestartAt(runs.started)
       return
     }
@@ -643,11 +666,15 @@ export default function ServerForm({
   }
 
   /** A sign-in in the bar's dialog: the page stays only for the same user;
-   * the dialog closes, the alert goes, focus on Save changes (36). */
+   * the dialog closes, the alert goes, focus on Save changes (36). The
+   * restart offer's Sign in is the one exception: the focus goes back to the
+   * button whose restart was refused (17d review D1). */
   function signedIn(session: Session) {
     if (!onRenewed(session)) return
     alerts.setAlert(null)
-    askSignIn.close(saveId)
+    const offer = offerControl.current
+    offerControl.current = null
+    askSignIn.close(offer ?? saveId)
   }
 
   const v = draft
@@ -686,7 +713,23 @@ export default function ServerForm({
         deleteDisabled={pageDelete?.disabled}
         deleteExpanded={pageDelete?.expanded}
         deleteHint={pageDelete?.reason}
+        restartNames={instance === null ? '' : nameOf(instance)}
       >
+        {/* 16 17d.3a: the restart the save left to make, a row of the bar under
+            its buttons, the bar being sticky so the offer stays in reach. An
+            edit answers it, as it answers the status line. */}
+        {phase === 'saved-restart-ids' && !dirty && instance !== null && (
+          <RestartOffer
+            ids={[instance]}
+            nameOf={nameOf}
+            renewals={renewals}
+            onChanged={onInstances}
+            onSignIn={(control) => {
+              offerControl.current = control
+              askSignIn.open()
+            }}
+          />
+        )}
         {pageDelete?.children}
       </SaveBar>
       <Card title={t('server-network')}>

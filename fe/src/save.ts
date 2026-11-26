@@ -9,9 +9,11 @@ import { apiError, isRecord, sessionRevoked, type Reply } from './api.ts'
 import { refusalOf, type RefusalTable } from './refusal.ts'
 import { t } from './strings.ts'
 
-/** What the PUT answered, in the order of the brief. */
+/** What the PUT answered, in the order of the brief. `restart` is the instances
+ * a restart is needed for (16 17d.4): the ids the reply names, empty when it
+ * names none. */
 export type SaveAnswer =
-  | { kind: 'saved'; revision: string; running: boolean }
+  | { kind: 'saved'; revision: string; running: boolean; restart: string[] }
   | { kind: 'signed-out' }
   | { kind: 'revoked' }
   | { kind: 'changed-elsewhere' }
@@ -49,7 +51,14 @@ export function saveAnswer(
     return isRecord(body) &&
       typeof body.revision === 'string' &&
       typeof body.running === 'boolean'
-      ? { kind: 'saved', revision: body.revision, running: body.running }
+      ? {
+          kind: 'saved',
+          revision: body.revision,
+          running: body.running,
+          restart: Array.isArray(body.restart)
+            ? body.restart.filter((id): id is string => typeof id === 'string')
+            : [],
+        }
       : failed(t('save-failed'))
   }
   const error = apiError(body)

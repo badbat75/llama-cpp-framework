@@ -759,7 +759,10 @@ test('S1.7: a 403 session-not-administrator on a model profile switch is 2c row 
   expect(buttons, 'one Sign in').toHaveLength(1)
   const alert = within(main).getByRole('alert')
   expect(before(alert, buttons[0]!), 'Sign in after the alert').toBe(true)
-  expect(before(buttons[0]!, table(main)), 'before the table').toBe(true)
+  expect(
+    before(buttons[0]!, table(main)),
+    'the region is above the table (17d.5b)',
+  ).toBe(true)
   expect(switchOf(main, 'Qwen3-27B').checked, 'the value before').toBe(true)
   expect(modelProfilesReads(bff), 'nothing read again').toBe(1)
   expect(switchesInactive(main), 'the switches stay active').toEqual([

@@ -99,6 +99,7 @@ export default function ServerProfilePage({
   onRenewed,
   onDirty,
   nameOf,
+  onInstances,
 }: {
   /** The id from the address. */
   id: string
@@ -110,6 +111,8 @@ export default function ServerProfilePage({
   /** The name of an instance by its id (16 17f.4): the Used by row says the
    * word the menu uses, not the key. */
   nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -460,6 +463,8 @@ export default function ServerProfilePage({
               onDirty={trackDirty}
               onReload={reload}
               onRenewed={renewed}
+              nameOf={nameOf}
+              onInstances={onInstances}
             />
           </section>
         </>
@@ -580,6 +585,8 @@ function Body({
   onDirty,
   onReload,
   onRenewed,
+  nameOf,
+  onInstances,
 }: {
   id: string
   answer: Answer | undefined
@@ -590,6 +597,10 @@ function Body({
   onDirty: (dirty: boolean) => void
   onReload: () => void
   onRenewed: (session: Session) => boolean
+  /** The name of an instance by its id, for the restart offer (16 17d.1a). */
+  nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   if (answer === undefined) {
     // The shape of the page to come (16 17a.6): the Used by row, and the card
@@ -619,12 +630,15 @@ function Body({
       <ServerForm
         id={id}
         doc={answer.doc}
+        instance={answer.instance}
         renewals={renewals}
         runs={NO_RUNS}
         pageDelete={pageDelete}
         onDirty={onDirty}
         onReload={onReload}
         onRenewed={onRenewed}
+        nameOf={nameOf}
+        onInstances={onInstances}
       />
     )
   }

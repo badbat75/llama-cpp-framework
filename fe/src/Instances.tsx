@@ -746,16 +746,20 @@ export function RunButtons({
 /** One row of the pool, as the create form reads it: the id, the port (null
  * when the reply's is no number) and the instance that runs it (null when
  * none does). */
-type PoolRow = { id: string; port: number | null; instance: string | null }
+export type PoolRow = {
+  id: string
+  port: number | null
+  instance: string | null
+}
 
 /** The pool the form's select lists: the rows, or the words of a read that
  * failed, with the Sign in when the read says the session is gone (16 17c.2:
  * a 401 is answered in the form, not by a sign-out). */
-type Pool = { rows: PoolRow[] } | { failed: string; signIn: boolean }
+export type Pool = { rows: PoolRow[] } | { failed: string; signIn: boolean }
 
 /** The rows of a pool reply: an item that names no id names nothing to pick,
  * so it is left out, as on the pool's own page (16 17a.4). */
-function poolRows(body: unknown): PoolRow[] {
+export function poolRows(body: unknown): PoolRow[] {
   if (!Array.isArray(body)) return []
   const rows: PoolRow[] = []
   for (const item of body) {
@@ -772,8 +776,9 @@ function poolRows(body: unknown): PoolRow[] {
   return rows
 }
 
-/** `GET /api/profiles/server` for the create form (16 17c.2). */
-async function readPool(): Promise<Pool> {
+/** `GET /api/profiles/server` for the create form (16 17c.2) and for the
+ * instance page's switch (16 17d.6a). */
+export async function readPool(): Promise<Pool> {
   try {
     const reply = await call('/api/profiles/server')
     if (reply.status === 401)

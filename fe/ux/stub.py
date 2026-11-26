@@ -559,6 +559,16 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json(
                     404, {"key": "no-model-profile-named", "args": [pid]}
                 )
+        # Brief 16 slice 17d (the state `model-profiles-restart-offer` of
+        # check.js): the Models list's row switch. The check clicks one switch
+        # and reads what the write leaves, so the answer is the one that asks
+        # for a restart: the profile switched on, the instance up, and the
+        # instance to restart (fe/briefs/api-contract.md, the `restart` ids of
+        # 17d.5).
+        if p.startswith("/api/profiles/model/") and p.endswith("/enabled"):
+            return self.json(
+                200, {"enabled": True, "running": True, "restart": ["default"]}
+            )
         return self.send_error(404, "no PUT of " + p)
 
     def do_POST(self):

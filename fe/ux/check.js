@@ -102,6 +102,17 @@ const NAV_HOST = '#nav ul[aria-labelledby="nav-host"]'
 // from the strings file it names a button of the text "undefined", so the state
 // fails until the slice lands, as it asks.
 const NAME_EDIT = `main button:has-text("${S['instance-name-edit']}")`
+// The instance page's server profile switch of 16 17d.6a, named by the key
+// 17d.11 adds: absent from the strings file it names a button of the text
+// "undefined", so the state fails until the slice lands, as it asks.
+const SWITCH_BUTTON = `main button:has-text("${S['instance-server-switch']}")`
+// The restart offer's button of 16 17d.1a, named by the key 17d.11 fills with
+// the instance's display name (22 D4.37), which the stub's `default` row spells
+// DEFAULT_NAME. Absent from the strings file the key's own shape is used, so
+// the button is not there and the state fails, as it asks.
+const OFFER_BUTTON = `main button:has-text("${(
+  S['restart-offer-button'] ?? 'Restart {0}'
+).replace('{0}', DEFAULT_NAME)}")`
 // The start of the GPU card's as-of line (brief 14 GD1.7): the sentence of
 // `model-profile-gpu-probed-at` up to its `{0}`, which the page fills with the
 // probe's moment in the browser's own locale, so no state can name the whole
@@ -425,6 +436,32 @@ const STATES = [
     ],
   },
   {
+    // Brief 16, slice 17d (as its 17d check of 2026-11-26 amends it, 17d.6a,
+    // 17d.10): the instance page's Server profile section with a free server
+    // profile to switch to, at rest. stub.py `pool=long` adds the widest row
+    // the rule allows, run by no instance (its id is LONG_POOL_ID, 32
+    // characters, port 9931), so the select has one option to cut after the id
+    // at 320 px (17c.11a) and the button sits under it. The button's text is
+    // the key 17d.11 adds: absent from the strings file it names a button of
+    // the text "undefined", so the state fails until the slice lands, as it
+    // asks. The page carries its own Restart in the head, so the section shows
+    // no offer (17d.6a).
+    name: 'instance-server-switch',
+    set: 'session=admin&pool=long',
+    hash: '#/instances/default',
+    expect: [
+      { selector: 'h2', text: S['instance-server-title'] },
+      {
+        selector: 'main select',
+        message: 'the switch’s select, in the field layout under the row',
+      },
+      {
+        selector: SWITCH_BUTTON,
+        message: 'the switch button, after the select',
+      },
+    ],
+  },
+  {
     // Brief 16, slice 17c (17c.1a, as the 17c check of 2026-11-25 amends it):
     // the Overview's create form, opened from the `+` that ends the instances
     // list. The opener carries the plus of Icon.tsx, so its selector names the
@@ -610,6 +647,34 @@ const STATES = [
     focus: {
       on: 'main .ot-add[aria-disabled="true"]',
       then: 'main .hint-tip',
+    },
+  },
+  {
+    // Brief 16, slice 17d (as its 17d check of 2026-11-26 amends it, 17d.5a,
+    // 17d.10): the Models list with a row switch answered by a restart. The
+    // stub answers the switch with `running: true` and `restart: ["default"]`
+    // (stub.py do_PUT), so the region the write leaves is the status, the
+    // offer's button and nothing else, and 17d.5a puts the whole region right
+    // after the table: the rows never move under the pointer. The button's
+    // text is the key 17d.11 fills with the stub's instance name, so the state
+    // fails until the slice lands, as it asks. At 320 px and at 200 % text the
+    // offer's buttons wrap, one per line if needed, with no sideways scroll.
+    name: 'model-profiles-restart-offer',
+    set: 'session=admin',
+    hash: '#/profiles/model',
+    expect: [
+      { selector: '#page-heading', text: S['model-profiles-title'] },
+      {
+        selector: 'main .model-profiles-switch input',
+        count: 1,
+        message: 'a row switch to write',
+      },
+    ],
+    open: {
+      // The first row's switch: `open` clicks one element, so the selector has
+      // to be one (strict mode).
+      click: 'main tbody tr:first-child .model-profiles-switch input',
+      then: OFFER_BUTTON,
     },
   },
   {

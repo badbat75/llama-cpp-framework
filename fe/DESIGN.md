@@ -795,7 +795,9 @@ Each is one React component, reused by every page.
   whatever request is still pending, never a progress text without end. The save bar is the
   same pattern for a form ([4.1.3](https://www.w3.org/TR/WCAG22/#status-messages)). For a control
   repeated in every row of a table, one region for the table, just after it (a line above a table
-  pushes its rows when it fills; brief 16 17e.12), whose messages name the row; one write at a time, every row's control `aria-disabled` while it runs.
+  pushes its rows when it fills; brief 16 17e.12), whose messages name the row; the one exception
+  is the Models list, whose region and restart offer stay above its long table, the focus never moving
+  (user, 2026-11-26, brief 16 17d.5b); one write at a time, every row's control `aria-disabled` while it runs.
 
 - **Create form in place** (New server profile, New instance: brief 16; New model profile: brief 22):
   the list's Add icon button ("Icon buttons of a list": a `plus`, its words visually hidden) at the

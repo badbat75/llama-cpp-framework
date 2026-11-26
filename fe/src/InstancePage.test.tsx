@@ -1160,7 +1160,8 @@ const SHELL = [
 ]
 
 /** The instance page's path (17a.10: the form is gone, the tags field is the
- *  page's last one, and the Server profile section shows a link, not a box). */
+ *  page's last one, and the Server profile section shows a link, not a box,
+ *  with 17d.6a's switch under it). */
 const TAB_PATH_INSTANCE = [
   ...SHELL,
   // 17f2.8: the display name pencil is the first stop of the page, before the
@@ -1180,6 +1181,11 @@ const TAB_PATH_INSTANCE = [
   // profile, so the row is the muted text, with no link.
   about(en('instance-tags-own')),
   en('instance-tag-add'),
+  // 16 17d.6a: the section's switch to a free profile is the field's select
+  // and its button (the fake's pool has `default` free). The button is
+  // switched off until a profile is chosen, and keeps its stop.
+  en('instance-server-switch-label'),
+  en('instance-server-switch'),
   // 17e.10a: the Model profiles section is the page's last: the `*` checkbox,
   // then each row's id link and its switch, in the reply's order. The fixture
   // answers the fake's default rows.
@@ -1378,7 +1384,7 @@ test('16 17a.10: the instance page reads and writes no server file, and shows no
   ).toEqual([])
 })
 
-test('16 17a.10: after the tags field, a section with h2 instance-server-title holds a Value row naming the list item’s serverProfile as a link to its page', async () => {
+test('16 17a.10 (as 17d.6a amends it): after the tags field, a section with h2 instance-server-title holds a Value row whose link reads instance-server-open with the list item’s serverProfile and leads to its page', async () => {
   const main = await loadedInstance({
     instances: [
       {
@@ -1391,9 +1397,11 @@ test('16 17a.10: after the tags field, a section with h2 instance-server-title h
   })
   const section = await profileSection(main)
   expect(assetRows(section)).toEqual([
-    [en('instance-server-title'), 'edge box'],
+    [en('instance-server-title'), en('instance-server-open', 'edge box')],
   ])
-  const link = within(section).getByRole('link', { name: 'edge box' })
+  const link = within(section).getByRole('link', {
+    name: en('instance-server-open', 'edge box'),
+  })
   expect(link.getAttribute('href')).toBe(serverProfileHref('edge box'))
   expect(
     before(tagsField(main), section),
@@ -1477,9 +1485,11 @@ test('16 17a.10: the row follows every list answer: a polled answer that gives t
     await act(async () => {
       await vi.advanceTimersByTimeAsync(6_000)
     })
-    await within(main).findByRole('link', { name: 'edge-01' })
+    // 16 17d.6a: the link says "Open {0}", not the bare id.
+    const open = en('instance-server-open', 'edge-01')
+    await within(main).findByRole('link', { name: open })
     expect(assetRows(await profileSection(main))).toEqual([
-      [en('instance-server-title'), 'edge-01'],
+      [en('instance-server-title'), open],
     ])
   } finally {
     vi.useRealTimers()

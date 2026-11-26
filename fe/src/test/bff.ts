@@ -233,6 +233,29 @@ export const EN: Record<string, string> = {
     'the instance `{0}` cannot be removed: it is the instance the configurator and the web UI use',
   'api-instance-running':
     'the instance `{0}` is running: stop it before removing it',
+  // Brief 16 slice 17d (as its 17d check of 2026-11-26 amends it): the restart
+  // offer of a save and of a switch, and the instance page's server profile
+  // switch. `1a strings` in App.test.tsx pins these against
+  // strings/en_US.json, so the sheet gains exactly 17d.11's keys.
+  'restart-offer-button': 'Restart {0}',
+  'restart-offer-running': 'Restarting {0}…',
+  'restart-offer-sent':
+    '{0} is restarting: its page shows when it is running again.',
+  'save-saved-restart-ids': 'Saved: restart {0} to apply.',
+  'model-profiles-switched-on-restart-ids':
+    'Switched {0} on: restart {1} to apply.',
+  'model-profiles-switched-off-restart-ids':
+    'Switched {0} off: restart {1} to apply.',
+  'instance-server-open': 'Open {0}',
+  'instance-server-switch-label': 'Switch to',
+  'instance-server-switch-hint':
+    'Only server profiles no other instance uses are listed. The instance reads its server profile when it starts.',
+  'instance-server-switch': 'Use this server profile',
+  'instance-server-switching': 'Switching the server profile…',
+  'instance-server-switched': 'This instance now uses the server profile {0}.',
+  'instance-server-switched-restart':
+    'This instance now uses the server profile {0}: restart it to apply.',
+  'instance-server-no-free': 'No other server profile is free to switch to.',
   'api-client-not-authorized':
     'Not authorized: the system refused this request.',
   'api-client-unavailable':
@@ -1922,6 +1945,18 @@ export type BffOptions = {
     init?: RequestInit,
   ) => Response | Promise<Response>
   /**
+   * PUT /api/instances/{id}/profiles/server (brief 16, 16 17d.7): the reply to
+   * the n-th switch (from 1), given the parsed body `{"serverProfile": <id>}`
+   * and the decoded instance id. Default 200 `{"running": false}`
+   * (fe/briefs/api-contract.md).
+   */
+  instanceServerProfile?: (
+    body: unknown,
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
    * GET /api/instances/{id}/profiles/model (brief 16, 17e.1): the document to
    * answer 200 with, or the reply. Default `INSTANCE_MODELS`.
    */
@@ -2177,6 +2212,24 @@ export function fakeBff(options: BffOptions = {}) {
         options.serverProfileSave
           ? options.serverProfileSave(body, n, init)
           : reply(200, { revision: 'r-2', running: false }),
+      )
+    }
+    // The instance's server profile (brief 16, 16 17d.7). This is matched
+    // BEFORE the instance's Server form below, whose test (`path.endsWith
+    // ('/server')`) fits this path too.
+    const instanceServerProfile =
+      /^PUT \/api\/instances\/([^/]+)\/profiles\/server$/.exec(route)
+    if (instanceServerProfile) {
+      const id = decodeURIComponent(instanceServerProfile[1]!)
+      const n = calls.filter(
+        (c) =>
+          c.method === 'PUT' &&
+          /^\/api\/instances\/[^/]+\/profiles\/server$/.test(c.path),
+      ).length
+      return Promise.resolve(
+        options.instanceServerProfile
+          ? options.instanceServerProfile(body, id, n, init)
+          : reply(200, { running: false }),
       )
     }
     const server = /^GET \/api\/instances\/([^/]+)\/server$/.exec(route)

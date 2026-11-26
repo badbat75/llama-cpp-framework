@@ -21,9 +21,11 @@ import { Icon } from './Icon.tsx'
 import {
   failureText,
   switchedText,
+  switchedTextIds,
   writeEnabled,
 } from './modelProfileSwitch.ts'
 import PageHeading from './PageHeading.tsx'
+import { RestartOffer } from './RestartOffer.tsx'
 import {
   ConfirmRow,
   DeleteReasons,
@@ -150,6 +152,8 @@ export default function ModelProfiles({
   onSort,
   onSignedOut,
   onRenewed,
+  nameOf,
+  onInstances,
 }: {
   /** The text kept by the shell, for the tab's life (02-models.md, 62). */
   filterText: string
@@ -159,6 +163,10 @@ export default function ModelProfiles({
   onSort: (sort: Sort | null) => void
   onSignedOut: (reason: SignedOut) => void
   onRenewed: (session: Session) => boolean
+  /** The name of an instance by its id, for the restart offer (16 17d.1a). */
+  nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -196,6 +204,8 @@ export default function ModelProfiles({
           onSort={onSort}
           onRenewed={onRenewed}
           onReread={reread}
+          nameOf={nameOf}
+          onInstances={onInstances}
         />
         {answer !== undefined && (
           <p className="model-profiles-note">{t('model-profiles-off-note')}</p>
@@ -214,6 +224,8 @@ function Body({
   onSort,
   onRenewed,
   onReread,
+  nameOf,
+  onInstances,
 }: {
   answer: Answer | undefined
   filter: string
@@ -222,6 +234,10 @@ function Body({
   onSort: (sort: Sort | null) => void
   onRenewed: (session: Session) => boolean
   onReread: () => void
+  /** The name of an instance by its id, for the restart offer (16 17d.1a). */
+  nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   if (answer === undefined) {
     // The rows' skeleton (17a.4): three lines in the table's place.
@@ -253,6 +269,8 @@ function Body({
       onSort={onSort}
       onRenewed={onRenewed}
       onReread={onReread}
+      nameOf={nameOf}
+      onInstances={onInstances}
     />
   )
 }
@@ -280,6 +298,8 @@ function Filtered({
   onSort,
   onRenewed,
   onReread,
+  nameOf,
+  onInstances,
 }: {
   read: ModelProfile[]
   filter: string
@@ -288,6 +308,10 @@ function Filtered({
   onSort: (sort: Sort | null) => void
   onRenewed: (session: Session) => boolean
   onReread: () => void
+  /** The name of an instance by its id, for the restart offer (16 17d.1a). */
+  nameOf: (id: string) => string
+  /** The app's instance list read again (16 17d.2a). */
+  onInstances: () => void
 }) {
   const uid = useId()
   // The rows as read, each switch's value kept up to date in place (2c.47).
@@ -300,7 +324,19 @@ function Filtered({
   const [alert, setAlert] = useState<{ text: string; signIn: boolean } | null>(
     null,
   )
+  // The instances the last switch left needing a restart (16 17d.5b): the
+  // offer above the table names them. The next switch replaces it when its
+  // answer lands, and never clears it while its request runs, so the rows move
+  // at most once per switch.
+  const [restart, setRestart] = useState<string[]>([])
   const [asking, setAsking] = useState(false)
+  // The sign-ins this list kept (17d review D1): each one raises the count the
+  // restart offer's alert was raised against, so the offer's alert and its Sign
+  // in go with the sign-in, as the switch region's own alert does.
+  const [renewals, setRenewals] = useState(0)
+  // The offer's button that asked for the sign-in: the dialog gives the focus
+  // back to it, not to the row of the last switch (17d review D1).
+  const offerControl = useRef<string | null>(null)
   const field = useRef<HTMLInputElement>(null)
   // The row of the latest write: where focus returns after a sign-in (2c.49).
   const last = useRef(0)
@@ -350,7 +386,24 @@ function Filtered({
       if (!mounted.current) return
       if (typeof result === 'object' && 'running' in result) {
         setModelProfiles((ps) => rowEnabled(ps, i, result.enabled))
-        setStatus(switchedText(p.id, p.engine, result.enabled, result.running))
+        // 16 17d.5b: the reply naming the instances to restart says them, and
+        // the offer above the table offers them; one naming none keeps today's
+        // words, with nothing to offer. The answer lands, so the offer the
+        // previous switch left is replaced by this one's.
+        if (result.restart.length > 0) {
+          setStatus(
+            switchedTextIds(
+              p.id,
+              result.enabled,
+              result.restart.map((id) => nameOf(id)).join(', '),
+            ),
+          )
+        } else {
+          setStatus(
+            switchedText(p.id, p.engine, result.enabled, result.running),
+          )
+        }
+        setRestart(result.restart)
         setBusy(false)
         return
       }
@@ -358,6 +411,7 @@ function Filtered({
         text: failureText(p.id, result),
         signIn: result === 'signed-out' || result === 'revoked',
       })
+      setRestart([])
       if (result === 'signed-out' || result === 'revoked') {
         setModelProfiles((ps) => rowEnabled(ps, i, previous))
         setBusy(false)
@@ -374,7 +428,7 @@ function Filtered({
       )
       setBusy(false)
     },
-    [busy, modelProfiles],
+    [busy, modelProfiles, nameOf],
   )
   // The table's rows are memoised (U17c), so the callback it is handed is stable.
   const onChange = useCallback(
@@ -421,11 +475,15 @@ function Filtered({
 
   function signedIn(session: Session) {
     const kept = onRenewed(session)
+    const offer = offerControl.current
+    offerControl.current = null
     flushSync(() => {
       setAsking(false)
       setAlert(null)
+      if (kept) setRenewals((n) => n + 1)
     })
-    if (kept) document.getElementById(`${uid}-switch-${last.current}`)?.focus()
+    if (kept)
+      document.getElementById(offer ?? `${uid}-switch-${last.current}`)?.focus()
     else onReread()
   }
 
@@ -495,6 +553,12 @@ function Filtered({
       <p role="status" className="model-profiles-filter-status">
         {statusText}
       </p>
+      {/* 16 17d.5b: the switch's region, its alert, its Sign in and the restart
+          the last switch left to make, between the filter and the table, so
+          they are seen at once in a long list. The status keeps its reserved
+          line, so only the offer's row of buttons can push the rows; the focus
+          stays on the switch used, and the offer is replaced only when the
+          next answer lands. */}
       <p role="status" className="model-profiles-switch-status">
         {status}
       </p>
@@ -513,6 +577,20 @@ function Filtered({
           {t('session-sign-in')}
         </button>
       )}
+      {/* Keyed by its ids (17d review D2): the next switch's offer is a new
+          one, with no status line and no alert carried from the offer it
+          replaced. */}
+      <RestartOffer
+        key={restart.join(',')}
+        ids={restart}
+        nameOf={nameOf}
+        renewals={renewals}
+        onChanged={onInstances}
+        onSignIn={(control) => {
+          offerControl.current = control
+          setAsking(true)
+        }}
+      />
       {shown.length > 0 && (
         <Table
           uid={uid}

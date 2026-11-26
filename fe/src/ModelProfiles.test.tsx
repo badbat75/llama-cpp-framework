@@ -1016,13 +1016,18 @@ test("10 R1.3: the table is the only child of a div.table-scroll, in the table's
     'the table keeps the name the h1 gives it (5b.5)',
   ).toBe('page-heading')
   // The order framed() checks is unchanged, and the box sits where the table
-  // was: after the filter, its hint and the two status lines.
+  // was: after the filter and its hint, with the filter's own status line
+  // above it. 17d.5b keeps the switch's region there too, between the filter
+  // and the box, so a long list is seen at once.
   framed(main, box, 'the table box')
   const hint = within(main).getByText(en('model-profiles-filter-hint'))
   expect(before(hint, box), 'the box comes after the filter').toBe(true)
   const switchStatus = main.querySelector('p.model-profiles-switch-status')
   expect(switchStatus, 'the switch status is on the page').not.toBeNull()
-  expect(before(switchStatus!, box), 'and after the status lines').toBe(true)
+  expect(
+    before(switchStatus!, box),
+    'and above the table, where the region stays (17d.5b)',
+  ).toBe(true)
 })
 
 test('10 R1.3: the box is no Tab stop of its own, and every row of a readable id holds its link and its switch, so Tab reaches each column and scrolls the box (Firefox adds the box as one stop only while it overflows: jsdom never scrolls)', async () => {

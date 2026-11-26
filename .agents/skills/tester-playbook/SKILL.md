@@ -349,6 +349,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `InstancePage.test.tsx`. A new FOCUSABLE field moves every tab-order list by TWO stops (the field's
   About button, then its control): `ServerSave.test.tsx` `1b 6` and `InstancePage.test.tsx`
   `TAB_PATH_FORM`. Amend each in the same pass and name them in the report.
+- Register a new route of the fake BEFORE an existing block that matches with `path.endsWith(...)`: the
+  older block answers the new path first, and its call counter counts it too (the server-profile PUT
+  counter ending `/server` took `PUT /api/instances/{id}/profiles/server`), so the red is a missing answer
+  and an inflated count, not the slice.
 - Keep a fixture constant looked up by accessible name clear of every other control's name; call
   `cleanup()` per iteration in a test that renders in a loop (RTL cleans only between tests); put
   `Element.prototype.scrollIntoView = () => {}` in the `beforeEach` of a file whose test clicks a jump
@@ -508,6 +512,19 @@ frozen list.
   the element and its EARLIER tokens against the classes of the element's ancestors (read off the DOM): a
   rule requiring every token to be the element's own misses the scoped rule the coder writes
   (`.instance-header .x`), which is a red for a correct fix.
+- A reader that matches a selector part on the WHITESPACE-STRIPPED text (`compact`, `sel.replace(/\s+/g,
+  '')`) never sees a part naming a TAG ancestor: `.run-actions button` collapses to `.run-actionsbutton`,
+  one token, matching no element, so the cascade of a button inside the run row reads EMPTY and the pin is
+  red on a correct fix. Split the part on whitespace and combinators into compounds (the
+  `Instances17c.test.tsx` `scopedBy` reader, `partsOf` + `compounds`), and use the compact form only where
+  every part is a single compound (`.run-remove`).
+- That `scopedBy` reader reads EVERY earlier compound as an ANCESTOR, so a SIBLING rule
+  (`.field-control select + button`) never reaches the element and an absence pin of such a rule through
+  it passes vacuously (proved: its `reach` for the switch's button was `[]`). The sibling-aware
+  `rulesReaching` of `RestartOffer17d.test.tsx` walks `+`/`~` over PREVIOUS siblings; it needs a `matched`
+  flag (breaking on an empty step leaves `nodes` at the previous step, so every descendant rule reads as
+  reaching: 17 false hits) and takes one compound as `compounds(part)[0]` (`compounds` answers a LIST of
+  them, and a nested array matches no element, so the pin reads empty).
 - Pin a line the brief gives by LOOK ("a muted line under the select") and by its RELATION to a control,
   never by a new id literal: take the ids in the control's `aria-describedby` (every one must exist in the
   document), pick the element carrying the key's text exactly, then pin it is in the control's field, after
@@ -546,7 +563,10 @@ frozen list.
   not `.visually-hidden`, and pin the href by identity.
 - Pin "the two controls share one rule" (a brief: share the class or the rule, not a copy) by reading the
   selector GROUP of the rule that styles the existing class and asserting the new control carries one of
-  its parts: a comma group and a shared class both pass, a copy of the declarations does not.
+  its parts: a comma group and a shared class both pass, a copy of the declarations does not. Read it from
+  the NEW control's cascade: per pinned property, the winning rule's group must carry a part equal to the
+  existing rule's part (`.run-actions`, `.run-actions button`), so a copied rule reds with the property
+  named.
 - Pin "ONE rule styles both" (a review asks for one rule, not two that drift apart) by the RULE'S
   IDENTITY: collect the top-level rules that declare the value AND reach each element, assert one each,
   then assert the two lists name the same rule (its offset in the sheet). The selector text is the coder's,
@@ -561,6 +581,17 @@ frozen list.
   box's `mouseleave` hides it, a `mouseover` of the box (not only of the control) shows it, and no rule
   reaching it declares `position: absolute`/`fixed`. A popover that is a child of the same wrapper passes
   every "the text is in the box" pin, so the text pins alone prove nothing (22 D4.13).
+- A component the page hands NEW ids keeps its own state: an offer whose ids are replaced never
+  unmounts, so its previous status line and alert carry over into the new offer. Pin the ABSENCE of
+  the previous words (the alerts above the table, read with `queryAllByRole('alert')` + `before(el,
+  table(main))`, or in the Save bar with `within(bar)`), never a class, and pin the new offer's own
+  buttons in the same test so the red names the carry-over, not a missing offer.
+- The sign-in dialog's close is where the page owes the focus back: `useSignInDialog(fromId)` closes
+  with the focus on `fromId` (the Sign in) and on a signed-in with the id the page passes to `close`,
+  so a control inside a child component needs its own id threaded through `onSignIn`. Pin it by
+  signing in THROUGH the dialog (`findByRole('dialog')`, type, submit, `waitFor` the dialog gone);
+  the alert-absence assert before the focus assert masks it, so prove the focus half red by flipping
+  the earlier expectations to today's value in a `cp` copy, `-t`, restore with `cmp -s`.
 - Prove the teeth of a CSS pin in a scratch css + scratch test pair (`cp` both, one string swap, `-t`).
   The test reads `index.css` beside itself, so a real-tree mutant of the css, restored with `cp` and
   proved with `cmp -s`, is enough. A snippet that ends at the rule's `}` puts the added declaration
@@ -587,6 +618,9 @@ frozen list.
   key, and pin the box's name by role and name (the group is named by the label).
 - `within(el).getByRole('group', { name })` never matches `el` itself: a `CheckboxField`'s `<fieldset>` IS
   the group, so look it up from `main` and compare identity with `toBe`.
+- jsdom gives a `<dt>` no accessible name from its own text, so `getByRole('term', { name })` answers 0 on
+  a `dl.assets` row: read the rows with `getAllByRole('term')[i]` and say in the comment that a slice
+  adding a row shifts the index.
 - `closest()` answers `Element`: cast to `HTMLElement` where a helper takes one (typecheck TS2345).
 - A link's accessible name joins the text of its children with NO separator, so a name built as text plus
   an inline `span` reads "Coding assistantID default": pin the space as a text node in the markup
@@ -642,6 +676,13 @@ frozen list.
   name is pinned where the brief states it.
 - When a brief makes a read-only field editable, amend every fixture that pinned it read-only (the
   fan-out goes through the shared cards helper) and retarget the "nothing to focus" refusals.
+- Flipping a status region's PLACEMENT on a list page reddens the whole-page tab-order snapshot too, not
+  only the `before()` pins: the region carries a stop (the Sign in after a 401), so `2c.53` moves with it.
+  Sweep `grep -rn "<region key>" fe/src/*.test.tsx` and expect the tab-order file among the reds.
+- A section that gains controls adds stops to EVERY fixture of that page: 17d.6a's server-profile switch
+  adds `instance-server-switch-label` and `instance-server-switch` to `TAB_PATH_INSTANCE` and `1c.46a`,
+  because the fake's default pool row has `instance: null` and so the switch renders on every default
+  instance-page fixture. Check the fake's default rows before writing a tab path.
 
 ### The web UI (fe/): the UX check
 
@@ -666,6 +707,13 @@ frozen list.
   `main tbody tr` with a `count`), never by a class the brief leaves unnamed, and answer the routes its
   page calls in `fe/ux/stub.py` (`do_GET` and `do_PUT`), else the state fails on a 404 the slice does not
   own. `python3 -m py_compile fe/ux/stub.py` is the cheap proof of that edit.
+- `open.click` must match EXACTLY ONE element: `isVisible()` throws a strict-mode violation on a selector
+  with several matches (a row switch: scope it `main tbody tr:first-child .model-profiles-switch input`),
+  and the throw aborts the whole state in every browser, width and theme, which reads as a broken harness.
+- Prove which UX-check failures are pre-existing by stashing the state edits
+  (`git stash push -- fe/ux/check.js fe/ux/stub.py`), running the check, and popping: the skeleton states
+  (`loading-node`, `loading-overview`) flake in one browser, and the count of 18 lines per new state is
+  the 6 configs x 3 browsers.
 
 ### Behaviour that cannot run here
 
@@ -782,10 +830,24 @@ frozen list.
   abandoned task ends, so a slot-comes-back pin must keep the fetch hung across the follow-up calls: a
   released fetch puts the slots back by itself and the pin passes on the bug.
 
+### xtask
+
+- xtask is a BINARY crate: `cargo test -p xtask` runs `--bin xtask`, and `linux/` is
+  `#[cfg(target_os = "linux")]`, `windows/` `#[cfg(windows)]`, so a phase's tests exist on one OS only
+  (the shared code's, in `common/`, run everywhere): state which OS can prove a pin.
+- A stub seam in a binary crate needs `#[allow(dead_code)]` (a `pub fn` of a bin is dead until wired)
+  AND `let _ = arg;` for each unused argument, else `cargo clippy -p xtask --all-targets -- -D warnings`
+  reds the stub, not the tests.
+- `cargo fmt -p xtask --check` answers a diff in `xtask/src/linux/package.rs` at HEAD (pre-existing):
+  hand-apply only your own hunks, prove with `git diff --stat` naming your files alone.
+
 ### The web UI (fe/)
 
 - `npx vitest` from the repo root resolves another config and the node environment: every test reds with
-  `window is not defined`.
+  `window is not defined`. `npx --prefix fe vitest run src/x.test.tsx` is the same trap: the reds are
+  `TypeError: Cannot read properties of undefined (reading 'restore')` in every file's `afterEach`
+  (`dialogs.restore()`), which reads as a broken teardown, not as the wrong harness. Use
+  `npm --prefix fe test -- <file-part>`.
 - `--reporter=basic` (vitest 5 dropped it) prints NOTHING, so a grep for the test names answers empty and
   reads as "the tests do not exist": run with the default reporter and read `Test Files` / `Tests`.
 - `vitest run --list` (vitest 5) dies with `CACError: Unknown option --list`, and the default reporter of a
@@ -830,6 +892,9 @@ frozen list.
 - A page-open helper that only renders keeps the PREVIOUS test's hash: a second `openPage` in the same
   test for another id renders the first id's page, and the DOM dump reads "There is no instance named
   <first id>" with the h1 of the first id. `startAt('#/instances/<id>')` before each render.
+- A page-open helper that renders without `cleanup()` first leaves TWO trees when a test opens two pages:
+  every `getByRole('main')` after it reds with "Found multiple elements with the role \"main\"", which
+  reads as a broken selector, not as the second render.
 - Pressing Save with the box holding the loaded value sends NOTHING (the unchanged-text rule), so a
   refusal fixture on that press is UNREACHABLE and the red is `Unable to find ... <refusal text>`: type a
   new value before the press that pins a refusal.

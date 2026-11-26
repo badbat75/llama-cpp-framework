@@ -14,9 +14,11 @@ import {
 } from './api.ts'
 import { t } from './strings.ts'
 
-/** What a switch write gave: the reply, 'signed-out', the error, or 'failed'. */
+/** What a switch write gave: the reply, 'signed-out', the error, or 'failed'.
+ * `restart` is the instances a restart is needed for (16 17d.5): the ids the
+ * reply names, empty when it names none. */
 export type Written =
-  | { enabled: boolean; running: boolean }
+  | { enabled: boolean; running: boolean; restart: string[] }
   | 'signed-out'
   | 'revoked'
   | (ApiError & { status: number })
@@ -40,7 +42,15 @@ export async function writeEnabled(
       return isRecord(body) &&
         typeof body.enabled === 'boolean' &&
         typeof body.running === 'boolean'
-        ? { enabled: body.enabled, running: body.running }
+        ? {
+            enabled: body.enabled,
+            running: body.running,
+            restart: Array.isArray(body.restart)
+              ? body.restart.filter(
+                  (id): id is string => typeof id === 'string',
+                )
+              : [],
+          }
         : 'failed'
     }
     if (reply.status === 401) return 'signed-out'
@@ -65,6 +75,10 @@ export function failureText(
       return t('api-client-not-authorized')
     case 'client-unavailable':
       return t('api-client-unavailable')
+    // A 504 reached the manager: the write may have happened, and the rows are
+    // read again to follow it (16 17d.2a).
+    case 'client-timeout':
+      return t('write-timeout')
     case 'no-model-profile-named':
       return t('api-no-model-profile-named', id)
     case 'load-on-startup-over-max':
@@ -98,4 +112,17 @@ export function switchedText(
   return running
     ? t('model-profiles-switched-off-restart', id, engine)
     : t('model-profiles-switched-off', id, engine)
+}
+
+/** The status of a switch that held, naming the instances to restart (16
+ * 17d.5): `names` is the reply's ids as the app shows them, joined for the
+ * text. The engine is left out: the instances are the news. */
+export function switchedTextIds(
+  id: string,
+  enabled: boolean,
+  names: string,
+): string {
+  return enabled
+    ? t('model-profiles-switched-on-restart-ids', id, names)
+    : t('model-profiles-switched-off-restart-ids', id, names)
 }

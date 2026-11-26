@@ -1027,7 +1027,7 @@ function tabbable(main: HTMLElement): HTMLElement[] {
   )
 }
 
-test('1c.46a: Tab goes the display name pencil, Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, Add tag, then the Server profile link', async () => {
+test('1c.46a: Tab goes the display name pencil, Start, Stop, Restart, the run Sign in, About Start at boot, the checkbox, the boot Sign in, About Instance tags, Add tag, then the Server profile link, its switch and its button', async () => {
   const { main } = await loaded({
     run: SESSION_ENDED,
     boot: boot(false, SESSION_ENDED),
@@ -1035,9 +1035,19 @@ test('1c.46a: Tab goes the display name pencil, Start, Stop, Restart, the run Si
     // has to name one for the link to exist.
     instances: [{ ...INSTANCES[0]!, serverProfile: 'default' }, INSTANCES[1]!],
   })
-  // 17a.10: the form is gone from this page, so the last stop is the link of
-  // the section that took its place.
-  const profileLink = within(main).getByRole('link', { name: 'default' })
+  // 17a.10: the form is gone from this page, so the last stops are the section
+  // that took its place: the link of the profile the instance runs, then the
+  // 17d.6a switch to another one (the fake's pool has `default` free, so the
+  // select and its button are there).
+  const profileLink = within(main).getByRole('link', {
+    name: en('instance-server-open', 'default'),
+  })
+  const profileSelect = within(main).getByRole('combobox', {
+    name: en('instance-server-switch-label'),
+  })
+  const profileSwitch = within(main).getByRole('button', {
+    name: en('instance-server-switch'),
+  })
   // Brief 12, section 5, as brief 15 section 3 leaves it: the tags field
   // follows Start at boot, so its stops come before the Server form's first
   // field. This fixture's instance has no tags, so the field has its About
@@ -1068,6 +1078,8 @@ test('1c.46a: Tab goes the display name pencil, Start, Stop, Restart, the run Si
     ['About Instance tags', tagsAbout],
     ['Add tag', tagAdd],
     ['Server profile link', profileLink],
+    ['Server profile switch', profileSelect],
+    ['Server profile switch button', profileSwitch],
   ]
   expect(names(expected)).toEqual(expected.map(([n]) => n))
 
@@ -1087,6 +1099,8 @@ test('1c.46a: Tab goes the display name pencil, Start, Stop, Restart, the run Si
     ['About Instance tags', tagsAbout],
     ['Add tag', tagAdd],
     ['Server profile link', profileLink],
+    ['Server profile switch', profileSelect],
+    ['Server profile switch button', profileSwitch],
   ]
   expect(names(expected)).toEqual(expected.map(([n]) => n))
 })

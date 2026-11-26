@@ -223,8 +223,10 @@ function runStatus(main: HTMLElement): HTMLElement {
   return all[0]!
 }
 
-/** The save bar's status line: the one status after the Server form's h2, on
- * the profile page (17a.5). */
+/** The save bar's status line: the bar's own status of the Server section
+ * (the header's run status comes before the section's h2, 1c.40). 16 17d.3a
+ * makes the restart offer a row of the bar with a status of its own, so the
+ * bar's line is picked by its class, not by counting. */
 function saveStatus(main: HTMLElement): HTMLElement {
   const h2 = within(main).getByRole('heading', {
     level: 2,
@@ -232,7 +234,7 @@ function saveStatus(main: HTMLElement): HTMLElement {
   })
   const all = within(main)
     .getAllByRole('status')
-    .filter((s) => before(h2, s))
+    .filter((s) => before(h2, s) && s.classList.contains('save-status'))
   expect(all, 'one status line in the Server section').toHaveLength(1)
   return all[0]!
 }
@@ -1630,7 +1632,11 @@ async function savedRestart(main: HTMLElement) {
   type(portBox(main), '8581')
   press(button(main, 'save-button'))
   await flush()
-  expect(saveStatus(main).textContent).toBe(en('save-saved-restart'))
+  // 16 17d.3a: the profile is the instance `default`'s (the fake's server
+  // document names it), so the bar names that instance and offers its restart.
+  expect(saveStatus(main).textContent).toBe(
+    en('save-saved-restart-ids', 'default'),
+  )
 }
 
 const RUNNING_SAVE = () => reply(200, { revision: 'r-2', running: true })

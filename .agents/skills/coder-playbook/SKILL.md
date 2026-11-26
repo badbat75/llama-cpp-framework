@@ -275,6 +275,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   property list reads it). A bare `h2, h3 { margin-top }` pair is not: it outranks the
   sheet's heading rules, which declare the `margin` SHORTHAND, so it moves every h2 on
   every page and gives every h3 a room it never had (17c re-check D4).
+- Sharing a rule by adding a class to its selector list is red when the rule is pinned by
+  `topBy(tight('.x'))` (HearthH8b.5 pins `.run-actions` by its EXACT selector, and the tester left
+  it alone): carry the class on the element instead (`restart-offer-buttons run-actions`), which the
+  cascade readers read as that rule's own, and the sheet gains no class (17d review D1).
+- An element whose class is outside R1.8's namespaces (`ot|tensor|placement`,
+  `instance-(rename|label|name)`, `instance-models`, `restart-offer`) gets its rule from the tags
+  and classes the sheet already names (17d adviser note 1: `.field-control select + button`), and
+  the rule carries no `min-height`/`min-width` (HearthTokens H1a.12 lists every one, in sheet order).
 - `box-shadow: var(--shadow)` is pinned as an EXHAUSTIVE list in two places at once
   (`HearthH2b.test.ts` H2b.6, `Reflow.test.ts` 10 R1.6): a new lifted box needs its selector added to
   both lists, so a brief that lifts a new box leaves those two reds for the tester.
@@ -306,6 +314,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   a pin reads (a flex row for a new button) needs a class of its own (`.status-cell`): a
   `.model-profiles td:nth-child(3)` rule is invisible to that reader, and a `.confirm-row td` rule is
   free of it (a descendant selector), which is where a confirm cell's `white-space: normal` goes.
+- A pin that a control is NOT stretched (`RestartOffer17d.test.tsx` 17d.6a, re-check D3) uses a
+  SIBLING-aware reader, `rulesReaching`: `cascade`/`scopedBy` read every earlier compound as an
+  ancestor, so a `+` rule never reaches the element and an absence pin through them passes with
+  nothing to check. It reads the `@media` rules too and takes a `flex` shorthand's basis as its third
+  token, so the only fix is to delete the rule (and removing a rule an uncommitted slice added leaves
+  the file byte-identical to HEAD: `git status` clean for it is the check, not a lost edit).
 - `ListColumns.test.tsx`'s `cascade(el)` reads a rule that ENDS in the element: a pseudo-class on a
   NON-last token is dropped and `>` is read as a descendant, so scoping the Actions rules to
   `tr:not(.confirm-row) > td:last-child` leaves them reaching the confirm td in that read (22 D4.4, L1
@@ -393,6 +407,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   state sits on screen. And a re-read that fails must not replace the write's alert: use the functional
   updater (`setAlert((a) => a === null ? {…} : { ...a, signIn: … })`), which sees the alert the same
   handler batch set, and raise `signIn` off the RE-READ's kind (401/403), not the write's.
+- A restart offer the NEXT write replaces (17d.5b) is cleared where the ANSWER lands (success: the
+  reply's ids, `[]` included; refusal: `[]`), never at the send. The test that asserts the offer gone
+  right after the write is recorded still passes: the fake bff's reply resolves in the microtask before
+  the assertion runs.
 - `flushSync` is the only way a committed state is readable in the next statement; an
   `aria-activedescendant` index over a DERIVED list must carry the list it was walked onto; a text field
   that may not read keeps its LAST READABLE value in the row state.
@@ -419,6 +437,20 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the fixtures keep one revision, so a revision check never fires, and the marker stays down for a write
   that answered, whose own word is the value the page shows (24 A2 review D3).
 - Reading helpers shared across pages point one way (no import cycles between readers).
+- A section that reads on appearance and for every sign-in the page answers (`renewals`, as
+  `InstanceModels.tsx` does): a module-level fn mapping the read's answer to the two state values, a
+  `useCallback` applier over it, and `useEffect(() => { void read().then(apply) }, [apply, renewals])`.
+  A `useCallback` that setStates called directly in the effect body (`void reread()`) is
+  `react-hooks/set-state-in-effect`, and an effect with `[renewals]` alone needs the disable comment the
+  repo already writes. Reuse the pool read of a list page (`readPool` of `Instances.tsx`) rather than
+  writing a second one.
+- A child with its own alert and Sign in: the alert carries `at: renewals` and is SHOWN as
+  `alert.at === renewals` (a render-time derive, no effect, no `set-state-in-effect`), so the page's
+  kept sign-in drops it; the child keeps the failed verb's id in a ref and hands it to `onSignIn`, and
+  the page keeps that in a ref its `signedIn` focuses (`askSignIn.close(offer ?? saveId)`). A page with
+  no sign-in counter of its own (a list) adds one raised beside `setAlert(null)`.
+- A child that stays mounted while its data changes (a list's offer, no `dirty` gate) keeps its own
+  `status` and `alert`: key it by the data's identity (`key={ids.join(',')}`) so a new one starts clean.
 
 ### The web UI (fe/): the UX check
 
@@ -471,6 +503,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `mod windows` is `#[cfg(windows)]`, so no file under `xtask/src/windows/` is compiled on Linux. A
   `pub fn` only Linux code calls is `dead_code` on windows-gnu. `cargo clippy -p xtask` prints two
   `xtask (manifest)` warnings that are not yours.
+- `cargo fmt -p xtask --check` is red at HEAD in `xtask/src/linux/package.rs` (rustfmt joins a
+  `format!` of a test assertion): `git status --porcelain -- '*.rs'` shows that file unmodified, so
+  report it and reformat nothing.
 - Every phase of the manager's e2e sets the process-wide `PRIVATE_AI_DATA_ROOT`, so several probes in one
   run MUST use `--test-threads=1`: in parallel they read each other's temp dirs, and a probe that fails
   at an early assertion of a phase it never reached is that cross-talk, not a red.
@@ -596,6 +631,15 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   COMMITTED children once the form is gone, so the outcome must be committed while the form is open).
 - `document.getElementById` is not generic (TS2558): narrow with `if (el instanceof HTMLInputElement)`
   to reach `value` and `setSelectionRange`.
+- A criterion amended in ONE test file reddens every UNAMENDED test that finds the same element another
+  way. A strings key that becomes a link's text (`instance-server-open`: "Open {0}") reddens each
+  `getByRole('link', {name: <bare id>})` of that link in other files; a region moved in the DOM reddens
+  each "above the table" assertion in the file that tests the verb living in it; a new control reddens
+  each document-wide tab list; a read added on page load reddens each "reads it only when X opens"
+  count; a save bar that gains a second `role="status"` (the offer's own) reddens each "one status line
+  in the section" helper. Before implementing an amended criterion, grep all of `fe/src` for the key, the
+  element's name and the region's place, and report the unamended files as test-side reds (17d: 11 of
+  them, 5 files).
 - `el.enabled` is not a DOM property (use `disabled`).
 - A row whose `group` is `null` has no `<key>-box` / `<key>-control` id; an editable text field with no
   default box is a plain labelled field, not a `role="group"`. A jump target is named by a slug carried
