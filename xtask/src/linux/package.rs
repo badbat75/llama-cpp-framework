@@ -98,8 +98,11 @@ const RPM_RELEASE: &str = "1";
 const LIB_DIR: &str = "usr/lib/private-ai"; // llama.cpp's libraries, the ggml backends
 const RT_DIR: &str = "usr/lib/private-ai/lib"; // the bundled GPU runtimes
 const LIBEXEC_DIR: &str = "usr/libexec/private-ai"; // pai-manager, pai-bff
-/// The RUNPATH of every staged llama.cpp ELF file: [`LIB_DIR`], [`RT_DIR`] and
-/// libomp's directory in it, by absolute path.
+/// The RUNPATH of every staged llama.cpp ELF file, by absolute path:
+/// [`LIB_DIR`], [`RT_DIR`] and every directory of the ROCm dist mirrored
+/// under [`RT_DIR`]: the loader searches only what is named here, so the
+/// directory [`rocm_stage_path`] stages a runtime reached through a symlink
+/// of the dist has to be named too (the dist's OpenMP runtime).
 const RUNPATH: &str =
     "/usr/lib/private-ai:/usr/lib/private-ai/lib:/usr/lib/private-ai/lib/llvm/lib";
 
@@ -121,6 +124,49 @@ fn place(name: &str) -> String {
 /// The RUNPATH every staged llama.cpp ELF file carries.
 fn runpath() -> &'static str {
     RUNPATH
+}
+
+/// Where one runtime library of the ROCm dist is staged, relative to the
+/// package root: the dist's own directory under [`RT_DIR`] (its libraries
+/// find each other and their kernel files by `$ORIGIN`-relative paths), the
+/// file under `soname`, the name the loader asked for. `path` is the file the
+/// loader resolved, inside `hip_root`'s `lib/`.
+///
+/// A dist keeps some libraries as a symlink in one of the directories the
+/// RUNPATH names, naming the file in a deeper one: `ldd` answers the file it
+/// points at, the loader asks the link's name. Such a library is staged where
+/// the link sits, the directory the loader searches, and carries the file's
+/// bytes: staged where the file sits it would sit off the RUNPATH, and every
+/// machine would load it by the system's copy of the same soname or not at
+/// all. A link that reaches no such file (a dangling one) is not the loader's
+/// way to it: the file keeps its own place.
+fn rocm_stage_path(hip_root: &Path, path: &Path, soname: &str) -> PathBuf {
+    let lib = hip_root.join("lib");
+    // The directory `dir` sits in, mirrored under the runtime dir, with the
+    // file named `soname` in it.
+    let mirrored = |dir: &Path| {
+        let rel = dir
+            .strip_prefix(&lib)
+            .ok()
+            .and_then(|r| r.parent())
+            .unwrap_or(Path::new(""));
+        PathBuf::from(RT_DIR).join(rel).join(soname)
+    };
+    // The link is sought in every directory of the dist above the file, the
+    // deepest first: the one resolving to this file is the way the loader
+    // reached it.
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut dir = path.parent().filter(|d| d.starts_with(&lib));
+    while let Some(d) = dir {
+        let link = d.join(soname);
+        if std::fs::symlink_metadata(&link).is_ok_and(|m| m.is_symlink())
+            && std::fs::canonicalize(&link).is_ok_and(|t| t == real)
+        {
+            return mirrored(&link);
+        }
+        dir = d.parent().filter(|p| p.starts_with(&lib));
+    }
+    mirrored(path)
 }
 
 /// A read-only data directory (`benchmarks`, `strings`,
@@ -494,8 +540,10 @@ pub fn run(
         //
         // WHICH libraries is not a list kept here: it is the ldd closure of the
         // staged files, restricted to what resolves inside a dist. Each library
-        // lands under the name it is asked for (its soname), symlinks
-        // dereferenced.
+        // lands under the name it is asked for (its soname), with the bytes of
+        // the file behind that name: no dist symlink is copied, and a library
+        // the loader reaches through one is staged in the directory of the link
+        // it sits in, which the RUNPATH names (rocm_stage_path).
         //
         // The ROCm dist keeps its layout under lib/ (lib/, lib/llvm/lib/,
         // lib/rocm_sysdeps/lib/, lib/rocblas/library/, ...): its libraries find
@@ -550,9 +598,12 @@ pub fn run(
             let real = canon(Path::new(path));
             let hip_lib = format!("{hip_root}/lib/");
             let (dest, from) = if !hip_root.is_empty() && path.starts_with(&hip_lib) {
-                let rel = Path::new(&path[hip_lib.len()..]);
                 (
-                    rt.join(rel.parent().unwrap_or(Path::new(""))).join(soname),
+                    stage.join(rocm_stage_path(
+                        Path::new(&hip_root),
+                        Path::new(path),
+                        soname,
+                    )),
                     Component::Rocm,
                 )
             } else if under(&real, &cuda_dir) || under(&real, &nccl_dir) {
@@ -3782,5 +3833,102 @@ mod tests {
                 .is_some_and(|at| clean < at),
             "the loader-clean ldd is not the command the closure loop reads"
         );
+    }
+
+    // ── RP: the runtime libraries bundled out of the ROCm dist ─────────────
+
+    /// A ROCm dist under the temp dir: `real` the library's own file, and
+    /// each of `links` a symlink under the dist, pointing at `target`.
+    fn rocm_dist(name: &str, real: &str, links: &[(&str, &str)]) -> PathBuf {
+        let dist = scratch(name);
+        let p = dist.join(real);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"the library").unwrap();
+        for (link, target) in links {
+            let l = dist.join(link);
+            std::fs::create_dir_all(l.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(target, &l).unwrap();
+        }
+        dist
+    }
+
+    /// The name `ldd` answers is the file a dist's symlink points at, and the
+    /// loader asks for the symlink's name in the directory the RUNPATH names:
+    /// a library reached through a symlink is staged where the symlink sits,
+    /// as the file's bytes under the name it is asked for, or the package
+    /// loads on no machine. The dist here is the one that broke:
+    /// `lib/llvm/lib/libomp.so` naming
+    /// `x86_64-unknown-linux-gnu/libomp.so`.
+    #[test]
+    fn rp_a_library_behind_a_dist_symlink_is_staged_where_the_symlink_sits() {
+        const LINK: &str = "lib/llvm/lib/libomp.so";
+        const REAL: &str = "lib/llvm/lib/x86_64-unknown-linux-gnu/libomp.so";
+        let dist = rocm_dist(
+            "rp-symlink",
+            REAL,
+            &[(LINK, "x86_64-unknown-linux-gnu/libomp.so")],
+        );
+        assert!(std::fs::symlink_metadata(dist.join(LINK))
+            .unwrap()
+            .is_symlink());
+        assert_eq!(std::fs::read(dist.join(LINK)).unwrap(), b"the library");
+
+        let staged = rocm_stage_path(&dist, &dist.join(REAL), "libomp.so");
+        assert_eq!(
+            staged.to_string_lossy(),
+            format!("{LIB_DIR}/lib/llvm/lib/libomp.so"),
+            "staged where the loader looks (the RUNPATH names lib/llvm/lib), not where the file sits"
+        );
+        assert_eq!(
+            staged.file_name().and_then(|n| n.to_str()),
+            Some("libomp.so"),
+            "staged under the name it is asked for"
+        );
+        assert_eq!(
+            components::of(&staged.to_string_lossy()),
+            Component::Llama,
+            "libomp is the engine's: the bundle loop refuses a staged path of another package"
+        );
+        std::fs::remove_dir_all(&dist).unwrap();
+    }
+
+    /// A library the dist keeps as a plain file keeps the dist's directory
+    /// under the runtime dir: the mirrored tree is what lets the libraries
+    /// find their kernel files. Nothing is looked up beside it.
+    #[test]
+    fn rp_a_library_with_no_symlink_keeps_the_dist_directory() {
+        for rel in ["lib/rocblas/library/librocblas.so", "lib/libhipblas.so.1"] {
+            let dist = rocm_dist("rp-plain", rel, &[]);
+            assert_eq!(
+                rocm_stage_path(&dist, &dist.join(rel), &name_of(&dist.join(rel)))
+                    .to_string_lossy(),
+                format!("{LIB_DIR}/{rel}"),
+                "{rel}"
+            );
+            std::fs::remove_dir_all(&dist).unwrap();
+        }
+    }
+
+    /// The symlink counts only when it reaches that very file: a shallow link
+    /// of the asked name that points elsewhere (here it dangles) is not the
+    /// loader's path to the file, and the file keeps its own place.
+    #[test]
+    fn rp_a_symlink_that_does_not_reach_the_file_is_not_the_loader_path() {
+        const REAL: &str = "lib/llvm/lib/x86_64-unknown-linux-gnu/libomp.so";
+        let dist = rocm_dist(
+            "rp-other",
+            REAL,
+            &[(
+                "lib/llvm/lib/libomp.so",
+                "x86_64-unknown-linux-gnu/other.so",
+            )],
+        );
+        assert!(!dist.join("lib/llvm/lib/libomp.so").exists());
+        assert_eq!(
+            rocm_stage_path(&dist, &dist.join(REAL), "libomp.so").to_string_lossy(),
+            format!("{LIB_DIR}/lib/llvm/lib/x86_64-unknown-linux-gnu/libomp.so"),
+            "the link reaches nothing, so the file's own place stands"
+        );
+        std::fs::remove_dir_all(&dist).unwrap();
     }
 }
