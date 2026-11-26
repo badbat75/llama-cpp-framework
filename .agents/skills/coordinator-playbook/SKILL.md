@@ -23,8 +23,10 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 - Ask the user for real runs one at a time, with the exact command and the expected result.
 - Check results by the output in the agents' reports, not their summary, and read the end of the log
   before trusting a run.
-- Run an OpenCode agent as the background command itself (no `nohup ... &`), so its exit is the
-  notification.
+- Run an OpenCode agent, or a chain of them, as the Bash tool's `run_in_background` command itself:
+  never in the foreground (a 40-minute run leaves the session deaf to the user and to peers) and never
+  as a `( ... ) &` or `nohup ... &` inside a foreground call (no exit notification). Its exit is the
+  notification (IT-Admin, for the owner, 2026-11-26).
 - After each run check `git status` for paths outside the allowed list before reading the report.
 - Give the coder one test file or one criterion group per run, tell it to run the tests and read only
   failing assertions, and stop a run at 2 hours, relaunching from what it saved.
