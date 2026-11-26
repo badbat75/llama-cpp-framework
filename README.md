@@ -257,3 +257,7 @@ The framework's MSI:
 - Is listed in Settings > Apps (and Programs and Features). Uninstalling from there removes the manager's, the web service's and the instances' services and preserves `%LOCALAPPDATA%\private-ai\` (settings, benchmark results, an earlier install's configs and logs) unless the user ticks the box that offers to delete it; a silent uninstall always preserves it.
 
 Which installers a release attaches is to settle (`PLAN.md` step 11).
+
+## Licence
+
+Copyright (c) 2026 Emiliano De Simoni. The Private AI Framework is distributed under the **GNU Affero General Public License, version 3 or later** ([LICENSE](LICENSE)): every crate of this repository (the six `pai-*` crates and `xtask`) declares `AGPL-3.0-or-later`, and the framework's packages carry that text. llama.cpp stays under its own MIT licence, and every bundled library (the ROCm, CUDA, Vulkan and OpenSSL runtimes, the configurator's icon font, the web UI's fonts, icon set and React) keeps its own; each package ships every text beside the libraries it covers, with a `README.txt` naming which covers what ([docs/build-packaging.md](docs/build-packaging.md)). Releases published before the relicensing are MIT and stay MIT. Under AGPL section 13, whoever runs a modified `pai-bff` and makes it available to others over a network must offer those users its source.

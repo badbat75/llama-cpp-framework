@@ -30,7 +30,7 @@ pai model-profile download <org/repo[:QUANT]|URL> [--list] [--quant Q] [--no-mmp
 
 ## GUI
 
-Built with [Slint](https://slint.dev). The nav rail switches between five tabs (Server, Models, Benchmark, Integrations, Settings) and carries the server run controls (Start/Stop over Open chat UI over HW Monitor over View logs over Refresh) at its bottom, reachable from any tab. A status footer shows the llama-server state (running / not running) and version.
+Built with [Slint](https://slint.dev), which SixtyFPS offers under three licences: the GNU GPL v3, the royalty-free Desktop, Mobile and Web Applications licence, or a paid Slint Software License ([the terms and conditions page](https://slint.dev/terms-and-conditions)); its GPL v3 option covers this AGPL-3.0-or-later application, since GPL v3 section 13 of that same page permits linking a covered work with a work under the GNU AGPL v3 into one combined work and conveying it, with AGPL section 13's network requirements applying to the combination. The nav rail switches between five tabs (Server, Models, Benchmark, Integrations, Settings) and carries the server run controls (Start/Stop over Open chat UI over HW Monitor over View logs over Refresh) at its bottom, reachable from any tab. A status footer shows the llama-server state (running / not running) and version.
 
 The non-obvious run controls:
 

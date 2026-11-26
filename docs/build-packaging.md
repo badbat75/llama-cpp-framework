@@ -170,8 +170,9 @@ the import closure, and its licence is the vendored Apache 2.0 of the loader's o
 
 **Each MSI shows a licence page** (WixUI `LicenseAgreementDlg`, with the accept checkbox) between the
 welcome page and `CustomizeDlg`. `xtask package` writes its text beside the product's staging tree
-(`build\windows\staging\<product>.license.rtf`, not installed): which text covers what, the MIT
-licence, and, in llama.cpp's, NVIDIA's terms in full. A silent or basic-UI install does not show it.
+(`build\windows\staging\<product>.license.rtf`, not installed): which text covers what, the product's
+own licence in full (the framework's MSI opens with the GNU AGPL v3 or later, llama.cpp's with llama.cpp's
+MIT), and, in llama.cpp's, NVIDIA's terms in full. A silent or basic-UI install does not show it.
 
 **The framework's MSI refuses to install without llama.cpp at the release it was built against or
 newer.** Windows Installer conditions compare no versions, so it finds the engine by llama.cpp's
@@ -373,9 +374,10 @@ been run for real.
 | `/usr/lib/systemd/system/`, `/usr/lib/sysusers.d/`, `/usr/share/dbus-1/system.d/`, `/usr/share/polkit-1/actions/`, `/usr/share/polkit-1/rules.d/`, `/etc/pam.d/` | `core`; `llama.cpp@.service`, `llama.cpp.target` and its `multi-user.target.wants/` symlink in `llama.cpp`; `private-ai-bff.service` and `private-ai-bff.conf` in `bff` | The services' system files, below |
 
 **Each package's `copyright` and `Homepage` (rpm `URL`) name its own source.** The framework's
-packages carry this project's MIT licence and repository; `llama.cpp` carries llama.cpp's own licence
+packages carry this project's GNU AGPL v3 or later and repository, their `copyright` holding the AGPL
+text with llama.cpp's MIT and the icon font's following; `llama.cpp` carries llama.cpp's own MIT licence
 and its upstream, `https://github.com/ggml-org/llama.cpp`; a runtime's describes the SDK libraries it
-redistributes, with the same upstream.
+redistributes, each under its own licence, with the same upstream.
 
 **Staging skips `cmake --install` and places each file of the build's `bin/` by name** (`place` in
 `xtask/src/linux/package.rs`): a `lib*.so*` in `/usr/lib/private-ai`, every other executable in
@@ -562,10 +564,12 @@ group-writable ones.
 **Icon.** It is the largest PNG frame of `resources/llama.ico`, cut out of the container by xtask,
 so no image tool is needed.
 
-**Licence metadata.** The `.rpm` `License:` field is computed from what each package bundles: an SPDX
-expression, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms. The `bff`'s, the only package with the
-web UI's texts and no bundled library, is `MIT AND OFL-1.1 AND ISC` (the two fonts are SIL OFL 1.1, Lucide
-ISC, React MIT); every other package's field is as before, from its own libraries.
+**Licence metadata.** The `.rpm` `License:` field is computed from what each package bundles, headed by
+the licence of the product whose package it is: `AGPL-3.0-or-later` for a framework package, llama.cpp's
+`MIT` for the engine's and the runtimes', which carry no framework text at all. The `bff`'s, the only
+package with the web UI's texts and no bundled library, is `AGPL-3.0-or-later AND MIT AND OFL-1.1 AND ISC`
+(the two fonts are SIL OFL 1.1, Lucide ISC, React MIT); every other package adds its own libraries after
+those, with `LicenseRef-NVIDIA-CUDA-EULA` for NVIDIA's terms.
 `usr/share/doc/<pkg>/copyright` includes that package's `share/licenses/<package>/README.txt` and points to the directory.
 
 **Maintainer.** `PRIVATE_AI_MAINTAINER` sets it, else git's `user.name` and `user.email`.

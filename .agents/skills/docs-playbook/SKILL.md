@@ -23,6 +23,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A llama.cpp rule is readable offline in the build's clone (`build/linux/llama.cpp`, its release from
   `git describe`): the preset precedence (command line, then a model section, then `[*]`) is in v1.0.0's
   `tools/server/README.md`, not `server/README.md`, and `docs/preset.md` holds the `[*]` example.
+- A llama.cpp source path moves between releases: the chat UI is `ui/apps/chat/` from v1.1.0 and was
+  `tools/ui/` before. Read the path in the guard (`check_web_ui`, `xtask/src/common/llama.rs`) and in
+  the clone, and the prebuilt fallback's repo and build number in the stamp beside the build
+  (`build/linux/llama.cpp-cmake/ui/apps/chat/.ui-stamp`, `ggml-org/llama-ui|b12774` on 2026-11-26).
 - Before writing that a manager default is live on this machine, read the render against the commit
   (`ls -l /etc/llama.cpp/models@default.ini`): GT5a's `[*] load-mode = none` was not in the render of 12:45,
   an hour before f545865, and the pool's model sections already carried `load-mode = none` from GT4's hand
@@ -413,6 +417,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - When a `PLAN.md` step closes, grep `step <N>` (not only `PLAN.md step <N>`) in every `.md` and in
   `.github/workflows/*.yml` comments, and point to the file that now holds it.
 - Before citing a `PLAN.md` slice for a bff route, check the slice lists that route.
+- A licence is PER PRODUCT and the code decides it: `readme()`, `installer_page()` and `rpm_license()` of
+  `xtask/src/common/licenses.rs`, with `components.rs` `product()` putting the engine and the GPU runtimes
+  on `Product::Llama` (so a runtime package names no framework licence at all). The prose repeats it in
+  `docs/build-packaging.md` (the MSI licence page, the `copyright`/`Homepage` paragraph, the rpm `License:`
+  paragraph), `installer/AGENTS.md`'s Features and UI bullet and the root README's Licence section: grep
+  `MIT` and `AGPL` in those. The framework's copyright holder is in the old LICENSE line only
+  (`git show <sha>^:LICENSE`), the AGPL text carries no holder line.
 
 ### Editing a file
 
@@ -443,6 +454,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `cargo run -p docs-site -- --check` is for `docs/` only: `tools/site` builds pages from `docs/`
   (`tools/site/src/main.rs`), so a change to the root `README.md`, `AGENTS.md`, `ARCHITECTURE.md` or a
   crate README needs no check.
+- An upstream npm claim is reproducible offline: copy the package's `package.json` and
+  `package-lock.json` to a scratch dir under `/tmp/opencode` and run `npm ci --dry-run` there (the
+  lock-sync check fails before any fetch, writes nothing; `--offline` is not a `npm ci` flag on npm 9).
 - For an anchor, a small Python `re` pass over `](#...)` against the headings of the same file settles
   it. The site turns a link out of `docs/` into a GitHub URL, so an anchor into a README is GitHub's slug
   (`### Migration from 2.4` is `#migration-from-24`): check it in the built site (`--out <dir>`).
