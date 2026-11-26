@@ -1799,3 +1799,66 @@ Tests: a CSS-reading test that `.primary.danger` sets the three declarations and
 inactive rule; one test per confirm that its verb has `danger` and Save/Create do not; the UX check's
 existing confirm states (`model-profile-delete`, `server-profile-delete`, `model-profiles-delete`, `instance-remove`) run axe on
 the new pair in both themes.
+
+## 22P/22C check (2026-11-26)
+
+Checked 22 P.1 to P.12 (with the 2026-11-25 "22P check") and 22 C.1 to C.10 against main at 1127663:
+the Models list as it is now (filter, the switch status region and restart offer above the table,
+17d.5b; the table with its trash column, L1; the note `model-profiles-off-note` under it), the server
+profiles' create form (17b2's `.ot-add` + after the list, its `h2` heading, `ServerProfiles.tsx`
+472-478, 658), the instance create form (17c), CD's red verbs, 17d's offer, and the served routes
+(`POST /api/profiles/model`, api-contract 703-726; the model files and the Hugging Face listing,
+226 and 727; nothing in them changed since the 22P check). Nothing of 22P or 22C is built yet: no
+`ModelSource`, no `model-profiles-new`, no stub route for either listing. Where this section
+differs, it wins.
+
+Still true: 22P as amended on 2026-11-25 (P.5a, P.6a, P.9a, P.10a), 22 C.2 to C.4, C.6 to C.9.
+
+**The slice cut (replaces section 0's 22P then 22C order).** 22P alone has no user, and one slice
+should be one useful piece (the coordinator's rule since 2026-11-19). Two runs, each a working
+form:
+- **22C1, the form with a model file and a copy**: 22 C.1 to C.10 with the picker's file half,
+  22 P.1 to P.6 (P.1 with the radios `model-source-file` and `model-source-copy` only, P.5a, P.6a).
+  The user can then create a profile from a file on the node or from another profile.
+- **22C2, Hugging Face**: 22 P.7 to P.11 (P.9a, P.10a) and the radio `model-source-hf` between the
+  other two, plus P.12 for the whole picker. 22E (the picker on the Assets card) follows it.
+
+**22 C.1a The opener's place.** The + (`.ot-add`, `model-profiles-new`, 17b2.2) comes after the
+note `model-profiles-off-note`, which belongs to the table it follows, and before nothing else; the
+form opens right after the +. The form's heading stays an `h2` (`model-profiles-new-title`), as the
+server profiles' form, so the page's `h2` room applies (the `form > h3:first-child` rule is for the
+instance form's `h3`). The switch status region and its offer stay above the table (17d.5b) and
+never hold the form's own status, which is the form's.
+
+**22 C.5a After the create.** 201 goes to the new profile's page with its `h1` focused, as written.
+The new profile is switched off and serves nowhere, so no restart text or offer follows (17d), and
+the page's state line (A2) says it is off.
+
+**22 C.5b Create is plain primary.** It is not destructive, so it is not `.primary.danger` (CD.1).
+
+**22 C.7a Two refusal keys by name.** `model-profile-bad-source` and `model-profile-no-model`
+(`field` `values`) go in the alert, `model-profile-no-model` with its existing
+`api-model-profile-no-model`; `model-profile-bad-source` has no fe text yet, so it is `api-other`
+until 22E gives it one (it cannot come from this form, which sends exactly one source). 400
+`model-profiles-malformed` is `request-failed`.
+
+**22 C.10a The UX states.** `model-profile-delete` already exists (22D), so 22C1 adds
+`model-profiles-new` only (the form open, file choice, the stub's `GET /api/node/model-files`
+answering the 40-character-path fixture); 22C2 adds `model-profiles-new-hf` (the stub's
+`GET /api/hf/files` with 12 quants, one of 3 shards). The tester adds both stub routes.
+
+**22 P.3a The combobox to reuse.** The tag suggestions' combobox on the instance page
+(`InstancePage.tsx` 1764) is the pattern to follow; share its keyboard handling rather than copy it
+where the coder can.
+
+What the tester pins first, in 22C1:
+1. C.1a and C.3: the + after the note, the form, Cancel and Escape, the focus.
+2. P.1 and P.2 (two radios) and C.2: the choices and the value.
+3. P.3, P.5a and P.6a: the combobox, its options and its state line.
+4. C.4: the page checks in their order.
+5. C.5, C.5a, C.6, C.7a: the request and its answers.
+6. Then P.4, C.8, C.9, C.10a.
+
+Choices taken (recommended options, the user may overrule): the two-run cut above; the copy
+select keeps the list's file order (not the table's sort), so it does not change when the user
+sorts the table.
