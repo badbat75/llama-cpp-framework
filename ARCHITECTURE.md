@@ -4461,11 +4461,50 @@ stays a render rule for an entry that leaves it unset.
    - `CreateInstance` with a free port from 8581; the delete rules; `CreateModelProfile` into
      `models.ini`, copying the stay keys only; saves answer the affected running instances.
    Done when: each method's success, refusals and render effect are tested over D-Bus and the pipe.
-4. **IP4** (`pai-bff`, contract):
-   - the instance profile, entry, instance profile-of-instance and address routes;
-   - `PUT /api/profiles/model/{id}` refusing a moved key with 422 and `field`;
-   - the switch, `enabled` and the 17d and 17e routes removed; `running` as a list.
-   Done when: the routes' answers and refusals are pinned; removed routes answer 404.
+4. **IP4** (`pai-bff`, contract; reconciled with briefs 26 section 0 and 22 IP5.0, 2026-11-27).
+   The routes, each over the IP3 method named:
+   - `GET /api/profiles/instance` (`instance_profiles`): rows `{id, server, models, usedBy}`.
+   - `POST /api/profiles/instance` `{id, server}` (`create_instance_profile`): 201.
+   - `GET /api/profiles/instance/{p}` (`instance_profile`): `{id, server, models, usedBy, revision}`.
+   - `DELETE /api/profiles/instance/{p}` (`delete_instance_profile`): 204, or 409
+     `instance-profile-in-use`.
+   - **`POST /api/profiles/instance/{p}/models` `{model}` adds an entry**
+     (`add_instance_profile_model`).
+   - `DELETE .../models/{m}` removes one (`remove_instance_profile_model`).
+   - **`PUT .../models/{m}` `{values, revision}` only saves an entry's keys** (IP3b's
+     `SetInstanceProfileModel`). The single PUT for both is withdrawn: the brief's split is right, an
+     add creates and a save replaces.
+   - `PUT .../server` `{server}` (IP3b's server switch).
+   - `GET .../models/{m}`: `{profile, server, model, values, revision}`.
+   - `PUT /api/instances/{id}/profile` `{instanceProfile, revision}` (`set_instance_profile`).
+   - `PUT /api/instances/{id}/address` `{hostname, port, revision}` (`set_instance_address`).
+   - `POST /api/instances` `{id, instanceProfile}`: 201 `{id, port}`.
+   - The model profile rows of `GET /api/profiles/model` and the page `GET /api/profiles/model/{id}`
+     gain **`usedBy`**, the instance profiles that list the model, in pool order. The bff computes it
+     from `instance_profiles`, and it matches the delete refusal `model-profile-in-use`.
+   - `PUT /api/profiles/model/{id}` refuses a moved key: 422 `model-profile-placement-key`, `field`.
+   - The switch route, `enabled`, `assignments` and the 17d and 17e routes are removed (404).
+
+   **Writes that act at once (the brief's page has no Save bar).**
+   - Add, remove and the server switch carry **no revision**, as IP3a's add and remove take none.
+     Each is one set-like change refused on its own conflict (`instance-profile-model-listed`,
+     `no-instance-profile-model`, `model-profile-device-outside`), so a stale page loses nothing by
+     acting, and a revision would only turn a concurrent unrelated edit into a 409.
+   - Each answers `{running: [<instance id>…]}`, the running instances that use the profile. The page
+     keeps one restart offer and updates its list after each change, then re-reads the profile.
+   - Only the entry save (`PUT .../models/{m}`), the instance's profile and its address carry a
+     revision: each replaces values the page read.
+   - **The revision on the wire is a hash, not the text.** IP3a's revision is the whole pool text
+     (`instance_profile` answers it). The bff answers `revision` as a SHA-256 hex of the profile's
+     own sections (`[<p>]` and its `[<p>/*]`), so an edit of another profile does not stale this
+     page. On a write it reads the pool again, compares that hash, and hands the text it read to the
+     manager, which compares the whole text under the `writing` lock. A change elsewhere in that
+     short window is a rare 409 `stale-revision`, read again.
+   - The instance's own revision is the same over `instances.ini`'s section of that instance.
+
+   Done when: every route's answer and refusal is pinned in the bff tests; the removed routes answer
+   404; a write with no revision is accepted where none is asked and refused 422
+   `model-profiles-malformed` where one is; `usedBy` is pinned on both model profile reads.
 5. **IP5** (`fe`, briefs 22 and 02e): the plain Models list; the model profile page without the
    switch and without the moved keys' cards and fields. Done when: the brief's tests are green and
    the designer's UX check passes.
