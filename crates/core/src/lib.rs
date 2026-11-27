@@ -17,9 +17,15 @@ pub mod hf;
 // The node's own host: its total RAM and the CPUs the manager may use.
 pub mod host;
 pub mod http;
+// The instance profiles: `instance-profiles.ini`, its `[<p>]` sections and its
+// `[<p>/<m>]` entries (ARCHITECTURE.md, "Instance profiles").
 pub mod ini;
+pub mod instance_profiles;
 pub mod launch;
 pub mod migrate;
+// The model data model's migration: today's pool, assignment and record texts
+// in, the new ones out (pure, IP1).
+pub mod migrate_model;
 pub mod net_ifaces;
 pub mod paths;
 pub mod proc;

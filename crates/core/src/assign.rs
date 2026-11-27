@@ -218,9 +218,70 @@ pub fn rows(
     (all, out)
 }
 
+/// The text of one instance's `models@<id>.ini`, rendered from the instance
+/// profile's shape (`ARCHITECTURE.md`, "Instance profiles", the placement and
+/// memory amendment):
+///
+/// - `pool`: the text of `models.ini`, the one pool file
+/// - `profiles`: the text of `instance-profiles.ini`
+/// - `profile`: the instance profile the instance names, whose `[<p>/<m>]`
+///   entry sections are the model profiles it is given, with their placement
+///   and memory keys
+///
+/// The pool's global `[*]` section comes first, always, copied byte for byte.
+/// Then every entry of `profile`, in the pool's own order: the model profile's
+/// section from `pool` (bytes kept), followed by the entry's key lines. A model
+/// profile the pool does not hold renders nothing, and a model profile with no
+/// entry of this profile renders nothing, so a profile with no entry is given
+/// `[*]` alone.
+///
+/// The entry wins: a key the model profile's section and the entry both name is
+/// written ONCE, with the entry's value (a pool section that still carries a
+/// moved key, from before the migration or from a hand edit, is the second
+/// source, and a rendered section of two lines of one key is what the engine
+/// reads as one).
+pub fn render_profile(pool: &str, profiles: &str, profile: &str) -> String {
+    let eol = ini::detect_eol(pool);
+    let mut out = format!("{HEADER}{eol}");
+    if let Some(text) = ini::text::section_text(pool, "*") {
+        push_section(&mut out, &text, eol);
+    }
+    for id in pool_ids(pool) {
+        let entry = format!("{profile}/{id}");
+        // The entry is the list: a model profile with no entry of this
+        // instance profile is not given to it, and so renders nothing.
+        if ini::text::section_text(profiles, &entry).is_none() {
+            continue;
+        }
+        let Some(text) = ini::text::section_text(pool, &id) else {
+            continue;
+        };
+        let keys = ini::section_keys(profiles, &entry);
+        let entry_keys: Vec<String> = keys.iter().map(|(key, _)| key.clone()).collect();
+        let mut section = String::new();
+        for line in text.split_inclusive('\n') {
+            // The section's own line of a key the entry names too: dropped, so
+            // the key goes into the render once, with the entry's value. Only a
+            // key line counts (the `=` right after the key), never a comment.
+            if !entry_keys
+                .iter()
+                .any(|key| ini::line_starts_with_key(line, key))
+            {
+                section.push_str(line);
+            }
+        }
+        for (key, value) in keys {
+            section.push_str(&format!("{key} = {value}"));
+            section.push_str(eol);
+        }
+        push_section(&mut out, &section, eol);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{render, rows, AssignmentRow};
+    use super::{render, render_profile, rows, AssignmentRow};
     use crate::ini;
 
     /// Both ending styles a pool file can have.
@@ -1472,6 +1533,322 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The IP1 render's pool: `[*]` and three model profiles, `alpha` with a
+    /// comment and two keys of its own.
+    fn ip1_pool(eol: &str) -> String {
+        file_of(
+            &[
+                "[*]",
+                "temp = 0.7",
+                "",
+                "[alpha]",
+                "; alpha's note",
+                "model = /models/alpha.gguf",
+                "temp = 0.2",
+                "",
+                "[beta]",
+                "model = /models/beta.gguf",
+                "",
+                "[gamma]",
+                "model = /models/gamma.gguf",
+            ],
+            eol,
+        )
+    }
+
+    /// The IP1 render's `instance-profiles.ini`: `default` with an entry for
+    /// `alpha` (two keys) and an empty entry for `beta`, `other` with an entry
+    /// for `gamma`, and `empty` with none.
+    fn ip1_profiles(eol: &str) -> String {
+        file_of(
+            &[
+                "[default]",
+                "ServerProfile = default",
+                "",
+                "[default/alpha]",
+                "device = cuda0",
+                "ctx-size = 8192",
+                "",
+                "[default/beta]",
+                "",
+                "[other]",
+                "ServerProfile = other",
+                "",
+                "[other/gamma]",
+                "device = cpu",
+                "",
+                "[empty]",
+                "ServerProfile = other",
+            ],
+            eol,
+        )
+    }
+
+    /// A render as sections: the id and the keys and values the INI reader
+    /// reads from it, in the file's section order.
+    fn ip1_sections(render: &str) -> Vec<(String, std::collections::BTreeMap<String, String>)> {
+        ini::parse_sections(render)
+            .into_iter()
+            .map(|s| (s.id, s.keys))
+            .collect()
+    }
+
+    /// A map of `pairs`, for a readable compare with a section's keys.
+    fn ip1_map(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// `ip1` criterion: the section of a model profile with an entry is the
+    /// model profile's own bytes, followed by the entry's key lines; the
+    /// profile's `[*]` section is first; a model profile with an entry of no
+    /// keys is its own bytes alone; a model profile with no entry of this
+    /// profile is not rendered.
+    #[test]
+    fn ip1_the_render_is_the_model_section_followed_by_the_entry_keys() {
+        for eol in EOLS {
+            let (pool, profiles) = (ip1_pool(eol), ip1_profiles(eol));
+            let render = render_profile(&pool, &profiles, "default");
+            let (head, body) = parts(&render);
+            assert_generated_header(&head, eol);
+            assert_one_ending_style(&render, eol);
+            assert_sections(
+                &body,
+                &[(&pool, "*"), (&pool, "alpha"), (&pool, "beta")],
+                eol,
+            );
+            let sections = ip1_sections(&render);
+            let ids: Vec<String> = sections.iter().map(|(id, _)| id.clone()).collect();
+            assert_eq!(
+                ids,
+                ["*", "alpha", "beta"],
+                "the sections are not these, in this order ({eol:?}): {render:?}"
+            );
+            assert_eq!(
+                sections[1].1,
+                ip1_map(&[
+                    ("model", "/models/alpha.gguf"),
+                    ("temp", "0.2"),
+                    ("device", "cuda0"),
+                    ("ctx-size", "8192")
+                ]),
+                "the [default/alpha] entry's keys are not added to the model profile's ({eol:?})"
+            );
+            // The entry's lines sit after the model profile's own lines.
+            let alpha = section(&pool, "alpha");
+            let alpha = alpha.trim_end_matches(['\r', '\n']).to_string();
+            let at = body.find(&alpha).unwrap_or_else(|| {
+                panic!("the [alpha] section is not in the render byte for byte ({eol:?}): {body:?}")
+            });
+            let after = &body[at..];
+            let own = after
+                .find("temp = 0.2")
+                .expect("the model profile's own last key");
+            let entry = after
+                .find("device = cuda0")
+                .expect("the entry's key line is not in the render");
+            assert!(
+                entry > own,
+                "the entry's keys come before the model profile's own ({eol:?}): {after:?}"
+            );
+            assert_eq!(
+                sections[2].1,
+                ip1_map(&[("model", "/models/beta.gguf")]),
+                "the entry of no keys adds a key to [beta] ({eol:?})"
+            );
+            assert!(
+                !body.contains("[gamma]"),
+                "a model profile with no entry of this profile is rendered ({eol:?}): {body:?}"
+            );
+            assert!(
+                !body.contains("[default/alpha]"),
+                "the entry section itself is written into the render ({eol:?}): {body:?}"
+            );
+        }
+    }
+
+    /// `ip1` criterion: an instance profile with no entry is rendered as the
+    /// pool's `[*]` section alone.
+    #[test]
+    fn ip1_a_profile_with_no_entry_renders_the_global_section_alone() {
+        for eol in EOLS {
+            let (pool, profiles) = (ip1_pool(eol), ip1_profiles(eol));
+            let render = render_profile(&pool, &profiles, "empty");
+            let (head, body) = parts(&render);
+            assert_generated_header(&head, eol);
+            assert_eq!(
+                headers(&body),
+                ["*"],
+                "a profile with no entry renders more than [*] ({eol:?}): {render:?}"
+            );
+            assert_sections(&body, &[(&pool, "*")], eol);
+        }
+    }
+
+    /// The same entry names read under another profile: the render of `other`
+    /// is `gamma` alone beside `[*]`, so one profile's entries never reach
+    /// another's render.
+    #[test]
+    fn ip1_one_profile_entries_do_not_reach_another_render() {
+        for eol in EOLS {
+            let (pool, profiles) = (ip1_pool(eol), ip1_profiles(eol));
+            let render = render_profile(&pool, &profiles, "other");
+            let ids: Vec<String> = ip1_sections(&render)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            assert_eq!(
+                ids,
+                ["*", "gamma"],
+                "the render of [other] is not its own entries ({eol:?}): {render:?}"
+            );
+            let sections = ip1_sections(&render);
+            assert_eq!(
+                sections[1].1,
+                ip1_map(&[("model", "/models/gamma.gguf"), ("device", "cpu")]),
+                "the [other/gamma] entry's keys are not in its section ({eol:?})"
+            );
+        }
+    }
+
+    /// The pool of the clashing key: `alpha` holds `ctx-size`, a placement key,
+    /// so after the migration only the entry can hold it. A pool that still
+    /// carries it (a file from before the migration, a hand edit) is what the
+    /// render must not double.
+    fn ip1_clash_pool(eol: &str) -> String {
+        file_of(
+            &[
+                "[*]",
+                "temp = 0.7",
+                "",
+                "[alpha]",
+                "model = /models/alpha.gguf",
+                "ctx-size = 8192",
+            ],
+            eol,
+        )
+    }
+
+    /// The profile of the same: `[default/alpha]` names the SAME key, with the
+    /// value the instance's entry sets for it.
+    fn ip1_clash_profiles(eol: &str) -> String {
+        file_of(
+            &[
+                "[default]",
+                "ServerProfile = default",
+                "",
+                "[default/alpha]",
+                "ctx-size = 4096",
+            ],
+            eol,
+        )
+    }
+
+    /// `ip1` criterion (review D6a): a key the model profile's section and the
+    /// entry both name is written ONCE, with the entry's value: the rendered
+    /// section carries no duplicate key line.
+    #[test]
+    fn ip1_a_key_the_section_and_the_entry_both_name_is_written_once_with_the_entrys_value() {
+        for eol in EOLS {
+            let (pool, profiles) = (ip1_clash_pool(eol), ip1_clash_profiles(eol));
+            let render = render_profile(&pool, &profiles, "default");
+            let (head, body) = parts(&render);
+            assert_generated_header(&head, eol);
+            let sections = ip1_sections(&render);
+            assert_eq!(
+                sections
+                    .iter()
+                    .map(|(id, _)| id.clone())
+                    .collect::<Vec<_>>(),
+                ["*", "alpha"],
+                "the render is not the global section and alpha ({eol:?}): {render:?}"
+            );
+            assert_eq!(
+                sections[1].1,
+                ip1_map(&[("model", "/models/alpha.gguf"), ("ctx-size", "4096")]),
+                "the entry's value does not win over the model profile's own ({eol:?}): {render:?}"
+            );
+            let lines: Vec<&str> = body
+                .lines()
+                .filter(|line| line.trim_start().starts_with("ctx-size"))
+                .collect();
+            assert_eq!(
+                lines,
+                ["ctx-size = 4096"],
+                "the key both the model profile's section and the entry name is written \
+                 twice, so the rendered section carries a duplicate key line ({eol:?}): {body:?}"
+            );
+        }
+    }
+
+    /// `ip1` criterion (review D6b): a pool of one ending style and an
+    /// `instance-profiles.ini` of the other: the render keeps the POOL's style,
+    /// so the entry's lines arrive in the pool's endings, and its keys and
+    /// values read unchanged.
+    #[test]
+    fn ip1_a_pool_of_one_ending_style_and_a_profile_file_of_the_other_keep_the_pools_style() {
+        for (pool_eol, profiles_eol) in [("\r\n", "\n"), ("\n", "\r\n")] {
+            let (pool, profiles) = (ip1_pool(pool_eol), ip1_profiles(profiles_eol));
+            let render = render_profile(&pool, &profiles, "default");
+            assert_one_ending_style(&render, pool_eol);
+            let sections = ip1_sections(&render);
+            assert_eq!(
+                sections
+                    .iter()
+                    .map(|(id, _)| id.clone())
+                    .collect::<Vec<_>>(),
+                ["*", "alpha", "beta"],
+                "the sections are not these, in this order ({pool_eol:?} pool, \
+                 {profiles_eol:?} profiles): {render:?}"
+            );
+            assert_eq!(
+                sections[1].1,
+                ip1_map(&[
+                    ("model", "/models/alpha.gguf"),
+                    ("temp", "0.2"),
+                    ("device", "cuda0"),
+                    ("ctx-size", "8192"),
+                ]),
+                "the entry's keys are not in the render, read as the reader reads them \
+                 ({pool_eol:?} pool, {profiles_eol:?} profiles): {render:?}"
+            );
+        }
+    }
+
+    /// `ip1` criterion (review D6c): a model profile the pool holds and this
+    /// instance profile has no entry for is NOT served: its section is nowhere
+    /// in the render, and the profile that does have the entry serves it.
+    #[test]
+    fn ip1_a_model_of_the_pool_with_no_entry_of_the_profile_is_not_served() {
+        for eol in EOLS {
+            let (pool, profiles) = (ip1_pool(eol), ip1_profiles(eol));
+            let render = render_profile(&pool, &profiles, "default");
+            let (_, body) = parts(&render);
+            assert_eq!(
+                headers(&body),
+                ["*", "alpha", "beta"],
+                "a model profile of the pool with no [default/gamma] entry is served \
+                 ({eol:?}): {render:?}"
+            );
+            let gamma = section(&pool, "gamma")
+                .trim_end_matches(['\r', '\n'])
+                .to_string();
+            assert!(
+                !body.contains(&gamma),
+                "the section of the model profile with no entry of this profile is in the \
+                 render ({eol:?}): {body:?}"
+            );
+            let other = render_profile(&pool, &profiles, "other");
+            assert_eq!(
+                headers(&parts(&other).1),
+                ["*", "gamma"],
+                "the profile that has the entry does not serve it ({eol:?}): {other:?}"
+            );
         }
     }
 }

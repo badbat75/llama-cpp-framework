@@ -145,10 +145,28 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `model`) keeps its own comment line INSIDE the same guard, and the reader treats the key's absence as
   the blank: a blank `model =` line beside `hf-repo` reads back as a second source, which the web's save
   refuses (`model-profile-bad-source`) and `llama-server` takes as an empty `-m`.
+- A merge that appends sections must SKIP what the base already holds (read it back with
+  `ini::text::section_text`) and must not trim the base's trailing blank lines when it appends nothing:
+  a writer that trims and re-appends an untouched input reddens the rerun's "answers byte for byte" pin.
+  Normalise the appended text to the base's `detect_eol`, never to a literal `\n`.
+- A migration's "already migrated" gate keys on the PRESENCE of the new marker (every section carries
+  `InstanceProfile`), never on the absence of the old one: an old record that carries an address and
+  names no profile is not migrated. A crash-point rerun reads the file it already wrote as the base
+  (a profile section on disk wins over what the stripped pool could rebuild: the pool has lost the
+  moved keys), and never invents a value from an input that already lost it (a server profile whose
+  `Port` line moved out gives the record no `DEFAULT_PORT`).
 - `set_key` and `remove_key` keep the section's trailing blank separator line (a trimming writer eats it);
   `parse_sections` drops key lines before the first header; a section copied from a file with no final
   newline needs one appended; `ini::detect_eol` styles a writer's appended section. Writers outside core
   use the shared helpers.
+- `ini::text::delete_section` normalizes a CRLF file to LF, and `set_key` writes the whole file in the
+  style it detects. A module that rebuilds whole sections (`instance_profiles.rs`) strips the section,
+  splices its own lines, and re-applies the file's `detect_eol` to the spliced text (its `normalize` +
+  `append_section` pair), the way every `ini.rs` writer carries a "preserves lfs-only files" test.
+- `assign::render` is a FILTER: an assignment naming a section the pool lacks is `Err(NotFound)`, which
+  the public `render()` answers as the EMPTY text, which the GUI's `rows_of` reads as "every on-profile
+  model". So a per-instance model list derived from a render's sections cannot exclude a model the pool
+  holds: the empty render spreads it over every instance.
 - A call to the running engine is `pai_core::http::request(port, method, path, body, timeout)`: the
   hand-rolled loopback HTTP/1.1 client (`Connection: close`, the timeout is the WHOLE request's
   deadline), so a poll needs no new dependency; `request_host(host, ..)` dials the address the caller
@@ -164,6 +182,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   NOTHING and is counted not ready, retried to the deadline: a listener on the default port is another
   server, not this instance. Only a `$MAINPID` that is unset, no number, a pid that is gone, or an
   engine `--port` that is no listener fails at once.
+- A record file the migration rewrites (`instances.ini`) is edited IN PLACE with
+  `ini::text::set_key` / `remove_key`: a re-render from `parse_sections` drops the file's comments and
+  the order of its keys, both pinned. In `assign::render_profile` the entry wins: the pool section's own
+  line of a key the entry names too is dropped (`ini::line_starts_with_key`, a key line only, never a
+  comment) and the entry's line appended, so the key reaches the engine once, with the entry's value.
 - A record (`assignments.ini`, `instances.ini`) is written through `write_served_file(..,
   &ConfigFile::Models, ..)`: mode 0644, temp file renamed over. A render written after a record change
   turns its failure into the call's answer. `assign::render` takes both pool files, so a profile in
@@ -559,8 +582,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A `cp ... && echo ok` piped through `tail` can hide a failure.
 - The sandbox clock jumps: content, not mtime, is the state (`md5sum`, `grep -n` the exact text).
 - A script that moves a block can drop the item header between it and its anchor.
+- An `edit` of a whole function whose `oldString` stops mid-body leaves the old tail sitting after the
+  new `}`: a duplicated block, and the compiler says only `unexpected closing delimiter: }`. Re-read the
+  whole function after a large rewrite, before running anything.
 - The `edit` tool intermittently misses text `awk` shows verbatim: append with a heredoc and check
   `git diff --stat`. After a rejected edit call, `grep -n "parameter>" <file>`.
+- A comment that narrates the shape the design REJECTED ("byte identity, which the render does not
+  keep") reads as a defect to a later reader and invites re-proposing it: the contract in code states
+  what the code does, the rejected shape and its consequence go in `ARCHITECTURE.md`, which is where
+  the design is kept.
 
 ### A cargo run
 
@@ -600,7 +630,9 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 - `binding_lint` reddens the whole `-p pai-config` run when `strings::t` keys and the language file
   differ. A new refusal key needs its arm in `checks::Refusal::text`, its keys in `en_US.toml` AND
   `cli.toml`, and passes `binding_lint`'s `cli_print_paths_hold_no_language` only when the strings
-  carry no path: reuse an existing key (`not-one-of` names the offending key as its first value).
+  carry no path: reuse an existing key (`not-one-of` names the offending key as its first value). It
+  also needs the key in `checks::KEYS` (core's `every_refusal_key_is_known_and_in_both_strings_files`).
+  `binding_lint` is a `pai-config` test, so a `-p pai-core` run never shows it.
 - `pai-config`'s `names_lint::no_code_names_the_old_project` scans `crates/{app,bff,cli,config,core,manager}`
   and `OLD_NAMES` holds `join("llama.cpp")`, so a manager test fixture that writes the engine's version
   file reddens `cargo test -p pai-config`, naming a `crates/manager` line in a crate you did not touch.

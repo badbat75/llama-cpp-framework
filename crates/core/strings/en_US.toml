@@ -1018,6 +1018,7 @@ model-profile-bad-source = "model profile `{0}`: pick exactly one source, a prof
 model-profile-bad-text = "`{0}` has a character that cannot go in a model profile file: no line break, no control character, no space at the ends"
 model-profile-enabled = "`{0}` is switched on: switch it off before deleting it"
 model-profile-assigned = "`{0}` is assigned to the instances `{1}`: unassign it before deleting it"
+model-profile-placement-key = "`{0}` decides where the model's memory sits: the entry of an instance profile carries it, not the model profile"
 model-profile-model-missing = "`{0}` names a model file that is not there: `{2}` is missing for instance `{1}`. Put the file at that path on the server machine, or pick another Model file for the profile."
 model-profile-over-memory = "`{0}` does not fit the GPU memory of instance `{1}`: it needs {2} MiB, the node has {3} MiB. To make it fit, lower its Context size, or pick a smaller K-cache type or V-cache type."
 model-profile-device-outside = "{2} = {3} names a GPU outside the Devices of instance {1}'s server profile, so model profile {0} may not use it. Pick a GPU of those Devices, or widen the server profile's Devices first"

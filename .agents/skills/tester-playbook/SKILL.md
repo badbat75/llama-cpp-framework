@@ -46,6 +46,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A fixture struct that holds a crate enum cannot `#[derive(Default)]`: write the fields out. A stub that
   answers the value a test expects is green BY THE STUB (a stubbed `Unreachable` passes the refused-port
   pin): name those tests in the report, their teeth show when the seam is wired.
+   The same holds the other way: an empty stub answers empty on both sides, so a "a second run changes"
+   nothing" compare over whole files is green before the code exists.
+ - A new `crates/<crate>/src/<name>.rs` that holds tests needs `pub mod <name>;` in the crate's `lib.rs`:
+   unregistered, its tests are not compiled and not run, and the filter reports green with no test named.
+   Register it first, then read the test names in the output.
 - Before reporting a new field on a struct, grep `<Struct> {` and run
   `cargo check --workspace --all-targets --exclude pai-config`: a field on a struct other crates build as
   a literal is a COMPILE red there. Fill each literal with the value its own fixture implies. A new field
@@ -77,6 +82,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   ephemeral id): a red is a contract, and the coder is free to pick the literal.
 - Pin an ORDER rule ("the record is written last") with a call that fails on the LAST step (make the
   render's path a directory so the rename fails) and assert the whole-tree snapshot is unchanged.
+- Pin a migration's "a second run changes nothing" by replaying the files left ON DISK, not the clean
+  tree: hand the rerun the merged file AND the file it was merged from (`models.ini` merged +
+  `models.ini.disabled` still there, `assignments.ini` still there). A rerun helper that answers
+  `String::new()` for the leftovers is green over the duplicate-section defect it is meant to catch.
+- Pin a crash point's "the next run answers the clean run's files" ONLY where every value the clean
+  result carries still exists in the inputs. A state that has already stripped the value's source (the
+  server profile lost `Hostname`/`Port`, the pool lost the moved keys) makes the whole-file equality
+  unsatisfiable: pin the parts that are reachable (the entry keys of the file already on disk, and that
+  no value is INVENTED, e.g. the record's `Port` is not the reader's 9931 fallback) and report the
+  equality as unachievable for that file.
 - Report a bookkeeping pin (a log or call count over calls made by earlier pins) green today, deferred to
   the coder's green run. For a count over a seam the builder also reads, take `let base = ...` after the
   builder and assert deltas.
@@ -98,6 +113,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   set on the line below carries the second-press pin). Mutate the guard where the disjunct is alone (the
   close-while-saving one) and report the survivor as unpinned.
 - Run nothing else with cargo on the crate while a prove loop rewrites the real source.
+- In a bash mutant script use `set -uo pipefail` and end the cargo pipeline with `|| true`, never `set -e`:
+  a KILLED test exits nonzero, so with `-e` and `pipefail` the script dies before its `cp` restore and
+  leaves the MUTANT in the real source (hit here: `let merged = merged;` survived in
+  `migrate_model.rs`, found by reading the mutated line back before the next run).
 - A mutant that SKIPS a check (drop one disjunct of a compound trigger) reds the test that pins the
   check's own side effect (the listing was asked: `0 != 2`) even where the outcome pin would pass: report
   both names, the second is the "the check runs" half. A trigger condition repeated in two adjacent blocks

@@ -31,6 +31,7 @@ pub const KEYS: &[&str] = &[
     "model-profile-bad-text",
     "model-profile-enabled",
     "model-profile-assigned",
+    "model-profile-placement-key",
     "fit-target-format",
     "override-no-pattern",
     "override-no-device",
@@ -118,6 +119,7 @@ impl Refusal {
             "model-profile-bad-text" => strings::fill("model-profile-bad-text", &[&v(0)]),
             "model-profile-enabled" => strings::fill("model-profile-enabled", &[&v(0)]),
             "model-profile-assigned" => strings::fill("model-profile-assigned", &[&v(0), &v(1)]),
+            "model-profile-placement-key" => strings::fill("model-profile-placement-key", &[&v(0)]),
             "fit-target-format" => strings::fill("fit-target-format", &[&v(0), &v(1)]),
             "override-no-pattern" => strings::fill("override-no-pattern", &[&v(0)]),
             "override-no-device" => strings::fill("override-no-device", &[&v(0), &v(1)]),
@@ -386,6 +388,121 @@ pub const MODEL_PROFILE_KEYS_NOT_ON_WEB: &[&str] = &[
     "spec-type",
     // The MoE keys: they need the model's facts.
     "moe-cache-mib",
+];
+
+/// The model profile keys that MOVE into the instance profile's entry
+/// `[<p>/<m>]` (`ARCHITECTURE.md`, "Instance profiles", the placement and
+/// memory amendment): a key that says where the weights go, or is sized by the
+/// memory of the hardware. The model profile keeps the file, the sampling and
+/// the behaviour, so it becomes hardware-independent. Every key of the model
+/// profile key set is in this list or in [`MODEL_PROFILE_STAY_KEYS`], never in
+/// both.
+pub const PLACEMENT_KEYS: &[&str] = &[
+    // Tensor split card: the GPUs and how the tensors spread over them.
+    "device",
+    "split-mode",
+    "tensor-split",
+    "override-tensor",
+    // That card's MoE keys: how many layers sit on a GPU, and the expert cache.
+    "n-gpu-layers",
+    "n-cpu-moe",
+    "n-cpu-ffn",
+    "moe-cache-mib",
+    "op-offload",
+    "repack",
+    "no-host",
+    "lazy-mode",
+    "load-mode",
+    // Memory fit card: the target the load is fitted to.
+    "fit",
+    "fit-ctx",
+    "fit-target",
+    // The draft model and the vision projector: which GPU carries them.
+    "device-draft",
+    "n-gpu-layers-draft",
+    "mmproj-device",
+    "mmproj-offload",
+    // Resource and context card: the size of the context is the memory the pair
+    // must find, and the batches are scaled by it.
+    "ctx-size",
+    "parallel",
+    "kv-unified",
+    "kv-unified-per-slot",
+    "batch-size",
+    "ubatch-size",
+    // KV cache card: both cache types, sized by the memory of the pair like the
+    // context is, the size of the cache, and the context checkpoints.
+    "cache-type-k",
+    "cache-type-v",
+    "flash-attn",
+    "cache-ram",
+    "ctx-checkpoints",
+    "checkpoint-min-step",
+    // Speculation card: the draft runs on a GPU of the pair, and its ubatch and
+    // cache types are sized by that GPU.
+    "spec-draft-n-ubatch",
+    "spec-draft-type-k",
+    "spec-draft-type-v",
+    // Advanced card: the models that sit in memory from the start, counted over
+    // the pair (the load-on-startup memory check, section E).
+    "load-on-startup",
+];
+
+/// The model profile keys that STAY in the model profile
+/// ([`PLACEMENT_KEYS`] is the list that moves).
+pub const MODEL_PROFILE_STAY_KEYS: &[&str] = &[
+    // The model source: the file, and the repository and the file in it.
+    "model",
+    "hf-repo",
+    "hf-file",
+    // The vision projector file: what is loaded, not where.
+    "mmproj",
+    // The draft model file: what is loaded, not where.
+    "model-draft",
+    // Sampling overrides card: the model's voice, the same in every instance.
+    "temp",
+    "top-k",
+    "top-p",
+    "min-p",
+    "repeat-penalty",
+    "presence-penalty",
+    "backend-sampling",
+    // Chat and reasoning card.
+    "n-predict",
+    "jinja",
+    "chat-template-kwargs",
+    "prefill-assistant",
+    "reasoning",
+    "reasoning-format",
+    "reasoning-effort",
+    "reasoning-preserve",
+    "reasoning-budget",
+    "reasoning-budget-message",
+    // Embeddings card: a mode of the model.
+    "embeddings",
+    "pooling",
+    // KV cache card: how much of the cache is kept for the next request, a
+    // reuse chunk and not a size.
+    "cache-reuse",
+    // Vision card: the tokens an image takes, read from the model.
+    "image-min-tokens",
+    "image-max-tokens",
+    // Speculation card: the method and its bounds, not the draft's memory.
+    "spec-type",
+    "spec-draft-n-max",
+    "spec-draft-n-min",
+    "spec-draft-p-min",
+    // The n-gram speculators' tuning: every key of that family.
+    "spec-ngram-mod-n-match",
+    "spec-ngram-mod-n-min",
+    "spec-ngram-mod-n-max",
+    "spec-ngram-simple-size-n",
+    "spec-ngram-simple-size-m",
+    "spec-ngram-map-k-size-n",
+    "spec-ngram-map-k-size-m",
+    "spec-ngram-map-k4v-size-n",
+    "spec-ngram-map-k4v-size-m",
+    "spec-ngram-map-k4v-min-hits",
 ];
 
 /// The ports a listener can bind.
@@ -1270,6 +1387,29 @@ pub fn model_profile_ids_free(new: &str, old: &str, other: &str) -> Result<(), R
         }
     }
     Ok(())
+}
+
+/// Check the text of a model profile file (`models.ini`) for a placement or
+/// memory key of [`PLACEMENT_KEYS`] left in a model profile section: after the
+/// migration those keys live in the instance profile's entry `[<p>/<m>]`, so a
+/// model profile carrying one is two sources of truth for where the weights go.
+/// The refusal names the key (`model-profile-placement-key`).
+pub fn model_profile_placement(text: &str) -> Result<(), Refusal> {
+    for section in ini::parse_sections(text) {
+        if section.id == "*" {
+            continue;
+        }
+        if let Some((key, _)) = section.keys.iter().find(|(k, _)| placement_key(k)) {
+            return Err(Refusal::new("model-profile-placement-key", &[key]));
+        }
+    }
+    Ok(())
+}
+
+/// True when `key` decides where a model's memory sits, so that it belongs to
+/// an instance profile's entry and not to the model profile.
+pub fn placement_key(key: &str) -> bool {
+    PLACEMENT_KEYS.contains(&key)
 }
 
 #[cfg(test)]
@@ -3806,5 +3946,118 @@ top-p = 0.95\r\n";
                 Ok(())
             );
         }
+    }
+
+    /// `ip1` criterion: the placement list and the stay list together are the
+    /// model profile key set, with no key in both: every key of a model profile
+    /// moves into the instance profile's entry, or stays.
+    #[test]
+    fn the_placement_and_stay_lists_are_the_model_profile_key_set() {
+        let mut want: Vec<&str> = WEB_MODEL_PROFILE_KEYS
+            .iter()
+            .chain(MODEL_PROFILE_KEYS_NOT_ON_WEB.iter())
+            .copied()
+            .collect();
+        want.sort_unstable();
+        want.dedup();
+        let mut got: Vec<&str> = PLACEMENT_KEYS
+            .iter()
+            .chain(MODEL_PROFILE_STAY_KEYS.iter())
+            .copied()
+            .collect();
+        got.sort_unstable();
+        assert_eq!(
+            got, want,
+            "the placement and stay lists are not the model profile key set"
+        );
+        for key in PLACEMENT_KEYS {
+            assert!(
+                !MODEL_PROFILE_STAY_KEYS.contains(key),
+                "{key} is in both lists"
+            );
+        }
+        // The keys the migration moves, as the design names them, and the keys
+        // the fixture's pool keeps, are in the list each of them belongs to.
+        // The K cache type is sized by the memory of the pair, like the V one,
+        // so it moves with it (the design's memory-sized list).
+        for key in [
+            "device",
+            "ctx-size",
+            "n-gpu-layers",
+            "load-on-startup",
+            "tensor-split",
+            "moe-cache-mib",
+            "n-cpu-moe",
+            "override-tensor",
+            "cache-type-k",
+            "cache-type-v",
+        ] {
+            assert!(
+                PLACEMENT_KEYS.contains(&key),
+                "{key} is not a placement key"
+            );
+        }
+        for key in [
+            "model",
+            "mmproj",
+            "model-draft",
+            "spec-type",
+            "temp",
+            "top-k",
+            "cache-reuse",
+        ] {
+            assert!(
+                MODEL_PROFILE_STAY_KEYS.contains(&key),
+                "{key} is not a stay key"
+            );
+        }
+    }
+
+    /// `ip1` criterion: a model profile section carrying a placement key is
+    /// refused, naming the key; a section of stay keys alone passes, and the
+    /// pool's global section keeps its placement keys (the render puts them in
+    /// every instance's file).
+    #[test]
+    fn a_model_profile_carrying_a_placement_key_is_refused() {
+        for key in PLACEMENT_KEYS {
+            let text = section("m", &format!("model = /models/m.gguf\n{key} = x\n"));
+            let r = model_profile_placement(&text).expect_err(&format!(
+                "the section [m] carrying the placement key {key} is not refused"
+            ));
+            assert_eq!(r.key, "model-profile-placement-key", "{key}: {r:?}");
+            assert_eq!(
+                r.values,
+                [key.to_string()],
+                "{key}: the refusal does not name the key: {r:?}"
+            );
+            assert!(KEYS.contains(&r.key), "{} missing from checks::KEYS", r.key);
+            assert_eq!(
+                Refusal::decode(&r.encode()),
+                Some(r.clone()),
+                "wire round trip: {r:?}"
+            );
+        }
+        assert_eq!(
+            model_profile_placement(&section("m", "model = /models/m.gguf\ntemp = 0.2\n")),
+            Ok(()),
+            "a model profile of stay keys alone is refused"
+        );
+        assert_eq!(
+            model_profile_placement(&section("m", "model = /models/m.gguf\ndevice = cuda0\n")),
+            Err(refusal("model-profile-placement-key", &["device"])),
+            "the switched-off file's profile (the same shape) is not checked"
+        );
+        // The pool's global section is exempt: the render copies it into every
+        // instance's file, where a placement key of its own belongs.
+        assert_eq!(
+            model_profile_placement(&section("*", "device = cuda0\ntemp = 0.7\n")),
+            Ok(()),
+            "the pool's global section [*] is refused for a placement key: [*] is exempt"
+        );
+        assert_eq!(
+            model_profile_placement(""),
+            Ok(()),
+            "an empty file is refused"
+        );
     }
 }

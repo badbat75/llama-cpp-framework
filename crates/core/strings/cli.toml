@@ -275,6 +275,7 @@ model-profile-bad-source = "model profile `{0}`: pick exactly one source, a prof
 model-profile-bad-text = "`{0}` has a character that cannot go in a model profile file: no line break, no control character, no space at the ends"
 model-profile-enabled = "`{0}` is switched on: switch it off before deleting it"
 model-profile-assigned = "`{0}` is assigned to the instances `{1}`: unassign it before deleting it"
+model-profile-placement-key = "`{0}` decides where the model's memory sits: the entry of an instance profile carries it, not the model profile"
 model-profile-not-listed = "No model profile named `{0}`. Run `pai model-profile list`."
 model-profile-off-cannot-run = "model profile `{0}` is switched off, so llama-server does not offer it: `pai model-profile enable {0}` first"
 model-profile-off-mark = "  (off)"

@@ -89,14 +89,35 @@ pub fn parse_sections(text: &str) -> Vec<Section> {
             continue;
         }
         let Some(s) = cur.as_mut() else { continue };
-        if let Some(eq) = t.find('=') {
-            let key = t[..eq].trim().to_string();
-            let val = t[eq + 1..].trim();
-            s.keys.insert(key, strip_inline_comment(val).to_string());
+        if let Some((key, val)) = key_of_line(t) {
+            s.keys.insert(key, val);
         }
     }
     if let Some(s) = cur {
         out.push(s);
+    }
+    out
+}
+
+/// The named section's key lines, in the order the file has them, each read as
+/// `parse_sections` reads it; nothing when the file has no such section.
+/// `parse_sections` puts a section's keys in a map, sorted: a writer that
+/// keeps the order the file has (a section moved into a render) uses this. The
+/// section is found as the writers find one, so `[*]` is named by `*`.
+pub fn section_keys(text: &str, section: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(name) = t.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) {
+            inside = name.trim().eq_ignore_ascii_case(section);
+            continue;
+        }
+        if inside {
+            if let Some(pair) = key_of_line(t) {
+                out.push(pair);
+            }
+        }
     }
     out
 }
@@ -108,6 +129,22 @@ pub fn parse_sections(text: &str) -> Vec<Section> {
 fn strip_inline_comment(val: &str) -> &str {
     let end = val.find([';', '#']).unwrap_or(val.len());
     val[..end].trim_end()
+}
+
+/// One TRIMMED line as its key and value, exactly as `parse_sections` reads
+/// one: no comment, no section header, a line with an `=`, the key and the
+/// value trimmed, everything from the first `;`/`#` of the value dropped.
+/// `None` for anything else, so every reader of key lines answers the same.
+pub(crate) fn key_of_line(line: &str) -> Option<(String, String)> {
+    let t = line.trim();
+    if t.starts_with(';') || t.starts_with('#') {
+        return None;
+    }
+    let eq = t.find('=')?;
+    Some((
+        t[..eq].trim().to_string(),
+        strip_inline_comment(t[eq + 1..].trim()).to_string(),
+    ))
 }
 
 /// The value of a key line exactly as `parse_sections` reads it, so a writer
@@ -548,7 +585,9 @@ pub fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
 
 // ── Internal: section-header scanning & EOL ──────────────────────────────
 
-fn line_starts_with_key(line: &str, key: &str) -> bool {
+/// True when `line` is a key line naming `key`, in any letter case (the `=`
+/// right after the key, blanks aside, never a comment line).
+pub(crate) fn line_starts_with_key(line: &str, key: &str) -> bool {
     let line = line.trim_start();
     if line.len() < key.len() || !line.is_char_boundary(key.len()) {
         return false;
@@ -633,7 +672,7 @@ pub fn detect_eol(content: &str) -> &'static str {
 }
 
 /// Rewrite `s` with `eol` as its line ending (input may mix CRLF and LF).
-fn normalize_eol(s: &str, eol: &str) -> String {
+pub fn normalize_eol(s: &str, eol: &str) -> String {
     let lf = s.replace("\r\n", "\n");
     if eol == "\n" {
         lf
