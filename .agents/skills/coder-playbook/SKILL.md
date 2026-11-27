@@ -29,8 +29,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   With no git side effect at all: `git archive HEAD | tar -x -C /tmp/<x>` (copy the untracked tests in
   by hand; the copy has no generated `.cargo/config.toml`, so it builds into its own `target/`).
 - To prove a hypothesis, copy the tree (`rsync -a --exclude build --exclude .git --exclude dist
-  --exclude node_modules <repo> /tmp/<x>`), use a fresh or shared `CARGO_TARGET_DIR` (registry crates are
-  reused; only workspace crates rebuild), patch there, rerun. Never patch the repo's tests.
+  --exclude node_modules <repo> /tmp/opencode/<x>`) with its OWN `CARGO_TARGET_DIR` inside the copy, never the
+  repo's: `paths::strings_dir()` is `env!("CARGO_MANIFEST_DIR")/strings`, baked in at compile time, so a
+  copy built into the shared target dir leaves test binaries that read the copy's strings, and once the copy
+  is gone the repo's string tests fail with a key where the text is expected (seen in IP3c). Patch there,
+  rerun, never patch the repo's tests, and `rm -rf` the copy before you report: copies left in /tmp/opencode
+  reached 51 GB.
 - To enumerate the reds a panic hides in a one-test e2e, work in a tree copy: rewrite each
   `assert!(cond, msg)` to a non-fatal `eprintln!` mark, run with `--nocapture` (captured stdout prints
   only on failure), and grep the marks.
@@ -64,6 +68,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Capture a loop's output before judging it: `out=$(eval "$c" 2>&1); code=$?`, then print `exit=$code`
   and the warning count. Judge from `FAILED`/`panicked`/`error`.
 - Enumerate a crate's test targets with `--no-fail-fast`.
+- Judge the manager's phase sequence (`tests::data_root_e2e`) ONLY with `-- --test-threads=1`: the phases
+  share the process-wide `PRIVATE_AI_DATA_ROOT`, so the default parallel run of the same test stops at a
+  DIFFERENT pin (measured 2026-11-27: single-threaded it stops where the rule bites, the full crate run
+  stopped two phases later at a D-Bus signature pin).
 - On Linux export `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` for every cargo command: the checked-in
   `.cargo/config.toml` pins `target-dir = "build/windows/cargo-target"`, so a bare `cargo test` rebuilds the
   whole workspace there.
@@ -273,7 +281,17 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `running_using_profile`), so an older phase that pins `calls(&c) == vec![]` ("no verb of an instance
   profile touches a unit") reddens with `left: [Status("default"), …]`: the read rides the same seam as
   the control. Report it as superseded, gate nothing: a status read is not a start, and the restart stays
-  the caller's (the design's word is `pendingRestart`).
+  the caller's (the design's word is `pendingRestart`). The read belongs to the VERB that answers, never
+  to the shared write body: the e2e pins `a write calls no service` after plain `write_file` calls, so
+  the rows go in `write_file_if` and the record saves, and `check_and_write` answers `()`.
+- A service verb whose Ok type grows (`()` to a struct) reddens its own module's test block by the
+  score: script the mechanical fix on the `cargo check` red lines. The `assert_eq!(call, Ok(()))` rows
+  take `.map(|_| ())` on the CALL line (the one above the `Ok(())`, and `            ),` when the call is
+  multi-line); a `let answer = verb(…);` line needs it on ITS line, before the `;` (appending to a line
+  that already ends `);` adds one paren too many, and the crate then dies on
+  `unexpected closing delimiter`); a block's expected-value closures (`let in_use = |x| -> Result<(),
+  ManagerError>`) take the new Ok name, and a `.map(|()| Vec::new())` on a grew verb takes `|_|`. None of
+  these changes what a test asserts; say so in the report.
 - When a tester retires a file out of a mode-check loop `for name in ["a", "b", "c"]` and one element is
   left, `clippy::single_element_loop` reddens the crate (`--all-targets`, Linux only: a `#[cfg(unix)]`
   block is not compiled for the Windows target). Unwrap it the way clippy says (`let name = "…";` plus
@@ -568,7 +586,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (`pageCards()`) and derive the page's cards, the jump list and the About read from that one filter.
   A `GroupRow` is dropped when every non-note field of its key left, a card when no field row is left,
   and a row reading the model file (`facts`, the GGUF header) goes with the read the slice stops
-  making. The rows stay in `CARDS` while other pages render them (brief 26's per-instance card).
+  making. The rows stay in `CARDS` while other pages render them (brief 26's per-instance card). The
+  CHECKS the page owned for a filtered card strand their texts: `strings.test.ts` reds "values no code
+  uses" (IP5: the four `ot-*` rule checks and the two GPU weights/Move lines). The brief keeps a moving
+  card's texts and `fe/src/test/bff.ts`'s `EN` mirror pins them, so the fix is to MOVE the check into
+  the card's own module (`TensorPlacement.tsx`'s `otChecks(rows)`, `GpuSplit.tsx`'s
+  `gpuWeightsFailureText` / `gpuMovedText`), never to prune the keys (that reddens `1a strings`).
 - `strings.test.ts`'s "every value is used" scans the code for `t(` IMMEDIATELY followed by a `'literal'`:
   a key picked by a ternary INSIDE the call (`t(on ? 'a' : 'b', id)`) is invisible to it, so the key is a
   "value no code uses" and the test is red. Write `on ? t('a', id) : t('b', id)`, the repo's style
@@ -711,7 +734,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `cargo clippy -p <crate> --all-targets -- -D warnings` builds the lib WITHOUT tests: an item only
   `#[cfg(test)]` code calls is dead there.
 - `cargo test -p <crate>` compiles the test modules of path dependencies, so a new public field reddens
-  every crate that writes a full struct literal (E0063).
+  every crate that writes a full struct literal (E0063). Those literals sit in OTHER crates' test
+  targets (`crates/bff/tests/*.rs`), which `cargo test -p pai-core` never compiles: after a field of a
+  shared row struct, run `cargo check -p pai-app -p pai-cli -p pai-bff --all-targets` (prefix
+  `PRIVATE_AI_LLAMA_CPP_DIR` for app/cli). A scripted insertion that lands the fields AFTER the
+  literal's `}` leaves a `}}` syntax error, in all eight bff test files at once; the fix is the
+  mechanical one, fields inside the literal, one closer kept, and `rustfmt --edition 2021` on the file.
 - `serde_json`'s `preserve_order` is ON when `pai-app` is built in the same invocation and OFF in a bare
   `cargo test -p pai-bff`.
 - `mod windows` is `#[cfg(windows)]`, so no file under `xtask/src/windows/` is compiled on Linux. A
@@ -1083,6 +1111,17 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 
 ### Rust library traps
 
+- A zbus `a{sv}` reply is a `HashMap<String, Value>` (a `BTreeMap` is NOT: `Value::new(map)` wants
+  `Structure: From<BTreeMap>`, which zvariant does not implement). A row nested in it is an
+  `OwnedValue::from(HashMap<String, Value>)`, not a `Value::new(HashMap)`. And a row whose signature a
+  core test pins (`<InstanceRow as Type>::SIGNATURE == "(sssqasass)"`) grows only with the tester: a
+  field the stream already answers stays off the bus row, whose client fills the struct's new field with
+  the neutral value.
+- Reading a zbus p2p reply in a test: the served connection is the value the server thread RETURNS, so
+  `let _ = served.join()` drops it and every client call dies with `Broken pipe` (bind it, `_server`).
+  And a reply body of signature `a{sv}` never deserializes as `OwnedValue` (whose signature is `v`), and
+  `serde_json::to_value` of a zvariant value is the wrapper `{"signature":…,"value":…}`, never plain
+  JSON: a pin that compares plain JSON needs a read that unwraps the wrapper.
 - `pai_core::ini::text::section_text` answers a section THROUGH the empty lines that sit before the next
   header, so a test pinning a section's text EXACTLY pins that separator too: an entry write that appends
   the file's usual blank line leaves `[profile]` as `…\n\n` and is red against `…\n`.

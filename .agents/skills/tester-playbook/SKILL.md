@@ -110,6 +110,32 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Pin a byte bound on a pipe payload twice: in the arithmetic, and at the wire crossing, where the red
   lands in the client's own frame check, which is the bound's evidence.
 - Write a file-name rule for one OS as a `cfg` split, not a table row.
+- In a manager fixture, the fit checks judge the instances the service answers RUNNING: keep an instance
+  that must fail fit OUT of `FakeService::running` (as `ip3c_fit_split_e2e` does), else the phase's own
+  setup save is refused `model-profile-over-memory` and the phase reds at its setup, not at its pins.
+- The instance-profile verbs are split across the transports: `SetInstanceProfileModel` has a service fn
+  and a D-Bus method and NO pipe arm; `SetModelProfile`'s frame carries the on/off switch, not a key
+  value; the model profile and server profile pages save with `WriteFileIf`, whose frame REQUIRES
+  `expected` (missing it is answered `BadRequest`, which `convergence.rs`'s `call` reports as
+  "the connection ends clean"). Pin a bus answer with a raw `call_method` and a
+  `zbus::zvariant::OwnedValue` decode: a body of `()` panics on the deserialize and a verb the bus does
+  not carry panics on the call, each naming its own gap, so a D-Bus value red needs no `src` stub.
+  `zbus::blocking::connection::Builder::async_io_unix_stream` on a `UnixStream::pair` serves the
+  interface peer to peer; `bus.inner().set_unique_name(":1.42")` is the caller.
+- The bus has no JSON: a re-rendering save's answer is the `a{sv}` of `affected_answer`
+  (`manager/dbus.rs`), so decode `BTreeMap<String, OwnedValue>` (it is `Type` + `Deserialize`), read
+  `running` as `Value::from(owned.try_clone()).downcast::<Vec<String>>()` and `notConverged` as an `Array`
+  whose `inner()` rows downcast to `Dict`. `serde_json::to_value(&*owned)` on it panics the deserialize,
+  which reads as "its body is `()`". `Dict::get::<str, String>(key)` is `E0277: the size for values of type
+  str cannot be known` (the key type is `Sized`), and `String::try_from(&Value)` on a variant field answers
+  `""` with NO error, silently emptying every row: match the key with `iter()` against `Value::new(key)` and
+  `try_clone().downcast::<String>()` the value.
+- Keep the connection a bus-serving thread hands back (`let _server = served.join()..`, never `let _ =`):
+  dropping it closes the socket, and every raw call of the phase dies `I/O error: Broken pipe (os error 32)`,
+  which reads as "the bus carries no such verb".
+- Seed an instance profile through its verbs (`create_instance_profile`, `add_instance_profile_model`,
+  `set_instance_profile_model`), never `write_file_if` of `instance-profiles.ini`: the served write has no
+  arm for a file the manager writes itself, so a hand-written second profile never arrives.
 - Prove a test exists with `-- --list | grep -c "^<name>:"`, never by running it.
 - Judge red from the OUTPUT (`FAILED`, `panicked at`), never the exit code.
 
@@ -143,7 +169,7 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Prove a red that cannot be shown in the real tree (test-side reds behind an earlier red, pins behind a
   compile-blocked phase, pins in a long phase) in a scratch copy:
   `rsync -a --exclude build --exclude .git --exclude dist --exclude node_modules <repo> /tmp/<x>` plus a
-  symlink of `fe/node_modules`, or a `git worktree add --detach` of HEAD for an inherited red. Report it
+  symlink of `fe/node_modules`, or a `git worktree add --detach` of HEAD for an inherited red. Give the copy its own `CARGO_TARGET_DIR`, never the repo's (strings are baked in by path: a shared target dir leaves binaries reading the copy's strings), and `rm -rf` it before you report. Report it
   as "seen in a scratch copy with X flipped", never as a green of the current tree, and name the scratch
   panic lines as such.
 - For an fe slice, the scratch copy is the proof the reds are satisfiable: a python script applies a
@@ -218,6 +244,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the SAME test 23 s, 150 s, 170 s, 293 s, 432 s, green and red, at load 6-12). Show it is not the slice
   by interleaving solo runs in the tree and in a HEAD worktree (own `CARGO_TARGET_DIR`, removed after)
   and by showing no symbol of the slice sits on the verb's path.
+- A raw D-Bus call (a pin's `Connection::call_method`, not the client's `call` helper) to a method the
+  interface does not serve fails at once with `I/O error: Broken pipe (os error 32)`, so the pin's own
+  message is the red and the phase's `test result: finished in` is seconds, not the 25 s zbus timeout.
 - Prove each phase alone when a refusal aborts at its own phase, and report the later ones as blocked,
   not passed. For a manager phase (all in `service.rs`, one `data_root_e2e`): a temporary
   `tests/ip3a_probe.rs`-style module with one `#[test]` per phase, run
@@ -298,6 +327,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the files on disk and answers the failures), so a fixture the client write refuses arrives by
   `std::fs::write` of the pool plus one `render_failures()` call. A client `write_file` of `models.ini`
   refuses a `[*]` section (`invalid-model-profile-id`), so the pool's global section is a hand edit.
+- A GPU-probe count pin of a fit check is judged against the instance's rendered PAIR on disk, the last
+  good state (`ARCHITECTURE.md` "Convergence"): read the pair (`models@<id>.ini`, `launch@<id>.ini`)
+  BEFORE the save, since a pool hand-edit (`pool_files` + `assignments`) does NOT re-render it, so a save
+  of an "unchanged" profile whose pool differs from the pair DOES probe. Pin it as three: the probe asked
+  AT MOST once, `kept(&pair)` (both rendered files byte-identical, the refusal wrote nothing), and
+  `m.not_converged()` naming the instance with the key (`model-profile-over-memory`). The mutant of the
+  count must add a probe on the path the save takes (the memory fit check's `gpus.gpus()`, not the device
+  bound's), and the phase's EARLIER exact-count pin (an `asks == ["gpus"]` block) masks it: delete that
+  marker block to show the later pin's teeth.
 - Read the pure render first (`pai_core::assign::render`): it already copies the pool's `[*]` section
   verbatim, so "an explicit pool `[*]` value is copied as is, nothing added" is a day-one green pin, and
   the slice's red is only the line the render ADDS.
@@ -1036,6 +1074,12 @@ frozen list.
 - The manager's D-Bus unit tests and the GPU-probe flooding test are load-sensitive (slow under a loaded
   machine, bound reds at 0..1800 ms).
 - A test that touches the live `bench.db` path hangs the crate's suites behind the machine-wide lock.
+- A `CARGO_TARGET_DIR` shared with a scratch copy keeps artifacts compiled THERE: `paths::strings_dir()`
+  is `env!("CARGO_MANIFEST_DIR")/strings`, baked at compile time, so the runtime read of the strings
+  files fails and EVERY test that resolves a key to its text reds with the key
+  ("the key, not its text"), deterministically solo and with `--test-threads=1`. Probe
+  `panic!("strings_dir={:?} t={}", pai_core::paths::strings_dir(), strings::t("<key>"))`;
+  `cargo clean -p pai-core` + rerun is green. Never call it a parallel interaction.
 - An attribute glued to the end of a doc comment leaves the test unregistered: it never runs, and clippy
   says `dead_code`.
 - `map.get(k).is_none()` is a clippy `unnecessary_get_then_check` red under `-D warnings`: pin a key's
@@ -1131,6 +1175,15 @@ frozen list.
   plausible dir to cover the coder's choice is an assumption to name in the report.
 - A tree with the earlier phase call lines gated prints ~33 `dead_code` warnings (each gated phase is now
   uncalled): run clippy only on the restored tree, and read those warnings as the gate.
+- In a convergence fixture whose record sections carry their own `ServerProfile` (the shape that gives two
+  instances running ONE instance profile on distinct cards), `SetServerProfile` moves the `ServerProfile`
+  of the instance profile both run and changes NO render (the record's own key wins in
+  `paths::instance_server_profile`), and `SetModelProfile` writes `assignments.ini`, inert once the record
+  names an instance profile (its entry sections ARE the model list). Both land and answer the affected
+  object with nothing moved, so a "the pair of X moves" pin cannot host them: pin them as landing with the
+  pair's bytes unchanged, and name the render that DOES move (an entry save, an instance profile switch).
+- An untracked file shows NOTHING in `git diff`: a test file a slice added is `??` in `git status
+  --short`, so review it by reading it, not by the diff.
 
 ### The bff (Rust)
 
