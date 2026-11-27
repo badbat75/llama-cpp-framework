@@ -80,6 +80,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   apply `--check`'s diff to your own file by hand, and prove with `git status --porcelain -- '*.rs'`
   before and after that no other file moved. After a rename that lengthens identifiers, run fmt per
   touched crate; `cargo fmt -p a -p b` takes several crates.
+- Proof that a `cargo fmt -p <crate>` pass (a tester's red files in the same slice) moved no assertion:
+  snapshot first, then `rustfmt --edition 2021` the snapshot's copies and `cmp` each against the working
+  file: byte-identical is the proof. A whitespace-stripped text compare is NOT: a string literal's `\n`
+  and a re-wrapped comment differ.
 - A mechanical clippy fix of a whole crate: `cargo clippy --fix --allow-dirty -p <crate> --all-targets`,
   with a snapshot and a `diff` showing only the intended edit.
 - Windows-only code is type-checked with `cargo check` then `clippy --all-targets --target
@@ -92,6 +96,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `self::<mod>::<phase>()` for a phase of a `tests/` submodule). To prove a rule inside a phase, extract
   the phase's `{ … }` block into a `pub(crate) fn` with the giant fn's scope bindings re-added (`sys`,
   `record`, `alice`, `bob`).
+- The cheap version of the same, in the repo, for ONE run: comment out every other phase call in
+  `tests/mod.rs`, run, and restore the file from a snapshot (`md5sum` both sides). Comment the
+  `#[cfg(target_os = "…")]` line ABOVE a commented call too: a stranded attribute is
+  `error: expected statement after outer attribute`, and the same trap hides the phase the run was for.
+  A script that rewrites those lines matches a whole call line (`    a::b_e2e();`) and builds its
+  target name by appending `();` to what the user typed: a `grep`-style prefix silently matches 0 lines
+  and the run reports `0 passed`.
+- A phase whose fixture writes a pool file by hand must write each instance's render with
+  `assign::render_profile`'s text in the same breath, or the phase's own seed moves under its first
+  write: `render_all_locked` rewrites a render whose bytes differ from the pool's render. And a render
+  pin written as `text_of(render).contains("<profile-id>")` is case-exact against a header the render
+  copies FROM the pool: seed the pool with the id in the case the pin expects.
 - Arithmetic with a ceiling: "saturating, divide last" is `checked_mul(..).and_then(..).map_or(MAX, |x|
   x / d)`, not a `saturating_mul` chain.
 
@@ -253,6 +269,21 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (the wire phase lists `(args, kind, needle)` rows). Change the rule and those rows are the last reds of
   `data_root_e2e`, one row at a time, and a row that pins the case the new rule accepts is a witness pair
   with the phase that pins the new rule: report the pair, change no test.
+- A verb that ANSWERS the running instances reads the unit seam (`service.status(id)` per record section,
+  `running_using_profile`), so an older phase that pins `calls(&c) == vec![]` ("no verb of an instance
+  profile touches a unit") reddens with `left: [Status("default"), …]`: the read rides the same seam as
+  the control. Report it as superseded, gate nothing: a status read is not a start, and the restart stays
+  the caller's (the design's word is `pendingRestart`).
+- When a tester retires a file out of a mode-check loop `for name in ["a", "b", "c"]` and one element is
+  left, `clippy::single_element_loop` reddens the crate (`--all-targets`, Linux only: a `#[cfg(unix)]`
+  block is not compiled for the Windows target). Unwrap it the way clippy says (`let name = "…";` plus
+  the assertion, re-indented): the assertion, its message and its `{name}` ride on unchanged, and the
+  file is named in the report.
+- A keyed refusal's action record is `outcome="Invalid"` (the `Debug` of the `ManagerError::Invalid`
+  kind); `outcome=refused` is ONLY a `NotAuthorized` (the phases pinning a 403 read, and the label and
+  tags phases pin the quoted form). A record literal that asks for `outcome=refused` beside an assertion
+  that the same call answers a keyed refusal is unsatisfiable: report the pair, the witness is the call
+  the same phase expects to succeed on the same key two lines later.
 - A verb added to the transports rides BOTH clients' acting frame, the READS included:
   `crates/core/src/client/pipe.rs` builds it with `self.guarded(method, &[])` (the `As` method name plus
   the `principal` field) and `crates/core/src/client/dbus.rs` with `match self.acting()`. A read written
@@ -521,7 +552,23 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (an `aria-disabled` button's onClick runs).
 - A strings key is pinned in THREE places: `1a strings` (App.test.tsx), `5b.11` (ProfilesNav) and the
   slice's own strings test (e.g. `22 D2.10` in ModelProfileDelete2). A key added or removed needs all
-  three.
+  three. `1a strings` carries the exhaustive `added` list (every key 1a did not write) and the `removed`
+  list a table must not contain: that is the registry, so a key the brief retires is already named in
+  `removed`, and `fe/src/strings/en_US.json` is the only file to prune.
+- A save answer whose "is it running" field changes SHAPE (22 IP5.0: `running` is a list of instance
+  ids for a model profile, a boolean for a server profile) is widened in `save.ts`'s one mapper: an
+  array becomes `running: ids.length > 0` and IS the `restart` list, a boolean keeps the `restart` key
+  beside it. Every page test answers booleans, so the widening is invisible to them; a page test of the
+  new shape answers `{ revision, running: [ids] }` and no `restart` at all.
+- A 422 whose key names a setting the page NO LONGER renders (IP5.7's `model-profile-placement-key`)
+  needs its own branch in the refusal path, not a table row: its sentence carries the key's name
+  (`api-*-key` with `{0}`), so it is shown BARE in the bar's alert, outside the `save-refused` wrapper
+  and outside `save-refused-at`, and its `field` is the 422's `field`, which marks no control.
+- A card list a slice cuts down (IP5 keeps 8 of 13): filter the rows ONCE in the list module
+  (`pageCards()`) and derive the page's cards, the jump list and the About read from that one filter.
+  A `GroupRow` is dropped when every non-note field of its key left, a card when no field row is left,
+  and a row reading the model file (`facts`, the GGUF header) goes with the read the slice stops
+  making. The rows stay in `CARDS` while other pages render them (brief 26's per-instance card).
 - `strings.test.ts`'s "every value is used" scans the code for `t(` IMMEDIATELY followed by a `'literal'`:
   a key picked by a ternary INSIDE the call (`t(on ? 'a' : 'b', id)`) is invisible to it, so the key is a
   "value no code uses" and the test is red. Write `on ? t('a', id) : t('b', id)`, the repo's style
@@ -648,6 +695,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   whole function after a large rewrite, before running anything.
 - The `edit` tool intermittently misses text `awk` shows verbatim: append with a heredoc and check
   `git diff --stat`. After a rejected edit call, `grep -n "parameter>" <file>`.
+- A read line's prefix is `<n>: ` and the space after the colon belongs to it: an `impl` method's `///`
+  sits at 4 spaces, so an anchor copied from the output is 5 and the `edit` and the python anchor both
+  miss. `print(repr(lines[i]))` before scripting an anchor edit of indented text.
 - A comment that narrates the shape the design REJECTED ("byte identity, which the render does not
   keep") reads as a defect to a later reader and invites re-proposing it: the contract in code states
   what the code does, the rejected shape and its consequence go in `ARCHITECTURE.md`, which is where
@@ -670,6 +720,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Every phase of the manager's e2e sets the process-wide `PRIVATE_AI_DATA_ROOT`, so several probes in one
   run MUST use `--test-threads=1`: in parallel they read each other's temp dirs, and a probe that fails
   at an early assertion of a phase it never reached is that cross-talk, not a red.
+- A sandbox copy that shares `CARGO_TARGET_DIR` with the real tree hands ITS test binary to the real
+  tree's `cargo test`: the run names probe tests that exist in no real file (and the fixture the sandbox
+  patched). The check is that the run names only tests you can open; the fix is `touch` a source file of
+  the crate in the real tree, or give the sandbox its own target dir.
+- `fakes::FakeService::new()` answers `UnitState::Active` for EVERY unit, so a manager phase that pins
+  "the running instances" through `FakeService { running: &[..] }` needs `state: UnitState::Inactive` on
+  the same fake. A running-list red naming an instance the fixture never listed is the fixture's, prove
+  it in a copy by setting that state: no verb shape tells `running` from `state`.
+- A manager `start_up()` over a MIGRATED record deletes `assignments.ini` and `models.ini.disabled`
+  (backed up as `<name>.2.99.0`, `service.rs` `retired`, pinned by
+  `manager_ip2_stray_assignments_e2e`), so a new phase that seeds a migrated tree cannot pin those two
+  names as standing on disk after the start: it must seed them ABSENT and pin `None`.
 - rustfmt: `use` groups sort a plain `use` before a `pub use` of the same prefix and lowercase items
   before `CamelCase` ones; consecutive `mod` lines are sorted; a one-line `if/else` past 50 characters is
 written multi-line; a `return Err(format!(..))` at deep indent is written broken; a `push_str("<INI
@@ -983,6 +1045,24 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   `() => reply(401, …)`: every read answers 401 and the re-read's rows never arrive (the 17c review's R2).
   The counter belongs in the test's closure, so it is the tester's fix; prove the production arm (the
   re-read fires) in the copy with `let n = 0; () => (++n === 1 ? reply(401, …) : reply(200, ROWS))`.
+- A class a slice retires from ONE list can be shared with a page the slice does not touch:
+  `.status-cell` and `.model-profiles-switch` are the Models list's AND the instance page's model list
+  (22 IP5.1 vs 16 17e.4a). The sheet's exhaustive bans (Reflow 10 R1.8's `CLASSES`, ListColumns
+  22 D4.25's `named(...)`) read `index.css` sheet-wide, so deleting the rule reddens 17e.4a and keeping
+  it reddens both bans: a witness pair to report, keeping the rule is the reading that breaks no page.
+  Delete only the rules NO page uses any more (the switch's status region and alert, the off note,
+  `tr.off`).
+- A stub reply written `{ error, field, message }` is not the contract's `{ key, args, field }`
+  (api-contract.md line 391): `apiError` reads `key`, so every page answers the one generic failure,
+  and no production branch reaches the strings sentence. Forcing it reddens the pinned "403 not the
+  error shape: never the body" of every list and page. Read the contract line before writing a refusal
+  path; a test-side fixture is the report.
+- A test that clicks Save with NO edit and expects a PUT is unsatisfiable: "a clean form sends nothing"
+  is pinned four times (ModelProfileSave1 2h.131/2h.136, Save10, Save11, Save12). An absence pin on a
+  save's body needs an edit that dirties the form (IP5.6 edits `pooling` and is green).
+- A test file whose MODULE body throws fails every test in it, the ones that read `index.css` as text
+  included: `CARDS.find(c => c.heading === 'model-profiles-gpu-distribution')!` in a `describe.skip`
+  loop, or any `!` on a row a slice removed, reddens the file's sheet pins too.
 
 ### The UX check
 
@@ -1003,6 +1083,9 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 
 ### Rust library traps
 
+- `pai_core::ini::text::section_text` answers a section THROUGH the empty lines that sit before the next
+  header, so a test pinning a section's text EXACTLY pins that separator too: an entry write that appends
+  the file's usual blank line leaves `[profile]` as `…\n\n` and is red against `…\n`.
 - A test listener that writes its answer and drops the socket WITHOUT reading the request closes with
   unread data: the kernel sends RST and the client loses the answer it had queued ("read failed:
   Connection reset by peer after 40 bytes"). A "real listener" test is flaky that way (2 of 8 solo);

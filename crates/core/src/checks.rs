@@ -32,6 +32,7 @@ pub const KEYS: &[&str] = &[
     "model-profile-enabled",
     "model-profile-assigned",
     "model-profile-placement-key",
+    "model-profile-stay-key",
     "fit-target-format",
     "override-no-pattern",
     "override-no-device",
@@ -62,6 +63,8 @@ pub const KEYS: &[&str] = &[
     "instance-profile-bad-id",
     "instance-profile-exists",
     "instance-profile-in-use",
+    "instance-profile-model-listed",
+    "no-instance-profile-model",
     "no-free-port",
 ];
 
@@ -124,6 +127,7 @@ impl Refusal {
             "model-profile-enabled" => strings::fill("model-profile-enabled", &[&v(0)]),
             "model-profile-assigned" => strings::fill("model-profile-assigned", &[&v(0), &v(1)]),
             "model-profile-placement-key" => strings::fill("model-profile-placement-key", &[&v(0)]),
+            "model-profile-stay-key" => strings::fill("model-profile-stay-key", &[&v(0)]),
             "fit-target-format" => strings::fill("fit-target-format", &[&v(0), &v(1)]),
             "override-no-pattern" => strings::fill("override-no-pattern", &[&v(0)]),
             "override-no-device" => strings::fill("override-no-device", &[&v(0), &v(1)]),
@@ -163,6 +167,12 @@ impl Refusal {
             "instance-profile-bad-id" => strings::fill("instance-profile-bad-id", &[&v(0)]),
             "instance-profile-exists" => strings::fill("instance-profile-exists", &[&v(0)]),
             "instance-profile-in-use" => strings::fill("instance-profile-in-use", &[&v(0), &v(1)]),
+            "instance-profile-model-listed" => {
+                strings::fill("instance-profile-model-listed", &[&v(0), &v(1)])
+            }
+            "no-instance-profile-model" => {
+                strings::fill("no-instance-profile-model", &[&v(0), &v(1)])
+            }
             "no-free-port" => strings::fill("no-free-port", &[&v(0), &v(1)]),
             other => other.to_string(),
         }

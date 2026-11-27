@@ -959,7 +959,10 @@ where
         let who = requester_of(&header)?;
         Ok(self
             .core(move |m| m.add_instance_profile_model(&who, &profile, &model))
-            .await?)
+            // The client's verb answers nothing: the bus carries the
+            // running instances from slice IP4 on.
+            .await
+            .map(|_| ())?)
     }
 
     /// `AddInstanceProfileModel` for `principal`, the principal first (`sss`).
@@ -973,7 +976,10 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.add_instance_profile_model(&who, &profile, &model))
-            .await?)
+            // The client's verb answers nothing: the bus carries the
+            // running instances from slice IP4 on.
+            .await
+            .map(|_| ())?)
     }
 
     /// `RemoveInstanceProfileModel`: takes a model profile away from an
@@ -987,7 +993,10 @@ where
         let who = requester_of(&header)?;
         Ok(self
             .core(move |m| m.remove_instance_profile_model(&who, &profile, &model))
-            .await?)
+            // The client's verb answers nothing: the bus carries the
+            // running instances from slice IP4 on.
+            .await
+            .map(|_| ())?)
     }
 
     /// `RemoveInstanceProfileModel` for `principal`, the principal first
@@ -1002,7 +1011,10 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.remove_instance_profile_model(&who, &profile, &model))
-            .await?)
+            // The client's verb answers nothing: the bus carries the
+            // running instances from slice IP4 on.
+            .await
+            .map(|_| ())?)
     }
 
     /// `SetInstanceProfile`: points an instance at an instance profile,
@@ -5104,13 +5116,14 @@ pub(crate) fn manager_dbus_ip3a_instance_profiles_e2e() {
     }
 }
 
-/// Creating and deleting a model profile over D-Bus (slice MP1):
-/// `CreateModelProfile(s profile, s from, a(ss) values)` and its `As` form with
-/// the principal first, `(sssa(ss))`; `DeleteModelProfile(s profile)` and
-/// `DeleteModelProfileAs(ss)`. Every reply is the unit. A rule's refusal crosses
-/// as the keyed `Invalid` (decoded to `model-profile-name-taken`,
-/// `invalid-model-profile-id`, `model-profile-bad-source`,
-/// `model-profile-bad-text`, `model-profile-enabled`,
+/// Creating and deleting a model profile over D-Bus (slice MP1, its rules of
+/// IP3b): `CreateModelProfile(s profile, s from, a(ss) values)` and its `As`
+/// form with the principal first, `(sssa(ss))`; `DeleteModelProfile(s profile)`
+/// and `DeleteModelProfileAs(ss)`. Every reply is the unit. The create writes
+/// the pool and joins no entry, so it moves no render; a model an entry lists
+/// is not free. A rule's refusal crosses as the keyed `Invalid` (decoded to
+/// `model-profile-name-taken`, `invalid-model-profile-id`,
+/// `model-profile-bad-source`, `model-profile-bad-text`,
 /// `model-profile-assigned`, `no-model-profile-named`), the guard's refusal as
 /// `NotAuthorized`. A body that is not the signature is zbus's own error and
 /// writes nothing, and a caller with no sender is refused.
@@ -5132,35 +5145,44 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
     crate::paths::redirect_for_tests(dir.path());
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("engine config dir");
-    std::fs::write(
-        sys.join("instances.ini"),
-        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n",
-    )
-    .expect("record");
-    for (id, port) in [("default", 8080), ("lan-2", 8081)] {
+    // The record: two instances, both running the instance profile `gpu`.
+    const RECORD: &str = "[default]\nInstanceProfile = gpu\nPort = 8080\n\n[lan-2]\nInstanceProfile = gpu\nPort = 8081\n";
+    // The instance profiles: the entries ARE the model list. `gpu` lists two of
+    // the pool's models, each in the other letter case; `plain` lists none.
+    const PROFILES: &str = "[gpu]\nServerProfile = gpu\n\n[gpu/On-One]\n\n[gpu/TWO-PLACES]\n\n[plain]\nServerProfile = plain\n";
+    std::fs::write(sys.join("instances.ini"), RECORD).expect("record");
+    std::fs::write(sys.join("instance-profiles.ini"), PROFILES).expect("instance profiles");
+    for name in ["gpu", "plain"] {
         std::fs::write(
-            sys.join(format!("server@{id}.ini")),
-            format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+            sys.join(format!("server@{name}.ini")),
+            "[Server]\nDevices = CUDA0\n",
         )
         .expect("server profile");
     }
-    let on = real_model_files(
+    // The pool holds `Twin`, `On-One`, `two-places`, `Star-Served` and `free-me`:
+    // two of them listed by an entry, three of them by none. The retired
+    // `models.ini.disabled` holds `Retired` and the retired `assignments.ini`
+    // names `two-places`: neither file is read, so neither blocks a delete and
+    // the test pins that neither is written.
+    let pool = real_model_files(
         dir.path(),
-        "[Twin]\nmodel = /models/twin.gguf\n\n[On-One]\nmodel = /models/on1.gguf\n",
+        "[Twin]\nmodel = /models/twin.gguf\n\n[On-One]\nmodel = /models/on1.gguf\n\n[two-places]\nmodel = /models/two.gguf\n\n[Star-Served]\nmodel = /models/star.gguf\n\n[free-me]\nmodel = /models/free.gguf\n",
     );
-    let off = real_model_files(
-        dir.path(),
-        "[two-places]\nmodel = /models/two.gguf\n\n[Star-Served]\nmodel = /models/star.gguf\n\n[free-me]\nmodel = /models/free.gguf\n",
-    );
-    std::fs::write(sys.join("models.ini"), on).expect("models.ini");
-    std::fs::write(sys.join("models.ini.disabled"), &off).expect("models.ini.disabled");
+    let retired = real_model_files(dir.path(), "[Retired]\nmodel = /models/retired.gguf\n");
+    std::fs::write(sys.join("models.ini"), &pool).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), &retired).expect("models.ini.disabled");
     std::fs::write(
         sys.join("assignments.ini"),
         "[default]\ntwo-places = inherit\n\n[lan-2]\ntwo-places = off\n* = on\n",
     )
     .expect("assignments.ini");
+    // Each instance's render, as the entries write it.
     for id in ["default", "lan-2"] {
-        std::fs::write(sys.join(format!("models@{id}.ini")), "").expect("render");
+        std::fs::write(
+            sys.join(format!("models@{id}.ini")),
+            pai_core::assign::render_profile(&pool, PROFILES, "gpu"),
+        )
+        .expect("render");
     }
 
     let connect = |core: &Arc<Core>, sender: Option<&str>| -> (Connection, Connection) {
@@ -5230,9 +5252,11 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
             .map(|(k, value)| (k.to_string(), value.to_string()))
             .collect()
     };
-    let off_text = || std::fs::read_to_string(sys.join("models.ini.disabled")).expect("off file");
+    let pool_text = || std::fs::read_to_string(sys.join("models.ini")).expect("pool");
+    let retired_off =
+        || std::fs::read_to_string(sys.join("models.ini.disabled")).expect("the retired off file");
     let section = |id: &str| -> String {
-        pai_core::ini::text::section_text(&off_text(), id).unwrap_or_default()
+        pai_core::ini::text::section_text(&pool_text(), id).unwrap_or_default()
     };
     let listing = || -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(&sys)
@@ -5244,6 +5268,20 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
             .unwrap_or_default();
         names.sort();
         names
+    };
+    // Every render, by name with its bytes: a create joins no entry, so it moves
+    // no render, and a delete moves only those of a profile that lists the model.
+    let renders = || -> Vec<(String, Vec<u8>)> {
+        listing()
+            .into_iter()
+            .filter(|name| name.starts_with("models@"))
+            .map(|name| {
+                (
+                    name.clone(),
+                    std::fs::read(sys.join(&name)).expect("render"),
+                )
+            })
+            .collect()
     };
 
     // ── A caller with no sender: both verbs refused, nothing touched ───────
@@ -5263,7 +5301,7 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
         assert!(
             !section("nope").contains("nope.gguf") && section("free-me").contains("free.gguf"),
             "a call with no sender wrote and removed nothing: {}",
-            off_text()
+            pool_text()
         );
     }
 
@@ -5271,6 +5309,9 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
     {
         let c = core(true);
         let (_server, client) = connect(&c, Some(":1.42"));
+        // The renders as the entries wrote them: no create here joins an entry,
+        // and the delete below takes away a model no entry lists.
+        let renders_before = renders();
 
         let r = call(
             &client,
@@ -5286,8 +5327,8 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
         assert_eq!(
             section("bus-x"),
             "[bus-x]\nmodel = /m/bus-x.gguf\n",
-            "the section of the call, in the switched-off file: {}",
-            off_text()
+            "the section of the call, in the pool: {}",
+            pool_text()
         );
 
         // The `from` of the wire is a name, the values pairs: a clone carries
@@ -5307,7 +5348,7 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
             section("bus-clone"),
             "[bus-clone]\nmodel = /m/bus-x.gguf\ntemp = 0.2\n",
             "the source's lines, then the call's: {}",
-            off_text()
+            pool_text()
         );
 
         // A rule's refusal of a create crosses as the keyed `Invalid`.
@@ -5374,36 +5415,50 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
             );
         }
         assert!(
-            !off_text().contains("[both]")
-                && !off_text().contains("[lf]")
-                && !off_text().contains("[hk-key]")
-                && !off_text().contains("[nowhere]")
-                && !off_text().contains("[clone-missing]"),
+            !pool_text().contains("[both]")
+                && !pool_text().contains("[lf]")
+                && !pool_text().contains("[hk-key]")
+                && !pool_text().contains("[nowhere]")
+                && !pool_text().contains("[clone-missing]"),
             "a refused create wrote nothing: {}",
-            off_text()
+            pool_text()
+        );
+        assert_eq!(
+            renders(),
+            renders_before,
+            "no create joined an entry, so no instance's render moved"
         );
 
-        // A rule's refusal of a delete, the same.
+        // A rule's refusal of a delete, the same. An entry that lists the model
+        // is the refusal, naming the instance profile that lists it, in the
+        // pool's own order; the retired record and the retired switched-off
+        // file name and hold sections, and are no proof a model is listed.
         for (id, want, why) in [
             (
-                "twin",
-                refusal("model-profile-enabled", &["twin"]),
-                "a profile that is switched on",
+                "On-One",
+                refusal("model-profile-assigned", &["On-One", "gpu"]),
+                "a model the entry `[gpu/On-One]` lists",
             ),
             (
-                "two-places",
-                refusal("model-profile-assigned", &["two-places", "default, lan-2"]),
-                "a profile two instances assign",
+                "on-one",
+                refusal("model-profile-assigned", &["on-one", "gpu"]),
+                "the same entry, in the other letter case",
             ),
             (
-                "Star-Served",
-                refusal("model-profile-assigned", &["Star-Served", "lan-2"]),
-                "a profile a hand `* = on` serves",
+                "TWO-PLACES",
+                refusal("model-profile-assigned", &["TWO-PLACES", "gpu"]),
+                "the entry `[gpu/TWO-PLACES]`, naming the profile once though two \
+                 instances run it",
             ),
             (
                 "gone",
                 refusal("no-model-profile-named", &["gone"]),
                 "a profile the pool does not hold",
+            ),
+            (
+                "Retired",
+                refusal("no-model-profile-named", &["Retired"]),
+                "a section of the retired switched-off file is no proof it exists",
             ),
             (
                 "*",
@@ -5422,38 +5477,39 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
             );
         }
         assert!(
-            pai_core::ini::text::section_text(
-                &std::fs::read_to_string(sys.join("models.ini")).expect("on file"),
-                "Twin",
-            )
-            .unwrap_or_default()
-            .contains("twin.gguf")
-                && section("Star-Served").contains("star.gguf"),
-            "a refused delete removed nothing: {}",
-            off_text()
+            section("Twin").contains("twin.gguf")
+                && section("On-One").contains("on1.gguf")
+                && section("Star-Served").contains("star.gguf")
+                && retired_off().contains("[Retired]"),
+            "a refused delete removed nothing, from the pool or from the retired file: {} / {}",
+            pool_text(),
+            retired_off()
         );
 
-        // The hand `* = on` of `lan-2` serves every switched-off profile, so
-        // while the record holds it no profile is free. The refusals above read
-        // it; the accepted delete needs the key of one profile alone.
-        std::fs::write(
-            sys.join("assignments.ini"),
-            "[default]\ntwo-places = inherit\n\n[lan-2]\ntwo-places = off\nStar-Served = on\n",
-        )
-        .expect("assignments.ini");
-
-        // The accepted delete: the section alone, out.
+        // The accepted delete: a model no entry lists, the section alone, out.
+        // The retired record's keys are nobody's rule any more: no write of it
+        // is needed for a profile to be free.
         call(&client, "DeleteModelProfile", &("free-me")).expect("the delete of a free profile");
         assert_eq!(
             section("free-me"),
             "",
             "the profile is gone: {}",
-            off_text()
+            pool_text()
         );
         assert!(
             section("Star-Served").contains("star.gguf"),
             "the neighbour is kept: {}",
-            off_text()
+            pool_text()
+        );
+        assert_eq!(
+            retired_off(),
+            retired,
+            "the retired switched-off file keeps every byte"
+        );
+        assert_eq!(
+            renders(),
+            renders_before,
+            "no instance's render moves for a model no entry listed"
         );
 
         // The `As` forms are there, with the principal first, and gated: this
@@ -5469,9 +5525,9 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
             .expect_err("DeleteModelProfileAs from a caller that is not the bff");
         assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
         assert!(
-            !off_text().contains("[bus-as]") && section("Star-Served").contains("star.gguf"),
+            !pool_text().contains("[bus-as]") && section("Star-Served").contains("star.gguf"),
             "a refused `As` form writes and removes nothing: {}",
-            off_text()
+            pool_text()
         );
 
         // The shape: no less, no more, and of the agreed types. zbus answers a
@@ -5528,7 +5584,7 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
             section("member-mp"),
             "[member-mp]\nhf-repo = org/repo\n",
             "the member's profile, with the fetch and no model: {}",
-            off_text()
+            pool_text()
         );
 
         let e = call(
@@ -5545,15 +5601,15 @@ pub(crate) fn manager_dbus_model_profiles_e2e() {
             section("member-mp"),
             "",
             "the member's delete landed: {}",
-            off_text()
+            pool_text()
         );
         let e = call(&client, "DeleteModelProfileAs", &("bob", "Star-Served"))
             .expect_err("DeleteModelProfileAs for a caller outside `pai`");
         assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
         assert!(
-            !off_text().contains("[outsider-mp]") && section("Star-Served").contains("star.gguf"),
+            !pool_text().contains("[outsider-mp]") && section("Star-Served").contains("star.gguf"),
             "a refusal of the `As` form wrote and removed nothing: {}",
-            off_text()
+            pool_text()
         );
     }
 }

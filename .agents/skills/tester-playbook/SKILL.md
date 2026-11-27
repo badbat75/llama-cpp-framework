@@ -165,7 +165,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `cargo fmt -p <crate>` is acceptable if a `git diff --stat` taken before and after moves the counts of
   YOUR files alone: keep both listings and quote them. Quicker and exact: `git status --porcelain` to list
   which `.rs` are yours, `rustfmt --edition 2021 <those files>`, then prove
-  `cargo fmt -p <crate> --check` prints nothing.
+  `cargo fmt -p <crate> --check` prints nothing. Where a whole-crate `cargo fmt` already ran over a dirty
+  tree, prove it touched only your files by their mtimes: every other dirty file keeps the coder's own
+  mtime, so fmt rewrote nothing there.
 
 ### Cargo runs
 
@@ -187,7 +189,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `--test <name>`, and filter inside a target with `-- <filter>` after `--test`/`--lib`. Cargo takes ONE
   positional TESTNAME: a second bare word is `error: unexpected argument ... found`, so several filters
   all go after `--`. Account for
-  every `N filtered out` line. Say which invocation covers a `#[test] #[serial]` in a lib (not
+  every `N filtered out` line. `-- --exact` with a bare name runs NOTHING (`0 passed; 0 failed`, which
+  reads as a missing test): exact compares the FULL path, so `-- --exact manager::service::the_probe`.
+  Say which invocation covers a `#[test] #[serial]` in a lib (not
   `--test <name>`). `--lib` of a binary crate runs unit tests, `--bins` the built binary.
 - Write a long cargo log to a file, grep `test result|Running|^error`, then `sed -n` each block.
 - Read a copy handed over as "green there" with `diff -rq crates <copy>`: it usually carries edits beyond
@@ -222,6 +226,40 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   only visible in the solo probe. Sweep the older phases in the same pass: every
   `assert_eq!(verb(..), Ok(()))` of the changed verb, and each typed `Vec<(&str, Result<.., ManagerError>)>`
   of a gate phase (its annotation moves, and the verbs that keep `()` need a `.map(|()| Vec::new())`).
+- A slice that moves a verb's ANSWER to a list built from the service manager retargets the older
+  transports' "no verb touches a unit" pins (IP3b): the entry add, the entry removal, the entry save and
+  the profile's server switch each call `running_using_profile`, which asks `status` of every instance
+  running that profile, so `calls(&c)` answers `[Status(<id>)]` per instance per accepted write. A record
+  verb (`SetInstanceProfile`, `SetInstanceAddress`, the creates) asks nothing, a refused write asks
+  nothing, and an add whose profile no instance runs yet asks nothing. `core(true, &[])`'s `FakeService`
+  answers `status` Active for EVERY id (the `running` list is empty), so with a record of two instances
+  running one profile, an entry write of it is TWO calls and a write of a profile one instance runs is
+  one: state that rule in the pin's message, the counts are fixture-derived.
+- A rule the slice retires reds the client phases' refusal tables (IP3b): removing an entry the profile
+  does not list is the keyed `no-instance-profile-model`, naming the profile and the model, not today's
+  accepted no-op; a delete's `model-profile-assigned` values are the entry owners (the instance profiles
+  listing it, joined by `, `), not the `assignments.ini` instances. Sweep
+  `grep -n "model-profile-enabled\|assignments.ini\|models.ini.disabled" crates/manager/src/tests/*.rs`
+  in the same pass: the client-transport phases seed the retired files and pin "the verb wrote it back".
+- Show the masked reds of several `pub(crate) fn` e2e phases in ONE run by a temporary `#[test]` over
+  each (`-- <full-path>` with `--exact`, or a bare word filter for the whole family): a sequential
+  `data_root_e2e` prints one panic, and the parallel full run stops each file's phases at their own
+  first. Strip the markers with a script that matches `#[test]` whose NEXT line starts the `pub(crate) fn`,
+  and prove with `grep -c` over the pair.
+- A pin about a file the model-data migration RETIRES reads the `.2.99.0` backup: after `start_up()`,
+  `models.ini.disabled` and `assignments.ini` are gone and their text stands in
+  `<name>.2.99.0`, so a phase that seeds one and pins "the verb wrote it back not" asserts the live name
+  `None` AND the backup equal to the seeded bytes. The phase's own verb is usually red ahead of that pair,
+  so prove the pair with a solo probe that seeds and calls `start_up()` alone.
+- Seed the manager's model pool with `std::fs::write`, never the client's `write_file`: a served write of
+  `models.ini` is refused `model-profile-placement-key` when its text carries a placement key
+  (`checks::PLACEMENT_KEYS`, run by `checks::model_profile_placement` only once `instances.ini` reads as
+  migrated), so a pool section carrying `load-on-startup` cannot arrive through the served path.
+- Seed an instance profile render's expected bytes with the seam that builds them
+  (`pai_core::assign::render_profile(pool, profiles, profile)`), not the retired
+  `assign::render(enabled, disabled, assignment)`.
+- A refusal table `for (id, key, values) in [...]` whose rows carry `&["a","b"]` is 8 `E0308: expected
+  &[&str], found &&[&str; 2]`: write each row's list as `&["a", "b"][..]`.
 - Today's `delete_model_profile` refuses a profile whose section sits in `models.ini` with
   `model-profile-enabled` (the switch-off-and-unassigned rule), so a one-pool fixture that deletes a
   profile no entry lists reds on THAT, before the entry-listing rule exists: pin the refusal loosely
@@ -418,6 +456,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   afterwards (prove with `ls | grep -c`).
 - Group fe reds by cause: strip ANSI and
   `grep -oE "(TestingLibraryElementError|AssertionError|TypeError): .{0,60}" | sort | uniq -c`.
+- Census many files' reds with per-file JSON reports: `cd fe && npx vitest run src/<f>
+  --reporter=json --outputFile=/tmp/jm.json` (run from `fe/`: `npm --prefix fe test` writes no
+  outputFile). The JSON carries the titles of every red, and the import-time throw of a file the
+  default reporter shows as `(0 test)` (a retired `en(key)` kills the module at import).
 - Judge a flaky fe red solo x3 before anything is touched; state a full-suite red that is green as a
   file, do not chase it. A red that appears ONLY in the full parallel run is invisible solo and in one
   plain run: reproduce it by running the flaky set at `--maxWorkers=4` under CPU load (N burners of
@@ -440,6 +482,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 ### The web UI (fe/): the fake bff and fixtures
 
 - Run the whole fe suite ONCE after changing the shared fake (`src/test/bff.ts`).
+- Keep a shared route's DEFAULT answer the shape the page reads TODAY, and let each suite's own fixture
+  carry the slice's future shape. Resharing the default is not the day-one red: IP5's `GET` default losing
+  `enabled` (a key the page still requires) reddened 1706 tests across 100 files, and the honest red is the
+  one the page's own read prints in the slice's two suites. The same for a save reply: IP5's `running`
+  ARRAY is additive, and dropping the document the reply echoed reddened three save suites that pin the
+  echo; keep the echo, pin the array.
+- A whole-page count (card titles, per-card field tables, tab-order lists) is derived in
+  `src/test/modelProfileCards.ts`, not written per suite: move the SHARED table with the slice and let each
+  suite filter the moved keys out of its own `FIELDS` copy (`FIELDS_IP5_ALL.filter((f) =>
+  !PLACEMENT_KEYS.includes(f.key))`), and prune the fixture rows of a moved key, so every count derives
+  from the new shape. Prune the tables before reading a red: a stale row is a `TypeError` on a fixture
+  lookup, which is a red for the wrong reason.
 - To answer one route twice with different replies, count the calls in a closure in the route's `Answer`
   (`let n = 0; hfFiles: () => (++n === 1 ? reply(401, …) : reply(200, …))`): an `Answer` gets no call index
   (only `modelProfileCreate` does), and a mid-test `vi.spyOn(globalThis, 'fetch')` clobbers the WHOLE fake.
@@ -470,6 +524,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   browser-measured fix the next defect undoes), the pair is two reds: the absence pin (`no rule names X
   declares contain:` → `toEqual([])`) is red because the sheet still carries the old declaration, and the
   replacement's positive pin is red because the sheet lacks the new one.
+- Retarget a "refusal marks the field" pin onto a field the page can mark: when the page's only LOAD-time
+  error came from a retired key (the model page's `fit` row), make the error instead, typing an invalid
+  value into a stay-key field and pressing Save (`top-k` = `abc` → `field-error-whole-number`), and give a
+  page-loop fixture a `dirty` hook run after `ready` to perform that edit. A control named by a literal
+  acronym (`Top-K`) has no strings key, so `en(key)` throws and the test spells the literal.
 - When a slice changes how an accessible NAME is built (a name read off the item, not the id), find the
   files to amend by the FIXTURES, not by the brief's list: the shared `INSTANCES` fixture leaves out the
   field feeding the name (`port`, `label`), so a lookup by id keeps passing there, and only a fixture that
@@ -611,6 +670,21 @@ frozen list.
 - A frozen `:hover` (or any `toEqual`) allowlist sits after another in one test: the first red masks
   it, so fixing one list reveals the next (H2b.6's shadow list hid its hover list, which 22 D4.21's
   `.ot-add` hovers move). Run the whole test after each amendment, not just the assertion you came for.
+- A slice that RETIRES a look retires its sheet rules: take the class out of `Reflow.test.ts`'s
+  `CLASSES` (and the property out of its R1.1 `sets()` list) in the same edit, so the day-one red names
+  the rule the coder must delete (`expected ['.status-cell', '.status-cell > span'] to deeply equal []`),
+  and rewrite that suite's own pin of the retired rule as the absence pin, naming the slice that retired
+  it. A class the brief describes and does not name goes into a new allowance regex beside `ofRename`
+  (inert while no class exists), never into the frozen list.
+- When the retired look's class serves a page the slice does NOT touch, its sheet rule STAYS (the list's
+  `.status-cell` and `.model-profiles-switch` until 24's InstanceModels17e, IP6): do not demand the rule's
+  removal in the reflow list, scope the absence pin to the rendered page (no element of the class on the
+  Models list), and leave the rule's removal to the slice that retires the other page.
+- A width the brief names (a column that stays below 480 px, no sideways scroll) is unmeasurable in
+  jsdom: pin the sheet text that carries the behaviour (the break every table cell inherits, the `td` of
+  `th, td { overflow-wrap: anywhere }`, plus that no rule takes the NEW column off it) and hand the
+  boundary itself to `fe/ux/check.js`, whose widths are 1280 and 320, naming the exact boundary
+  unproven in the report.
 - Pin a look the brief gives a control ("40 px, no border, no fill") as the CASCADE for the classes the
   element carries: read `button.classList` off the page, keep the top-level rules whose selector is the
   element's tag or a compound of those classes, order them by class count then sheet order, merge their
@@ -871,6 +945,14 @@ frozen list.
 - Run `npm --prefix fe run build` then `npm --prefix fe/ux run check` (about 12 minutes) and report unique
   lines (`sed 's/^chromium //..' | sort | uniq -c`), not the summary's count: it prints one line per
   browser x width x theme (x text mode), so one unmet `expect` is 18 lines.
+- Launch it from the REPO ROOT: `npm --prefix fe/ux run check` run inside `fe/` resolves `fe/fe/ux` and
+  dies `ENOENT` with exit 254, which reads as a broken harness.
+- The check reads the BUILT `fe/dist`, which `npm test` never rebuilds: an unmet `expect` in a state you
+  did not touch is often the stale site (compare `ls -l dist/index.html` with the last `fe/src` commit),
+  and the stash-baseline of the next bullet is what separates the two.
+- A state's `set:` keys MERGE into the stub's state and stay for every later state, so `load()`'s reset
+  query must name every state-dependent key (a `used=1` left set by one state flips the next state's
+  fixture; the stub's own reset list is the only place that clears them).
 - For a new state whose reads the stub holds, use `waitUntil: domcontentloaded` and every key it can set
   in the reset query of `load()`; read the `expect` markers BEFORE `click`/`open`/`hover`; the nav at
   320 px needs the `menu: true` field.

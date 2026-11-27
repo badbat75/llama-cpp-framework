@@ -34,6 +34,12 @@ mod node_info;
 // `load-mode = none`"): a text check of the production sources, so it runs on
 // every OS and touches no `paths::`.
 mod gt5a_windows_gate;
+// IP3b (ARCHITECTURE.md "Instance profiles", slice IP3 part b): the entry-key
+// save, the verbs that answer the running instances, `CreateModelProfile` into
+// `models.ini` with the stay keys only, and the retirement of the assignment
+// record. Every phase redirects the data root, so they run in the one test
+// below, in order.
+mod instance_profile_entries;
 
 #[test]
 fn data_root_e2e() {
@@ -185,6 +191,32 @@ fn data_root_e2e() {
 
     // ── Manager core: IP3a review D5, the principal gate of the write verbs ─
     crate::manager::service::manager_ip3a_fix_principal_gate_e2e();
+
+    // ── Manager core: IP3b 1, `CreateModelProfile` into `models.ini` ──────
+    // (ARCHITECTURE.md "Instance profiles", slice IP3 part b: the pool, and the
+    // stay keys only of a copy.)
+    instance_profile_entries::ip3b_create_model_profile_e2e();
+
+    // ── Manager core: IP3b 2, the entry-key save and its render ──────────
+    instance_profile_entries::ip3b_entry_save_e2e();
+
+    // ── Manager core: IP3b 3, the entry save's refusals ──────────────────
+    instance_profile_entries::ip3b_entry_save_refusals_e2e();
+
+    // ── Manager core: IP3b 4, the entry add and remove answer the running ─
+    instance_profile_entries::ip3b_add_remove_e2e();
+
+    // ── Manager core: IP3b 5, the server profile switch of a profile ─────
+    instance_profile_entries::ip3b_server_switch_e2e();
+
+    // ── Manager core: IP3b 6, the memory check measures the entry keys ───
+    instance_profile_entries::ip3b_entry_memory_e2e();
+
+    // ── Manager core: IP3b 6b, the same check never refuses a shrink ─────
+    instance_profile_entries::ip3b_entry_memory_shrink_e2e();
+
+    // ── Manager core: IP3b 7, one pool file, no assignment record ────────
+    instance_profile_entries::ip3b_pool_is_one_file_e2e();
 
     // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
     // Served peer to peer on a socket pair, no bus.

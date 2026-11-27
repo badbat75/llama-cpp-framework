@@ -1262,7 +1262,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 }
                 _ => contents,
             };
-            self.check_and_write(file, name, contents, MODEL_FILES_JUDGE)
+            self.check_and_write(file, name, contents, MODEL_FILES_JUDGE, PLACEMENT_JUDGE)
         })
     }
 
@@ -1286,7 +1286,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // other bytes mean its read is stale and the write is refused.
             match std::fs::read_to_string(file_path(name)?) {
                 Ok(text) if text == expected => {
-                    self.check_and_write(file, name, contents, MODEL_FILES_JUDGE)
+                    self.check_and_write(file, name, contents, MODEL_FILES_JUDGE, PLACEMENT_JUDGE)
                 }
                 Ok(_) => Err(ManagerError::Changed),
                 // A file that is not there is the same refusal: the caller's
@@ -1349,17 +1349,26 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     ///
     /// `judge_model_files` is [`MODEL_FILES_JUDGE`] for every write, and
     /// [`MODEL_FILES_SKIP`] for the create of a model profile, whose section is
-    /// born switched off: the model file it names is judged when a switch-on or
-    /// an assignment puts the profile in effect.
+    /// listed in no entry: the model file it names is judged when an entry lists
+    /// it. `judge_placement` is [`PLACEMENT_JUDGE`] for the save of a pool, and
+    /// [`PLACEMENT_SKIP`] for the create and the delete, which judge the
+    /// section they write and leave the sections they do not.
     fn check_and_write(
         &self,
         file: &ConfigFile,
         name: &str,
         contents: &str,
         judge_model_files: bool,
+        judge_placement: bool,
     ) -> Result<(), ManagerError> {
-        check_contents(file, contents, &*self.gpus, judge_model_files)
-            .map_err(ManagerError::Invalid)?;
+        check_contents(
+            file,
+            contents,
+            &*self.gpus,
+            judge_model_files,
+            judge_placement,
+        )
+        .map_err(ManagerError::Invalid)?;
         if let ConfigFile::ServerProfile(id) = file {
             self.check_address(id, contents)?;
         }
@@ -1528,28 +1537,32 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
-    /// Writes a new model profile `profile` into `models.ini.disabled`: born
-    /// switched off, assigned nothing, and never over a name either pool file
-    /// holds in any letter case. The source is one of two: `values` names the
-    /// model, with `model` alone or `hf-repo` and its optional `hf-file`, and
-    /// becomes the section's own lines sorted by key; `from` names a profile of
-    /// the pool, whose section's lines the new one takes under its own header,
-    /// and takes with it the `values` that only override a line, the clone
-    /// carrying its model with it. Every check answers before a byte is
+    /// Writes a new model profile `profile` at the end of `models.ini`, the one
+    /// pool, never over a name the pool holds in any letter case. The source is
+    /// one of two: `values` names the model, with `model` alone or `hf-repo` and
+    /// its optional `hf-file`, and becomes the section's own lines sorted by
+    /// key; `from` names a profile of the pool, whose section's stay keys the
+    /// new one takes under its own header, and takes with it the `values` that
+    /// only override a line, the clone carrying its model with it. A key of the
+    /// entry ([`pai_core::checks::PLACEMENT_KEYS`]) is left out of the copy: it
+    /// belongs to the entry of the instance profile that lists the model, and a
+    /// new profile is listed in none. Every check answers before a byte is
     /// written, in this order: a value that is blank, carries a control
     /// character, a space at an end or a comment marker, or a key that is no
     /// key of the INI (`model-profile-bad-text` and `comment-markers`, each
     /// naming the key), the shape of the source (`model-profile-bad-source`),
     /// the id rule (`invalid-model-profile-id`), a name the pool holds
-    /// (`model-profile-name-taken`), and a source that is no pool id
-    /// (`no-model-profile-named`, naming the source). Before the pool write,
-    /// every key of `assignments.ini` naming the new id in any letter case is
-    /// removed: the pool does not hold the id, so the key is dead, and a hand
-    /// `on` under an instance would serve the new profile at once. Nothing
-    /// renders, an off and unassigned profile being in no render. Guarded as a
-    /// write of a served file is: `configure` first, the `As` form answered
-    /// only to the bff's account for a current member of `pai`, one record of
-    /// the action log per call.
+    /// (`model-profile-name-taken`), a value naming a key of the entry
+    /// (`pai_core::checks::PLACEMENT_KEYS`, `model-profile-placement-key`,
+    /// naming the key), and a source that is no pool id
+    /// (`no-model-profile-named`, naming the source). Nothing renders: the new
+    /// profile is listed in no entry, so it joins no instance's render, and the
+    /// write changes no render. The new section
+    /// takes the line ending of the file it lands in, the CRLF of a file the
+    /// install never wrote. Guarded as a write of a
+    /// served file is: `configure` first, the `As` form answered only to the
+    /// bff's account for a current member of `pai`, one record of the action log
+    /// per call.
     pub fn create_model_profile<W: AsRequester>(
         &self,
         who: &W,
@@ -1560,7 +1573,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let who = who.as_requester();
         let run = || -> Result<(), ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
-            // The source, the values and the id are judged before the lock and
+            // The values, the source and the id are judged before the lock and
             // before a file is read: they need nothing of the node.
             for (key, value) in values {
                 create_key_text(key).map_err(ManagerError::Invalid)?;
@@ -1584,26 +1597,35 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     Err(e) => Err(ManagerError::Io(e.kind())),
                 }
             };
-            let enabled = on_disk("models.ini")?;
-            let mut disabled = on_disk("models.ini.disabled")?;
+            let pool = on_disk("models.ini")?;
             let holds = |text: &str| pai_core::ini::text::section_text(text, profile).is_some();
-            if holds(&enabled) || holds(&disabled) {
+            if holds(&pool) {
                 return Err(one_value_refusal("model-profile-name-taken", profile));
             }
-            // The section to write, at the end of the off file: the source's
+            // A key of the entry among the values is refused here, before the
+            // source is read: the new profile is listed in no entry, so such a
+            // key would put a second source of where the weights go in the
+            // pool, where the migration took it out of. A pick takes the three
+            // keys of the model file only, so this reaches a clone's overrides.
+            if let Some((key, _)) = values
+                .iter()
+                .find(|(key, _)| pai_core::checks::placement_key(key))
+            {
+                return Err(one_value_refusal("model-profile-placement-key", key));
+            }
+            // The section to write, at the end of the pool: the source's stay
             // lines under the new header, the call's keys after them. A clone
             // takes the line ending of the source's own text, the keys that of
             // the file being written, the CRLF of a file the install never
-            // copied.
+            // wrote.
+            let eol = pai_core::ini::detect_eol(&pool);
             let mut section = String::new();
             if !from.is_empty() {
-                let source = pai_core::ini::text::section_text(&enabled, from)
-                    .or_else(|| pai_core::ini::text::section_text(&disabled, from))
+                let source = pai_core::ini::text::section_text(&pool, from)
                     .ok_or_else(|| one_value_refusal("no-model-profile-named", from))?;
                 section.push_str(&cloned_section(&source, profile));
             }
             if !values.is_empty() {
-                let eol = pai_core::ini::detect_eol(&disabled);
                 if from.is_empty() {
                     section.push_str(&format!("[{profile}]{eol}"));
                 }
@@ -1613,56 +1635,58 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     section.push_str(&format!("{key} = {value}{eol}"));
                 }
             }
-            // The dead keys go before the pool: the pool write is the one that
-            // makes the id a profile, and a hand `on` that outlives it serves
-            // the new profile at once.
-            let keys_text = on_disk(ASSIGNMENTS_FILE)?;
-            let cleaned = drop_profile_keys(&keys_text, profile);
-            if cleaned != keys_text {
-                std::fs::create_dir_all(&dir).map_err(&io)?;
-                write_served_file(
-                    &dir.join(ASSIGNMENTS_FILE),
-                    &ConfigFile::Models,
-                    &cleaned,
-                    &*self.group,
-                )
-                .map_err(&io)?;
+            let mut after = pool;
+            if !after.is_empty() && !after.ends_with('\n') {
+                after.push_str(eol);
             }
-            if !disabled.is_empty() && !disabled.ends_with('\n') {
-                disabled.push_str(pai_core::ini::detect_eol(&disabled));
-            }
-            disabled.push_str(&section);
-            // The new profile is born switched off and unassigned, so its model
-            // file is not judged here: a switch-on or an assignment judges it.
-            self.check_and_write(
-                &ConfigFile::ModelsDisabled,
-                "models.ini.disabled",
-                &disabled,
+            after.push_str(&section);
+            // The content checks of a pool write, then the write itself, and no
+            // render: the new profile is listed in no entry, so it is in no
+            // instance's render, and the write changes no render (its model
+            // file, its devices and its memory are judged when an entry lists
+            // it). A render pass here would rewrite renders this call has no
+            // part in.
+            check_contents(
+                &ConfigFile::Models,
+                &after,
+                &*self.gpus,
                 MODEL_FILES_SKIP,
+                PLACEMENT_SKIP,
             )
+            .map_err(ManagerError::Invalid)?;
+            std::fs::create_dir_all(&dir).map_err(&io)?;
+            write_served_file(
+                &dir.join("models.ini"),
+                &ConfigFile::Models,
+                &after,
+                &*self.group,
+            )
+            .map_err(&io)?;
+            Ok(())
         };
         let answer = run();
         self.record_action("create_model_profile", profile, Some(&who), &answer);
         answer
     }
 
-    /// Removes the model profile `profile` from `models.ini.disabled`: only a
-    /// profile that is switched off and assigned nothing. Every check answers
-    /// before a byte is written, in this order: a name neither pool file holds
-    /// is `no-model-profile-named [profile]`, the id of no id and `*` included
-    /// (the id rule answers nothing of its own here, and no path is built); a
-    /// name `models.ini` holds, a twin an interrupted switch left in both files
-    /// included, is `model-profile-enabled [profile]`, even when an instance
-    /// assigns it; a profile an instance's section of `assignments.ini` names
-    /// with `on`, `off` or `inherit` in any letter case, or that a hand
-    /// `* = on` under an instance serves, is `model-profile-assigned
-    /// [profile, "<ids>"]`, naming every such instance in the order of
-    /// `instances.ini`; and a record that cannot be read is
-    /// [`ManagerError::Io`], never the empty list of a node with no instance.
-    /// The write takes every section of the id, repeated in any letter case,
-    /// out of the off file, through the content checks of a save: a file whose
-    /// last section is removed stands empty. Nothing else moves, the renders
-    /// included. Guarded as a write of a served file is: `configure` first, the
+    /// Removes the model profile `profile` from `models.ini`, the one pool: only
+    /// a profile no instance profile's entry `[<profile>/<model>]` lists. Every
+    /// check answers before a byte is written, in this order: the id rule answers
+    /// nothing of its own here, so no id and `*` are `no-model-profile-named
+    /// [profile]`, with no file read and no path built; the pool of instance
+    /// profiles is read next, so a file that cannot be read is
+    /// [`ManagerError::Io`], never the empty list of a node with no profile; a
+    /// name the pool has no section for is the same refusal, a key of the retired
+    /// `assignments.ini` or a section of the retired `models.ini.disabled` being
+    /// no proof it exists; and a name an entry lists, in any letter case, is
+    /// `model-profile-assigned [profile, "<a>, <b>"]`, naming every instance
+    /// profile that lists it, in the pool's own order, each once: the model sits
+    /// in those profiles' renders, and a delete would leave an entry naming
+    /// nothing. The write takes every section of the id, repeated in any letter
+    /// case, out of the pool, through the content checks of a save: a file whose
+    /// last section is removed stands empty. Nothing else moves, and the renders
+    /// that move are those of the instances running a profile that lists the
+    /// model. Guarded as a write of a served file is: `configure` first, the
     /// `As` form answered only to the bff's account for a current member of
     /// `pai`, one record of the action log per call.
     pub fn delete_model_profile<W: AsRequester>(
@@ -1675,7 +1699,6 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             self.authorize_as(&who, Action::Configure)?;
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
-            let io = |e: std::io::Error| ManagerError::Io(e.kind());
             let dir = crate::paths::engine_config_dir();
             let on_disk = |name: &str| -> Result<String, ManagerError> {
                 match std::fs::read_to_string(dir.join(name)) {
@@ -1692,37 +1715,31 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             {
                 return Err(one_value_refusal("no-model-profile-named", profile));
             }
-            let enabled = on_disk("models.ini")?;
-            let mut disabled = on_disk("models.ini.disabled")?;
-            let holds = |text: &str| pai_core::ini::text::section_text(text, profile).is_some();
-            if holds(&enabled) {
-                return Err(one_value_refusal("model-profile-enabled", profile));
-            }
-            if !holds(&disabled) {
+            // The entries are the ground of the refusal, so they are read before
+            // the pool: their file unreadable is the read's own kind, never the
+            // "unused" of an empty list.
+            let profiles = self.pool_text()?;
+            let text = on_disk("models.ini")?;
+            if pai_core::ini::text::section_text(&text, profile).is_none() {
                 return Err(one_value_refusal("no-model-profile-named", profile));
             }
-            let record = read_record(&dir.join(INSTANCES_FILE)).map_err(io)?;
-            let holders = assigned_instances(
-                &on_disk(ASSIGNMENTS_FILE)?,
-                &record,
-                &enabled,
-                &disabled,
-                profile,
-            );
+            let holders = entry_profile_owners(&profiles, profile);
             if !holders.is_empty() {
                 return Err(ManagerError::Invalid(pai_core::checks::Refusal {
                     key: "model-profile-assigned",
                     values: vec![profile.to_string(), holders.join(", ")],
                 }));
             }
-            while let Some(text) = pai_core::ini::text::delete_section(&disabled, profile) {
-                disabled = text;
+            let mut after = text;
+            while let Some(text) = pai_core::ini::text::delete_section(&after, profile) {
+                after = text;
             }
             self.check_and_write(
-                &ConfigFile::ModelsDisabled,
-                "models.ini.disabled",
-                &disabled,
+                &ConfigFile::Models,
+                "models.ini",
+                &after,
                 MODEL_FILES_JUDGE,
+                PLACEMENT_SKIP,
             )
         };
         let answer = run();
@@ -2273,20 +2290,23 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// Gives the instance profile `profile` the model profile `model`: an
     /// empty `[<profile>/<model>]` entry appended in the pool's own shape
-    /// ([`pai_core::instance_profiles::add_entry`]). A profile the pool has no
-    /// section for is [`ManagerError::NoInstanceProfile`], a model profile the
-    /// pool has no section for is the keyed `no-model-profile-named`, naming
-    /// the model. A model the profile already lists is no refusal and writes no
-    /// byte: the entry's own keys are its state. Every instance running the
-    /// profile renders again, so the model lands in its render.
+    /// ([`pai_core::instance_profiles::add_entry`]), answered with the running
+    /// instances that use the profile. A profile the pool has no section for is
+    /// [`ManagerError::NoInstanceProfile`], a model profile the pool has no
+    /// section for is the keyed `no-model-profile-named`, naming the model, and
+    /// a model the profile lists already is the keyed
+    /// `instance-profile-model-listed`, naming the profile and the model: the
+    /// entry's keys are its state, and the page adds what is not there. Every
+    /// instance running the profile renders again, so the model lands in its
+    /// render.
     pub fn add_instance_profile_model<W: AsRequester>(
         &self,
         who: &W,
         profile: &str,
         model: &str,
-    ) -> Result<(), ManagerError> {
+    ) -> Result<Vec<String>, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<Vec<String>, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
             let text = self.pool_text()?;
@@ -2299,10 +2319,27 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             if !pool_holds(&pool, model) {
                 return Err(one_value_refusal("no-model-profile-named", model));
             }
+            // The profile lists the model already: the add is refused on its
+            // own conflict, and no byte is written.
+            if entry_models(&text, profile)
+                .iter()
+                .any(|entry| entry == model)
+            {
+                return Err(two_value_refusal(
+                    "instance-profile-model-listed",
+                    profile,
+                    model,
+                ));
+            }
+            // The instances the write touches: running, and running this
+            // profile, in the record's own order. The write moves no instance,
+            // so the list read here is the list the answer carries.
+            let running = self.running_using_profile(profile)?;
             self.write_pool(
                 &text,
                 &pai_core::instance_profiles::add_entry(&text, profile, model),
             )
+            .map(|()| running)
         };
         let answer = run();
         self.record_action("add_instance_profile_model", profile, Some(&who), &answer);
@@ -2311,18 +2348,20 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// Takes the model profile `model` away from the instance profile
     /// `profile`: its entry section goes, every other byte of the file the
-    /// file's own. A profile the pool has no section for is
+    /// file's own, and the answer is the running instances that use the
+    /// profile. A profile the pool has no section for is
     /// [`ManagerError::NoInstanceProfile`]; an entry the profile does not list
-    /// is no refusal and writes no byte. Every instance running the profile
-    /// renders again, so the model leaves its render.
+    /// is the keyed `no-instance-profile-model`, naming the profile and the
+    /// model. Every instance running the profile renders again, so the model
+    /// leaves its render.
     pub fn remove_instance_profile_model<W: AsRequester>(
         &self,
         who: &W,
         profile: &str,
         model: &str,
-    ) -> Result<(), ManagerError> {
+    ) -> Result<Vec<String>, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<Vec<String>, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
             let text = self.pool_text()?;
@@ -2332,11 +2371,18 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             let section = format!("{profile}/{model}");
             let next = match pai_core::ini::text::delete_section(&text, &section) {
                 Some(next) => next,
-                // No entry of that model: the profile does not list it, so
-                // there is nothing to take away.
-                None => return Ok(()),
+                // No entry of that model: the profile does not list it, so the
+                // remove is refused on its own conflict.
+                None => {
+                    return Err(two_value_refusal(
+                        "no-instance-profile-model",
+                        profile,
+                        model,
+                    ))
+                }
             };
-            self.write_pool(&text, &next)
+            let running = self.running_using_profile(profile)?;
+            self.write_pool(&text, &next).map(|()| running)
         };
         let answer = run();
         self.record_action(
@@ -2345,6 +2391,161 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             Some(&who),
             &answer,
         );
+        answer
+    }
+
+    /// Writes the keys of the entry `[profile/model]` of `instance-profiles.ini`
+    /// as `values` sent them, and answers the running instances that use
+    /// `profile`: the checks of the moved keys ride this write, the device
+    /// bound is the profile's own server profile, the memory is judged on every
+    /// render of an instance running the profile (`ARCHITECTURE.md` "Instance
+    /// profiles" and its checks). The entry holds exactly the keys sent, in the
+    /// order they were sent: the keys it carried and are not sent are gone, the
+    /// model profile's own keys, which the entry does not name, are not touched,
+    /// and the entry stands directly under the profile's own section.
+    ///
+    /// Every check answers before a byte is written, in this order: a profile
+    /// the pool has no section for is [`ManagerError::NoInstanceProfile`], a
+    /// pool no longer holding `revision`, the text the caller read, is
+    /// [`ManagerError::Changed`], an entry the profile does not list is the
+    /// keyed `no-instance-profile-model` naming the profile and the model, a key
+    /// that stays in the model profile is the keyed `model-profile-stay-key`
+    /// naming it, the value rules of the keys (`not-whole-number-in-range`,
+    /// `tensor-split-format`, `override-no-device`, the enums and the numbers,
+    /// [`pai_core::checks`]'s own), an entry naming a card the profile's server
+    /// profile does not name is the keyed `model-profile-device-outside` naming
+    /// the profile, the model, the key and the card, and the memory of a render
+    /// this write makes larger than the node's usable GPU memory is the keyed
+    /// `model-profile-over-memory`. What stands today is no news: an entry that
+    /// already names the card, and a render already over the cards, are left
+    /// alone, so a save that fixes one of them lands. Guarded as every write of
+    /// a served file is: `configure` first, the `As` form answered only to the
+    /// bff's account for a current member of `pai`, one record of the action log
+    /// per call.
+    pub fn set_instance_profile_model<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+        model: &str,
+        values: &[(String, String)],
+        revision: &str,
+    ) -> Result<Vec<String>, ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<Vec<String>, ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let text = self.pool_text()?;
+            let row = profile_rows(&text)
+                .into_iter()
+                .find(|row| row.id == profile)
+                .ok_or_else(|| ManagerError::NoInstanceProfile(profile.to_string()))?;
+            if revision != text {
+                return Err(ManagerError::Changed);
+            }
+            let section = format!("{profile}/{model}");
+            if !row.entries.iter().any(|entry| entry == model) {
+                return Err(two_value_refusal(
+                    "no-instance-profile-model",
+                    profile,
+                    model,
+                ));
+            }
+            check_entry_values(values).map_err(ManagerError::Invalid)?;
+            // The entry as the page sent it, written whole: every key it
+            // carried and is not sent is gone, and the entry holds exactly what
+            // the page sent, in the order it sent it.
+            let next = write_entry_section(&text, profile, model, values);
+            // The cards the profile's own server profile names: the entry's
+            // placement is judged there, the same file the launch reads. What
+            // the entry names today, outside the cards, is no news.
+            let devices = server_devices(&row.server_profile);
+            let was = entry_device_outside(&text, &section, &devices);
+            if let Some((key, device)) = entry_device_outside(&next, &section, &devices)
+                .filter(|outside| Some(outside) != was.as_ref())
+            {
+                return Err(ManagerError::Invalid(pai_core::checks::Refusal {
+                    key: "model-profile-device-outside",
+                    values: vec![profile.to_string(), model.to_string(), key, device],
+                }));
+            }
+            let dir = crate::paths::engine_config_dir();
+            let pool = read_record(&dir.join("models.ini")).map_err(io)?;
+            let running = self.running_using_profile(profile)?;
+            for id in &running {
+                check_render_memory(
+                    &render_instance(id, &pool, &next, profile),
+                    &render_instance(id, &pool, &text, profile),
+                    id,
+                    &*self.gpus,
+                )
+                .map_err(ManagerError::Invalid)?;
+            }
+            self.write_pool(&text, &next).map(|()| running)
+        };
+        let answer = run();
+        self.record_action(
+            "set_instance_profile_model",
+            &format!("{profile}/{model}"),
+            Some(&who),
+            &answer,
+        );
+        answer
+    }
+
+    /// Points the instance profile `profile` at the server profile
+    /// `server_profile`, and answers the running instances that use it: the
+    /// switch re-checks every entry's device keys against the new server
+    /// profile's `Devices` (`ARCHITECTURE.md` "Instance profiles"), so a switch
+    /// that takes away a card an entry names is refused, naming the entry and
+    /// the card, and the profile keeps the server profile it had. A profile the
+    /// pool has no section for is [`ManagerError::NoInstanceProfile`], a server
+    /// profile the node has no file for is [`ManagerError::NoServerProfile`].
+    /// The switch carries no revision: it is one set-like change, refused on its
+    /// own conflict. Guarded as every write of a served file is.
+    pub fn set_instance_profile_server<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+        server_profile: &str,
+    ) -> Result<Vec<String>, ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<Vec<String>, ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            // A poisoned lock is taken over: it guards no data of its own.
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let text = self.pool_text()?;
+            let row = profile_rows(&text)
+                .into_iter()
+                .find(|row| row.id == profile)
+                .ok_or_else(|| ManagerError::NoInstanceProfile(profile.to_string()))?;
+            let no_profile = || ManagerError::NoServerProfile(server_profile.to_string());
+            let path = crate::paths::instance_ini(server_profile).ok_or_else(no_profile)?;
+            if std::fs::symlink_metadata(&path).is_err() {
+                return Err(no_profile());
+            }
+            // Every entry of the profile is judged on the new cards: the switch
+            // moves the ground of all of them at once.
+            let devices = server_devices(server_profile);
+            for entry in &row.entries {
+                let section = format!("{profile}/{entry}");
+                if let Some((key, device)) = entry_device_outside(&text, &section, &devices) {
+                    return Err(ManagerError::Invalid(pai_core::checks::Refusal {
+                        key: "model-profile-device-outside",
+                        values: vec![profile.to_string(), entry.clone(), key, device],
+                    }));
+                }
+            }
+            let running = self.running_using_profile(profile)?;
+            self.write_pool(
+                &text,
+                &pai_core::ini::text::set_key(&text, profile, "ServerProfile", server_profile),
+            )
+            .map(|()| running)
+        };
+        let answer = run();
+        self.record_action("set_instance_profile_server", profile, Some(&who), &answer);
         answer
     }
 
@@ -2485,6 +2686,24 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// The text of `instance-profiles.ini`, as [`read_pool`] reads it.
     fn pool_text(&self) -> Result<String, ManagerError> {
         read_pool().map_err(|e| ManagerError::Io(e.kind()))
+    }
+
+    /// The instances that run the instance profile `profile` and are up, in the
+    /// record's own order: the answer of every write of the profile, the list
+    /// the page offers a restart to. An instance the record gives no profile,
+    /// and one the service manager does not answer active, is not in it.
+    fn running_using_profile(&self, profile: &str) -> Result<Vec<String>, ManagerError> {
+        let record = self.read_record_locked()?;
+        Ok(pai_core::ini::parse_sections(&record)
+            .into_iter()
+            .map(|section| section.id)
+            .filter(|id| instance_profile_of(&record, id).as_deref() == Some(profile))
+            .filter(|id| {
+                self.service
+                    .status(id)
+                    .is_ok_and(|state| state == UnitState::Active)
+            })
+            .collect())
     }
 
     /// Writes the instance profile pool `text` over the text `before` the file
@@ -3815,11 +4034,12 @@ fn known_engine(engine: &str) -> Result<(), ManagerError> {
 
 /// True when `from` and `values` are a source [`Manager::create_model_profile`]
 /// can build a section from. A pick: `from` empty and `values` naming the model
-/// with `model` alone, or `hf-repo` with `hf-file` beside it, no key twice. A
-/// clone: `from` a name, and `values` only lines that override one of the
-/// clone's, so none of the three naming a model of its own, none twice. Exactly
-/// one of the two sources, the empty pair and the pair at once both refused. The
-/// shape answers before a value is read.
+/// with `model` alone, or `hf-repo` with `hf-file` beside it, no key twice, and
+/// any other key a line of the new profile of its own (a key of the entry is
+/// refused by its own rule). A clone: `from` a name, and `values` only lines
+/// that override one of the clone's, so none of the three naming a model of its
+/// own, none twice. Exactly one of the two sources, the empty pair and the pair
+/// at once both refused. The shape answers before a value is read.
 fn create_source_shape(from: &str, values: &[(String, String)]) -> bool {
     let mut seen = [false; 3];
     for (key, _) in values {
@@ -3827,13 +4047,9 @@ fn create_source_shape(from: &str, values: &[(String, String)]) -> bool {
             "model" => 0,
             "hf-repo" => 1,
             "hf-file" => 2,
-            // A clone's line of its own, `temp` beside the clone's model.
-            _ => {
-                if from.is_empty() {
-                    return false;
-                }
-                continue;
-            }
+            // A line of the new profile of its own, `temp` beside its model,
+            // on a pick as on a clone: the page sends the model profile's keys.
+            _ => continue,
         };
         // A pick takes each key once; a clone takes no key that names a model.
         if !from.is_empty() || seen[i] {
@@ -3882,14 +4098,21 @@ fn create_value_text(key: &str, value: &str) -> Result<(), pai_core::checks::Ref
 /// comment lines included, the blank separator lines that end the section of
 /// the middle of the file left out, and one line ending added at the end. The
 /// line ending is the source's own, the one its header carries, so a clone of a
-/// section of an LF file is an LF section.
+/// section of an LF file is an LF section. A key line of the entry is left out:
+/// the placement and memory keys ([`pai_core::checks::PLACEMENT_KEYS`]) belong
+/// to the entry of the instance profile that lists the model, and a clone is
+/// listed in no entry, so copying one would put a second source of where the
+/// weights go in the pool.
 fn cloned_section(source: &str, id: &str) -> String {
     let eol = eol_of(source);
     let rest = match source.split_once('\n') {
         Some((_, rest)) => rest,
         None => "",
     };
-    let mut lines: Vec<&str> = rest.split(eol).collect();
+    let mut lines: Vec<&str> = rest
+        .split(eol)
+        .filter(|line| !is_entry_key_line(line))
+        .collect();
     while lines.last().is_some_and(|line| line.trim().is_empty()) {
         lines.pop();
     }
@@ -3897,6 +4120,21 @@ fn cloned_section(source: &str, id: &str) -> String {
         return format!("[{id}]{eol}");
     }
     format!("[{id}]{eol}{}{eol}", lines.join(eol))
+}
+
+/// Whether `line`, a line of a model profile section, is the key line of a key
+/// of the entry ([`pai_core::checks::PLACEMENT_KEYS`]): its key, read as the INI
+/// reads it, is one of them. A blank line, a comment and a line with no `=` are
+/// no key line.
+fn is_entry_key_line(line: &str) -> bool {
+    let line = line.trim();
+    if line.starts_with(';') || line.starts_with('#') {
+        return false;
+    }
+    match line.split_once('=') {
+        Some((key, _)) => pai_core::checks::placement_key(key.trim()),
+        None => false,
+    }
 }
 
 /// The line ending of `source`, a section's text taken from a file: the one its
@@ -3909,70 +4147,24 @@ fn eol_of(source: &str) -> &'static str {
     }
 }
 
-/// `text`, an `assignments.ini`, with every key naming `profile`, in any letter
-/// case, in any instance's section, dropped: the pool holds no profile of that
-/// name, so the key is dead, and a hand `on` under an instance would serve the
-/// profile the moment it is born.
-fn drop_profile_keys(text: &str, profile: &str) -> String {
-    let mut out = text.to_string();
-    for section in pai_core::ini::parse_sections(text) {
-        for key in section.keys.keys() {
-            if key.eq_ignore_ascii_case(profile) {
-                out = pai_core::ini::text::remove_key(&out, &section.id, key);
-            }
-        }
-    }
-    out
-}
-
-/// The ids, in the order of the record `record`, of the instances that assign
-/// `profile`. An instance assigns it with a key of its own: a section naming a
-/// key that names the id in any letter case, with `on`, `off` or `inherit`. A
-/// profile no section names is assigned by the hand `* = on` of an instance
-/// whose render holds it (`assign::rows` gives it `effective`, through the
-/// wildcard): `* = inherit` follows the pool's switch, so a switched-off profile
-/// stays out of that render and blocks nothing. The wildcard counts only when
-/// no key names the profile: a profile with a key of its own is assigned by
-/// that key, and the refusal names the instances that set it.
-fn assigned_instances(
-    assignments: &str,
-    record: &str,
-    enabled: &str,
-    disabled: &str,
-    profile: &str,
-) -> Vec<String> {
-    let sections = pai_core::ini::parse_sections(assignments);
-    let mut keyed: Vec<String> = Vec::new();
-    let mut served: Vec<String> = Vec::new();
-    for instance in pai_core::ini::parse_sections(record) {
-        let assigns = sections
-            .iter()
-            .find(|section| section.id.eq_ignore_ascii_case(&instance.id))
-            .is_some_and(|section| {
-                section.keys.iter().any(|(key, value)| {
-                    key.eq_ignore_ascii_case(profile)
-                        && ["on", "off", "inherit"]
-                            .iter()
-                            .any(|word| value.eq_ignore_ascii_case(word))
-                })
-            });
-        if assigns {
-            keyed.push(instance.id.clone());
-        }
-        let text = pai_core::ini::text::section_text(assignments, &instance.id);
-        let (_, rows) = pai_core::assign::rows(enabled, disabled, text.as_deref());
-        if rows
-            .iter()
-            .any(|row| row.via_all && row.effective && row.id.eq_ignore_ascii_case(profile))
+/// The ids, in the order of the instance profile pool `text`, of the profiles
+/// whose entry sections list the model profile `model`, in any letter case. A
+/// profile is named once, whatever the number of its entries: an entry is the
+/// model's place in the profile, and the profile is what its page changes to
+/// take the model out.
+fn entry_profile_owners(text: &str, model: &str) -> Vec<String> {
+    let mut owners: Vec<String> = Vec::new();
+    for profile in pai_core::instance_profiles::parse(text) {
+        if !owners.contains(&profile.id)
+            && profile
+                .entries
+                .iter()
+                .any(|entry| entry.model.eq_ignore_ascii_case(model))
         {
-            served.push(instance.id);
+            owners.push(profile.id);
         }
     }
-    if keyed.is_empty() {
-        served
-    } else {
-        keyed
-    }
+    owners
 }
 
 /// The refusal of a rule that carries one value: the key, and the name the
@@ -3982,6 +4174,140 @@ fn one_value_refusal(key: &'static str, value: &str) -> ManagerError {
         key,
         values: vec![value.to_string()],
     })
+}
+
+/// The refusal of a rule that carries two: the key, and the two names the rule
+/// refused, the pair an entry is (`instance-profile-model-listed`,
+/// `no-instance-profile-model`).
+fn two_value_refusal(key: &'static str, first: &str, second: &str) -> ManagerError {
+    ManagerError::Invalid(pai_core::checks::Refusal {
+        key,
+        values: vec![first.to_string(), second.to_string()],
+    })
+}
+
+/// The checks of the entry keys a save sends, the checks of the keys the model
+/// profile gave up to the entry (`ARCHITECTURE.md` "Instance profiles", the
+/// placement and memory amendment): a key that STAYS in the model profile is
+/// the keyed `model-profile-stay-key`, naming it, and every value is judged by
+/// the rule of its key as the model profile's own save judges it, the ranges of
+/// [`pai_core::checks::MODEL_PROFILE_INT_KEYS`], the tensor rule, the tensor
+/// rules' devices, the device lists, the floats, the enums and the pairs.
+fn check_entry_values(values: &[(String, String)]) -> Result<(), pai_core::checks::Refusal> {
+    for (key, value) in values {
+        if !pai_core::checks::placement_key(key) {
+            return Err(pai_core::checks::Refusal {
+                key: "model-profile-stay-key",
+                values: vec![key.clone()],
+            });
+        }
+        if let Some(range) = pai_core::checks::model_profile_int_range(key) {
+            pai_core::checks::whole_number(key, value, &range)?;
+        }
+        if key == "tensor-split" {
+            pai_core::checks::tensor_split(value)?;
+        }
+        if key == "override-tensor" {
+            pai_core::checks::override_tensor(value, true)?;
+        }
+        if pai_core::checks::DEVICE_LIST_KEYS.contains(&key.as_str()) {
+            pai_core::checks::device_list(key, value)?;
+        }
+    }
+    pai_core::checks::model_profile_values(|key| {
+        values
+            .iter()
+            .find(|(sent, _)| sent == key)
+            .map(|(_, value)| value.clone())
+    })
+}
+
+/// The pool text `text` with the entry `[profile/model]` written whole: its
+/// header and `keys` in the order they were sent, standing directly under the
+/// profile's own `[profile]` section, the blank line that separated the two
+/// dropped (the entry is part of that section's list, not a section of its
+/// own). Every other byte of the file is the file's own. The caller refuses an
+/// entry the profile does not list, so the section is there.
+fn write_entry_section(
+    text: &str,
+    profile: &str,
+    model: &str,
+    keys: &[(String, String)],
+) -> String {
+    let eol = pai_core::ini::detect_eol(text);
+    let section = format!("{profile}/{model}");
+    let body = match pai_core::ini::text::section_text(text, &section) {
+        Some(body) => body,
+        None => return text.to_string(),
+    };
+    let at = text.find(&body).unwrap_or(0);
+    // The blank line goes only when the profile's own text runs up to here.
+    let from = match pai_core::ini::text::section_text(text, profile) {
+        Some(row) if text.find(&row).is_some_and(|start| start + row.len() == at) => {
+            blank_lines_before(text, at)
+        }
+        _ => at,
+    };
+    let mut next = String::with_capacity(text.len());
+    next.push_str(&text[..from]);
+    next.push_str(&format!("[{section}]{eol}"));
+    for (key, value) in keys {
+        next.push_str(&format!("{key} = {value}{eol}"));
+    }
+    next.push_str(&text[at + body.len()..]);
+    next
+}
+
+/// The offset of the section header at `at`, with the empty lines in front of
+/// it dropped, in the file's own line endings.
+fn blank_lines_before(text: &str, at: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut end = at;
+    loop {
+        if end >= 2 && bytes[end - 1] == b'\n' && bytes[end - 2] == b'\n' {
+            end -= 1;
+        } else if end >= 4
+            && bytes[end - 1] == b'\n'
+            && bytes[end - 2] == b'\r'
+            && bytes[end - 3] == b'\n'
+            && bytes[end - 4] == b'\r'
+        {
+            end -= 2;
+        } else {
+            return end;
+        }
+    }
+}
+
+/// The first (key, device) the entry section `section` of the pool text `text`
+/// names outside the `Devices` value `devices` of a server profile: the entry's
+/// own card keys, the keys [`outside_devices`] judges (`device-draft`,
+/// `mmproj-device` and the `override-tensor` rules), read off the entry alone.
+/// The entry is what an entry write moves, and the profile's server profile is
+/// the ground it is judged on, the same file the launch reads.
+fn entry_device_outside(text: &str, section: &str, devices: &str) -> Option<(String, String)> {
+    let mut keys = String::new();
+    for (key, value) in pai_core::ini::section_keys(text, section) {
+        let value = value.trim();
+        let named = key == "override-tensor"
+            || pai_core::checks::DEVICE_LIST_KEYS[1..].contains(&key.as_str());
+        if !value.is_empty() && named {
+            keys.push_str(&format!("{key} = {value}\n"));
+        }
+    }
+    pai_core::checks::devices_outside(&keys, devices)
+}
+
+/// The `[Server] Devices` of the server profile `name`, as the memory check
+/// measures the cards of the profile: `""` when the name builds no path or its
+/// file cannot be read, the measure of every card of the node, like
+/// [`instance_devices`].
+fn server_devices(name: &str) -> String {
+    crate::paths::instance_ini(name)
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .map(|contents| crate::server_cfg::from_text(&contents).devices)
+        .unwrap_or_default()
+        .unwrap_or_default()
 }
 
 /// The first section of the record text `text` that runs the server profile
@@ -4033,10 +4359,21 @@ fn record_profile_owner(text: &str, profile: &str) -> Option<String> {
 /// The `judge_model_files` of [`check_contents`] and [`Manager::check_and_write`]:
 /// a write that judges the model files of the model profiles it puts in effect.
 const MODEL_FILES_JUDGE: bool = true;
-/// A write that leaves that check out: the create of a model profile, born
-/// switched off, names a model file judged when a switch-on or an assignment
-/// puts the profile in effect.
+/// A write that leaves that check out: the create of a model profile, whose
+/// profile is listed in no entry, names a model file judged when an entry lists
+/// it and puts the profile in a render.
 const MODEL_FILES_SKIP: bool = false;
+
+/// The `judge_placement` of [`check_contents`] and [`Manager::check_and_write`]:
+/// a write of `models.ini` that judges the whole pool for a placement or memory
+/// key left in a model profile section, the key the migration moved into the
+/// instance profile's entry: the save of the pool, which writes every section.
+const PLACEMENT_JUDGE: bool = true;
+/// A write that leaves that check out: the create of a model profile appends a
+/// section it has judged key by key, and the delete takes a section out. A key
+/// of a section neither verb writes is the node's own text, and the save that
+/// writes that section is where it is judged.
+const PLACEMENT_SKIP: bool = false;
 
 /// The content checks of `file` for `contents`, against the files on disk:
 /// the instance file against the Server rules and its own render, `models.ini`
@@ -4059,6 +4396,7 @@ fn check_contents(
     contents: &str,
     gpus: &dyn GpuTotals,
     judge_model_files: bool,
+    judge_placement: bool,
 ) -> Result<(), pai_core::checks::Refusal> {
     use pai_core::checks;
     let dir = crate::paths::engine_config_dir();
@@ -4128,8 +4466,10 @@ fn check_contents(
             // profiles", the placement and memory amendment): from the migration
             // on, a pool that carries one is a second source of truth for where
             // the weights go. A tree the migration has not written keeps its
-            // keys in the pool, which is where they were.
-            if record_is_migrated(&on_disk(INSTANCES_FILE)) {
+            // keys in the pool, which is where they were. `judge_placement`
+            // leaves the check out where the write does not touch the section
+            // carrying the key.
+            if judge_placement && record_is_migrated(&on_disk(INSTANCES_FILE)) {
                 checks::model_profile_placement(contents)?;
             }
             checks::model_profile_ids_free(contents, &old, &off)?;
@@ -21762,28 +22102,30 @@ mod tests {
 }
 
 /// Creating a model profile (`CreateModelProfile`, ARCHITECTURE.md "Create,
-/// clone and delete model profiles from the web", slice MP1): `[<profile>]` and
-/// one line per value, appended to `models.ini.disabled`, born switched off and
-/// assigned nothing, never overwriting a name either pool file holds. Every
-/// other byte of the tree is kept: the switched-on file, the instance record and
-/// every render. The values are the file pick, the keys llama.cpp reads, sorted
-/// by key before anything is built, and the manager judges every byte itself
-/// before the lock, in this order: the shape (exactly one of `from` and
-/// `values`; `model` xor `hf-repo`; `hf-file` only with `hf-repo`; the three
-/// keys only) is `model-profile-bad-source [profile]`, an empty, control-space
-/// ridden or marker-carrying value is `model-profile-bad-text [key]` or
-/// `comment-markers [key]`, then the id is `invalid-model-profile-id
-/// [profile]`, a name either file holds in any letter case is
-/// `model-profile-name-taken [profile]`, and a clone's source that is no pool
-/// id, `*` included, is `no-model-profile-named [from]`. A clone is the source
-/// section's lines byte for byte under the new header, comments, key order and
-/// `load-on-startup` included, and is born switched off whatever the source is.
-/// Before the pool write, every key naming the new id in any letter case is
-/// removed from `assignments.ini`: they are dead keys (the pool does not hold
-/// the id), so no render changes, and a hand `on` key would serve the new
-/// profile at once. Guarded as a write of a served file is: `configure` first,
-/// the `As` form answered only to the bff's account for a current member of
-/// `pai`, one record of the action log per call.
+/// clone and delete model profiles from the web", slice MP1, as amended by
+/// "Instance profiles" and its key split): `[<profile>]` and one line per
+/// value, appended to `models.ini`, the one pool, listed in no instance
+/// profile, so it renders nowhere. Never overwriting a name the pool holds,
+/// and every other byte of the tree is kept: the instance record, the
+/// instance profiles, every render, and the retired `models.ini.disabled` and
+/// `assignments.ini` of an install, which no verb reads or writes any more.
+/// The values are the file pick, the keys llama.cpp reads, sorted by key
+/// before anything is built, and the manager judges every byte itself before
+/// the lock, in this order: the shape (exactly one of `from` and `values`;
+/// `model` xor `hf-repo`; `hf-file` only with `hf-repo`; the three keys only)
+/// is `model-profile-bad-source [profile]`, an empty, control-space ridden or
+/// marker-carrying value is `model-profile-bad-text [key]` or `comment-markers
+/// [key]`, then the id is `invalid-model-profile-id [profile]`, a name the
+/// pool holds in any letter case is `model-profile-name-taken [profile]`, a
+/// value naming a placement key of the keys that moved to the entry
+/// (`checks::PLACEMENT_KEYS`) is `model-profile-placement-key [key]`, and a
+/// clone's source that is no pool id, `*` included, is
+/// `no-model-profile-named [from]`. A clone is the source section's stay keys
+/// (`checks::MODEL_PROFILE_STAY_KEYS`), byte for byte, under the new header,
+/// comments, key order and `load-on-startup` included, and carries none of
+/// the keys that moved to the entry. The write is a served write of the pool:
+/// `configure` first, the `As` form answered only to the bff's account for a
+/// current member of `pai`, one record of the action log per call.
 #[cfg(test)]
 pub(crate) fn manager_model_profile_create_e2e() {
     use fakes::{
@@ -21882,42 +22224,45 @@ pub(crate) fn manager_model_profile_create_e2e() {
         out
     };
 
-    // The pool, and the records. `models.ini` holds `On-Profile`, switched on
-    // and cloned below, and `Twin`; `models.ini.disabled` holds `Off-Profile`.
-    // `X = on` names the id the first create writes, in the other letter case:
-    // a dead key a GUI delete or a hand edit leaves, which the create removes.
+    // The pool, and the records. `models.ini` is the one pool: it holds
+    // `On-Profile`, cloned below, and `Twin`. `instance-profiles.ini` has one
+    // profile, `gpu`, with its entry for `On-Profile`; the record runs it. The
+    // retired `models.ini.disabled`, holding `Off-Profile`, and the retired
+    // `assignments.ini`, with its `X = on` naming the id the first create
+    // writes in the other letter case, stand in the tree as an install leaves
+    // them: no verb reads them, and the test pins that no verb writes them.
     let pool_on = real_model_files(
         dir.path(),
         "[On-Profile]\n; a note\ntemp = 0.7\nmodel = /models/on.gguf\nload-on-startup = true\n\n[Twin]\nmodel = /models/twin.gguf\n",
     );
     let pool_off = real_model_files(dir.path(), "[Off-Profile]\nmodel = /models/off.gguf\n");
     let seed_assignments = "[default]\nX = on\nkeep = inherit\n";
-    write_record(&sys, &["default"]);
+    const PROFILES: &str = "[gpu]\nServerProfile = default\n\n[gpu/On-Profile]\nctx-size = 4096\n";
+    std::fs::write(sys.join(INSTANCE_PROFILES_FILE), PROFILES).expect(INSTANCE_PROFILES_FILE);
+    std::fs::write(
+        sys.join(INSTANCES_FILE),
+        "[default]\nInstanceProfile = gpu\nPort = 8581\n",
+    )
+    .expect(INSTANCES_FILE);
     std::fs::write(
         sys.join("server@default.ini"),
         "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
     )
     .expect("server profile");
     std::fs::write(sys.join(ASSIGNMENTS_FILE), seed_assignments).expect(ASSIGNMENTS_FILE);
-    let m = core(true, FakeActionLog::new());
-    assert_eq!(
-        m.write_file(&desktop, "models.ini", &pool_on, false),
-        Ok(()),
-        "the pool stands first, so the renders exist"
-    );
-    // The switched-off half is a client's read, never a write, so the fixture
-    // seeds it as an install that has one leaves it; the creates below are the
-    // manager's own verbs, which keep the file.
-    std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("models.ini.disabled");
+    std::fs::write(sys.join("models.ini"), &pool_on).expect("models.ini");
+    std::fs::write(sys.join(MODELS_DISABLED_FILE), &pool_off).expect(MODELS_DISABLED_FILE);
+    let render_of = pai_core::assign::render_profile(&pool_on, PROFILES, "gpu");
+    std::fs::write(sys.join("models@default.ini"), &render_of).expect("render");
     let render_of = text_of("models@default.ini");
     assert!(
-        !render_of.contains("[On-Profile]") && !render_of.contains("[Off-Profile]"),
-        "the hand keys name no id of the pool, so the render holds no model profile: {}",
-        text_of("models@default.ini")
+        render_of.to_lowercase().contains("[on-profile]") && !render_of.contains("[Off-Profile]"),
+        "the entry `[gpu/On-Profile]` lists the model, so the render carries it, and the \
+         retired switched-off file's profile is in no render: {render_of}"
     );
 
-    // ── A create writes the section at the end of the off file ─────────────
-    // `want` is the whole off file, kept byte for byte as the creates grow it.
+    // ── A create writes the section at the end of the pool ──────────────────
+    // `want` is the whole pool, kept byte for byte as the creates grow it.
     let mut want;
     {
         let log = FakeActionLog::new();
@@ -21925,11 +22270,12 @@ pub(crate) fn manager_model_profile_create_e2e() {
         let group = FakeGroup::new();
         let g = group.calls.clone();
         let m = core_in(true, group, log);
-        let on_before = bytes_of("models.ini");
+        let off_before = bytes_of(MODELS_DISABLED_FILE);
+        let keys_before = bytes_of(ASSIGNMENTS_FILE);
         let record_before = bytes_of(INSTANCES_FILE);
         let render_before = bytes_of("models@default.ini");
         let before = listing();
-        want = text_of("models.ini.disabled");
+        want = text_of("models.ini");
 
         assert_eq!(
             m.create_model_profile(&desktop, "x", "", &vals(&[("model", "/m/x.gguf")])),
@@ -21938,26 +22284,28 @@ pub(crate) fn manager_model_profile_create_e2e() {
         );
         want = format!("{want}[x]\nmodel = /m/x.gguf\n");
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             want,
-            "the section at the end of the off file, every other byte of it kept, and \
+            "the section at the end of the pool, every other byte of it kept, and \
              no blank line added to a text that ends with an ending"
         );
         assert_eq!(
-            bytes_of("models.ini"),
-            on_before,
-            "nothing lands in the switched-on file: the profile is born switched off"
+            bytes_of(MODELS_DISABLED_FILE),
+            off_before,
+            "the retired switched-off file keeps every byte: the create writes the pool, \
+             and there is no switch any more"
         );
         assert_eq!(
             bytes_of("models@default.ini"),
             render_before,
-            "the render is kept byte for byte: an off, unassigned profile serves nothing"
+            "the render is kept byte for byte: the new profile is listed in no entry, so \
+             it renders nowhere"
         );
         assert_eq!(
-            text_of(ASSIGNMENTS_FILE),
-            "[default]\nkeep = inherit\n",
-            "born unassigned: the key naming the new id in the other case is gone, \
-             every other key and byte kept"
+            bytes_of(ASSIGNMENTS_FILE),
+            keys_before,
+            "the retired record keeps every byte, the dead `X = on` and all: no verb reads \
+             or writes assignments.ini any more"
         );
         assert_eq!(
             bytes_of(INSTANCES_FILE),
@@ -21976,22 +22324,17 @@ pub(crate) fn manager_model_profile_create_e2e() {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            for name in [
-                "models.ini.disabled",
-                "models@default.ini",
-                ASSIGNMENTS_FILE,
-            ] {
-                assert_eq!(
-                    std::fs::metadata(sys.join(name))
-                        .expect("metadata")
-                        .permissions()
-                        .mode()
-                        & 0o7777,
-                    0o644,
-                    "the mode of {name}: the pool's files, the record and the render, \
-                     written by the create as a served write writes them"
-                );
-            }
+            let name = "models.ini";
+            assert_eq!(
+                std::fs::metadata(sys.join(name))
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o644,
+                "the mode of {name}: the pool, written by the create as a served \
+                 write writes it"
+            );
         }
 
         // The Hugging Face pick: the two lines, sorted, and `hf-repo` alone.
@@ -22007,7 +22350,7 @@ pub(crate) fn manager_model_profile_create_e2e() {
         );
         want = format!("{want}[hf-pair]\nhf-file = m-Q8_0.gguf\nhf-repo = org/model\n");
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             want,
             "the two lines sorted by key, whatever order the call sent them in"
         );
@@ -22017,7 +22360,7 @@ pub(crate) fn manager_model_profile_create_e2e() {
             "`hf-repo` alone names the model the node downloads: the `model` rule accepts it"
         );
         want = format!("{want}[hf-only]\nhf-repo = org/other\n");
-        assert_eq!(text_of("models.ini.disabled"), want);
+        assert_eq!(text_of("models.ini"), want);
         assert_eq!(
             m.create_model_profile(
                 &desktop,
@@ -22026,14 +22369,14 @@ pub(crate) fn manager_model_profile_create_e2e() {
                 &vals(&[("model", &dir.path().join("absent.gguf").to_string_lossy())])
             ),
             Ok(()),
-            "a model file the node has not is accepted: the profile is off and \
-             unassigned, so it renders nowhere and the file is judged at the switch-on"
+            "a model file the node has not is accepted: the profile is listed in no \
+             entry, so it renders nowhere and the file is judged when an entry lists it"
         );
         want = format!(
             "{want}[nofile]\nmodel = {}\n",
             dir.path().join("absent.gguf").to_string_lossy()
         );
-        assert_eq!(text_of("models.ini.disabled"), want);
+        assert_eq!(text_of("models.ini"), want);
 
         assert_eq!(
             records(&lines),
@@ -22055,39 +22398,33 @@ pub(crate) fn manager_model_profile_create_e2e() {
     {
         let m = core(true, FakeActionLog::new());
 
-        std::fs::write(
-            sys.join("models.ini.disabled"),
-            "[Hand]\r\nmodel = /m/hand.gguf\r\n",
-        )
-        .expect("a CRLF off file");
+        std::fs::write(sys.join("models.ini"), "[Hand]\r\nmodel = /m/hand.gguf\r\n")
+            .expect("a CRLF pool");
         assert_eq!(
             m.create_model_profile(&desktop, "crlf", "", &vals(&[("model", "/m/crlf.gguf")])),
             Ok(()),
             "a create into a pool a hand edit wrote with CRLF"
         );
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             "[Hand]\r\nmodel = /m/hand.gguf\r\n[crlf]\r\nmodel = /m/crlf.gguf\r\n",
             "the new section takes the file's ending, and the bytes before it stand"
         );
 
-        std::fs::write(
-            sys.join("models.ini.disabled"),
-            "[Hand]\nmodel = /m/hand.gguf",
-        )
-        .expect("a pool with no ending on its last line");
+        std::fs::write(sys.join("models.ini"), "[Hand]\nmodel = /m/hand.gguf")
+            .expect("a pool with no ending on its last line");
         assert_eq!(
             m.create_model_profile(&desktop, "noeol", "", &vals(&[("model", "/m/noeol.gguf")])),
             Ok(()),
             "a create into a text whose last line has no ending"
         );
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             "[Hand]\nmodel = /m/hand.gguf\n[noeol]\nmodel = /m/noeol.gguf\n",
             "one ending first: the last line of the file and the new header do not share a line"
         );
 
-        std::fs::remove_file(sys.join("models.ini.disabled")).expect("no off file");
+        std::fs::remove_file(sys.join("models.ini")).expect("no pool");
         assert_eq!(
             m.create_model_profile(
                 &desktop,
@@ -22096,76 +22433,88 @@ pub(crate) fn manager_model_profile_create_e2e() {
                 &vals(&[("model", "/m/new.gguf")])
             ),
             Ok(()),
-            "a node with no off file at all"
+            "a node with no pool at all"
         );
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             "[brand-new]\r\nmodel = /m/new.gguf\r\n",
             "the file is created holding the section alone, with the CRLF ending the \
              GUI writes when it has no file to read one from"
         );
     }
 
-    // ── A clone: the source's lines, byte for byte, born switched off ──────
+    // ── A clone: the source's stay keys, byte for byte, listed nowhere ──────
     {
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, log);
-        std::fs::write(sys.join("models.ini.disabled"), "").expect("an empty off file");
-        let on_before = bytes_of("models.ini");
+        std::fs::write(sys.join("models.ini"), &pool_on).expect("the pool");
+        let keys_before = bytes_of(ASSIGNMENTS_FILE);
         let render_before = bytes_of("models@default.ini");
 
         assert_eq!(
             m.create_model_profile(&desktop, "x-clone", "On-Profile", &vals(&[])),
             Ok(()),
-            "a clone of a profile that is switched on"
+            "a clone of a profile the entry lists"
         );
         assert_eq!(
-            text_of("models.ini.disabled"),
-            // The source's lines under the new header, its trailing blank
+            text_of("models.ini"),
+            // The source's stay keys under the new header, its trailing blank
             // lines left out: the separator before the next section is layout,
             // not the source's lines (MP1, ARCHITECTURE.md done-when).
             format!(
-                "[x-clone]\n; a note\ntemp = 0.7\n{}\nload-on-startup = true\n",
+                "{pool_on}[x-clone]\n; a note\ntemp = 0.7\n{}\n",
                 model_line_of(&pool_on)
             ),
-            "the source's lines as they stand, under the new header: the comment, the \
-             key order, and `load-on-startup` too, with no blank line at the end"
+            "the source's stay keys as they stand, under the new header: the comment and \
+             the key order, with no blank line at the end; `load-on-startup` is a key of \
+             the entry now, so the clone carries it not"
         );
         assert_eq!(
-            bytes_of("models.ini"),
-            on_before,
-            "the source is kept byte for byte, and the clone is not in the switched-on file"
+            bytes_of(ASSIGNMENTS_FILE),
+            keys_before,
+            "the retired record keeps every byte: a clone assigns nothing to nothing"
         );
         assert_eq!(
             bytes_of("models@default.ini"),
             render_before,
-            "the render is kept: the clone is switched off, so it serves nothing"
+            "the render is kept: the clone is listed in no entry, so it renders nowhere"
         );
 
-        // The source is looked up as the render does: the other file, and any
-        // letter case.
-        std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("the off pool");
+        // The source is looked up as the render does: any letter case.
         assert_eq!(
             m.create_model_profile(&desktop, "off-clone", "OFF-PROFILE", &vals(&[])),
+            refused("no-model-profile-named", &["OFF-PROFILE"]),
+            "the retired switched-off file is no source: its profiles are in the pool, \
+             or they are gone"
+        );
+        assert_eq!(
+            m.create_model_profile(&desktop, "off-clone", "on-profile", &vals(&[])),
             Ok(()),
-            "a source named in the other letter case, in the off file"
+            "a source named in the other letter case"
         );
         assert!(
-            text_of("models.ini.disabled")
-                .contains(&format!("[off-clone]\n{}\n", model_line_of(&pool_off))),
-            "the source's own line, copied: {}",
-            text_of("models.ini.disabled")
+            text_of("models.ini").contains(&format!(
+                "[off-clone]\n; a note\ntemp = 0.7\n{}\n",
+                model_line_of(&pool_on)
+            )),
+            "the source's own lines, copied: {}",
+            text_of("models.ini")
         );
         assert_eq!(
             records(&lines),
             vec![
                 r#"action="create_model_profile" target="x-clone" caller=":1.42" principal=- outcome=ok"#
                     .to_string(),
+                // A keyed refusal is `ManagerError::Invalid`: the record carries the
+                // error's own kind, quoted. `refused` is the bare `NotAuthorized`'s.
+                r#"action="create_model_profile" target="off-clone" caller=":1.42" principal=- outcome="Invalid""#
+                    .to_string(),
                 r#"action="create_model_profile" target="off-clone" caller=":1.42" principal=- outcome=ok"#
                     .to_string(),
             ],
-            "one record per clone"
+            "one record per call: the refused clone, a keyed refusal, records the \
+             quoted kind, as every keyed refusal of every verb does"
         );
     }
 
@@ -22177,7 +22526,7 @@ pub(crate) fn manager_model_profile_create_e2e() {
             dir.path(),
             "[mid-src]\n; a note\ntemp = 0.3\nmodel = /models/clone-same.gguf\n\n[last-src]\n; a note\ntemp = 0.3\nmodel = /models/clone-same.gguf\n",
         );
-        std::fs::write(sys.join("models.ini.disabled"), &same).expect("the off pool");
+        std::fs::write(sys.join("models.ini"), &same).expect("the pool");
         assert_eq!(
             m.create_model_profile(&desktop, "from-mid", "mid-src", &vals(&[])),
             Ok(()),
@@ -22188,7 +22537,7 @@ pub(crate) fn manager_model_profile_create_e2e() {
             Ok(()),
             "a clone of a source that is the file's last section"
         );
-        let off = text_of("models.ini.disabled");
+        let off = text_of("models.ini");
         let sec = |id: &str| -> String {
             pai_core::ini::text::section_text(&off, id).expect("the clone is there")
         };
@@ -22214,18 +22563,18 @@ pub(crate) fn manager_model_profile_create_e2e() {
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, log);
-        std::fs::write(sys.join("models.ini"), &pool_on).expect("the on pool");
-        std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("the off pool");
+        std::fs::write(sys.join("models.ini"), &pool_on).expect("the pool");
+        std::fs::write(sys.join(MODELS_DISABLED_FILE), &pool_off).expect(MODELS_DISABLED_FILE);
         std::fs::write(sys.join(ASSIGNMENTS_FILE), seed_assignments).expect(ASSIGNMENTS_FILE);
         std::fs::write(
             sys.join(INSTANCES_FILE),
-            "[default]\nServerProfile = default\n",
+            "[default]\nInstanceProfile = gpu\nPort = 8581\n",
         )
         .expect(INSTANCES_FILE);
         let before = snapshot();
 
         for (id, from, values, key) in [
-            // A name either file holds, in any letter case: a create never overwrites.
+            // A name the pool holds, in any letter case: a create never overwrites.
             (
                 "twin",
                 "",
@@ -22239,7 +22588,7 @@ pub(crate) fn manager_model_profile_create_e2e() {
                 "model-profile-name-taken",
             ),
             (
-                "OFF-PROFILE",
+                "on-profile",
                 "",
                 vec![("model", "/m/x.gguf")],
                 "model-profile-name-taken",
@@ -22497,9 +22846,9 @@ pub(crate) fn manager_model_profile_create_e2e() {
         assert_eq!(
             text_of(ASSIGNMENTS_FILE),
             seed_assignments,
-            "the dead key `X = on` stays: a create refused at the shape, the id, the \
-             values, the taken name or the source never reaches the cleanup of step 6, \
-             so it writes no record at all"
+            "the retired record keeps every byte, the dead `X = on` and all: a create \
+             refused at the shape, the id, the values, the taken name or the source writes \
+             nothing, and no create writes this file at all"
         );
         assert_eq!(
             listing(),
@@ -22522,55 +22871,178 @@ pub(crate) fn manager_model_profile_create_e2e() {
         );
     }
 
-    // ── A pool write that lands, a render that does not: the cleanup stays ─
+    // ── The retired record stands when its own key is the id ────────────────
+    // (IP3b review D1) The create drops a dead key of the retired
+    // `assignments.ini` before the pool's content checks, so a create whose id
+    // IS one of that file's keys rewrites a file no verb reads any more. The id
+    // here is a key of the record in its own letters (the cleanup compares the
+    // letters, so the seeded `X = on` of the blocks above is never dropped).
+    {
+        let log = FakeActionLog::new();
+        let m = core(true, log);
+        let seed = "[default]\nDead-Key = on\nkeep = inherit\n";
+        std::fs::write(sys.join("models.ini"), &pool_on).expect("the pool");
+        std::fs::write(sys.join(MODELS_DISABLED_FILE), &pool_off).expect(MODELS_DISABLED_FILE);
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), seed).expect(ASSIGNMENTS_FILE);
+        let keys_before = bytes_of(ASSIGNMENTS_FILE);
+
+        assert_eq!(
+            m.create_model_profile(
+                &desktop,
+                "Dead-Key",
+                "",
+                &vals(&[("model", "/m/dead.gguf")])
+            ),
+            Ok(()),
+            "an id the pool holds not, spelled as a retired key"
+        );
+        assert_eq!(
+            bytes_of(ASSIGNMENTS_FILE),
+            keys_before,
+            "the accepted create writes the pool and no byte of the retired record: its \
+             `Dead-Key = on` is a key nothing reads, so dropping it is a write of a file no \
+             verb reads: {}",
+            text_of(ASSIGNMENTS_FILE)
+        );
+        assert!(
+            text_of("models.ini").contains("[Dead-Key]\nmodel = /m/dead.gguf\n"),
+            "the pool write itself lands: {}",
+            text_of("models.ini")
+        );
+    }
+
+    // ── A create the content checks refuse leaves the retired record alone ───
+    // (IP3b review D1) The key drop of the block above runs before
+    // `check_contents`, so a create that drops a key and is then refused by the
+    // content checks leaves a changed `assignments.ini` behind. The refusal here
+    // is the pool rule that an id stays unique across the pool and the retired
+    // switched-off file: the create's own checks read the pool alone, so they
+    // pass it and the content check is the one that refuses.
+    {
+        let log = FakeActionLog::new();
+        let m = core(true, log);
+        std::fs::write(sys.join("models.ini"), &pool_on).expect("the pool");
+        std::fs::write(
+            sys.join(MODELS_DISABLED_FILE),
+            real_model_files(dir.path(), "[Dead-Key]\nmodel = /models/dead.gguf\n"),
+        )
+        .expect(MODELS_DISABLED_FILE);
+        std::fs::write(
+            sys.join(ASSIGNMENTS_FILE),
+            "[default]\nDead-Key = on\nkeep = inherit\n",
+        )
+        .expect(ASSIGNMENTS_FILE);
+        let keys_before = bytes_of(ASSIGNMENTS_FILE);
+        let pool_before = bytes_of("models.ini");
+        let before = snapshot();
+
+        assert_eq!(
+            m.create_model_profile(
+                &desktop,
+                "Dead-Key",
+                "",
+                &vals(&[("model", "/m/dead.gguf")])
+            ),
+            refused("model-profile-name-taken", &["Dead-Key"]),
+            "an id the retired switched-off file holds is refused by the content check of \
+             the pool write, not by a check the create runs itself"
+        );
+        assert_eq!(
+            bytes_of(ASSIGNMENTS_FILE),
+            keys_before,
+            "a create the content check refuses leaves every byte of the retired record: \
+             the key drop belongs to the pool write, and this create wrote no pool: {}",
+            text_of(ASSIGNMENTS_FILE)
+        );
+        assert_eq!(
+            bytes_of("models.ini"),
+            pool_before,
+            "and the pool keeps every byte, the refused section absent"
+        );
+        assert_eq!(
+            snapshot(),
+            before,
+            "a create refused by the content check changed no byte, anywhere"
+        );
+
+        // The pool and the retired files back as the blocks below read them.
+        std::fs::write(sys.join(MODELS_DISABLED_FILE), &pool_off).expect(MODELS_DISABLED_FILE);
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), seed_assignments).expect(ASSIGNMENTS_FILE);
+    }
+
+    // ── A create renders nothing, even where a render cannot land ───────────
+    // IP3b: the model list is the instance profile's entries, and a create joins
+    // none, so it writes the pool and renders nothing. The id is named by an
+    // entry here, and the render's place is a directory an atomic write cannot
+    // rename onto: the create lands, and the render is untouched. A mode change
+    // is no fixture, the service runs as root.
     {
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, log);
-        std::fs::write(sys.join(ASSIGNMENTS_FILE), "[default]\ny = on\n").expect(ASSIGNMENTS_FILE);
+        // The retired record, as an install leaves it: no verb reads it.
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), seed_assignments).expect(ASSIGNMENTS_FILE);
+        std::fs::write(sys.join("models.ini"), "[Hand]\nmodel = /m/hand.gguf\n").expect("the pool");
         std::fs::write(
-            sys.join("models.ini.disabled"),
-            "[Hand]\nmodel = /m/hand.gguf\n",
+            sys.join(INSTANCE_PROFILES_FILE),
+            "[gpu]\nServerProfile = default\n\n[gpu/y]\n",
         )
-        .expect("the off pool");
-        // The render cannot land: an atomic write cannot rename a file onto a
-        // directory. A mode change is no fixture, the service runs as root.
+        .expect(INSTANCE_PROFILES_FILE);
+        // The model file the entry's render would judge, real under this tree.
+        let y = real_model_files(dir.path(), "[y]\nmodel = /models/y.gguf\n");
+        let y_model = y
+            .lines()
+            .find(|line| line.starts_with("model = "))
+            .expect("a model line")["model = ".len()..]
+            .to_string();
         let render = sys.join("models@default.ini");
         std::fs::remove_file(&render).expect("the render aside");
         std::fs::create_dir(&render).expect("a directory in the render's place");
 
-        let e = m.create_model_profile(&desktop, "y", "", &vals(&[("model", "/m/y.gguf")]));
-        assert!(
-            matches!(e, Err(ManagerError::Io(_))),
-            "the render's own failure is the answer: {e:?}"
+        assert_eq!(
+            m.create_model_profile(&desktop, "y", "", &vals(&[("model", y_model.as_str())])),
+            Ok(()),
+            "the create renders nothing, so a render that cannot be written stops it not"
         );
         assert!(
-            text_of("models.ini.disabled").contains("[y]\nmodel = /m/y.gguf\n"),
-            "the pool write landed, as a write of a pool file does when a render fails: {}",
-            text_of("models.ini.disabled")
+            text_of("models.ini").contains(&format!("[y]\nmodel = {y_model}\n")),
+            "the pool write landed: {}",
+            text_of("models.ini")
         );
         assert!(
-            !text_of(ASSIGNMENTS_FILE).contains("X = on"),
-            "the dead key stays removed: the cleanup is kept, the pool holds the id now: {}",
+            render.is_dir()
+                && std::fs::read_dir(&render)
+                    .expect("the render's place")
+                    .count()
+                    == 0,
+            "no render was written, and no temp file was left in its place: the new \
+             profile joins no entry, so it is in no instance's render"
+        );
+        assert_eq!(
+            bytes_of(ASSIGNMENTS_FILE),
+            seed_assignments.as_bytes(),
+            "the retired record keeps every byte, the dead `X = on` and all: its \
+             cleanup was a rule of the assignment record, retired with the file: {}",
             text_of(ASSIGNMENTS_FILE)
         );
         assert_eq!(
             records(&lines),
             vec![
-                r#"action="create_model_profile" target="y" caller=":1.42" principal=- outcome="Io""#
+                r#"action="create_model_profile" target="y" caller=":1.42" principal=- outcome=ok"#
                     .to_string()
             ],
-            "the failure is recorded, as every guarded call is"
+            "the create is recorded, as every guarded call is"
         );
 
         std::fs::remove_dir(&render).expect("the directory away");
         std::fs::write(&render, "[*]\n").expect("the render back");
+        std::fs::write(sys.join(INSTANCE_PROFILES_FILE), PROFILES).expect(INSTANCE_PROFILES_FILE);
     }
 
     // ── The gate: configure, and the `As` form for a member of `pai` ──────
     {
         std::fs::write(sys.join("models.ini"), &pool_on).expect("the on pool");
-        std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("the off pool");
+        std::fs::write(sys.join("models.ini"), &pool_off).expect("the off pool");
         std::fs::write(sys.join(ASSIGNMENTS_FILE), seed_assignments).expect(ASSIGNMENTS_FILE);
 
         let log = FakeActionLog::new();
@@ -22598,7 +23070,7 @@ pub(crate) fn manager_model_profile_create_e2e() {
     }
     {
         std::fs::write(sys.join("models.ini"), &pool_on).expect("the on pool");
-        std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("the off pool");
+        std::fs::write(sys.join("models.ini"), &pool_off).expect("the off pool");
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, log);
@@ -22612,7 +23084,7 @@ pub(crate) fn manager_model_profile_create_e2e() {
             "the bff's account, for a member of `pai`"
         );
         assert!(
-            text_of("models.ini.disabled").contains("[alice-mp]\nmodel = /m/a.gguf\n"),
+            text_of("models.ini").contains("[alice-mp]\nmodel = /m/a.gguf\n"),
             "and the profile is there"
         );
         assert_eq!(
@@ -22626,11 +23098,11 @@ pub(crate) fn manager_model_profile_create_e2e() {
             "a caller that is not the bff vouches for nobody"
         );
         assert!(
-            !text_of("models.ini.disabled").contains("[bob-mp]"),
+            !text_of("models.ini").contains("[bob-mp]"),
             "the refused `As` create wrote nothing"
         );
         assert!(
-            !text_of("models.ini.disabled").contains("[x]"),
+            !text_of("models.ini").contains("[x]"),
             "nor did the one that is not the bff's"
         );
         let got = records(&lines);
@@ -22649,25 +23121,27 @@ pub(crate) fn manager_model_profile_create_e2e() {
 }
 
 /// Deleting a model profile (`DeleteModelProfile`, ARCHITECTURE.md "Create,
-/// clone and delete model profiles from the web", slice MP1): the profile's own
-/// section, alone, out of `models.ini.disabled`, every other byte of the tree
-/// kept. The checks, under the lock, in this order: the id rule fails, or the id
-/// is `*`, and it is `no-model-profile-named [profile]`, never
-/// `invalid-model-profile-id`, and before any file is read; a profile
-/// `models.ini` holds in any letter case, a twin left in both files included, is
-/// `model-profile-enabled [profile]` (switch it off first), even when an
-/// instance assigns it; a profile neither pool file holds is
-/// `no-model-profile-named [profile]`, a key of `assignments.ini` notwithstanding;
-/// a profile an instance's section names with `inherit`, `on` or `off` (any
-/// letter case), or that a hand `* = on` serves, is **`model-profile-assigned
-/// [profile, "<a>, <b>"]`** with the ids of every such instance, in the record's
-/// own order, joined with `, `; a record that cannot be read is `Io`, never the
-/// "unused" of an empty list. `* = inherit` serves nothing of itself, so it does
-/// not block. The write is `check_and_write(ModelsDisabled, …)`: every section of
+/// clone and delete model profiles from the web", slice MP1, as amended by
+/// "Instance profiles" and its key split): the profile's own section, alone, out
+/// of `models.ini`, the one pool, every other byte of the tree kept, the retired
+/// `models.ini.disabled` and `assignments.ini` included. The checks, under the
+/// lock, in this order: the id rule fails, or the id is `*`, and it is
+/// `no-model-profile-named [profile]`, never `invalid-model-profile-id`, and
+/// before any file is read; a profile the pool has no section for is the same
+/// refusal, a key of the retired record or a section of the retired
+/// switched-off file no proof it exists; a profile an instance profile's entry
+/// `[<profile>/<model>]` lists, in any letter case, is **`model-profile-assigned
+/// [profile, "<a>, <b>"]`** with the ids of every such instance profile, in the
+/// pool's own order, joined with `, `: the model sits in those profiles'
+/// renders, and a delete would leave an entry naming nothing. An instance
+/// profile file that cannot be read is `Io`, never the "unused" of an empty
+/// list. `* = inherit` in the retired record serves nothing of itself, so it
+/// does not block. The write is `check_and_write(Models, …)`: every section of
 /// the id, repeated in any letter case, is gone with `ini::text::delete_section`
-/// and nothing else moves, the renders included. Guarded as a write of a served
-/// file is: `configure` first, the `As` form answered only to the bff's account
-/// for a current member of `pai`, one record of the action log per call.
+/// and nothing else moves, the renders of the instances running a profile that
+/// lists the model excepted. Guarded as a write of a served file is:
+/// `configure` first, the `As` form answered only to the bff's account for a
+/// current member of `pai`, one record of the action log per call.
 #[cfg(test)]
 pub(crate) fn manager_model_profile_delete_e2e() {
     use fakes::{
@@ -22759,44 +23233,52 @@ pub(crate) fn manager_model_profile_delete_e2e() {
             .collect()
     };
 
-    // The three instances of the record, and the pool: `On-One` (switched on,
-    // `load-on-startup`) and `Twin` in `models.ini`; `off-one`, the twin's other
-    // copy, `two-places`, `Repeated` and a second copy spelled in the other case
-    // in `models.ini.disabled`. A twin is what an interrupted switch leaves.
-    const IDS: [&str; 3] = ["default", "lan-2", "lan-3"];
-    write_record(&sys, &IDS);
-    let pool_on = real_model_files(
+    // The pool, the instance profiles and the record. `default` and `lan-2` run
+    // `gpu`, `lan-3` runs `plain`, which lists no model. The one pool holds
+    // `On-One`, `Twin`, `off-one`, `two-places`, `Repeated` twice (the twin an
+    // interrupted migration leaves) and `Star-Served`; the entry `[gpu/On-One]`
+    // and the entry `[gpu/TWO-PLACES]` list two of them, in the other case. The
+    // retired `models.ini.disabled` holds `Retired` and the retired
+    // `assignments.ini` names `repeated` and `star-served`: neither file is read,
+    // so neither blocks a delete, and the test pins that neither is written.
+    const PROFILE_OF: [(&str, &str); 3] =
+        [("default", "gpu"), ("lan-2", "gpu"), ("lan-3", "plain")];
+    const RECORD: &str = "[default]\nInstanceProfile = gpu\nPort = 8581\n\n[lan-2]\nInstanceProfile = gpu\nPort = 8582\n\n[lan-3]\nInstanceProfile = plain\nPort = 8583\n";
+    const PROFILES: &str = "[gpu]\nServerProfile = gpu\n\n[gpu/On-One]\nctx-size = 4096\n\n[gpu/TWO-PLACES]\n\n[plain]\nServerProfile = plain\n";
+    const RETIRED_OFF: &str = "[Retired]\nmodel = /models/retired.gguf\n";
+    const RETIRED_KEYS: &str = "[default]\nrepeated = inherit\nstar-served = on\n";
+    let pool = real_model_files(
         dir.path(),
-        "[On-One]\nmodel = /models/on1.gguf\nload-on-startup = true\n\n[Twin]\nmodel = /models/twin.gguf\n",
+        "[On-One]\nmodel = /models/on1.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n\n[off-one]\nmodel = /models/off1.gguf\n\n[two-places]\n; a note\ntemp = 0.3\nmodel = /models/two.gguf\n\n[Repeated]\nmodel = /models/rep1.gguf\n\n[repeated]\nmodel = /models/rep2.gguf\n\n[Star-Served]\nmodel = /models/star.gguf\n",
     );
-    let pool_off = real_model_files(
-        dir.path(),
-        "[off-one]\nmodel = /models/off1.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n\n[two-places]\n; a note\ntemp = 0.3\nmodel = /models/two.gguf\n\n[Repeated]\nmodel = /models/rep1.gguf\n\n[repeated]\nmodel = /models/rep2.gguf\n\n[Star-Served]\nmodel = /models/star.gguf\n",
-    );
-    // The pool and the record of the assignments, and the render of every
-    // instance as the pool and its own section give it: a fixture that seeds
-    // the pool by hand writes no render of its own.
-    let seed = |on: &str, off: &str, assignments: &str| {
-        std::fs::write(sys.join("models.ini"), on).expect("models.ini");
-        std::fs::write(sys.join("models.ini.disabled"), off).expect("models.ini.disabled");
-        std::fs::write(sys.join(ASSIGNMENTS_FILE), assignments).expect(ASSIGNMENTS_FILE);
-        for id in IDS {
+
+    // The tree as a start leaves it: the pool, the profiles, the record, the
+    // retired files, and the render of every instance as its own instance
+    // profile gives it. A fixture that seeds the pool by hand writes its own
+    // render, the same text the render builds.
+    let seed = |pool: &str| {
+        std::fs::write(sys.join("models.ini"), pool).expect("models.ini");
+        std::fs::write(sys.join(INSTANCE_PROFILES_FILE), PROFILES).expect(INSTANCE_PROFILES_FILE);
+        std::fs::write(sys.join(INSTANCES_FILE), RECORD).expect(INSTANCES_FILE);
+        std::fs::write(sys.join(MODELS_DISABLED_FILE), RETIRED_OFF).expect(MODELS_DISABLED_FILE);
+        std::fs::write(sys.join(ASSIGNMENTS_FILE), RETIRED_KEYS).expect(ASSIGNMENTS_FILE);
+        for (id, profile) in PROFILE_OF {
+            std::fs::write(
+                sys.join(format!("server@{profile}.ini")),
+                "[Server]\nDevices = CUDA0\n",
+            )
+            .expect("server profile");
             std::fs::write(
                 sys.join(format!("models@{id}.ini")),
-                pai_core::assign::render(on, off, Some(&section(assignments, id))),
+                pai_core::assign::render_profile(pool, PROFILES, profile),
             )
             .expect("render");
         }
     };
 
-    // The keys: `Off-One` and `two-places` under `default`, `On-One` and
-    // `TWO-PLACES` under `lan-2` (the other case, and an `off`), `On-Three` a key
-    // of a profile the pool does not hold, and a hand `* = on` under `lan-3`.
-    const KEYS: &str = "[default]\nOff-One = inherit\ntwo-places = inherit\nOn-Three = off\n\n[lan-2]\nOn-One = inherit\nTWO-PLACES = off\n\n[lan-3]\n* = on\n";
-
     // ── Every refusal, and the whole tree standing behind it ───────────────
     {
-        seed(&pool_on, &pool_off, KEYS);
+        seed(&pool);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let group = FakeGroup::new();
@@ -22805,39 +23287,28 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         let before = snapshot();
 
         for (id, key, values) in [
-            // Switched on: step 2, before the assignments of step 3, which
-            // `lan-2`'s key would answer.
-            ("on-one", "model-profile-enabled", &["on-one"][..]),
-            ("ON-ONE", "model-profile-enabled", &["ON-ONE"]),
-            // The twin an interrupted switch left in both files: on.
-            ("twin", "model-profile-enabled", &["twin"]),
-            // Assigned, in the other case, and `inherit`: a row the admin set.
-            ("off-one", "model-profile-assigned", &["off-one", "default"]),
-            ("OFF-ONE", "model-profile-assigned", &["OFF-ONE", "default"]),
-            // Two instances, named in the record's order: the `inherit` of
-            // `default` first, the `off` of `lan-2` with it.
+            // Listed by an entry of the profile two instances run: the entry is
+            // judged before the pool is read, and the other letter case is the
+            // same entry.
+            ("on-one", "model-profile-assigned", &["on-one", "gpu"][..]),
+            ("ON-ONE", "model-profile-assigned", &["ON-ONE", "gpu"][..]),
             (
                 "two-places",
                 "model-profile-assigned",
-                &["two-places", "default, lan-2"],
+                &["two-places", "gpu"][..],
             ),
-            // Served only through a hand `* = on`: a delete would leave a key
-            // that the next profile of the id inherits.
-            (
-                "star-served",
-                "model-profile-assigned",
-                &["star-served", "lan-3"],
-            ),
-            // Not in the pool at all, and a key of it is no proof.
-            ("nope", "no-model-profile-named", &["nope"]),
-            ("On-Three", "no-model-profile-named", &["On-Three"]),
+            // Not in the pool at all: a key of the retired record and a section
+            // of the retired switched-off file are no proof it exists.
+            ("nope", "no-model-profile-named", &["nope"][..]),
+            ("On-Three", "no-model-profile-named", &["On-Three"][..]),
+            ("retired", "no-model-profile-named", &["retired"][..]),
             // No id of its own: the id rule and `*` answer the pool's refusal,
             // not `invalid-model-profile-id`, and no path is built.
-            ("*", "no-model-profile-named", &["*"]),
-            ("a b", "no-model-profile-named", &["a b"]),
-            ("", "no-model-profile-named", &[""]),
-            ("../x", "no-model-profile-named", &["../x"]),
-            ("a[b]", "no-model-profile-named", &["a[b]"]),
+            ("*", "no-model-profile-named", &["*"][..]),
+            ("a b", "no-model-profile-named", &["a b"][..]),
+            ("", "no-model-profile-named", &[""][..]),
+            ("../x", "no-model-profile-named", &["../x"][..]),
+            ("a[b]", "no-model-profile-named", &["a[b]"][..]),
         ] {
             assert_eq!(
                 m.delete_model_profile(&desktop, id),
@@ -22858,7 +23329,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         let got = records(&lines);
         assert_eq!(
             outcomes(&got),
-            vec!["Invalid"; 14],
+            vec!["Invalid"; 11],
             "one record per refused call, every one of them the check's refusal"
         );
         assert!(
@@ -22868,43 +23339,43 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         );
     }
 
-    // ── The record cannot be read: `Io`, never "unused" ────────────────────
+    // ── The instance profiles cannot be read: `Io`, never "unused" ──────────
     {
-        seed(&pool_on, &pool_off, KEYS);
+        seed(&pool);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, log);
-        let on_before = bytes_of("models.ini");
-        let off_before = bytes_of("models.ini.disabled");
+        let pool_before = bytes_of("models.ini");
+        let off_before = bytes_of(MODELS_DISABLED_FILE);
         let kept = renders();
-        std::fs::remove_file(sys.join(INSTANCES_FILE)).expect("the record out");
-        std::fs::create_dir(sys.join(INSTANCES_FILE)).expect("a directory in its place");
+        std::fs::remove_file(sys.join(INSTANCE_PROFILES_FILE)).expect("the profiles out");
+        std::fs::create_dir(sys.join(INSTANCE_PROFILES_FILE)).expect("a directory in its place");
 
         assert_eq!(
             m.delete_model_profile(&desktop, "repeated"),
             Err(ManagerError::Io(std::io::ErrorKind::IsADirectory)),
-            "a record that cannot be read answers the read's own kind, not the \
-             empty list of a node with no instance"
+            "the entries are the ground of the refusal: their file cannot be read, so the \
+             delete answers the read's own kind, not the empty list of a node with no profile"
         );
         // The id is judged before any file: `*` answers the pool's refusal even
-        // with the record unreadable.
+        // with the entries unreadable.
         assert_eq!(
             m.delete_model_profile(&desktop, "*"),
             refused("no-model-profile-named", &["*"]),
-            "the id rule runs before the record is read"
+            "the id rule runs before the entries are read"
         );
         assert_eq!(
             bytes_of("models.ini"),
-            on_before,
-            "nothing removed from the switched-on file"
+            pool_before,
+            "nothing removed from the pool"
         );
         assert_eq!(
-            bytes_of("models.ini.disabled"),
+            bytes_of(MODELS_DISABLED_FILE),
             off_before,
-            "and nothing from the switched-off one"
+            "and nothing from the retired switched-off file"
         );
         assert_eq!(renders(), kept, "and no render written");
-        assert!(sys.join(INSTANCES_FILE).is_dir(), "the path stands");
+        assert!(sys.join(INSTANCE_PROFILES_FILE).is_dir(), "the path stands");
         assert_eq!(
             records(&lines),
             vec![
@@ -22913,44 +23384,43 @@ pub(crate) fn manager_model_profile_delete_e2e() {
             ],
             "the read's failure is recorded as every guarded call is"
         );
-        std::fs::remove_dir(sys.join(INSTANCES_FILE)).expect("the directory away");
-        write_record(&sys, &IDS);
+        std::fs::remove_dir(sys.join(INSTANCE_PROFILES_FILE)).expect("the directory away");
     }
 
-    // ── A pool file cannot be read: `Io`, nothing removed ──────────────────
+    // ── The pool cannot be read: `Io`, nothing removed ─────────────────────
     {
-        seed(&pool_on, &pool_off, KEYS);
+        seed(&pool);
         let m = core(true, FakeActionLog::new());
-        let off_before = bytes_of("models.ini.disabled");
+        let off_before = bytes_of(MODELS_DISABLED_FILE);
         let kept = renders();
         std::fs::remove_file(sys.join("models.ini")).expect("models.ini out");
         std::fs::create_dir(sys.join("models.ini")).expect("a directory in its place");
         assert_eq!(
             m.delete_model_profile(&desktop, "repeated"),
             Err(ManagerError::Io(std::io::ErrorKind::IsADirectory)),
-            "the switched-on file is read first: its failure is the answer"
+            "the pool is the file the delete writes: its read's failure is the answer"
         );
         assert_eq!(
-            bytes_of("models.ini.disabled"),
+            bytes_of(MODELS_DISABLED_FILE),
             off_before,
-            "the file the delete writes keeps every byte"
+            "the retired switched-off file is never opened: it keeps every byte"
         );
         assert_eq!(renders(), kept, "and no render written");
         std::fs::remove_dir(sys.join("models.ini")).expect("the directory away");
     }
 
-    // ── An accepted delete: the section alone, out ─────────────────────────
-    // The keys of the profiles this block deletes are gone: `* = inherit` serves
-    // nothing of itself, so it does not block, and no key names them.
-    const FREE: &str = "[default]\nkeep = inherit\n\n[lan-2]\n* = inherit\n";
+    // ── An accepted delete: the section alone, out of the pool ─────────────
+    // The profiles this block deletes are listed by no entry, so no render of
+    // any instance carries them.
     {
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, log);
-        seed(&pool_on, &pool_off, FREE);
-        let on_before = bytes_of("models.ini");
-        let record_before = bytes_of(INSTANCES_FILE);
+        seed(&pool);
+        let off_before = bytes_of(MODELS_DISABLED_FILE);
         let keys_before = bytes_of(ASSIGNMENTS_FILE);
+        let record_before = bytes_of(INSTANCES_FILE);
+        let profiles_before = bytes_of(INSTANCE_PROFILES_FILE);
         let kept = renders();
         let before = listing();
 
@@ -22960,61 +23430,66 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         assert_eq!(
             m.delete_model_profile(&desktop, "repeated"),
             Ok(()),
-            "a profile no instance assigns, in the switched-off file"
+            "a profile no entry lists, in the one pool"
         );
         let want = delete_section(
-            &delete_section(&pool_off, "repeated").expect("one copy"),
+            &delete_section(&pool, "repeated").expect("one copy"),
             "repeated",
         )
         .expect("the other copy");
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             want,
-            "every section of the id is gone, repeated copies and all, every other \
-             byte of the file kept"
+            "every section of the id is gone, repeated copies and all, every other byte \
+             of the pool kept"
         );
         assert!(
-            !text_of("models.ini.disabled").contains("[Repeated]")
-                && !text_of("models.ini.disabled").contains("[repeated]"),
+            !text_of("models.ini").contains("[Repeated]")
+                && !text_of("models.ini").contains("[repeated]"),
             "no copy is left"
         );
         assert_eq!(
-            section(&text_of("models.ini.disabled"), "star-served"),
-            section(&pool_off, "Star-Served"),
+            section(&text_of("models.ini"), "star-served"),
+            section(&pool, "Star-Served"),
             "the neighbour's section is the bytes it was, its case and all"
         );
         assert_eq!(
-            bytes_of("models.ini"),
-            on_before,
-            "the switched-on file: nothing"
+            bytes_of(MODELS_DISABLED_FILE),
+            off_before,
+            "the retired switched-off file keeps every byte"
         );
         assert_eq!(
             bytes_of(ASSIGNMENTS_FILE),
             keys_before,
-            "a delete writes no assignment key: it refuses one that has any"
+            "the retired record keeps every byte, the key naming this very profile and all"
         );
         assert_eq!(
             bytes_of(INSTANCES_FILE),
             record_before,
-            "and no instance record"
+            "a delete writes no instance record"
+        );
+        assert_eq!(
+            bytes_of(INSTANCE_PROFILES_FILE),
+            profiles_before,
+            "and no instance profile: the profile it deletes is listed in none"
         );
         assert_eq!(
             renders(),
             kept,
-            "and no render moves: an unassigned profile is in none of them"
+            "and no render moves: an unlisted profile is in none of them"
         );
         assert_eq!(listing(), before, "no new file, and no temp file left");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(
-                std::fs::metadata(sys.join("models.ini.disabled"))
+                std::fs::metadata(sys.join("models.ini"))
                     .expect("metadata")
                     .permissions()
                     .mode()
                     & 0o7777,
                 0o644,
-                "the mode of the pool file the delete wrote"
+                "the mode of the pool the delete wrote"
             );
         }
         assert_eq!(
@@ -23033,32 +23508,29 @@ pub(crate) fn manager_model_profile_delete_e2e() {
             "the id given in the other letter case is the same profile"
         );
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             delete_section(&want, "star-served").expect("the section"),
             "the section is found ignoring the case, as the reader finds it"
         );
 
         // The last section, with no ending of its own: the file keeps standing,
         // empty.
-        std::fs::write(
-            sys.join("models.ini.disabled"),
-            "[Last]\nmodel = /m/last.gguf",
-        )
-        .expect("an unterminated pool");
+        std::fs::write(sys.join("models.ini"), "[Last]\nmodel = /m/last.gguf")
+            .expect("an unterminated pool");
         assert_eq!(
             m.delete_model_profile(&desktop, "last"),
             Ok(()),
-            "the only profile of the file"
+            "the only profile of the pool"
         );
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             "",
             "the file stands, empty: a delete removes a section, not the file"
         );
 
         // The CRLF file a hand edit wrote, with its ending kept for what is left.
         let crlf_seed = "[Keep]\r\nmodel = /m/keep.gguf\r\n\r\n[Crlf]\r\nmodel = /m/crlf.gguf\r\n";
-        std::fs::write(sys.join("models.ini.disabled"), crlf_seed).expect("a CRLF off file");
+        std::fs::write(sys.join("models.ini"), crlf_seed).expect("a CRLF pool");
         assert_eq!(
             m.delete_model_profile(&desktop, "crlf"),
             Ok(()),
@@ -23066,7 +23538,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         );
         let crlf_want = delete_section(crlf_seed, "crlf").expect("the section");
         assert_eq!(
-            text_of("models.ini.disabled"),
+            text_of("models.ini"),
             crlf_want,
             "the section out, every other byte kept"
         );
@@ -23075,13 +23547,13 @@ pub(crate) fn manager_model_profile_delete_e2e() {
             "the neighbour's section keeps its CRLF ending: {crlf_want:?}"
         );
         assert!(
-            !text_of("models.ini.disabled").contains("[Crlf]"),
+            !text_of("models.ini").contains("[Crlf]"),
             "and the profile's section is gone"
         );
 
         // Gone already: the second delete of the same id is the pool's refusal,
         // and writes nothing.
-        let off_before = bytes_of("models.ini.disabled");
+        let pool_before = bytes_of("models.ini");
         let before = snapshot();
         assert_eq!(
             m.delete_model_profile(&desktop, "crlf"),
@@ -23093,12 +23565,89 @@ pub(crate) fn manager_model_profile_delete_e2e() {
             before,
             "and a second delete of it changed no byte"
         );
-        assert_eq!(bytes_of("models.ini.disabled"), off_before);
+        assert_eq!(bytes_of("models.ini"), pool_before);
+    }
+
+    // ── A listed model, once its entry is gone: the pool, and the render ────
+    // The entry is what lists the model. Remove it, as taking the model out of
+    // the profile does, and the model deletes: its section leaves the pool and
+    // every instance running the profile renders again without it, while the
+    // render of an instance running a profile that never listed it keeps its
+    // bytes.
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        // The tree as a start leaves it, the entries of `gpu` standing and every
+        // render written from them: the render carries the model the entry lists,
+        // with the POOL's own section header (the entry is `[gpu/On-One]`, the
+        // pool's section is `[On-One]`, and the render copies the section's bytes).
+        seed(&pool);
+        // Then the entry is taken away, as the profile's page does: no render is
+        // rewritten by hand, the render that carries the model is the one the
+        // entries wrote while the entry stood.
+        let stripped = PROFILES.replace("\n\n[gpu/On-One]\nctx-size = 4096", "");
+        std::fs::write(sys.join(INSTANCE_PROFILES_FILE), &stripped).expect("the entry gone");
+        let gpu_before = bytes_of("models@default.ini");
+        let plain_before = bytes_of("models@lan-3.ini");
+        assert!(
+            gpu_before.starts_with(b"; Generated")
+                && text_of("models@default.ini").contains("[On-One]"),
+            "the render of an instance running `gpu` carries the model the entry \
+             listed, under the pool's header: {}",
+            text_of("models@default.ini")
+        );
+        assert!(
+            !text_of("models@lan-3.ini").contains("[On-One]"),
+            "and the render of `plain` does not: {}",
+            text_of("models@lan-3.ini")
+        );
+
+        assert_eq!(
+            m.delete_model_profile(&desktop, "on-one"),
+            Ok(()),
+            "a model no entry lists any more"
+        );
+        assert_eq!(
+            text_of("models.ini"),
+            delete_section(&pool, "on-one").expect("the section"),
+            "the section alone, out of the pool"
+        );
+        assert_eq!(
+            bytes_of(INSTANCE_PROFILES_FILE),
+            stripped.as_bytes(),
+            "and no entry written: the entry is the profile's page's to take away"
+        );
+        let gpu_after = text_of("models@default.ini");
+        assert_ne!(bytes_of("models@default.ini"), gpu_before);
+        assert!(
+            !gpu_after.contains("[On-One]"),
+            "the render of an instance running the profile renders again, without the \
+             model it listed: {gpu_after}"
+        );
+        assert!(
+            gpu_after.contains("[two-places]"),
+            "the model the entry `[gpu/TWO-PLACES]` still lists stays in the render, under \
+             the pool's own header: {gpu_after}"
+        );
+        assert_eq!(
+            bytes_of("models@lan-3.ini"),
+            plain_before,
+            "the render of an instance running a profile that lists nothing keeps its bytes"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="delete_model_profile" target="on-one" caller=":1.42" principal=- outcome=ok"#
+                    .to_string()
+            ],
+            "one record for the accepted delete"
+        );
     }
 
     // ── The gate: configure, and the `As` form for a member of `pai` ───────
     {
-        seed(&pool_on, &pool_off, FREE);
+        seed(&pool);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(false, log);
@@ -23123,7 +23672,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         );
     }
     {
-        seed(&pool_on, &pool_off, FREE);
+        seed(&pool);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, log);
@@ -23137,7 +23686,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
             "the bff's account, for a member of `pai`"
         );
         assert_eq!(
-            m.delete_model_profile(&outsider, "two-places"),
+            m.delete_model_profile(&outsider, "twin"),
             Err(ManagerError::NotAuthorized),
             "the bff's account, for a caller outside `pai`"
         );
@@ -23146,14 +23695,14 @@ pub(crate) fn manager_model_profile_delete_e2e() {
             Err(ManagerError::NotAuthorized),
             "a caller that is not the bff vouches for nobody"
         );
-        let off = text_of("models.ini.disabled");
+        let pool_after = text_of("models.ini");
         assert!(
-            !off.contains("[star-served]") && !off.contains("[Star-Served]"),
+            !pool_after.contains("[star-served]") && !pool_after.contains("[Star-Served]"),
             "the accepted delete landed"
         );
         assert!(
-            off.contains("two-places") && off.contains("off-one"),
-            "every refused delete left its profile: {off}"
+            pool_after.contains("twin") && pool_after.contains("off-one"),
+            "every refused delete left its profile: {pool_after}"
         );
         let got = records(&lines);
         assert_eq!(
@@ -23170,7 +23719,6 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         );
     }
 }
-
 /// M3 of "Choosing the model file on the web" (`ARCHITECTURE.md` (4) and (7),
 /// amended by "One models folder for every engine" (3)): `ModelFiles` /
 /// `ModelFilesAs` lists the node's one models folder
@@ -24611,13 +25159,17 @@ fn ip2_tree_diff(a: &[(String, String)], b: &[(String, String)]) -> Vec<String> 
 }
 
 /// A manager over the redirected tree, for the IP2 fix-round phases (the review
-/// of the slice, D1 to D5).
+/// of the slice, D1 to D5). No unit runs: the fake's default answers EVERY unit
+/// as running, and the running list a verb answers follows the units in `running`.
 #[cfg(test)]
 pub(crate) fn ip2_manager() -> Manager<fakes::FakeService, fakes::FakeAuthority, fakes::FakeResolver>
 {
     use fakes::{FakeAuthority, FakeResolver, FakeService};
     Manager::new(
-        FakeService::new(),
+        FakeService {
+            state: crate::manager::service::UnitState::Inactive,
+            ..FakeService::new()
+        },
         FakeAuthority::new(true),
         FakeResolver::lan(),
     )
@@ -25266,8 +25818,8 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     let pool_before = pool();
     assert_eq!(
         m.add_instance_profile_model(&alice, "default", "gamma"),
-        Ok(()),
-        "IP3a: the entry add lands"
+        Ok(Vec::new()),
+        "IP3a: the entry add lands (IP3b 4 pins the running list it answers)"
     );
     assert_eq!(
         pool(),
@@ -25286,14 +25838,17 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     let pool_before = pool();
     assert_eq!(
         m.add_instance_profile_model(&alice, "default", "alpha"),
-        Ok(()),
-        "IP3a: a model the profile already lists is no refusal"
+        Err(refused(
+            "instance-profile-model-listed",
+            &["default", "alpha"]
+        )),
+        "IP3b 4: the add of a model the profile already lists is refused on its own \
+         conflict"
     );
     assert_eq!(
         pool(),
         pool_before,
-        "IP3a: adding a model the profile already lists writes no byte (its entry's \
-         keys are its state)"
+        "IP3b 4: the refused add writes no byte (the entry's keys are its state)"
     );
 
     // ── The entry remove ─────────────────────────────────────────────────
@@ -25309,8 +25864,8 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     );
     assert_eq!(
         m.remove_instance_profile_model(&alice, "default", "beta"),
-        Ok(()),
-        "IP3a: the entry removal lands"
+        Ok(Vec::new()),
+        "IP3a: the entry removal lands (IP3b 4 pins the running list it answers)"
     );
     assert_eq!(
         pool(),
@@ -25331,13 +25886,17 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     let pool_before = pool();
     assert_eq!(
         m.remove_instance_profile_model(&alice, "unassigned", "beta"),
-        Ok(()),
-        "IP3a: removing an entry the profile does not list is no refusal"
+        Err(refused(
+            "no-instance-profile-model",
+            &["unassigned", "beta"]
+        )),
+        "IP3b 4: the remove of an entry the profile does not list is refused on its \
+         own conflict"
     );
     assert_eq!(
         pool(),
         pool_before,
-        "IP3a: removing an entry that is not there writes no byte"
+        "IP3b 4: the refused remove writes no byte"
     );
 
     // ── SetInstanceProfile: the record's pointer, the pool's text as revision
@@ -25889,14 +26448,16 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
 
     // Every call answers on its own merits for a member (the round below), so a
     // refusal here is the principal gate and nothing else.
-    let answers: Vec<(&str, Result<(), ManagerError>)> = vec![
+    let answers: Vec<(&str, Result<Vec<String>, ManagerError>)> = vec![
         (
             "create_instance_profile",
-            m.create_instance_profile(&bob, "brand", "lab"),
+            m.create_instance_profile(&bob, "brand", "lab")
+                .map(|()| Vec::new()),
         ),
         (
             "delete_instance_profile",
-            m.delete_instance_profile(&bob, "spare"),
+            m.delete_instance_profile(&bob, "spare")
+                .map(|()| Vec::new()),
         ),
         (
             "add_instance_profile_model",
@@ -25906,13 +26467,16 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
             "remove_instance_profile_model",
             m.remove_instance_profile_model(&bob, "spare", "alpha"),
         ),
+        // The verbs that answer no list, as the same shape.
         (
             "set_instance_profile",
-            m.set_instance_profile(&bob, "default", "spare", &pool),
+            m.set_instance_profile(&bob, "default", "spare", &pool)
+                .map(|()| Vec::new()),
         ),
         (
             "set_instance_address",
-            m.set_instance_address(&bob, "default", "127.0.0.1", "8699", &record),
+            m.set_instance_address(&bob, "default", "127.0.0.1", "8699", &record)
+                .map(|()| Vec::new()),
         ),
     ];
     for (verb, answer) in answers {
@@ -25935,7 +26499,7 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
     );
 
     // The teeth: the same six verbs, carried by a member, all land.
-    let member: Vec<(&str, Result<(), ManagerError>)> = vec![
+    let member: Vec<(&str, Result<Vec<String>, ManagerError>)> = vec![
         (
             "add_instance_profile_model",
             m.add_instance_profile_model(&alice, "spare", "alpha"),
@@ -25946,18 +26510,19 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
         ),
         (
             "create_instance_profile",
-            m.create_instance_profile(&alice, "brand", "lab"),
+            m.create_instance_profile(&alice, "brand", "lab")
+                .map(|()| Vec::new()),
         ),
         (
             "delete_instance_profile",
-            m.delete_instance_profile(&alice, "brand"),
+            m.delete_instance_profile(&alice, "brand")
+                .map(|()| Vec::new()),
         ),
     ];
     for (verb, answer) in member {
-        assert_eq!(
-            answer,
-            Ok(()),
-            "IP3a review D5: `{verb}` carried by `alice`, a member of `pai`, lands"
+        assert!(
+            answer.is_ok(),
+            "IP3a review D5: `{verb}` carried by `alice`, a member of `pai`, lands:              {answer:?}"
         );
     }
     assert_eq!(

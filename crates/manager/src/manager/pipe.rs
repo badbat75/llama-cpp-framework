@@ -546,11 +546,15 @@ where
             .map(|()| Value::Null),
         Request::AddInstanceProfileModel(profile, model, principal) => requester(caller, principal)
             .and_then(|who| manager.add_instance_profile_model(&who, &profile, &model))
-            .map(|()| Value::Null),
+            // The client's verb answers nothing: the stream carries the
+            // running instances from slice IP4 on.
+            .map(|_| Value::Null),
         Request::RemoveInstanceProfileModel(profile, model, principal) => {
             requester(caller, principal)
                 .and_then(|who| manager.remove_instance_profile_model(&who, &profile, &model))
-                .map(|()| Value::Null)
+                // The client's verb answers nothing: the stream carries the
+                // running instances from slice IP4 on.
+                .map(|_| Value::Null)
         }
         Request::SetInstanceProfile(instance, profile, revision, principal) => {
             requester(caller, principal)
