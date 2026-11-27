@@ -7,6 +7,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 ## How to
 
+- Run every ad-hoc script under a hard timeout: `timeout 120 python3 - <<'EOF'`, never a bare `python3 -` heredoc. Two rewrite scripts with backtracking regexes outlived their run and spun at 100% CPU for 13.5 h (2026-11-26); prefer plain string edits to multi-line regexes over whole files.
+
 ### Working in the shared tree
 
 - Before starting: `ls` the named test files, `git log --oneline -3`, `git status`. A slice with no test

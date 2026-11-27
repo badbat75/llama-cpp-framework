@@ -7,6 +7,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 ## How to
 
+- Run every ad-hoc script under a hard timeout: `timeout 120 python3 - <<'EOF'`, never a bare `python3 -` heredoc. Two rewrite scripts with backtracking regexes outlived their run and spun at 100% CPU for 13.5 h (2026-11-26); prefer plain string edits to multi-line regexes over whole files.
+
 ### Before you start
 
 - Check a reported red against the checkout (`git cat-file -t <commit>`, `ls`, `git worktree list`) before
@@ -33,11 +35,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   call site of the seam in the same pass, and run clippy (the stub's unused argument is a `-D warnings`
   red). A retired source-text grep's note goes in `//` lines, not `///`: a doc block followed by a blank
   line and another doc block is clippy `empty_line_after_doc_comments`.
+- clippy's `needless_borrows_for_generic_args` reds, under `-D warnings`, a `std::fs::write(p, &format!(..))`
+  and a `std::fs::remove_file(&dir.join(f))`: pass them by value.
 - Stub a manager verb that does not exist yet with `ManagerError::Io(std::io::ErrorKind::Unsupported)`
   (`ManagerError` has no `Other`); make the phase's refusal helper take `key: &'static str`, because
   `checks::Refusal.key` is `&'static str` (a `&str` closure argument is a lifetime red, not a test red);
   write `serde_json::from_str::<serde_json::Value>` inside a
   `json!` literal (the macro's `Into<Value>` leaves `T` ambiguous).
+- A verb whose ANSWER grows a value drops that value at the transport wrappers in the slice that changes
+  the signature (`manager/dbus.rs`'s `Ok(self.core(move |m| m.verb(..)).await?)`, `manager/pipe.rs`'s
+  `.and_then(..).map(|()| Value::Null)`): map it away there (`|_| ()`, `|_| Value::Null`) and keep the `?`,
+  since the wire shape is a later slice's. A scripted edit that adds `.map(|_| ())` and loses the `?` is
+  six `E0308: expected Vec<String>, found ()`.
 - A new `pai-manager` subcommand is stubbed in the existing `manager.rs` (no new production file): the
   `ManagerCommand` arm, the seam fns with a `// <SLICE> STUB` body, and the arm in `run()`. The parser
   tests need no stub (`UnknownCommand` is today's red). Keep the seam's argument list at 7: clippy
@@ -205,6 +214,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `tests/ip3a_probe.rs`-style module with one `#[test]` per phase, run
   `--lib -- --test-threads=1 <probe-filter>`, shows every phase's day-one panic at once (each phase
   redirects the data root to its own tempdir, so solos are safe); delete the module before reporting.
+  A probe in the slice's OWN test file, gated on an env var naming the phase, is the same proof with no
+  new module to register, and needs `--test-threads=1` (it redirects the root too).
+- A slice that changes what an OLDER slice's phase pins (an idempotent add that becomes a refusal, a verb
+  grown from `Result<()>` to a list) reddens that older phase, which runs FIRST: the suite's `panicked at`
+  names `service.rs` and an older phase's message, not the new test file, so the new phases' own reds are
+  only visible in the solo probe. Sweep the older phases in the same pass: every
+  `assert_eq!(verb(..), Ok(()))` of the changed verb, and each typed `Vec<(&str, Result<.., ManagerError>)>`
+  of a gate phase (its annotation moves, and the verbs that keep `()` need a `.map(|()| Vec::new())`).
+- Today's `delete_model_profile` refuses a profile whose section sits in `models.ini` with
+  `model-profile-enabled` (the switch-off-and-unassigned rule), so a one-pool fixture that deletes a
+  profile no entry lists reds on THAT, before the entry-listing rule exists: pin the refusal loosely
+  (a keyed refusal naming the id) for the rule the slice has not shaped yet, and exactly for the one it has.
 - Pin "a search stops at the end of its range and refuses" (IP3a D3: the port walk of
   `create_instance`) by seeding the WHOLE range? No: 57 000 instances make `write_served` render one
   file each. Add the narrowest builder seam beside `with_walk_max_entries` (`with_port_search(first,
