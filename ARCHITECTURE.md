@@ -4040,7 +4040,7 @@ file a later engine loads.
   carries no profile id.
 - **The test:** every rendered file and every launch argv in the manager's tests holds no substring
   that is a profile id of the fixture. Each render slice pins it (UR1, UR2, IP3c).
-- **What the rule does not cover, to be confirmed by the user:** the *instance* id still names the
+- **What the rule does not cover, confirmed by the user (2026-11-27):** the *instance* id still names the
   render files themselves (`models@<id>.ini`), the unit, and the state and log paths the launch passes
   (`--slot-save-path .../state/<id>`). Those are names of places, not profile references, so they
   stay. Rendering them by name would make a rename move folders, which the id was introduced to
