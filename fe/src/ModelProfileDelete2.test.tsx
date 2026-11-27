@@ -12,7 +12,11 @@
 // which 22D2 put at the top and kept. So D2.1 to D2.4 and D2.8 to D2.10 name
 // the bar and the plain status paragraph here, and the row's flex row is the
 // list cell's (ModelProfilesDelete1.test.tsx and ServerProfilesDelete1.test.tsx).
-// D2.5 to D2.7 are the bar, which 22D4 keeps.
+// D2.5 to D2.7 are the bar, which 22D4 keeps, and which 22 L2.B1 (the user's
+// ruling of 2026-11-26) moves to the end of the form, sticky at the viewport's
+// bottom edge: D2.5 and D2.7 are amended here, the sheet rules D2.6 pinned are
+// pinned as L2.B1's in Reflow.test.ts, and the visible reason line of 22 D4.14
+// is replaced by the floating tip in ModelProfileDelete3.test.tsx.
 //
 // 22 D2.9's widths (320 px, 200 % text, 1280 and 1600 px, both themes, no
 // sideways scroll, the minus wrapping under the status text, the bar never
@@ -36,7 +40,9 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  accName,
   before,
+  type BffOptions,
   en,
   EN,
   fakeBff,
@@ -44,9 +50,9 @@ import {
   modelProfileDoc,
   reply,
   serverProfileDoc,
+  shownText,
   startAt,
   stubDialog,
-  type BffOptions,
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
@@ -178,8 +184,8 @@ function mainTabbable(main: HTMLElement): string[] {
 
 /** The name Tab shows: a control's text, or the label that names an input. */
 function nameOf(el: HTMLElement): string {
-  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // The accessible name, `aria-label` first (test/bff.ts's accName).
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return accName(el)
   const labelled = el.getAttribute('aria-labelledby')
   if (labelled)
     return labelled
@@ -259,8 +265,9 @@ const RULES: Rule[] = [...CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
   depth: opened(m.index ?? 0),
 }))
 
-// Top-level rules only: the bar is sticky at every width but in the short
-// viewport block, which is read on its own.
+// Top-level rules only: the push of the bar's Delete (22 D4.30 with L2.A2) and
+// the cascade reads are pinned against the sheet as it applies at normal
+// widths, where nothing is overridden by a media block.
 const TOP = RULES.filter((r) => r.depth === 0)
 
 const norm = (v: string): string => v.replace(/\s+/g, ' ').trim()
@@ -274,21 +281,6 @@ const prop = (body: string, name: string): string => {
   }
   return val
 }
-
-const single = (list: Rule[], what: string): Rule => {
-  if (list.length !== 1)
-    throw new Error(
-      `expected exactly one rule: ${what}, found ${list.length}` +
-        (list.length ? ` (${list.map((r) => r.compact).join(' | ')})` : ''),
-    )
-  return list[0]
-}
-
-const topBy = (compact: string, what: string): Rule =>
-  single(
-    TOP.filter((r) => r.compact === compact),
-    `the top-level rule whose selector is exactly ${compact} (${what})`,
-  )
 
 /** Does the rule's selector name `el`, as written (the combinators kept)? */
 const names = (rule: Rule, el: HTMLElement): boolean =>
@@ -305,31 +297,17 @@ const names = (rule: Rule, el: HTMLElement): boolean =>
       }
     })
 
-/** The top-level rules that give `el` a `--space-5` gap on its right, the
- *  properties that put space after a thing in a row (22 D4.10). The selector is
- *  the coder's: the pin is that one rule names this button on the page and
- *  declares the gap, and that the gap is the Delete's own. */
-const GAP_RIGHT = ['margin-right', 'margin-inline-end']
+/** The top-level rules that push `el` to the end of its row, the way 22 D4.30
+ *  with L2.A2 pushes the bar's Delete: `margin-inline-start: auto` (the
+ *  `--space-5` gap 22 D4.10 gave after it is gone, the Delete being last). The
+ *  selector is the coder's: the pin is that one rule names this button on the
+ *  page and declares the push, and that the push is the Delete's own. */
+const GAP_LEFT = ['margin-left', 'margin-inline-start']
 const gapRules = (el: HTMLElement): Rule[] =>
   TOP.filter(
     (r) =>
-      GAP_RIGHT.some((p) => norm(prop(r.body, p)) === 'var(--space-5)') &&
-      names(r, el),
+      GAP_LEFT.some((p) => norm(prop(r.body, p)) === 'auto') && names(r, el),
   )
-
-// The rules inside the @media (max-height: 31.98rem) block, by its own matched
-// braces.
-const shortBlock = (): Rule[] => {
-  const open = CSS.indexOf('@media (max-height: 31.98rem)')
-  expect(open, 'the short-viewport media block').toBeGreaterThan(-1)
-  let end = open
-  let depth = 0
-  for (; end < CSS.length; end++) {
-    if (CSS[end] === '{') depth++
-    else if (CSS[end] === '}' && --depth === 0) break
-  }
-  return RULES.filter((r) => r.depth > 0 && r.at > open && r.at < end)
-}
 
 /** The declarations that reach `el` from the top-level rules, merged in the
  *  cascade's order, with the rules that carry them. The reader of the 22D
@@ -436,14 +414,14 @@ test('22 D2.1 (as 22 D4.9 and 24 A2.1 amend it): the status row is gone; the sta
     '22 D4.10: a switched-on profile keeps the Delete, switched off',
   ).toBe('true')
   expect(
-    within(on.main).queryByText(NEEDS_OFF),
-    '22 D2.1: the muted line is gone, its key leaves the strings file',
-  ).toBeNull()
+    shownText(on.main),
+    '22 D2.1 as 22 L2.B2 amends it: the page shows no muted line with the words, which now live in the Delete’s not-shown reason element (and in the tip, when it opens)',
+  ).not.toContain(NEEDS_OFF)
 })
 
 // ── 22 D2.2: the minus button ───────────────────────────────────────────
 
-test('22 D2.2 (as 22 D4.10 amends it): the page’s Delete is a text button type="button" with id model-profile-delete, its words written on it and no icon, a secondary button of the bar’s group, and the sheet gives it a --space-5 gap after it and not to Discard or Save changes', async () => {
+test('22 D2.2 (as 22 D4.10 and 22 D4.30 amend it): the page’s Delete is a text button type="button" with id model-profile-delete, its words written on it and no icon, a secondary button at the end of the bar’s group, and the sheet pushes it to the bar end with margin-inline-start: auto and not to Discard or Save changes', async () => {
   const { main } = await loaded()
   const button = deleteButton(main)
   expect(button.tagName, 'a native button').toBe('BUTTON')
@@ -452,7 +430,7 @@ test('22 D2.2 (as 22 D4.10 amends it): the page’s Delete is a text button type
     'model-profile-delete',
   )
   expect(
-    text(button),
+    accName(button),
     '22 D4.10: a text button: the words are on it, so no hidden name is needed',
   ).toBe(en('model-profile-delete'))
   expect(
@@ -471,19 +449,19 @@ test('22 D2.2 (as 22 D4.10 amends it): the page’s Delete is a text button type
   expect(button.closest('.save-actions'), 'in the bar’s group').toBe(actions)
   expect(
     [...actions.children].indexOf(button),
-    '22 D4.10: first, before Discard and Save changes',
-  ).toBe(0)
-  // The gap: one rule, naming this button, putting --space-5 after it.
+    '22 D4.30: last, after Discard and Save changes',
+  ).toBe(actions.children.length - 1)
+  // The push: one rule, naming this button, taking the free space before it.
   const gaps = gapRules(button)
   expect(
     gaps.length,
-    '22 D4.10: exactly one rule gives the bar’s Delete a --space-5 gap on its right',
+    '22 D4.30 with L2.A2: exactly one rule pushes the bar’s Delete to the bar end with margin-inline-start: auto',
   ).toBe(1)
   for (const key of ['save-discard', 'save-button']) {
     const other = within(actions).getByRole('button', { name: en(key) })
     expect(
       gapRules(other).length,
-      `22 D4.10: the gap is the Delete's own, so ${key} carries no --space-5 of its own`,
+      `22 D4.30: the push is the Delete's own, so ${key} carries no margin-inline-start: auto of its own`,
     ).toBe(0)
   }
 })
@@ -579,9 +557,9 @@ function readCount(bff: ReturnType<typeof fakeBff>, id = ID): number {
   return bff.to('GET', `/api/profiles/model/${encodeURIComponent(id)}`).length
 }
 
-// ── 22 D2.5: the Save bar at the top ────────────────────────────────────
+// ── 22 D2.5 as 22 L2.B1 amends it: the Save bar at the end of the form ───
 
-test('22 D2.5: the Save bar is inside the settings section, right after its h2, before the jump list and the cards, with its status line, Discard and Save changes', async () => {
+test('22 D2.5 as 22 L2.B1 amends it: the Save bar is the settings section’s last child, after the jump list and every card, with its status line, Discard and Save changes', async () => {
   const { main } = await loaded()
   const h2 = settingsTitle(main)
   const section = h2.closest('section')
@@ -590,18 +568,21 @@ test('22 D2.5: the Save bar is inside the settings section, right after its h2, 
   expect(bar, 'the bar is there').not.toBeNull()
   expect(bar!.closest('section'), 'inside the settings section').toBe(section)
   expect(
-    h2.nextElementSibling,
-    '22 D2.5: right after the h2, the first thing in the section',
+    (section as HTMLElement).lastElementChild,
+    '22 L2.B1 a: the form ends with the bar: sticky bottom holds only an element placed after the content it floats over',
   ).toBe(bar)
   const nav = within(main).getByRole('navigation', {
     name: en('model-profile-jump-label'),
   })
-  expect(before(bar!, nav), 'before the jump list').toBe(true)
+  expect(
+    before(nav, bar!),
+    'the jump list, which 22 D2.5 put after it, comes first',
+  ).toBe(true)
   const assets = within(main).getByRole('heading', {
     level: 3,
     name: en('model-profile-assets'),
   })
-  expect(before(bar!, assets), 'and before the cards').toBe(true)
+  expect(before(assets, bar!), 'and the cards come first').toBe(true)
   const statuses = [...bar!.querySelectorAll('[role="status"]')]
   expect(statuses, 'the bar keeps its one status line').toHaveLength(1)
   expect(text(statuses[0]), 'empty on arrival').toBe('')
@@ -615,112 +596,35 @@ test('22 D2.5: the Save bar is inside the settings section, right after its h2, 
   ).toBe('model-profile-save')
 })
 
-// ── 22 D2.6: sticky at the top ──────────────────────────────────────────
+// ── 22 D2.6: the sheet rules, now 22 L2.B1's ────────────────────────────
 
-test('22 D2.6: the sheet sticks the bar to the top: .save-bar is sticky at top 0 with no bottom, its border and its round corners on the bottom edge, its shadow, background and wrap kept; html:has(.save-bar) pads scroll-padding-top and .save-bar button cancels it with the equal negative scroll-margin-top; below 32rem the bar is static and both are 0', () => {
-  const bar = topBy('.save-bar', 'the bar rule')
-  expect(prop(bar.body, 'position'), '22 D2.6: sticky').toBe('sticky')
-  expect(prop(bar.body, 'top'), 'at the viewport’s top').toBe('0')
-  expect(
-    prop(bar.body, 'bottom'),
-    'the bottom edge is gone with the move',
-  ).toBe('')
-  expect(
-    norm(prop(bar.body, 'border-bottom')),
-    'the border moves to the bottom edge',
-  ).toBe('1px solid var(--control)')
-  expect(prop(bar.body, 'border-top'), 'and not the top').toBe('')
-  expect(
-    norm(prop(bar.body, 'border-radius')),
-    'only its bottom corners round',
-  ).toBe('0 0 var(--radius-card) var(--radius-card)')
-  expect(prop(bar.body, 'box-shadow'), 'the same lift').toBe('var(--shadow)')
-  expect(prop(bar.body, 'background'), 'the same background').toBe('var(--bg)')
-  expect(prop(bar.body, 'flex-wrap'), 'the same wrap').toBe('wrap')
-  const pad = topBy('html:has(.save-bar)', 'the page padding rule')
-  expect(
-    norm(prop(pad.body, 'scroll-padding-top')),
-    '22 D2.6: the padding follows the bar to the top, the same calc',
-  ).toBe('calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3))')
-  expect(prop(pad.body, 'scroll-padding-bottom'), 'and leaves the bottom').toBe(
-    '',
-  )
-  const btn = topBy('.save-barbutton', 'the bar’s controls rule')
-  const inner = prop(pad.body, 'scroll-padding-top')
-    .replace(/^calc\((.*)\)$/, '$1')
-    .trim()
-  expect(
-    norm(prop(btn.body, 'scroll-margin-top')),
-    '22 D2.6: the padding of the rule above, negated, so focusing a bar button scrolls nothing (2.4.11)',
-  ).toBe(`calc(-1 * (${inner}))`)
-  expect(
-    prop(btn.body, 'scroll-margin-bottom'),
-    'and the bottom margin is gone',
-  ).toBe('')
-  expect(btn.at > pad.at, 'written after the padding rule, as H5c.1 pins').toBe(
-    true,
-  )
-  const short = shortBlock()
-  expect(
-    prop(
-      single(
-        short.filter((r) => r.compact === '.save-bar'),
-        'the .save-bar rule inside the short-viewport block',
-      ).body,
-      'position',
-    ),
-    '22 D2.6: below a 32rem viewport the bar is static, at the top of the settings',
-  ).toBe('static')
-  expect(
-    prop(
-      single(
-        short.filter((r) => r.compact === 'html:has(.save-bar)'),
-        'the html:has(.save-bar) rule inside the short-viewport block',
-      ).body,
-      'scroll-padding-top',
-    ),
-    'and the padding is 0 there',
-  ).toBe('0')
-  expect(
-    prop(
-      single(
-        short.filter((r) => r.compact === '.save-barbutton'),
-        'the .save-bar button rule inside the short-viewport block',
-      ).body,
-      'scroll-margin-top',
-    ),
-    'and the cancel is cancelled there too (H5c.2)',
-  ).toBe('0')
-  const bottom = RULES.filter(
-    (r) =>
-      prop(r.body, 'scroll-padding-bottom') !== '' ||
-      prop(r.body, 'scroll-margin-bottom') !== '',
-  )
-  expect(
-    bottom.map((r) => r.compact),
-    '22 D2.6: no rule in the sheet pads or margins the scroll at the bottom any more',
-  ).toEqual([])
-})
+// The sheet half of 22 D2.6 (sticky, the border and the corners, the scroll
+// padding pair, the short-viewport block) is not pinned here any more: 22
+// L2.B1 (the user's ruling of 2026-11-26) moves the bar to the viewport's
+// bottom edge and flips every one of those declarations, and the sheet rules
+// are pinned in Reflow.test.ts ("22 L2.B1" tests), where the other sheet
+// readers of L2 sit. The DOM place of the move is pinned above (22 D2.5 as
+// L2.B1 amends it) and in L2SaveBar.test.tsx.
 
-// ── 22 D2.7: the focus order ────────────────────────────────────────────
+// ── 22 D2.7 as 22 L2.B1 amends it: the focus order ──────────────────────
 
-test('22 D2.7 (as 22 D4.11 and 24 A2.1 amend it): Tab reaches the back link, the state line’s switch, the bar’s Delete, Discard and Save changes, the jump list and then the fields; with the confirm open its two buttons come after the bar’s three, and the bar’s buttons come before every field of the cards', async () => {
+test('22 D2.7 (as 22 D4.11, 24 A2.1 and 22 L2.B1 amend it): Tab reaches the back link, the state line’s switch, the jump list and the fields, and the bar’s three buttons last, reading Discard, Save changes, Delete; with the confirm open its two buttons are the page’s last, after the bar’s three', async () => {
   const { main } = await loaded()
   const stops = mainTabbable(main)
   expect(
-    stops.slice(0, 5),
-    '22 D4.10, 24 A2.1: back link, the state line’s switch (named by the h1, so its name is the id), then the bar: its Delete, Discard, Save changes',
-  ).toEqual([
-    en('model-profile-back'),
-    ID,
-    en('model-profile-delete'),
-    en('save-discard'),
-    en('save-button'),
-  ])
+    stops.slice(0, 2),
+    '22 D4.10, 24 A2.1: back link, the state line’s switch (named by the h1, so its name is the id)',
+  ).toEqual([en('model-profile-back'), ID])
+  expect(
+    stops.slice(-3),
+    '22 L2.B1 a: the bar is the form’s last element, so its stops are the page’s last, and WCAG 2.4.3 keeps them reading Discard, Save changes, Delete (22 D4.30 with L2.A2)',
+  ).toEqual([en('save-discard'), en('save-button'), en('model-profile-delete')])
   const jump = stops.indexOf(en('model-profile-jump-label'))
-  expect(jump, 'the jump list follows the bar').toBeGreaterThan(
-    stops.indexOf(en('save-button')),
-  )
+  expect(
+    jump,
+    '22 L2.B1 a: the jump list, which 22 D2.5 put after the bar, now precedes it',
+  ).toBeGreaterThan(-1)
+  expect(jump, 'and is before the bar’s stops').toBeLessThan(stops.length - 3)
   const assets = stops.indexOf(en('model-profile-assets'))
   expect(assets, 'and the Assets toggle follows the jump list').toBeGreaterThan(
     jump,
@@ -730,30 +634,31 @@ test('22 D2.7 (as 22 D4.11 and 24 A2.1 amend it): Tab reaches the back link, the
   )
   expect(
     firstField,
-    'the first field of the cards is a stop, after the bar',
-  ).toBeGreaterThan(stops.indexOf(en('save-button')))
+    'the first field of the cards is a stop, before the bar',
+  ).toBeLessThan(stops.length - 3)
   cleanup()
   vi.unstubAllGlobals()
   // The confirm, open, is the pair right after the bar's own buttons, since
-  // 22 D4.11 puts the group inside the bar, under them. 24 A2.1: the state
-  // line's switch is the stop before the bar.
+  // 22 D4.11 puts the group inside the bar, under them, and 22 L2.B1 leaves
+  // that order at the page's end. 24 A2.1: the state line's switch is the
+  // second stop of the page.
   const off = await loaded()
   const group = await confirmGroup(off.main)
   const open = mainTabbable(off.main)
   expect(
-    open.slice(2, 7),
-    '22 D4.11: the bar’s Delete, Discard, Save changes, then the group’s verb and Cancel',
+    open.slice(-5),
+    '22 D4.11 with 22 L2.B1: the page ends with the bar’s Discard, Save changes, Delete, then the group’s verb and Cancel',
   ).toEqual([
-    en('model-profile-delete'),
     en('save-discard'),
     en('save-button'),
+    en('model-profile-delete'),
     en('confirm-delete'),
     en('confirm-cancel'),
   ])
   expect(
     open.indexOf(en('model-profile-jump-label')),
-    'the jump list comes after the open group',
-  ).toBeGreaterThan(open.indexOf(en('confirm-cancel')))
+    'the jump list comes before the bar, and so before the open group',
+  ).toBeLessThan(open.length - 5)
   expect(
     group.contains(document.activeElement as Node),
     'the focus is inside the group, on Cancel',
@@ -762,7 +667,7 @@ test('22 D2.7 (as 22 D4.11 and 24 A2.1 amend it): Tab reaches the back link, the
 
 // ── 22 D2.8: the server profile page follows ────────────────────────────
 
-test('22 D2.8 (as 22 D4.9 and 22 D4.10 amend it): the server page’s status row is gone and the Value list’s Used by row stays; the Save bar’s Delete is its first button, active when no instance uses the profile, and switched off with the list’s reason when one does', async () => {
+test('22 D2.8 (as 22 D4.9, 22 D4.10 and 22 D4.30 with L2.A2 amend it): the server page’s status row is gone and the Value list’s Used by row stays; the Save bar’s Delete is its last button, active when no instance uses the profile, and switched off with the list’s reason when one does', async () => {
   const { main } = await loadedServer()
   expect(
     main.querySelector('div.page-status'),
@@ -779,7 +684,7 @@ test('22 D2.8 (as 22 D4.9 and 22 D4.10 amend it): the server page’s status row
     'server-profile-delete',
   )
   expect(button.getAttribute('type'), 'it submits nothing').toBe('button')
-  expect(text(button), '22 D4.10: a text button: the words are on it').toBe(
+  expect(accName(button), '22 D4.10: a text button: the words are on it').toBe(
     en('server-profile-delete'),
   )
   expect(button.querySelector('svg'), 'and no glyph').toBeNull()
@@ -791,8 +696,8 @@ test('22 D2.8 (as 22 D4.9 and 22 D4.10 amend it): the server page’s status row
   expect(button.closest('.save-actions'), 'in the bar’s group').toBe(actions)
   expect(
     [...actions.children].indexOf(button),
-    '22 D4.10: first, before Discard and Save changes',
-  ).toBe(0)
+    '22 D4.30 with L2.A2: last, after Discard and Save changes, pushed to the bar end',
+  ).toBe(actions.children.length - 1)
   expect(
     button.getAttribute('aria-disabled'),
     '22 D4.10: no instance uses it, so the Delete can act',

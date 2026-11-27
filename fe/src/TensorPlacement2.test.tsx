@@ -55,6 +55,9 @@ const TEXT_HINT = en('model-profile-ot-text-hint')
 /** The About toggle of the Rules as text field (Field.tsx: its name carries the
  *  label). */
 const ABOUT = `${en('field-about')} ${TEXT}`
+/** 22 D4.31 (the designer's ruling of 2026-11-27): the card's own About toggle,
+ *  a Tab stop right after the card's h3, leads the card's tab path. */
+const CARD_ABOUT = `${en('field-about')} ${CARD}`
 /** 21 T.11: the bar's alert when the page's own check refuses the save. */
 const INVALID = en('save-invalid')
 /** The key this card owns. */
@@ -927,13 +930,14 @@ test('21 T.12: any other key naming override-tensor, comment-markers, answers on
 
 // ── 21 T.13: the keyboard, the long value, the strings ────────────────────
 
-test('21 T.13: after the last rule, Tab goes Add rule, the Rules as text About toggle, its input', async () => {
+test('21 T.13 (as 22 D4.31 amends it): the card opens with its own About, and after the last rule, Tab goes Add rule, the Rules as text About toggle, its input', async () => {
   const { main } = await form(file(`${EXPS}=CPU`, `${HAND}=CPU`))
   await landed(main)
   expect(
     tabbable(cardOf(main, CARD)).map(nameOf),
     '21 T.13: the tab path of the card',
   ).toEqual([
+    CARD_ABOUT,
     TENSOR,
     LAYERS,
     GOES,

@@ -574,13 +574,16 @@ const STATES = [
   },
   {
     // Brief 22, 22 D4.10 and 22 D4.3, as the 22D4 review's D3 asks, as 22 D4.14
-    // amends it: the Save bar's Delete of a profile an instance runs, switched
-    // off, with its reason shown. The page of `default` is the one where the verb
-    // cannot act (stub.py answers its read with `instance` "default", under
-    // `pool=long` as under every pool). 22 D4.14 takes the focus tip away: the
-    // reason is a `p` in the bar after its buttons, shown all the time, so the
-    // check reads it on load, at 320 px and at 200 % text, where it must not push
-    // the page sideways.
+    // and 22 L2.B2 (the user's ruling of 2026-11-26) amend it: the Save bar's
+    // Delete of a profile an instance runs, switched off, with its reason. The
+    // page of `default` is the one where the verb cannot act (stub.py answers
+    // its read with `instance` "default", under `pool=long` as under every
+    // pool). 22 L2.B2 takes the reason line away: the reason is a visually
+    // hidden element the Delete names with aria-describedby, and the eye reads
+    // it only as the floating .hint-tip, on hover and on focus, so the check
+    // opens the tip with the keyboard and reads it there, at 320 px and at
+    // 200 % text, where it must not push the page sideways and must stay in
+    // the viewport.
     name: 'server-profile-delete-disabled',
     set: 'session=admin&pool=long',
     hash: '#/profiles/server/default',
@@ -591,11 +594,11 @@ const STATES = [
         message:
           "the Save bar's Delete, switched off: an instance runs the profile",
       },
-      {
-        selector: '#server-profile-delete-reason',
-        text: S['server-profiles-delete-in-use'],
-      },
     ],
+    focus: {
+      on: '#server-profile-delete',
+      then: 'main .hint-tip',
+    },
   },
   {
     name: 'model-profiles',
@@ -756,12 +759,15 @@ const STATES = [
     ],
   },
   {
-    // Brief 24, slice A2 (23 A2.1, 23 A2.2): the model profile page's own
-    // switch, in the state line under the summary line. The stub reads this
-    // profile switched on, so the line says so in the short words beside the
-    // switch, and the Save bar's Delete is switched off with the list's reason
-    // under it (22 D4.2). The line, the switch, the words and the reason are
-    // what the check reads at 320 px and at 200 % text.
+    // Brief 24, slice A2 (23 A2.1, 23 A2.2), as 22 L2.B2 amends it: the model
+    // profile page's own switch, in the state line under the summary line. The
+    // stub reads this profile switched on, so the line says so in the short
+    // words beside the switch, and the Save bar's Delete is switched off. The
+    // line, the switch and the words are what the check reads at 320 px and at
+    // 200 % text. The reason (23 A2.2) is not read here: 22 L2.B2 keeps it in a
+    // visually hidden element the Delete names, shown only as the floating tip
+    // on hover and focus, and the tip of this verb is read by the model profile
+    // page's own state.
     name: 'model-profile-switch',
     set: 'session=admin',
     hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
@@ -775,11 +781,11 @@ const STATES = [
         selector: 'main label.model-profiles-switch + span',
         text: S['model-profile-on-short'],
       },
-      {
-        selector: '#model-profile-delete-reason',
-        message: "the Save bar's reason, kept by 23 A2.2",
-      },
     ],
+    focus: {
+      on: '#model-profile-delete',
+      then: 'main .hint-tip',
+    },
   },
   {
     name: 'model-profile-blocks',

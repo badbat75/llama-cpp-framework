@@ -22,19 +22,21 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  accName,
   before,
+  type BffOptions,
   deferred,
   en,
   fakeBff,
+  heavyTest,
   held,
-  navigate,
   MODEL_PROFILES,
   modelProfileDoc,
+  navigate,
   quiet,
   reply,
+  rowName,
   startAt,
-  heavyTest,
-  type BffOptions,
 } from './test/bff.ts'
 import {
   cardButtons,
@@ -139,9 +141,7 @@ function dataRows(t: HTMLElement): HTMLElement[] {
 }
 
 function shownIds(t: HTMLElement): string[] {
-  return dataRows(t).map((row) =>
-    (row.querySelector('td, th')?.textContent ?? '').trim(),
-  )
+  return dataRows(t).map((row) => rowName(row.querySelector('td, th')!))
 }
 
 function filterField(main: HTMLElement): HTMLInputElement {
@@ -669,7 +669,7 @@ test('2d.60: in the list each row name is a link to the model profile page, its 
   ])
   for (const row of dataRows(t)) {
     const nameCell = row.querySelector('td, th') as HTMLElement
-    const id = (nameCell.textContent ?? '').trim()
+    const id = rowName(nameCell)
     const input = row.querySelector('input')!
     const by = input.getAttribute('aria-labelledby') ?? ''
     const target = document.getElementById(by)
@@ -720,9 +720,7 @@ test('2d.59a: in the list, a row whose id is . or .. shows its id as plain text,
     'no link for . or ..',
   ).toEqual([LIST_ID, OFF_ID])
   for (const id of ['..', '.']) {
-    const row = rows.find(
-      (r) => (r.querySelector('td, th')?.textContent ?? '').trim() === id,
-    )!
+    const row = rows.find((r) => rowName(r.querySelector('td, th')!) === id)!
     expect(
       within(row).queryByRole('link'),
       `${id}: the row holds no link`,
@@ -1013,23 +1011,23 @@ test('2d.67: the model profile is read once on open and once on each route chang
   // Criterion 67: no refresh button. 2h.10's 196: the page's buttons start
   // with the jump disclosure and one jump button per card, named by the card
   // titles; criterion 88: then the Assets disclosure and the buttons each card
-  // holds (one About toggle per 2e field, and a card's own controls at its
-  // card's place, brief 21's Add rule), in DOM order (the list of
-  // test/modelProfileCards.ts; H11b.1 retires the Engine About toggle). 22
-  // D2.5 moved the save bar to the top of the settings section, so its two
-  // buttons lead the list (2h.1's 135 had them at the end). So no other button
-  // (a refresh) is in main.
+  // holds (one About toggle per 2e field, the About of a card whose intro sits
+  // behind it, 22 D4.31, and a card's own controls at its card's place, brief
+  // 21's Add rule), in DOM order (the list of test/modelProfileCards.ts; H11b.1
+  // retires the Engine About toggle). 22 L2.B1 (the user's ruling of
+  // 2026-11-26) moved the save bar to the end of the form, so its buttons close
+  // the list. So no other button (a refresh) is in main.
   expect(
     within(main)
       .queryAllByRole('button')
-      .map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim()),
-    'main holds the bar of 22 D2.5, the jump disclosure of H10.10, one jump button per card, the Assets disclosure, every card button',
+      .map((b) => accName(b)),
+    'main holds the jump disclosure of H10.10, one jump button per card, the Assets disclosure, every card button, and the bar of 22 L2.B1 at the end',
   ).toEqual([
-    ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...cardHeadings(),
     en('model-profile-assets'),
     ...cardButtons(),
+    ...saveBarTabStops(),
   ])
   await advance(60_000)
   expect(modelProfileReads(bff), 'no polling').toBe(1)

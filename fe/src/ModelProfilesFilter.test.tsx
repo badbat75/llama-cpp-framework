@@ -24,6 +24,7 @@ import {
   isHidden,
   navigate,
   reply,
+  rowName,
   shownText,
   startAt,
   type BffOptions,
@@ -75,7 +76,9 @@ function clearButton(main: HTMLElement): HTMLElement | null {
   })
 }
 
-/** The ids of the shown rows; [] when the table is not rendered. */
+/** The ids of the shown rows; [] when the table is not rendered. The name cell
+ *  is read as the id alone: 22 D4.35 copies the engine there as a muted second
+ *  line for the narrow page, pinned in L2ModelsList.test.tsx. */
 function shownIds(main: HTMLElement): string[] {
   const t = within(main).queryByRole('table', {
     name: en('model-profiles-title'),
@@ -84,11 +87,12 @@ function shownIds(main: HTMLElement): string[] {
   return within(t)
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
-    .map((row) => (row.querySelector('td, th')?.textContent ?? '').trim())
+    .map((row) => rowName(row.querySelector('td, th')!))
 }
 
 /** The data rows' cells' text, the row's − of 22 D4.1 left out (its words are
- *  its accessible name, in a `.visually-hidden` span). */
+ *  its accessible name, in a `.visually-hidden` span). The name cell is the id
+ *  alone, as in `shownIds`. */
 function rows(main: HTMLElement): string[][] {
   const t = within(main).getByRole('table', {
     name: en('model-profiles-title'),
@@ -96,7 +100,11 @@ function rows(main: HTMLElement): string[][] {
   return within(t)
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
-    .map((row) => [...row.querySelectorAll('td, th')].map((c) => shownText(c)))
+    .map((row) =>
+      [...row.querySelectorAll('td, th')].map((c, i) =>
+        i === 0 ? rowName(c) : shownText(c),
+      ),
+    )
 }
 
 function type(input: HTMLInputElement, value: string) {

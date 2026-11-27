@@ -94,7 +94,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   equality as unachievable for that file.
 - Report a bookkeeping pin (a log or call count over calls made by earlier pins) green today, deferred to
   the coder's green run. For a count over a seam the builder also reads, take `let base = ...` after the
-  builder and assert deltas.
+  builder and assert deltas. Where the phase is red at its FIRST verb, the count pin is unreachable and no
+  probe measures it: get the number by script, counting the verb-call sites in the phase's own text
+  (`(?<![A-Za-z_])(verb)\(`, so `create_instance_profile(` is not counted as `instance_profile(`) and
+  adding each loop's extra rounds.
 - Pin a byte bound on a pipe payload twice: in the arithmetic, and at the wire crossing, where the red
   lands in the client's own frame check, which is the bound's evidence.
 - Write a file-name rule for one OS as a `cfg` split, not a table row.
@@ -151,7 +154,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   lines. List the hunks with `--check | grep '^Diff in'`, hand-apply your own, and prove with `--check`
   answering 0 and a `git status --porcelain` before/after diff. Where only Rust lines are yours,
   `cargo fmt -p <crate>` is acceptable if a `git diff --stat` taken before and after moves the counts of
-  YOUR files alone: keep both listings and quote them.
+  YOUR files alone: keep both listings and quote them. Quicker and exact: `git status --porcelain` to list
+  which `.rs` are yours, `rustfmt --edition 2021 <those files>`, then prove
+  `cargo fmt -p <crate> --check` prints nothing.
 
 ### Cargo runs
 
@@ -606,6 +611,33 @@ frozen list.
 - Pin a cascade value that today's sheet already carries globally (the `h1`'s `overflow-wrap: anywhere`)
   as a presence pin on that global rule, not as a value of the scoped merge: the merge sees only the rules
   scoped to the new box, so a global declaration reads absent and the pin is red on a correct fix.
+- A review's "the line keeps no margin" is NOT "no rule reaching it declares a margin": the sheet's global
+  `p { margin: 0 0 var(--space-3) }` reaches the line (0,0,1), so the absence pin reds the review's own fix
+  (`margin: 0` on its class, 0,1,0). Pin the CASCADE WINNER as `0` (rules reaching it, ordered by specificity
+  counted in `.`/`#` then sheet order, the shorthand expanded: `margin: a b` puts `b` above and below,
+  `margin: a b c d` puts `a` above and `c` below), and keep the absence pin only for a property no global
+  rule carries (`min-height`). Same for a colour: "every rule giving it `var(--danger)` names its class" is
+  pinnable, "every rule setting its colour names its class" reds the global
+  `.secondary { color: var(--text) }` that reaches every secondary button. Learn which rules reach an
+  element with a throwaway probe that prints them as JSON in a `toBe('SHOW')` message (vitest prints a
+  `console.log` under a `stdout | <file> > <test>` header when the test runs, and swallows nothing), then
+  delete it.
+- A pin of the rule a review TAKES AWAY, read in sheet order, is green on the defect when the global class
+  rule sits later in the file: `.about` (0,1,0) is at 1819, `.card-heading .about` (0,2,0), the rule that
+  cleared the padding and border, at 1558, so a last-in-file read answers the field's `var(--space-2)` for
+  the card's toggle and the pin passes on the bug. A card-scoped override of a global class is a
+  SPECIFICITY read (the `cascadeOf` order), never a last-declaration read.
+- A review that WITHDRAWS a shape it earlier advised is pinned as absences of every form the shape took: the
+  control's own text (`norm(del.textContent)` equals the key), no element children (the spans,
+  `children.length === 0`), no attribute duplicating the text (`hasAttribute('aria-label')` false), the
+  brief's literal "the visible text is the accessible name" through `accName`, and NO rule of the sheet
+  naming a class the withdrawn parts carried (`RULES.filter(r => /class-(short|long)/.test(r.sel))` → `[]`,
+  the `@media` blocks included, jsdom applying no query). The class-name pins of the surviving class
+  (`save-bar-delete`) are day-one greens, the coder keeping what the code review gave; the shared
+  `accName`/`words` readers of tab-order lists need no change, the name they read is unchanged.
+- To list the later reds of ONE fe test (a test stops at its first assertion), write a probe with a
+  `pin(fails, name, fn)` collector, one try/catch per assertion, and `expect(fails).toEqual([])`: a single
+  run prints every red the first red hides. Delete it and prove with `ls | grep -c`.
 - A new box reusing the field classes needs a pin of the SELECTOR GROUP, not of a `> *` rule: the 720 px
   block places `.field-control, .full-value, .field-hint, .field-error` in column 2, and a top-level
   `.x > * { grid-column: 1 }` (0,1,0) BEFORE it loses on source order, so the box collapses (17f2 D1:
@@ -726,6 +758,12 @@ frozen list.
   null), retarget the same selector onto the thing this slice adds.
 - The nav is a SIBLING of `main` (App.tsx): a nav link read with `within(main)` answers `found 0`, so take
   `screen.findByRole('navigation', { name: en('nav-label') })` and `within(nav)`, as NodesMenu1/2 do.
+- A control the sheet gives TWO runs of words, one for a wide width and one for a narrow one, with the full
+  words in `aria-label` (22 D4.30 review A1: the bar's Delete and its `-long`/`-short` spans), reads DOUBLED
+  through `textContent` in jsdom: "Delete model profileDelete". Every tab-order list, `getAllByRole('button')
+  .map(textContent)` and words pin of it reds. Read the accessible name: `accName` of `fe/src/test/bff.ts`
+  (`aria-label` first, then the text, whitespace normalised). Sweep `textContent` in the name readers of the
+  files that pin that control, and keep WCAG 2.5.3 in mind: the short visible word sits inside the label.
 - A tab-order name map built from `textContent` IS the accessible name of a link or a button, so a tile's
   stops read `llama.cpp :9090, instance lab` and `Start llama.cpp :9090` (17f.3's reader-only id, 24 A1.3's
   hidden instance): spell the expected names as `` `${name}${en('instance-id-said', id)}` `` and
@@ -767,6 +805,14 @@ frozen list.
   Retiring a test moves the suite total by one: state the arithmetic. Run only those tests with
   `npm --prefix fe test -- <the files> -t '2h.135|2d.71|2d.78|2e.91'`: the five cards files are ~1500 lines
   each, and a full run of them is minutes of unrelated tests.
+  When the move is to the END of the form (22 L2.B1): the shared head list loses the bar's stops, so every
+  whole-page list must APPEND the shared `pageBottomTabStops()` (it sits in
+  `fe/src/test/modelProfileCards.ts` with no consumer until the move), a head-window pin that spelled
+  `saveBarTabStops()` in the head (`ModelProfileSave16` 2h.197) drops it there and gains a tail check
+  (`slice(-saveBarTabStops().length)`), and a file's LOCAL whole-path const (`InstancePage`'s
+  `TAB_PATH_FORM`) moves its three entries to the tail in the bar's own order (Discard, Save changes,
+  Delete: 22 D4.30). The doubled-name red masks the order red: fix the names first, and the order red
+  that follows names the moved stops in its diff hunk (`@@ -145,6 +145,9 @@`).
 - Land a new nav entry in about a dozen order lists: sweep every standalone `en('nav-...'),` line (and
   the `EN[...]` variants), then check tails (`grep -L` for the new key; `grep -rn "slice(-[0-9]"` for
   windowed lists) and `NodePage`'s list. Then rewrite what the sweep cannot: a `parseRoute` pin of
@@ -849,6 +895,12 @@ frozen list.
 - A cargo test binary does not inherit a variable set on the command line for a harness process; a unit
   test body does see it.
 - Piping a long cargo log into `grep` dies on SIGPIPE.
+- Run `cargo clippy -p <crate> --all-targets -- -D warnings` over a new phase before reporting: reds in
+  YOUR test code are yours. New code that copies an older phase's `std::fs::write(p, &helper(..))` where
+  the helper returns a `String` is clippy `needless_borrows_for_generic_args` (four sites here): drop the
+  `&`. A closure the `on(..)`-style helper needs as `'static` must be `move`, and a `move` closure that
+  calls the phase's `pool()` / `record()` file reader MOVES it, so read the revision into a `let` outside
+  and pass `&rev`.
 - A background run killed by the shell's timeout leaves a partial log full of `test result: ok` and no
   `FAILED`: judge a run complete only by its own exit line, and rerun the crate whole.
 - Setting `PRIVATE_AI_FE_DIST` reruns the bff's build script and recompiles every target of the crate (it
@@ -875,6 +927,10 @@ frozen list.
   filter the rules by the at-rule's own offsets (`atRanges` + the match index).
 - A card's About toggle renders only when its intro key has more than one line, so a shorter intro drops
   it from the Tab path: the card tab-order tests (`TensorPlacement1` 21 T.9) are part of that fan-out.
+- A card that gains a control beside its heading puts the `h3` in a row of its own (`.card-heading`,
+  22 D4.31 review A2), so every `section.card > h3` selector in the older tests finds NOTHING
+  (`HearthAssets` H11a.11's ten-card order): grep `card > h3` when a heading gains a neighbour. A role
+  query (`getByRole('heading', { name })`) is unaffected, which hides the break in the DOM-shape pins only.
 
 ### Mutants and scratch copies
 
@@ -901,7 +957,10 @@ frozen list.
   phases are calls of ONE test, so a full run prints only the first panic. To show a LATER phase's
   day-one state, comment out the earlier phase's one CALL LINE in `src/tests/mod.rs` (a `// GATE`
   prefix), run, restore with `cp` + `cmp -s` and `grep -c "// GATE"` answering 0: one line per phase,
-  no block surgery.
+  no block surgery. A script that gates every registration up to a marker must gate the `#[cfg(..)]`
+  attribute ABOVE each call too (an orphan attribute is a compile red, not a red), and the run works from
+  one saved un-gated copy of `mod.rs` (`cp` it right after registering the phases, gate from the copy,
+  restore from it).
 - Pin a walk's bound of ENTRIES VISITED with a marker file under a subfolder: the bound is consumed
   inside the first folder's loop, so the marker's ABSENCE proves where the walk stopped, and a tree
   below the bound proves it did not stop early. `paths::instance_models_dir()` under a redirect is
@@ -912,6 +971,17 @@ frozen list.
 - A mutant of a validation gate shows only on a tree green in that phase first: with an unrelated fixture
   red upstream the panic you print is the fixture, not the gate.
 - A bound a client checks (frame size) reds in the client, not the manager.
+- A zbus signature string concatenates its members with NO separator: `(String, Vec<String>, String)` is
+  `(sass)`, `Vec<(String, String, Vec<String>)>` is `a(ssas)`, a unit reply is `""`. A pin that writes
+  `(sas s)` never matches and the red reads like a missing method.
+- `instance-profiles.ini` is NOT a served `ConfigFile` (`config_file` answers `None`, so a client
+  `read_file` of it is `BadFileName`): the pool's CRUD writes go through the `ConfigFile::Models` slot of
+  `write_served_file`, and the pool's LIST answers no revision (the file is one text) while its single
+  read answers the whole text as the revision a compare-and-swap write carries back.
+- `checks::check_binding` walks `paths::instance_ids()` with `skip` = the instance being written, then the
+  bff's listen, so an address test needs the whole node: `127.0.0.1:8681` collides with an instance bound
+  `0.0.0.0:8681` (the refusal names that instance), and with no `bff.ini` in the tree the web service's
+  address is the DEFAULT `127.0.0.1:8590` (`AddressInUse("private-ai-bff")`).
 - An uncalled e2e phase is invisible: its solo run looks green.
 - `pai_core::bff_cfg::versions_dir()` answers `None` under a test redirect (it resolves only when the
   config dir is exactly `/etc/llama.cpp`), so the engine's installed backends (`versions::installed`,

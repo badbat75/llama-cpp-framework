@@ -27,7 +27,7 @@ import {
 import Dialog from './Dialog.tsx'
 import { FieldError, Hint, HintToggle } from './Field.tsx'
 import { Icon } from './Icon.tsx'
-import { InstanceLink } from './Instances.tsx'
+import { InstanceLink, type NameOf } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
 import { refusalOf, type RefusalTable } from './refusal.ts'
 import {
@@ -108,8 +108,9 @@ export default function ServerProfiles({
   /** A sign-in in the form's dialog: true when the page stays. */
   onRenewed: (session: Session) => boolean
   /** The name of an instance by its id (16 17f.4): the Used by cell says the
-   * word the menu uses, not the key. */
-  nameOf: (id: string) => string
+   * word the menu uses, not the key, and keeps the id only when the name is
+   * shared (22 D4.37). */
+  nameOf: NameOf
 }) {
   // undefined while the reply is awaited.
   const [answer, setAnswer] = useState<Answer | undefined>(undefined)
@@ -189,7 +190,9 @@ function Body({
   onRenewed: (session: Session) => boolean
   onReload: () => void
   onReread: () => Promise<string[] | null>
-  nameOf: (id: string) => string
+  /** The name of an instance by its id, with the shared-name rule the Used by
+   *  cell keeps (22 D4.37). */
+  nameOf: NameOf
 }) {
   const uid = useId()
   // The list's own lines, above the table (22 D4.6).

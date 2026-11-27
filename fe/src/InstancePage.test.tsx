@@ -17,7 +17,9 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  accName,
   before,
+  type BffOptions,
   deferred,
   en,
   fakeBff,
@@ -26,7 +28,6 @@ import {
   serverDoc,
   startAt,
   stubDialog,
-  type BffOptions,
 } from './test/bff.ts'
 import { serverProfileHref } from './route.ts'
 
@@ -1111,8 +1112,8 @@ function tabbable(): HTMLElement[] {
  * `<label>`.
  */
 function nameOf(el: HTMLElement): string {
-  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // The accessible name, `aria-label` first (test/bff.ts's accName).
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return accName(el)
   // An input has no text of its own: its name is the label that points at it.
   const labelled = el.getAttribute('aria-labelledby')
   if (labelled)
@@ -1205,13 +1206,11 @@ const TAB_PATH_FORM = [
   en('server-profile-back'),
   // 17a.5: the one Value row, the instance that runs this profile.
   'default',
-  // 22 D2.5 moved the bar to the top of the form, so its stops follow the
-  // Used by link (test 6 had them at the end of the fields). 22 D4.10 puts
-  // the page's Delete first in the bar; it is aria-disabled here (an instance
-  // uses this profile) and aria-disabled keeps the stop (22 D4.2).
-  en('server-profile-delete'),
-  en('save-discard'),
-  en('save-button'),
+  // 22 L2.B1 (the user's ruling of 2026-11-26) moved the bar to the end of the
+  // form: its stops close the path, below (test 6 had them there, 22 D2.5 put
+  // them at the top, L2.B1 moved them back). 22 D4.30 puts the page's Delete at
+  // the bar's end; it is aria-disabled here (an instance uses this profile) and
+  // aria-disabled keeps the stop (22 D4.2).
   ...[
     [about('Port'), en('option-default'), 'Port'],
     [
@@ -1246,6 +1245,9 @@ const TAB_PATH_FORM = [
     [about('Disable GPU graphs'), en('server-gpu-graphs-toggle')],
     [about('KV rotation'), en('server-kv-rotation-toggle')],
   ].flat(),
+  en('save-discard'),
+  en('save-button'),
+  en('server-profile-delete'),
 ]
 
 test('6 (17a.10, 17e.10a): Tab goes skip link, product link, Menu, theme switch, Sign out, nav links, the display name pencil, the run buttons, Start at boot and Instance tags, then the Model profiles checkbox and each row’s link and switch, and no control of a Server form', async () => {
@@ -1271,7 +1273,7 @@ test('6 (17a.10, 17e.10a): Tab goes skip link, product link, Menu, theme switch,
   expect(main.querySelector('.save-bar'), 'no save bar').toBeNull()
 })
 
-test('6 (22 D2.5): Tab goes the shell, Back, the Used by link, the save bar at the top of the form, then every control of the editable form in table order', async () => {
+test('6 (22 L2.B1): Tab goes the shell, Back, the Used by link, every control of the editable form in table order, then the save bar at the end of the form', async () => {
   await loaded()
   expect(tabbable().map(nameOf)).toEqual(TAB_PATH_FORM)
   // The h1 takes focus only from the page (tabindex -1).

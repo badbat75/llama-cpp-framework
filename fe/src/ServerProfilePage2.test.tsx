@@ -212,7 +212,7 @@ function asksBrowser(): boolean {
 
 // ── 17b.6: delete is offered while unused ───────────────────────────────
 
-test('16 17b.6 (as 22 D4.9 and 22 D4.10 amend it): the status row of 22 D2.8 is gone; a profile whose document says no instance runs offers the server-profile-delete delete as the Save bar’s first button, active; one whose document names an instance keeps it, aria-disabled with the list’s reason; the button follows the document read', async () => {
+test('16 17b.6 (as 22 D4.9, 22 D4.10 and 22 D4.30 amend it): the status row of 22 D2.8 is gone; a profile whose document says no instance runs offers the server-profile-delete delete as the Save bar’s last button, active; one whose document names an instance keeps it, aria-disabled with the list’s reason; the button follows the document read', async () => {
   const { main } = await loaded()
   expect(
     main.querySelector('div.page-status'),
@@ -229,8 +229,8 @@ test('16 17b.6 (as 22 D4.9 and 22 D4.10 amend it): the status row of 22 D2.8 is 
   )
   expect(
     [...actions.children].indexOf(button),
-    '22 D4.10: first in the group, before Discard and Save changes',
-  ).toBe(0)
+    '22 D4.30: last in the group, after Discard and Save changes',
+  ).toBe(actions.children.length - 1)
   expect(
     button.className,
     '22 D4.10: secondary, so Save changes stays the bar’s primary',
@@ -266,7 +266,14 @@ test('16 17b.6 (as 22 D4.9 and 22 D4.10 amend it): the status row of 22 D2.8 is 
     level: 3,
     name: en('server-network'),
   })
-  expect(before(button, card), 'and the bar sits before the cards').toBe(true)
+  expect(
+    before(card, button),
+    '22 L2.B1 a: the bar is the form’s last element, so it sits after every card, not before them',
+  ).toBe(true)
+  expect(
+    (section as HTMLElement).lastElementChild,
+    '22 L2.B1 a: and the Server section ends with the bar',
+  ).toBe(saveBar(main))
   cleanup()
   vi.unstubAllGlobals()
   // A profile an instance runs: the same button, switched off with the list's

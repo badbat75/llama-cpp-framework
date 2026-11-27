@@ -18,7 +18,9 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  accName,
   before,
+  type BffOptions,
   en,
   EN,
   fakeBff,
@@ -26,16 +28,16 @@ import {
   modelProfileDoc,
   reply,
   startAt,
-  type BffOptions,
 } from './test/bff.ts'
 import {
-  cardHeadings,
   cardHeadingKeys,
+  cardHeadings,
   controlEnabled,
+  type Field,
   fieldTabStops,
+  pageBottomTabStops,
   pageTopTabStops,
   specGroupEnabled,
-  type Field,
 } from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
@@ -601,8 +603,8 @@ function mainTabbable(root: HTMLElement): string[] {
 
 /** The name Tab shows: a control's text, or the label that names an input. */
 function nameOf(el: HTMLElement): string {
-  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // The accessible name, `aria-label` first (test/bff.ts's accName).
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return accName(el)
   const labelled = el.getAttribute('aria-labelledby')
   if (labelled)
     return labelled
@@ -1563,8 +1565,8 @@ test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 i
   ).toEqual(start)
   expect(
     tabbed.slice(start.length),
-    'the page tab order is the list of test/modelProfileCards.ts',
-  ).toEqual([...fieldTabStops(docOf(SET).values)])
+    'the page tab order is the list of test/modelProfileCards.ts, the bar of 22 L2.B1 last',
+  ).toEqual([...fieldTabStops(docOf(SET).values), ...pageBottomTabStops()])
 })
 
 test('2e.116, 2h.193: the card, its five group headings, every label, hint and note show the English of the 31 strings of 116 and the 2 new strings of 193', async () => {

@@ -291,23 +291,29 @@ test('GD1.1: the card is a D5.2 Card with h3 GPU distribution, right after the A
   ).toBe(true)
 })
 
-test('GD1.1: the card intro model-profile-gpu-distribution-intro follows its h3, each line of it a paragraph, shown', async () => {
+test('GD1.1 (as 22 D4.31 and its D1 review amend it): the card shows the intro key as a paragraph of its own after its h3; the card’s -about key is not shown at load (it is the card About panel, whose toggle L2PageHead.test.tsx pins)', async () => {
   const { main } = await form()
-  expect(INTRO_LINES.length, 'the intro of section 2 is two lines').toBe(2)
+  // 22 D4.31 review D1 (2026-11-27): the intro key is the card's ONE SENTENCE,
+  // and the rest of the old string is a key of its own for the About panel.
+  expect(INTRO_LINES.length, 'the intro of section 2 is one line').toBe(1)
+  const about = en('model-profile-gpu-distribution-about').split('\n')
+  expect(about.length, 'the about of section 2 is a text of its own').toBe(2)
   const card = cardOf(main, GPU)
   const h3 = within(main).getByRole('heading', { level: 3, name: GPU })
-  const paras = [...card.querySelectorAll('p')]
+  const paras = [...card.querySelectorAll('p')].filter((p) => !isHidden(p))
   const texts = paras.map((p) => p.textContent ?? '')
-  for (const line of INTRO_LINES)
+  expect(
+    texts,
+    '22 D4.31: the card shows the intro, as a paragraph of its own',
+  ).toContain(INTRO_LINES[0]!)
+  for (const line of about)
     expect(
       texts,
-      `GD1.1: the intro line is a paragraph of its own: ${line.slice(0, 24)}…`,
-    ).toContain(line)
+      `22 D4.31: the card’s about is behind its About toggle, shown on the card at load: ${line.slice(0, 24)}…`,
+    ).not.toContain(line)
   const first = paras.find((p) => (p.textContent ?? '') === INTRO_LINES[0])!
   expect(isHidden(first), 'GD1.1: the intro is shown').toBe(false)
   expect(before(h3, first), 'GD1.1: the intro follows the h3').toBe(true)
-  const second = paras.find((p) => (p.textContent ?? '') === INTRO_LINES[1])!
-  expect(before(first, second), 'GD1.1: the lines in order').toBe(true)
 })
 
 test('GD1.1: the jump list gains GPU distribution between Assets and Hardware, and its button moves focus to the card h3 and scrolls it into view, leaving the hash alone', async () => {

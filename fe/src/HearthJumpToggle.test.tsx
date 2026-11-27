@@ -27,13 +27,14 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import App from './App.tsx'
 import { t } from './strings.ts'
 import {
+  accName,
   before,
+  type BffOptions,
   en,
   fakeBff,
   modelProfileDoc,
   reply,
   startAt,
-  type BffOptions,
 } from './test/bff.ts'
 import { cardHeadings, saveBarTabStops } from './test/modelProfileCards.ts'
 
@@ -475,25 +476,31 @@ function tabbableElements(root: HTMLElement): HTMLElement[] {
   )
 }
 
-/** Their names, in DOM order. */
+/** Their names, in DOM order: the accessible name, `aria-label` first
+ *  (test/bff.ts's accName). */
 const tabNames = (root: HTMLElement): string[] =>
-  tabbableElements(root).map((el) => textOf(el))
+  tabbableElements(root).map((el) => accName(el))
 
-test('H10.10 (22 D2.5): in jsdom, with no CSS, Tab from the top reaches the back link, then the save bar, then the jump toggle, then the ten jump buttons in card order (the page start of 2h.197 with the toggle inserted)', async () => {
+test('H10.10 (22 D2.5 as 22 L2.B1 amends it): in jsdom, with no CSS, Tab from the top reaches the back link, then the jump toggle, then the ten jump buttons in card order (the page start of 2h.197 with the toggle inserted), and the save bar last', async () => {
   const { main } = await form()
-  // 22 D2.5 moved the bar to the top of the settings section, 22 D4.10 puts
-  // its Delete first in it. 24 A2.1: the state line’s switch is the stop
-  // between the back link and the bar; the names here are the elements’ text,
-  // and an input has none.
-  const start = [
+  // 22 L2.B1 moved the bar to the end of the settings section, so its stops
+  // left the head of the order; 22 D4.10 puts the page's Delete in the bar and
+  // 22 D4.30 moves it to the bar's end. 24 A2.1: the state line’s switch is
+  // the stop between the back link and the jumps; the names here are the
+  // elements’ text, and an input has none.
+  const names = tabNames(main)
+  const head = [
     en('model-profile-back'),
     '',
-    ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...TITLES,
   ]
   expect(
-    tabNames(main).slice(0, start.length),
-    'H10.10: back link, the bar with its Delete, toggle, the ten entries in card order',
-  ).toEqual(start)
+    names.slice(0, head.length),
+    'H10.10 with 22 L2.B1: back link, switch, toggle, the ten entries in card order',
+  ).toEqual(head)
+  expect(
+    names.slice(-saveBarTabStops().length),
+    '22 L2.B1: the bar’s Discard, Save changes and Delete are the page’s last stops',
+  ).toEqual(saveBarTabStops())
 })

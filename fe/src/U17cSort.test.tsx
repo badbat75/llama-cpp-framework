@@ -35,6 +35,7 @@ import {
   en,
   fakeBff,
   navigate,
+  rowName,
   startAt,
   type BffOptions,
   type ModelProfile,
@@ -123,11 +124,12 @@ function dataRows(t: HTMLElement): HTMLElement[] {
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
 }
 
-/** The data rows' ids, in the order the table shows them. */
+/** The data rows' ids, in the order the table shows them. The name cell is read
+ *  as the id alone: 22 D4.35 copies the engine there as a muted second line for
+ *  the narrow page, pinned in L2ModelsList.test.tsx, and sorting the names
+ *  sorts the ids. */
 function idsIn(t: HTMLElement): string[] {
-  return dataRows(t).map((row) =>
-    (row.querySelector('td, th')?.textContent ?? '').trim(),
-  )
+  return dataRows(t).map((row) => rowName(row.querySelector('td, th')!))
 }
 
 /** The `th` of the column named `label`. */

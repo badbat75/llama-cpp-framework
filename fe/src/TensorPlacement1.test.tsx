@@ -60,6 +60,10 @@ const removeName = (n: number) =>
   en('model-profile-ot-remove', en('model-profile-ot-rule', `${n}`))
 const PATTERN = en('model-profile-ot-pattern')
 const ADD = en('model-profile-ot-add')
+/** 22 D4.31 (the designer's ruling of 2026-11-27): the card's own About toggle,
+ *  a Tab stop right after the card's h3, leads the card's tab path, before the
+ *  first rule's Tensor. */
+const CARD_ABOUT = `${en('field-about')} ${CARD}`
 /** 21 T.13 (TP2): the Rules as text Field follows Add rule, so its About toggle
  *  and its input end every tab path of this card. The full path, with the rules,
  *  is pinned in `TensorPlacement2.test.tsx`. */
@@ -509,23 +513,24 @@ test('21 T.2: the jump list gains its entry between GPU distribution and Hardwar
   expect(window.location.hash, '21 T.2: the hash is untouched').toBe(HASH)
 })
 
-test('21 T.2: the intro is the two lines of the strings key, one paragraph per newline', async () => {
+test('21 T.2 (as 22 D4.31 and its D1 review amend it): the card shows the intro key as one paragraph; the card’s -about key is not shown at load (it is the card About panel, whose toggle L2PageHead.test.tsx pins)', async () => {
   const { main } = await form()
-  expect(INTRO_LINES.length, 'the intro of section 2 is two lines').toBe(2)
+  // 22 D4.31 review D1 (2026-11-27): the intro key is the card's ONE SENTENCE,
+  // the rest of the old string is a key of its own for the About panel.
+  expect(INTRO_LINES.length, 'the intro of section 2 is one line').toBe(1)
+  const about = en('model-profile-tensor-placement-about').split('\n')
+  expect(about.length, 'the about of section 2 is a text of its own').toBe(2)
   const card = cardOf(main, CARD)
-  const texts = [...card.querySelectorAll('p')].map((p) => p.textContent ?? '')
-  for (const line of INTRO_LINES)
-    expect(texts, `21 T.2: an intro paragraph: ${line.slice(0, 24)}`).toContain(
-      line,
-    )
-  const first = [...card.querySelectorAll('p')].find(
-    (p) => (p.textContent ?? '') === INTRO_LINES[0],
-  )!
+  const shown = [...card.querySelectorAll('p')].filter((p) => !isHidden(p))
+  const texts = shown.map((p) => p.textContent ?? '')
+  expect(texts, '22 D4.31: the card shows the intro').toContain(INTRO_LINES[0]!)
+  for (const line of about)
+    expect(
+      texts,
+      `22 D4.31: the card’s about is behind its About toggle, shown on the card at load: ${line.slice(0, 24)}`,
+    ).not.toContain(line)
+  const first = shown.find((p) => (p.textContent ?? '') === INTRO_LINES[0])!
   expect(isHidden(first), '21 T.2: the intro is shown').toBe(false)
-  const second = [...card.querySelectorAll('p')].find(
-    (p) => (p.textContent ?? '') === INTRO_LINES[1],
-  )!
-  expect(before(first, second), '21 T.2: the lines in order').toBe(true)
 })
 
 test('21 T.2: one fieldset legend Rules; everything after the legend is in one wrapper div holding the format paragraph, the rules, and Add rule, in that order; the Rules as text Field of 21 T.10 follows the fieldset', async () => {
@@ -1505,16 +1510,24 @@ test('21 T.8: an edit undone is unchanged, and Discard restores the loaded rules
 
 // ── 21 T.9: the keyboard ──────────────────────────────────────────────────
 
-test('21 T.9: Tab in a rule goes Tensor, Layers, Goes on, Remove, and after the last rule Add rule, then Rules as text (21 T.13)', async () => {
+test('21 T.9 (as 22 D4.31 amends it): Tab in a rule goes the card About, Tensor, Layers, Goes on, Remove, and after the last rule Add rule, then Rules as text (21 T.13)', async () => {
   const { main } = await form(file(`${EXPS}=CPU`))
   await landed(main)
   expect(
     tabbable(cardOf(main, CARD)).map(nameOf),
     '21 T.9: one rule of a kind with a block',
-  ).toEqual([TENSOR, LAYERS, GOES, removeName(1), ADD, ...TEXT_STOPS])
+  ).toEqual([
+    CARD_ABOUT,
+    TENSOR,
+    LAYERS,
+    GOES,
+    removeName(1),
+    ADD,
+    ...TEXT_STOPS,
+  ])
 })
 
-test('21 T.9: Tab in a Custom rule goes Tensor, Goes on, Remove, Pattern, and then Add rule, then Rules as text (21 T.13)', async () => {
+test('21 T.9 (as 22 D4.31 amends it): Tab in a Custom rule goes the card About, Tensor, Goes on, Remove, Pattern, and then Add rule, then Rules as text (21 T.13)', async () => {
   const { main } = await form(file(`${HAND}=CPU`, `${EMBD}=CUDA0`))
   await landed(main)
   const card = cardOf(main, CARD)
@@ -1523,6 +1536,7 @@ test('21 T.9: Tab in a Custom rule goes Tensor, Goes on, Remove, Pattern, and th
     stops,
     '21 T.9: the Custom row, then the embd row, then Add rule',
   ).toEqual([
+    CARD_ABOUT,
     TENSOR,
     GOES,
     removeName(1),

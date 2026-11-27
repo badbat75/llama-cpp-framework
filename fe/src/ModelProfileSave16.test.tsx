@@ -26,7 +26,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import { t } from './strings.ts'
 import {
+  accName,
   before,
+  type BffOptions,
   en,
   fakeBff,
   isHidden,
@@ -34,7 +36,6 @@ import {
   reply,
   startAt,
   stubDialog,
-  type BffOptions,
 } from './test/bff.ts'
 import { cardHeadings, saveBarTabStops } from './test/modelProfileCards.ts'
 
@@ -269,8 +270,8 @@ function mainTabbable(root: HTMLElement): string[] {
 
 /** The name Tab shows: a control's text, or the label that names an input. */
 function nameOf(el: HTMLElement): string {
-  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // The accessible name, `aria-label` first (test/bff.ts's accName).
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return accName(el)
   const labelled = el.getAttribute('aria-labelledby')
   if (labelled)
     return labelled
@@ -491,21 +492,25 @@ test('2h.196: no card h3 is a tab stop: each carries tabindex -1 and none is in 
 test('2h.197 (22 D2.5): Tab from the top reaches the back link, then the save bar, then the jump toggle of H10.10, then the ten jump buttons in card order, then the Assets toggle (H11b.4: the Engine About toggle and select are gone)', async () => {
   const { main } = await form()
   const tabbed = mainTabbable(main)
-  // 22 D2.5 moved the bar to the top of the settings section, 22 D4.10 puts
-  // its Delete first in it. 24 A2.1: the state line's switch, named by the h1
-  // (its text is the id), sits between the back link and the bar.
+  // 22 L2.B1 (the user's ruling of 2026-11-26) moved the bar to the end of the
+  // form, so its stops left the head of the path (they are its tail, the check
+  // below). 24 A2.1: the state line's switch, named by the h1 (its text is the
+  // id), sits between the back link and the jumps.
   const start = [
     en('model-profile-back'),
     ID,
-    ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...TITLES,
     ASSETS,
   ]
   expect(
     tabbed.slice(0, start.length),
-    '197 with H10.10 and H11b.4: back, the bar with its Delete, the disclosure, the ten jumps in card order, the Assets toggle',
+    '197 with H10.10 and H11b.4: back, the disclosure, the ten jumps in card order, the Assets toggle',
   ).toEqual(start)
+  expect(
+    tabbed.slice(-saveBarTabStops().length),
+    '22 L2.B1 with 22 D4.30: the bar closes the page, its Delete last in it',
+  ).toEqual(saveBarTabStops())
 })
 
 // ── 198: the strings, and the changed one ─────────────────────────────

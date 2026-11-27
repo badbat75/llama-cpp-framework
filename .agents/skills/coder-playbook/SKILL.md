@@ -327,9 +327,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   reddens scores of files with `Test timed out in 5000ms` (vitest spawns one worker per file, 139
   here): rerun
   with `npm --prefix fe test -- --maxWorkers=4` (user, 2026-11-24: back to 4 after Strata hung under RAM and disk pressure; 12 was tried that day), and rerun a named file solo, before
-  believing any of it. Green baseline today: 3487 tests, 139 files, ~13 min at `--maxWorkers=2` (22C2,
-  2026-11-26). There is no `basic` reporter here (`--reporter=basic` exits 1 `Failed to load custom
-  Reporter`): the default reporter's `×` lines list the reds.
+  believing any of it. Green baseline today: 3536 tests, 143 files, 107 s at
+  `--maxWorkers=4` (2026-11-27; 3487 tests, 139 files at `--maxWorkers=2` on
+  2026-11-26). There is no `basic` reporter here (`--reporter=basic` exits 1
+  `Failed to load custom Reporter`): the default reporter's `×` lines list the reds.
 - The package is `fe/package.json`, there is no root one: a copy of the tree runs as
   `npm --prefix <copy>/fe test -- src/X.test.tsx` (`--prefix <copy>` exits 254 `ENOENT package.json`).
 - A picked quant writes its tagged value (`<repo>:TAG`) into the repo field (22 P.9), so a test that
@@ -432,6 +433,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   nothing to check. It reads the `@media` rules too and takes a `flex` shorthand's basis as its third
   token, so the only fix is to delete the rule (and removing a rule an uncommitted slice added leaves
   the file byte-identical to HEAD: `git status` clean for it is the check, not a lost edit).
+- A brief that says "delete this rule" and a tester that pins the rule's DECLARATIONS: delete only the
+  declaration the test reads and keep the one that carries the layout, and say which reading you took
+  (22 D3 of 2026-11-27: `flex: 1` out of `.card-heading > h3`, its `margin: 0` kept, since a
+  `margin-bottom` on a flex item shifts the title off the row's `align-items: center` middle). Both
+  readings go green, so the brief's literal wording is not the tie-breaker: the geometry is.
 - `ListColumns.test.tsx`'s `cascade(el)` reads a rule that ENDS in the element: a pseudo-class on a
   NON-last token is dropped and `>` is read as a descendant, so scoping the Actions rules to
   `tr:not(.confirm-row) > td:last-child` leaves them reaching the confirm td in that read (22 D4.4, L1
@@ -698,6 +704,34 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 ### The web UI (fe/)
 
 - `npx vitest` from the repo root has no config and reds every test with `window is not defined`.
+- `npm --prefix fe run <name>` where `fe/package.json` has no such script prints `No script found,
+  pointing "npm run <name>" to "<name>"` and runs `<name>` from the PATH: in this workspace that is the
+  OpenDesign CLI, whose token report (`Found 2 potential issues in src/index.css at 1554:23, 1558:1`)
+  is NOT a project check and quotes lines of whatever `src/index.css` the cwd holds (2026-11-27). The
+  fe checks are exactly `test`, `typecheck`, `lint`, `format:check`.
+- A card's heading row (22 D4.31 review A2: the card's About beside its title) is a `div` beside the
+  heading, NOT the `h3` itself and not the card `section`: `L2PageHead.test.tsx` A2 pins
+  `toggle.closest('h3') === null`, `toggle.parentElement === h3.parentElement` and that the parent is
+  no section, with `h3.nextElementSibling === toggle`. `Card.tsx` renders it only when there is a
+  control, so a plain card keeps its `h3` as the section's first child. The stale pin this leaves is
+  `HearthAssets.test.tsx` H11a.11, which counts the Assets page's cards as `section.card > h3`: the two
+  cards that carry an About drop out, so the selector wants `section.card h3`.
+- `HearthTokens.test.ts` H1a.12 pins an EXACT array of every sheet rule that sets a height,
+  `min-height` or `min-width` (49 entries). A new rule that sets one of those three, even
+  `min-height: 24px` on `.card-heading .about` or `min-width: 0` on `.card h3`, reddens it: reach for a
+  property the registry does not watch (`padding-inline`, `margin`, `border-color`), or the entry goes
+  in the registry with the tester.
+- A button whose words swap by width (`SaveBar`'s Delete, 22 D4.30 review A1) is read by jsdom with
+  BOTH spans, since no test reads CSS: `button.textContent` is the short word plus the full label
+  ("Delete model profileDelete"). The tester's new pin (`L2SaveBar.test.tsx` 866-903) DEMANDS both
+  spans, the short one's text `confirm-delete` and `aria-label` the full key, and its `words()` prefers
+  `aria-label`; the 16 files of Tab-order and word pins (`nameOf`, per file, `textContent` only:
+  `ModelProfileCards1` to `5`, `ModelProfileContent` 2d.71/2d.78, `ModelProfilePage` 2d.67,
+  `ModelProfileSave2` 2h.141, `ModelProfileSave16` 2h.197, `ModelProfileDelete` 22 D.1,
+  `ModelProfileDelete2` D2.2/D2.7/D2.8, `ListDeleteTip` 22 D4.21, `HearthJumpToggle` H10.10,
+  `HearthAssetsEngine` H11b.4, `InstancePage` 6) ignore `aria-label`, so no DOM text satisfies both
+  sides: `nameOf` wants the label first, as L2SaveBar's `words()` already does. Report it, never pick a
+  side by dropping a span.
 - A card-head control the tab-stop lists do not name (the card About toggle of 22 D4.31) must carry
   `tabIndex={-1}`: the tester's amended `fieldTabStops` (`fe/src/test/modelProfileCards.ts`) excludes it,
   and 2e.91 of `ModelProfileCards1` to `5` (503 tests) reddens the moment it joins the Tab path.

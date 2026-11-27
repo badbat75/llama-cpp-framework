@@ -10,7 +10,7 @@ import { flushSync } from 'react-dom'
 import { apiError, call, isRecord, sessionRevoked } from './api.ts'
 import Dialog from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
-import { InstanceLink } from './Instances.tsx'
+import { InstanceLink, type NameOf } from './Instances.tsx'
 import PageHeading from './PageHeading.tsx'
 import { modelProfileIdUnreadable } from './route.ts'
 import { deleteRow } from './RowDelete.tsx'
@@ -109,8 +109,9 @@ export default function ServerProfilePage({
   /** Told whether the form holds unsaved changes; false when it goes. */
   onDirty: (dirty: boolean) => void
   /** The name of an instance by its id (16 17f.4): the Used by row says the
-   * word the menu uses, not the key. */
-  nameOf: (id: string) => string
+   * word the menu uses, not the key, and keeps the id only when the name is
+   * shared (22 D4.37). */
+  nameOf: NameOf
   /** The app's instance list read again (16 17d.2a). */
   onInstances: () => void
 }) {
@@ -530,7 +531,7 @@ function ConfirmDelete({
         <button
           type="button"
           id="confirm-delete"
-          className="primary"
+          className="primary danger"
           aria-disabled={running || undefined}
           onClick={onConfirm}
         >

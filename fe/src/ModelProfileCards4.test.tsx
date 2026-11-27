@@ -40,24 +40,26 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import strings from './strings/en_US.json'
 import {
+  accName,
   before,
+  type BffOptions,
   en,
   fakeBff,
   isHidden,
   modelProfileDoc,
   reply,
   startAt,
-  type BffOptions,
 } from './test/bff.ts'
 import {
-  cardHeadings,
   cardHeadingKeys,
+  cardHeadings,
   controlEnabled,
   expectedInputMode,
   fieldTabStops,
   fitCheckedAtLoad,
   fitToggleKey,
   fitToggleText,
+  pageBottomTabStops,
   pageTopTabStops,
 } from './test/modelProfileCards.ts'
 
@@ -542,8 +544,8 @@ function mainTabbable(root: HTMLElement): string[] {
 
 /** The name Tab shows: a control's text, or the label that names an input. */
 function nameOf(el: HTMLElement): string {
-  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // The accessible name, `aria-label` first (test/bff.ts's accName).
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return accName(el)
   const labelled = el.getAttribute('aria-labelledby')
   if (labelled)
     return labelled
@@ -1598,6 +1600,7 @@ test('2e.91, 2h.175, 2h.177: Tab in main reaches the back link, the save bar of 
   expect(mainTabbable(main)).toEqual([
     ...pageTopTabStops(),
     ...fieldTabStops(doc.values),
+    ...pageBottomTabStops(),
   ])
   // A disabled control takes no focus, so a read-only row contributes only
   // its About toggle; an enabled boxed row contributes its box and its input,

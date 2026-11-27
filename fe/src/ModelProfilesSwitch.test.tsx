@@ -26,6 +26,7 @@ import {
   isHidden,
   navigate,
   reply,
+  rowName,
   shownText,
   startAt,
   stubDialog,
@@ -146,10 +147,15 @@ function dataRows(main: HTMLElement): HTMLElement[] {
 
 /** The rows' cells' text: id, engine, On/Off. The eye's read, so the row's −
  *  of 22 D4.1 is not in it: its words are its accessible name, in a
- *  `.visually-hidden` span, and the cell shows an icon. */
+ *  `.visually-hidden` span, and the cell shows an icon. The name cell is read
+ *  as the id alone: 22 D4.35 adds the engine there as a muted second line for
+ *  the narrow page, a copy of the Engine column, pinned in
+ *  L2ModelsList.test.tsx. */
 function rows(main: HTMLElement): string[][] {
   return dataRows(main).map((row) =>
-    [...row.querySelectorAll('td, th')].map((c) => shownText(c)),
+    [...row.querySelectorAll('td, th')].map((c, i) =>
+      i === 0 ? rowName(c) : shownText(c),
+    ),
   )
 }
 
@@ -690,7 +696,10 @@ test('2c.38: each switch is named by the id in its row, through aria-labelledby 
   const seen = new Set<string>()
   for (const row of dataRows(main)) {
     const nameCell = row.querySelector('td, th')!
-    const id = (nameCell.textContent ?? '').trim()
+    // The id alone names the row: 22 D4.35 adds the engine as a muted second
+    // line of the cell, outside the element that labels the controls (the
+    // designer's ruling of 2026-11-27).
+    const id = rowName(nameCell)
     const input = row.querySelector('input')!
     const by = input.getAttribute('aria-labelledby') ?? ''
     expect(by, id).not.toBe('')

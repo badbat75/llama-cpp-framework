@@ -17,20 +17,22 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  accName,
   before,
+  type BffOptions,
   en,
   fakeBff,
   isHidden,
   modelProfileDoc,
   reply,
   startAt,
-  type BffOptions,
 } from './test/bff.ts'
 import {
-  cardHeadings,
   cardHeadingKeys,
+  cardHeadings,
   expectedInputMode,
   fieldTabStops,
+  pageBottomTabStops,
   pageTopTabStops,
 } from './test/modelProfileCards.ts'
 
@@ -439,8 +441,8 @@ function mainTabbable(main: HTMLElement): string[] {
 
 /** The name Tab shows: a control's text, or the label that names an input. */
 function nameOf(el: HTMLElement): string {
-  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // The accessible name, `aria-label` first (test/bff.ts's accName).
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return accName(el)
   const labelled = el.getAttribute('aria-labelledby')
   if (labelled)
     return labelled
@@ -1035,6 +1037,7 @@ test('2e.91: Tab in main reaches the back link, the save bar of 22 D2.5, the ten
   expect(mainTabbable(main)).toEqual([
     ...pageTopTabStops(),
     ...fieldTabStops(docOf(SET).values),
+    ...pageBottomTabStops(),
   ])
 })
 

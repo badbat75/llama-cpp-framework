@@ -1623,8 +1623,21 @@ test('GD2.10: GD2 keys of section 2 are strings of the suite, and Draft device, 
       `GD2.10: no Tensor placement control inside the GPU card: ${key}`,
     ).toBeNull()
   // `Field.tsx`'s Hint is one paragraph per `\n` of the string, so the hint is
-  // counted as the field's hint block and its lines, never as one text.
-  const hints = [...card.querySelectorAll('.field-hint')]
+  // counted as the field's hint block and its lines, never as one text. The
+  // card's own About of 22 D4.31 opens the panel of the card's intro, and that
+  // panel is a `Hint` too, so the count is scoped to the field hints by leaving
+  // out the panel the toggle names.
+  const about = within(card).getByRole('button', {
+    name: `${en('field-about')} ${GPU}`,
+  })
+  const panel = about.getAttribute('aria-controls')
+  expect(
+    panel,
+    'GD2.10: 22 D4.31: the card About names the panel of its intro',
+  ).toBeTruthy()
+  const hints = [...card.querySelectorAll('.field-hint')].filter(
+    (el) => el.id !== panel,
+  )
   expect(
     hints.length,
     'GD2.10: the card shows one hint, that of its split mode field',

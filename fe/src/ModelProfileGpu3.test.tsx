@@ -988,7 +988,7 @@ test('GD1.11: an untouched device is never sent, so an id the probe does not lis
 
 // ── GD1.12: keyboard, and nothing else ────────────────────────────────────
 
-test('GD1.12: the card tab order is the split mode About toggle, its select, then per row its checkbox, Move up and Move down, and nothing takes focus on arrival', async () => {
+test('GD1.12 (as 22 D4.31 amends it): the card tab order is the card’s own About toggle, the split mode About toggle, its select, then per row its checkbox, Move up and Move down, and nothing takes focus on arrival', async () => {
   // Real timers: this criterion reads no clock, and the mount helper's
   // `findBy*` needs them.
   const { main } = await form({ device: 'CUDA0,ROCm0' })
@@ -998,14 +998,22 @@ test('GD1.12: the card tab order is the split mode About toggle, its select, the
   )
   const inCard = mainTabbable(main).filter((el) => card.contains(el))
   const names = inCard.map((el) => nameOf(el))
-  expect(names.slice(0, 2), 'GD1.12: the About toggle then the select').toEqual(
-    [`${en('field-about')} ${MODE_LABEL}`, MODE_LABEL],
-  )
+  expect(
+    // 22 D4.31 (the designer's ruling of 2026-11-27): the card's own About, a
+    // Tab stop right after the card's h3, leads the card, before the split
+    // mode About and its select.
+    names.slice(0, 3),
+    'GD1.12: the card About, then the split mode About, then the select',
+  ).toEqual([
+    `${en('field-about')} ${GPU}`,
+    `${en('field-about')} ${MODE_LABEL}`,
+    MODE_LABEL,
+  ])
   const firstOf = (id: string) => names.findIndex((n) => n.includes(id))
   expect(
     firstOf('CUDA0'),
     'GD1.12: the rows follow the split mode pair, in row order',
-  ).toBeGreaterThan(1)
+  ).toBeGreaterThan(2)
   expect(firstOf('CUDA0'), 'GD1.12: CUDA0 precedes ROCm0').toBeLessThan(
     firstOf('ROCm0'),
   )

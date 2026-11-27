@@ -16,18 +16,20 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  accName,
   before,
+  type BffOptions,
   en,
   fakeBff,
   isHidden,
   modelProfileDoc,
   reply,
   startAt,
-  type BffOptions,
 } from './test/bff.ts'
 import {
-  MODEL_PROFILE_CARDS,
   fieldTabStops,
+  MODEL_PROFILE_CARDS,
+  pageBottomTabStops,
   pageTopTabStops,
 } from './test/modelProfileCards.ts'
 
@@ -227,8 +229,8 @@ function mainTabbable(main: HTMLElement): string[] {
 
 /** The name Tab shows: a control's text, or the label that names an input. */
 function nameOf(el: HTMLElement): string {
-  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
-    return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // The accessible name, `aria-label` first (test/bff.ts's accName).
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return accName(el)
   const aria = el.getAttribute('aria-label')
   if (aria) return aria
   const id = el.getAttribute('id')
@@ -293,7 +295,11 @@ test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes an
   for (const name of [en('save-button'), en('save-discard')])
     expect(within(main).queryByRole('button', { name }), name).toBeTruthy()
   expect(main.querySelector('.save-bar'), 'the save bar').toBeTruthy()
-  expect(mainTabbable(main)).toEqual([...pageTopTabStops(), ...CARD_TAB_STOPS])
+  expect(mainTabbable(main)).toEqual([
+    ...pageTopTabStops(),
+    ...CARD_TAB_STOPS,
+    ...pageBottomTabStops(),
+  ])
 })
 
 // ── The order and the off line (68, 69) ─────────────────────────────────
@@ -679,6 +685,7 @@ test('2d.78: Tab on the model profile page goes skip link, banner, nav, the back
     en('nav-about'),
     ...pageTopTabStops(),
     ...CARD_TAB_STOPS,
+    ...pageBottomTabStops(),
   ])
   // The h1 takes the focus only from the page (tabindex -1): Tab starts below it.
   expect(

@@ -649,7 +649,7 @@ test('H11a.11: the notice, the Engine row of Assets (H11b), the h2, the nine car
     en('model-profiles-engine-not-available', ENGINE),
   ])
   expect(
-    [...main.querySelectorAll<HTMLElement>('section.card > h3')].map((h) =>
+    [...main.querySelectorAll<HTMLElement>('section.card h3')].map((h) =>
       textOf(h),
     ),
     'H11a.11: the ten cards in the order of 83',
@@ -943,7 +943,7 @@ const LOOK: [string, string, [string, string][]][] = [
     'summary',
     SUMMARY_SEL,
     [
-      ['margin', '0 0 var(--space-4)'],
+      ['margin', '0 0 var(--space-5)'],
       ['color', 'var(--muted)'],
       ['overflow-wrap', 'anywhere'],
     ],

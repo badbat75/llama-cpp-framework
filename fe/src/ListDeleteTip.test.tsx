@@ -32,13 +32,14 @@ import { afterEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import strings from './strings/en_US.json'
 import {
+  accName,
+  type BffOptions,
   en,
   fakeBff,
   isHidden,
-  startAt,
-  type BffOptions,
   type ModelProfile,
   type ServerProfile,
+  startAt,
 } from './test/bff.ts'
 
 /** `trash-2` of lucide-static 1.74.0 (icons/trash-2.svg, ISC), the five paths in
@@ -662,7 +663,7 @@ test('22 D4.21: the row delete of both lists is the trash can in a button carryi
       verb.querySelector('svg'),
       `22 D4.21: the Save bar\u2019s Delete on ${route} stays a text button`,
     ).toBeNull()
-    expect(text(verb), 'its word says it').toBe(en(key))
+    expect(accName(verb), 'its word says it').toBe(en(key))
     cleanup()
   }
 })

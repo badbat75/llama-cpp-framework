@@ -38,11 +38,14 @@
 // Speculative decoding card (112) and, with it, the group row of 90: a card row
 // that is the GUI's bold sub-heading and the rows under it, so a card's rows
 // nest and the one renderer still shows them all.
+import { useState } from 'react'
 import { boxText, boxedFrom, type Boxed } from './boxed.ts'
 import Card from './Card.tsx'
 import {
   CheckboxField,
   DefaultBoxField,
+  Hint,
+  HintToggle,
   SelectField,
   TextField,
 } from './Field.tsx'
@@ -296,8 +299,13 @@ type CardFields = {
    * `note` sits right after the card's h3, before the first field: a plain
    * paragraph in reading order (181), never a control's description. */
   needsFile?: { key: string; note: string }
-  /** Brief 14: the card's intro, one paragraph per line, right after the h3. */
+  /** Brief 14: the card's intro, one paragraph per line, right after the h3.
+   *  22 D4.31 as its D1 review (2026-11-27) amends it: the intro is the card's
+   *  one sentence, and what the card goes on to say is `about`. */
   introLines?: string[]
+  /** 22 D4.31 review D1: the words behind the card's About, the rest of the
+   *  intro the card used to show, `\n` breaks included. */
+  about?: string
   rows: Row[]
 }
 
@@ -397,6 +405,7 @@ const CARDS: CardFields[] = [
     id: 'gpu',
     title: t('model-profile-gpu-distribution'),
     introLines: t('model-profile-gpu-distribution-intro').split('\n'),
+    about: t('model-profile-gpu-distribution-about'),
     rows: [
       { kind: 'facts', key: 'model-info' },
       {
@@ -426,6 +435,7 @@ const CARDS: CardFields[] = [
     id: 'tensor',
     title: t('model-profile-tensor-placement'),
     introLines: t('model-profile-tensor-placement-intro').split('\n'),
+    about: t('model-profile-tensor-placement-about'),
     rows: [
       {
         kind: 'tensor',
@@ -2474,23 +2484,41 @@ export function fieldPlace(
   return null
 }
 
-/** The cards, in the order of the table, each with the fields of its rows. The
- * page's form (`values`, the draft it edits, and `loaded`, the read's values)
- * writes a change of an editable row into `onEdit`, and the box state of its
- * number fields into `boxed` through `onTick` and `onBoxText`; a page that only
- * shows the file leaves every control disabled and passes an empty `boxed`.
- * `errors` marks the fields a save refusal named (2h's 142), by key. */
-export default function ModelProfileCards({
-  values,
-  loaded,
-  onEdit,
-  boxed,
-  onTick,
-  onBoxText,
-  errors,
-  gpu,
-  tensor,
+/** A card's intro: its one sentence, and the card's own About panel (22 D4.31,
+ * as its D1 review of 2026-11-27 amends it): a card that opens with three
+ * hundred words pushes its first field down the screen, so the card shows the
+ * sentence and keeps the rest in the panel. The panel is the field hint of
+ * today, one paragraph per line, closed by the toggle of the heading row
+ * (`ProfileCard`, 22 D4.31 review A2): no new word, no new look. */
+function CardIntro({
+  lines,
+  about,
+  hintId,
+  open,
 }: {
+  /** The intro as the strings file gives it, one entry per line. */
+  lines: string[]
+  /** 22 D4.31 review D1: the words of the panel, `\n` breaks included. */
+  about?: string
+  /** The panel's id, named by the heading row's toggle. */
+  hintId: string
+  open: boolean
+}) {
+  if (lines.length === 0) return null
+  return (
+    <>
+      <p className="intro">{lines[0]}</p>
+      {about === undefined ? null : (
+        <Hint id={hintId} text={about} open={open} />
+      )}
+    </>
+  )
+}
+
+/** What a page gives the card list: the form it edits (`values`, the draft, and
+ * `loaded`, the read's values), the writes, and the two cards that read the
+ * page's own state (`gpu`, `tensor`). */
+type CardsProps = {
   values: Record<string, string>
   loaded: Record<string, string>
   onEdit: (key: string, value: string) => void
@@ -2505,47 +2533,94 @@ export default function ModelProfileCards({
    * rules, the page's rows. A page that only shows the file passes none: the
    * rules show nothing, as the GPUs' fieldset does. */
   tensor?: TensorCardProps
-}) {
+}
+
+/** One card of the list, with its own About open state: the toggle sits in the
+ * row of the card's h3 (22 D4.31 review A2) and the panel in the card's body,
+ * so the state is the card's, and one component holds both. */
+function ProfileCard({ card, page }: { card: CardFields; page: CardsProps }) {
+  const [open, setOpen] = useState(false)
+  const headingId = cardHeadingId(card.id)
+  const hintId = `${headingId}-about`
+  const {
+    values,
+    loaded,
+    onEdit,
+    boxed,
+    onTick,
+    onBoxText,
+    errors,
+    gpu,
+    tensor,
+  } = page
+  return (
+    <Card
+      title={card.title}
+      // 196: the heading is this card's jump target, so it carries the id
+      // and the tabindex -1 of the rule.
+      headingId={headingId}
+      // 22 D4.31 review A2: the card's About stands beside the title, the way a
+      // field's About follows its label, and is the card's first Tab stop
+      // (the designer's ruling of 2026-11-27, WCAG 2.1.1): a keyboard reader
+      // reaches the card's words as they reach the card.
+      headingExtra={
+        card.about === undefined ? undefined : (
+          <HintToggle
+            label={card.title}
+            open={open}
+            hintId={hintId}
+            onToggle={() => setOpen(!open)}
+          />
+        )
+      }
+      // 176, 181: while the card's file rule is not met, its note sits
+      // right after the h3, before the first field: a plain paragraph in
+      // reading order, not a live region, no control's description.
+      intro={
+        card.needsFile !== undefined &&
+        held(loaded, card.needsFile.key) === undefined
+          ? card.needsFile.note
+          : undefined
+      }
+    >
+      {card.introLines === undefined ? null : (
+        <CardIntro
+          lines={card.introLines}
+          about={card.about}
+          hintId={hintId}
+          open={open}
+        />
+      )}
+      {card.rows.map((row) => (
+        <ModelProfileRow
+          key={row.key}
+          row={row}
+          values={values}
+          loaded={loaded}
+          onEdit={onEdit}
+          boxed={boxed}
+          onTick={onTick}
+          onBoxText={onBoxText}
+          errors={errors}
+          gpu={gpu}
+          tensor={tensor}
+        />
+      ))}
+    </Card>
+  )
+}
+
+/** The cards, in the order of the table, each with the fields of its rows. The
+ * page's form (`values`, the draft it edits, and `loaded`, the read's values)
+ * writes a change of an editable row into `onEdit`, and the box state of its
+ * number fields into `boxed` through `onTick` and `onBoxText`; a page that only
+ * shows the file leaves every control disabled and passes an empty `boxed`.
+ * `errors` marks the fields a save refusal named (2h's 142), by key. */
+export default function ModelProfileCards(page: CardsProps) {
   return (
     <>
       {CARDS.map((card) => (
-        <Card
-          key={card.title}
-          title={card.title}
-          // 196: the heading is this card's jump target, so it carries the id
-          // and the tabindex -1 of the rule.
-          headingId={cardHeadingId(card.id)}
-          // 176, 181: while the card's file rule is not met, its note sits
-          // right after the h3, before the first field: a plain paragraph in
-          // reading order, not a live region, no control's description.
-          intro={
-            card.needsFile !== undefined &&
-            held(loaded, card.needsFile.key) === undefined
-              ? card.needsFile.note
-              : undefined
-          }
-        >
-          {card.introLines?.map((line, i) => (
-            <p className="intro" key={i}>
-              {line}
-            </p>
-          ))}
-          {card.rows.map((row) => (
-            <ModelProfileRow
-              key={row.key}
-              row={row}
-              values={values}
-              loaded={loaded}
-              onEdit={onEdit}
-              boxed={boxed}
-              onTick={onTick}
-              onBoxText={onBoxText}
-              errors={errors}
-              gpu={gpu}
-              tensor={tensor}
-            />
-          ))}
-        </Card>
+        <ProfileCard key={card.title} card={card} page={page} />
       ))}
     </>
   )

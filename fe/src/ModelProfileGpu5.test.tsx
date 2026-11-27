@@ -25,6 +25,7 @@ import {
   en,
   fakeBff,
   held,
+  isHidden,
   MODEL_FILE,
   modelProfileDoc,
   reply,
@@ -176,10 +177,12 @@ function modeSelect(main: HTMLElement): HTMLSelectElement {
 }
 
 /** The facts line of 19 G.2: the card's one paragraph after its intro and
- * before the split mode field, whatever it says. */
+ * before the split mode field, whatever it says. 22 D4.31 review D1 (2026-11-27)
+ * adds the card's About panel, a hidden paragraph of the card, so the line is
+ * looked for among the paragraphs the eye sees. */
 function factsEl(main: HTMLElement): HTMLElement {
   const card = cardOf(main, GPU)
-  const paras = [...card.querySelectorAll('p')]
+  const paras = [...card.querySelectorAll('p')].filter((p) => !isHidden(p))
   const intro = paras.filter((p) => INTRO_LINES.includes(p.textContent ?? ''))
   const after = intro.length > 0 ? intro[intro.length - 1]! : card
   const found = paras.filter(

@@ -3,9 +3,9 @@
 // in place of a new instance (fe/briefs/16-server-profiles-and-instances.md,
 // 17c.1a and 17c.2, as the 17c check of 2026-11-25 amends them).
 import {
-  useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -336,10 +336,16 @@ export function instancesStore(): InstancesStore {
  * names an instance it did not read, like a server profile's "Used by", says it
  * by the word the menu uses. The id for an instance the list does not have
  * (before the read, or one the manager removed).
+ *
+ * `sharedOf` answers 22 D4.37: true when the list has another instance showing
+ * the same name, the one case where the name alone leaves the reader without
+ * the key of the instance they mean.
  */
-export function useInstanceNames(
-  store: InstancesStore,
-): (id: string) => string {
+export type NameOf = ((id: string) => string) & {
+  sharedOf: (id: string) => boolean
+}
+
+export function useInstanceNames(store: InstancesStore): NameOf {
   const [names, setNames] = useState<Record<string, string>>({})
   useEffect(() => {
     // The list is polled, so the names are compared: an answer that changes
@@ -355,15 +361,25 @@ export function useInstanceNames(
     })
     return unwatch
   }, [store])
-  return useCallback((id: string) => names[id] ?? id, [names])
+  return useMemo(() => {
+    // How many instances show each name: the name is shared when two do.
+    const counts = new Map<string, number>()
+    for (const name of Object.values(names))
+      counts.set(name, (counts.get(name) ?? 0) + 1)
+    return Object.assign((id: string) => names[id] ?? id, {
+      sharedOf: (id: string) => (counts.get(names[id] ?? id) ?? 0) > 1,
+    })
+  }, [names])
 }
 
 /**
  * An instance as a link to its page, named as the menu names it, with the id
  * right after the link in a `span.instance-id` (16 17f.4, as brief 22 22 D4.34
  * amends it): the id is the key the reader can act on, and it is plain text,
- * so what a reader hears as the link is the name alone (2.4.4). The id is left
- * out when the name IS the id, which would say the same twice (17f.1).
+ * so what a reader hears as the link is the name alone (2.4.4). 22 D4.37 keeps
+ * the id for the names more than one instance shares, where the name alone
+ * would send the reader to the wrong page: one instance of a name says it once,
+ * the id adding nothing (17f.1).
  */
 export function InstanceLink({
   id,
@@ -371,14 +387,13 @@ export function InstanceLink({
 }: {
   /** The instance's id: the key, and the route. */
   id: string
-  /** The name of an instance, as the app's list has it. */
-  nameOf: (id: string) => string
+  /** The names of the app's list, with its shared-name rule. */
+  nameOf: NameOf
 }) {
-  const name = nameOf(id)
   return (
     <>
-      <a href={instanceHref(id)}>{name}</a>
-      {name !== id && (
+      <a href={instanceHref(id)}>{nameOf(id)}</a>
+      {nameOf.sharedOf(id) && (
         <>
           {' '}
           <span className="instance-id">{t('instance-id-shown', id)}</span>

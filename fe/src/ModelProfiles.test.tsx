@@ -114,13 +114,17 @@ function rows(t: HTMLElement): string[][] {
   return within(t)
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
-    .map((row) => cellsOf(row).map((c) => cellText(c)))
+    .map((row) => cellsOf(row).map((c, i) => cellText(c, i === 0)))
 }
 
-/** A cell's text, the buttons' own text left out. */
-function cellText(cell: HTMLElement): string {
+/** A cell's text, the buttons' own text left out. The name cell is read as the
+ *  id alone: 22 D4.35 copies the engine there as a muted second line for the
+ *  narrow page, L2ModelsList.test.tsx pins that copy, and the id alone keeps
+ *  naming the row's controls (the designer's ruling of 2026-11-27). */
+function cellText(cell: HTMLElement, nameCell = false): string {
   const clone = cell.cloneNode(true) as HTMLElement
   for (const b of clone.querySelectorAll('button')) b.remove()
+  if (nameCell) for (const m of clone.querySelectorAll('.muted')) m.remove()
   return (clone.textContent ?? '').trim()
 }
 

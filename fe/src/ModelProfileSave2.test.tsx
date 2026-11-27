@@ -20,7 +20,9 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  accName,
   before,
+  type BffOptions,
   deferred,
   en,
   fakeBff,
@@ -29,7 +31,6 @@ import {
   reply,
   startAt,
   stubDialog,
-  type BffOptions,
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
@@ -308,7 +309,7 @@ async function modelProfileAfterNavigation() {
 
 // ── 135: the save bar ───────────────────────────────────────────────────
 
-test("2h.135 (22 D2.5): the save bar is the settings section's first element after its h2, before the jump list and the cards: status, no alert, Discard, Save changes, both aria-disabled while clean and inert to a click", async () => {
+test("2h.135 (as 22 L2.B1 amends it): the save bar is the settings section's last element, after the jump list and the cards: status, no alert, Discard, Save changes, both aria-disabled while clean and inert to a click", async () => {
   const { bff, main } = await page({ embeddings: 'true', pooling: 'mean' })
   const h2 = within(main).getByRole('heading', {
     level: 2,
@@ -320,12 +321,12 @@ test("2h.135 (22 D2.5): the save bar is the settings section's first element aft
     true,
   )
   expect(
-    h2.nextElementSibling,
-    "the element right after the h2 is the bar (22 D2.5 moved it to the top of the section; 2h.135 had it as the section's last child)",
+    section.lastElementChild,
+    "22 L2.B1 moved the bar back to the section's last element (22 D2.5 had put it right after the h2, 2h.135 before that)",
   ).toBe(b)
   const cards = [...section.querySelectorAll('.card')]
-  expect(cards.length, 'the cards are after it').toBeGreaterThan(5)
-  expect(before(b, cards[0]!), 'before the first card').toBe(true)
+  expect(cards.length, 'the cards are before it').toBeGreaterThan(5)
+  expect(before(cards[0]!, b), 'the first card comes first').toBe(true)
   const line = status(main)
   const save = saveButton(main)
   const discard = discardButton(main)
@@ -356,7 +357,7 @@ test("2h.135 (22 D2.5): the save bar is the settings section's first element aft
   expect(status(main).textContent, 'and says nothing').toBe('')
 })
 
-test("2h.135: the bar keeps the Server page's sticky CSS: sticky, with the page's scroll padding clear of it (D4)", () => {
+test("2h.135 (as 22 L2.B1 amends it): the bar keeps the Server page's sticky CSS: sticky, with the page's scroll padding clear of it (D4)", () => {
   const css = readFileSync(
     join(import.meta.dirname, 'index.css'),
     'utf8',
@@ -368,8 +369,8 @@ test("2h.135: the bar keeps the Server page's sticky CSS: sticky, with the page'
   expect(rules.map((m) => m[2]).join(' ')).toMatch(/position:\s*sticky/)
   expect(
     css,
-    'a field focused near the top is not hidden behind the bar (22 D2.6 moved the bar, and the padding, to the top)',
-  ).toMatch(/html:has\(\.save-bar\)\s*\{[^{}]*scroll-padding-top:\s*calc\(/)
+    'a field focused near the bottom is not hidden behind the bar (22 L2.B1 moved the bar, and the padding with it, to the bottom; 22 D2.6 had moved both to the top)',
+  ).toMatch(/html:has\(\.save-bar\)\s*\{[^{}]*scroll-padding-bottom:\s*calc\(/)
 })
 
 // ── 136: Discard ────────────────────────────────────────────────────────
@@ -831,7 +832,7 @@ test('2h.140: the browser Forward while the model profile form is dirty is put b
 
 // ── 141: keyboard, screen reader, the strings of the save ───────────────
 
-test("2h.141 (22 D2.7): the tab order takes each Embeddings About toggle and then its select, in the card order, and the bar's Discard and Save changes are the page's first controls after the back link", async () => {
+test("2h.141 (22 D2.7 as 22 L2.B1 amends it): the tab order takes each Embeddings About toggle and then its select, in the card order, and the bar's Discard, Save changes and Delete are the page's last controls", async () => {
   const { main } = await page({ embeddings: 'true', pooling: 'mean' })
   const focusable = [
     ...main.querySelectorAll<HTMLElement>(
@@ -864,20 +865,22 @@ test("2h.141 (22 D2.7): the tab order takes each Embeddings About toggle and the
     at(document.getElementById('model-profile-assets-toggle') as HTMLElement),
     'H11b.4: the Embeddings card sits after the Assets toggle',
   ).toBeLessThan(at(about(MODE)))
-  // 22 D2.5 moved the bar to the top of the settings section, so its stops
-  // lead the page (2h.141 had them last). 22 D4.10 puts the bar's Delete first
-  // in its group.
+  // 2h.141 had the bar's stops last; 22 D2.5 moved them to the head and 22
+  // L2.B1 (the user's ruling of 2026-11-26) moved the bar back to the end of
+  // the form, so they are last again, now with the page's Delete after Discard
+  // and Save changes (22 D4.10 with 22 D4.30 and L2.A2).
   expect(
-    focusable.slice(0, 5).map((el) => (el.textContent ?? '').trim()),
-    'the back link, then the state line’s switch of 24 A2.1, then the bar with its Delete, lead the page',
+    focusable.slice(0, 2).map((el) => (el.textContent ?? '').trim()),
+    'the back link and the state line’s switch of 24 A2.1 lead the page',
   ).toEqual([
     en('model-profile-back'),
     // 24 A2.1: the switch is an input, so it carries no text of its own.
     '',
-    en('model-profile-delete'),
-    en('save-discard'),
-    en('save-button'),
   ])
+  expect(
+    focusable.slice(-3).map((el) => accName(el)),
+    '22 L2.B1: the bar’s Discard, Save changes and Delete are the page’s last stops',
+  ).toEqual([en('save-discard'), en('save-button'), en('model-profile-delete')])
 })
 
 test('2h.141: the bar status is one live region that is there before its text changes, and a failure is announced by the alert, not by the status line', async () => {

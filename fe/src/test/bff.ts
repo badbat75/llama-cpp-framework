@@ -620,8 +620,9 @@ export const EN: Record<string, string> = {
     'Two lists are already being read from Hugging Face. Try again in a moment.',
   // Slice 2b (fe/briefs/02-models.md, section 2b.9): the list's filter.
   'model-profiles-filter-label': 'Filter model profiles',
-  'model-profiles-filter-hint':
-    'Matches part of the model profile name or of its model file path. Case does not matter.',
+  // Brief 22, 22 D4.33: the hint is one short line, so it stays on one line at
+  // 1280 px. The English lands in strings/en_US.json with the code.
+  'model-profiles-filter-hint': 'Name or model file; case does not matter.',
   'model-profiles-filter-clear': 'Clear filter',
   'model-profiles-filter-count': 'Model profiles shown: {0} of {1}.',
   'model-profiles-no-match': 'No model profiles match the filter.',
@@ -899,8 +900,13 @@ export const EN: Record<string, string> = {
   // model-profile-gpu-moved and api-device-bad-name, then GD2's (the weights).
   // Every English is the brief's, the web text of the column that says "web".
   'model-profile-gpu-distribution': 'GPU distribution',
+  // 22 D4.31 as its D1 review (2026-11-27) amends it: the intro is the card's
+  // first sentence alone, and the rest of the old string, word for word with
+  // its `\n` breaks, is the new `-about` key the card's About panel shows.
   'model-profile-gpu-distribution-intro':
-    "Which GPUs run THIS model and how much each holds, saved to models.ini. Check nothing to let llama.cpp choose. With two GPUs of different sizes, check both and give the bigger one more; left on Auto, the split follows free VRAM at load, not an even cut. Under split mode layer, once the model file is read, each GPU takes a number of blocks: the model's blocks and its output layer, shared out top to bottom. Otherwise the weights are ratios: 3 and 1 give 75% and 25%. The checked GPUs, top to bottom, are the split order: Move up and Move down change it; the first one is llama.cpp's main GPU.\nKeys: split-mode, device, tensor-split.",
+    'Which GPUs run THIS model and how much each holds, saved to models.ini.',
+  'model-profile-gpu-distribution-about':
+    "Check nothing to let llama.cpp choose. With two GPUs of different sizes, check both and give the bigger one more; left on Auto, the split follows free VRAM at load, not an even cut. Under split mode layer, once the model file is read, each GPU takes a number of blocks: the model's blocks and its output layer, shared out top to bottom. Otherwise the weights are ratios: 3 and 1 give 75% and 25%. The checked GPUs, top to bottom, are the split order: Move up and Move down change it; the first one is llama.cpp's main GPU.\nKeys: split-mode, device, tensor-split.",
   'model-profile-split-mode': 'GPU split mode',
   'model-profile-split-mode-hint':
     'How THIS model is divided between GPUs. Does nothing with one GPU checked. Same on CUDA and ROCm.\nlayer (default): each GPU takes a consecutive run of blocks, in the proportion of its weight. Fastest prefill; copes with a slow link between GPUs.\nnone: one GPU, the first checked row; other checked rows go unused.\ntensor (experimental): the GPUs act as one device, and all weights and the KV cache are divided by the ratio (blank = even). Fastest decode, needs a fast link. Flash attention must not be off, Fit to VRAM is skipped (set Context size yourself), some architectures refuse to load, and llama.cpp tunes it for CUDA with no guarantees on other backends.\nrow (deprecated, use tensor): weights are split by rows by the ratio (CUDA/ROCm; Vulkan falls back to layer). The KV cache follows the layer cut.\nFlag: --split-mode',
@@ -941,8 +947,12 @@ export const EN: Record<string, string> = {
   // Brief 21 (fe/briefs/21-tensor-placement.md), section 2, sub-slice TP1: the
   // Tensor placement card. Every English is the brief's.
   'model-profile-tensor-placement': 'Tensor placement',
+  // 22 D4.31 as its D1 review (2026-11-27) amends it: same split, the card's
+  // first sentence in the intro, the rest in the new `-about` key.
   'model-profile-tensor-placement-intro':
-    'Exceptions to the GPU distribution above: tensors that go on a device of their own, whatever their layer does. On a MoE model, sending the experts of some layers to the CPU frees the most VRAM, as MoE CPU layers does for the first ones. llama.cpp also keeps the embedding table in RAM even when it reports every layer on the GPU: put it on a GPU to reclaim that memory, if the card has room. The first rule that matches a tensor wins.\nKey: override-tensor.',
+    'Exceptions to the GPU distribution above: tensors that go on a device of their own, whatever their layer does.',
+  'model-profile-tensor-placement-about':
+    'On a MoE model, sending the experts of some layers to the CPU frees the most VRAM, as MoE CPU layers does for the first ones. llama.cpp also keeps the embedding table in RAM even when it reports every layer on the GPU: put it on a GPU to reclaim that memory, if the card has room. The first rule that matches a tensor wins.\nKey: override-tensor.',
   'model-profile-ot-rules': 'Rules',
   'model-profile-ot-none': 'No rules: every tensor goes where its layer goes.',
   'model-profile-ot-format': String.raw`Layers: empty for every layer, or numbers and ranges such as 10-12, 15. Pattern: a regular expression searched in each tensor's name, such as blk\.1[0-9]\..*_exps.`,
@@ -2775,6 +2785,34 @@ export function shownText(root: Node): string {
       out += shownText(node)
   }
   return out.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * The words of a list row's first cell that name the row: its text without the
+ * muted engine line 22 D4.35 puts under the name. The id alone names the row's
+ * controls (the designer's ruling of 2026-11-27, 22 D4.35), so a test that
+ * looks a row up by its id, or compares the name it shows, drops that line.
+ */
+export function rowName(cell: Element): string {
+  const copy = cell.cloneNode(true) as HTMLElement
+  for (const el of Array.from(copy.querySelectorAll('.muted'))) el.remove()
+  return shownText(copy)
+}
+
+/**
+ * The name a reader says for `el`: its `aria-label` when it carries one, else
+ * its text. jsdom applies no CSS, so a control the sheet gives two runs of
+ * words, one for a wide width and one for a narrow one, reads doubled through
+ * `textContent`, and an `aria-label` is what a reader says: the accessible name
+ * is the contract, and WCAG 2.5.3 keeps the visible words inside it. (22 D4.30
+ * review A1 gave the Save bar's Delete exactly that shape, and this helper was
+ * written for it; the round's second review, D4, withdrew the short verb, so
+ * that button names itself with its one full label and the two readings agree.)
+ */
+export function accName(el: Element): string {
+  return (el.getAttribute('aria-label') ?? el.textContent ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 /**

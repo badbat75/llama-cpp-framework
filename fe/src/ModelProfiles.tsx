@@ -739,78 +739,86 @@ const Table = memo(function Table({
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ p, i }) => (
-            <Fragment key={p.id}>
-              <tr className={p.enabled ? undefined : 'off'}>
-                <td>
-                  <span id={`${uid}-name-${i}`}>
-                    {modelProfileIdUnreadable(p.id) ? (
-                      p.id
-                    ) : (
-                      <a href={modelProfileHref(p.id)}>{p.id}</a>
-                    )}
-                  </span>
-                </td>
-                <td>
-                  {p.engineAvailable
-                    ? p.engine
-                    : t('model-profiles-engine-not-available', p.engine)}
-                </td>
-                <td className="status-cell">
-                  {/* The switch and its word are one line, carried by their own
+          {rows.map(({ p, i }) => {
+            // The engine as the name cell's second line (22 D4.35): the sheet
+            // hides the Engine column below 480 px, where this line is what
+            // says what runs the profile. It stands beside the span that names
+            // the row's controls, not inside it: the eye reads the line, the id
+            // alone names the switch, the name link and the row delete
+            // (2d.60, 2c.38, the designer's ruling of 2026-11-27).
+            const engine = p.engineAvailable
+              ? p.engine
+              : t('model-profiles-engine-not-available', p.engine)
+            return (
+              <Fragment key={p.id}>
+                <tr className={p.enabled ? undefined : 'off'}>
+                  <td>
+                    <span id={`${uid}-name-${i}`}>
+                      {modelProfileIdUnreadable(p.id) ? (
+                        p.id
+                      ) : (
+                        <a href={modelProfileHref(p.id)}>{p.id}</a>
+                      )}
+                    </span>
+                    <span className="muted">{engine}</span>
+                  </td>
+                  <td>{engine}</td>
+                  <td className="status-cell">
+                    {/* The switch and its word are one line, carried by their own
                       span (22 D4.25): the cell stays a plain table cell, so it
                       centres its content in the row. */}
-                  <span>
-                    <label className="model-profiles-switch">
-                      <input
-                        id={`${uid}-switch-${i}`}
-                        type="checkbox"
-                        role="switch"
-                        checked={p.enabled}
-                        aria-labelledby={`${uid}-name-${i}`}
-                        aria-disabled={busy || deleting || undefined}
-                        onChange={(e) => {
-                          if (!busy) onChange(i, e.target.checked)
-                        }}
-                      />
-                    </label>
-                    <span aria-hidden="true">
-                      {p.enabled
-                        ? t('model-profiles-status-on')
-                        : t('model-profiles-status-off')}
+                    <span>
+                      <label className="model-profiles-switch">
+                        <input
+                          id={`${uid}-switch-${i}`}
+                          type="checkbox"
+                          role="switch"
+                          checked={p.enabled}
+                          aria-labelledby={`${uid}-name-${i}`}
+                          aria-disabled={busy || deleting || undefined}
+                          onChange={(e) => {
+                            if (!busy) onChange(i, e.target.checked)
+                          }}
+                        />
+                      </label>
+                      <span aria-hidden="true">
+                        {p.enabled
+                          ? t('model-profiles-status-on')
+                          : t('model-profiles-status-off')}
+                      </span>
                     </span>
-                  </span>
-                </td>
-                {/* The row's actions (22 D4.23): the trash can alone, in the
+                  </td>
+                  {/* The row's actions (22 D4.23): the trash can alone, in the
                     column every row ends with. */}
-                <td>
-                  <RowDelete
-                    domId={`${uid}-delete-${p.id}`}
-                    name={t('model-profiles-delete-row', p.id)}
-                    reason={
-                      p.enabled ? t('model-profiles-delete-needs-off') : null
-                    }
-                    disabled={p.enabled}
-                    busy={deleting}
-                    open={confirming === p.id}
-                    onPress={() => onDelete(p.id)}
+                  <td>
+                    <RowDelete
+                      domId={`${uid}-delete-${p.id}`}
+                      name={t('model-profiles-delete-row', p.id)}
+                      reason={
+                        p.enabled ? t('model-profiles-delete-needs-off') : null
+                      }
+                      disabled={p.enabled}
+                      busy={deleting}
+                      open={confirming === p.id}
+                      onPress={() => onDelete(p.id)}
+                    />
+                  </td>
+                </tr>
+                {confirming === p.id && (
+                  <ConfirmRow
+                    columns={4}
+                    question={t('model-profiles-delete-question', p.id)}
+                    status={confirmStatus}
+                    alert={confirmAlert}
+                    running={deleting}
+                    onConfirm={onConfirm}
+                    onCancel={onCancel}
+                    onSignIn={onSignIn}
                   />
-                </td>
-              </tr>
-              {confirming === p.id && (
-                <ConfirmRow
-                  columns={4}
-                  question={t('model-profiles-delete-question', p.id)}
-                  status={confirmStatus}
-                  alert={confirmAlert}
-                  running={deleting}
-                  onConfirm={onConfirm}
-                  onCancel={onCancel}
-                  onSignIn={onSignIn}
-                />
-              )}
-            </Fragment>
-          ))}
+                )}
+              </Fragment>
+            )
+          })}
         </tbody>
       </table>
     </div>

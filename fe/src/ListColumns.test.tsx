@@ -35,6 +35,7 @@ import {
   en,
   fakeBff,
   reply,
+  rowName,
   serverProfileDoc,
   shownText,
   startAt,
@@ -66,8 +67,9 @@ const SERVER_ROWS: ServerProfile[] = [
   serverRow('qwen-27b', null),
 ]
 
-/** The instance of 22 D4.34: a label, so its name is not its id and the id
- *  line is there to tell two instances named alike apart (16 17f.4). */
+/** The instance of 22 D4.34 as 22 D4.37 amends it: a label, so its name is not
+ *  its id, and a name no other instance of the stub's list carries, so its
+ *  Used by link carries no id. */
 const LABELLED: Instance[] = [
   {
     id: 'default',
@@ -421,7 +423,9 @@ test('22 D4.23: every row of both lists has its trash can in the Actions cell, t
       expect(cells, `${list.label}: one cell under every header`).toHaveLength(
         headers.length,
       )
-      const id = text(cells[0])
+      // The id alone (22 D4.35): the Models row's first cell shows the engine
+      // under the name, and the row's delete is named by the id.
+      const id = rowName(cells[0]!)
       const del = deleteOf(row, list, id)
       expect(
         del.closest('td'),
@@ -441,7 +445,7 @@ test('22 D4.23: every row of both lists has its trash can in the Actions cell, t
           'the Status cell keeps the switch',
         ).toHaveLength(1)
         const p = MODEL_LIST.find(
-          (m) => m.id === text(cellsOf(row)[0]),
+          (m) => m.id === rowName(cellsOf(row)[0]!),
         )!.enabled
         expect(text(cell), 'and the word that says the state').toBe(
           en(p ? 'model-profiles-status-on' : 'model-profiles-status-off'),
@@ -799,9 +803,9 @@ test('22 D4.28: no rule makes a table cell, or the status cell, a flex box (the 
   ).not.toBe('flex')
 })
 
-// ── 22 D4.34: Used by on the server list ────────────────────────────────
+// ── 22 D4.34 as 22 D4.37 amends it: Used by on the server list ──────────
 
-test("22 D4.34: the Used by cell is one link of the instance's name, with the id as muted plain text right after it, outside the link (16 17f.4 still tells two instances named alike apart)", async () => {
+test("22 D4.34 (as 22 D4.37 amends it): the Used by cell is one link of the instance's name and nothing after it, the id only where two instances share that name", async () => {
   const main = await SERVERS.open({ instances: LABELLED })
   const t = tableOf(main, SERVERS)
   const cell = cellsOf(rowOf(main, SERVERS, 'default'))[
@@ -817,26 +821,19 @@ test("22 D4.34: the Used by cell is one link of the instance's name, with the id
   expect(link.getAttribute('href'), 'to the instance page').toBe(
     '#/instances/default',
   )
-  const id = link.nextElementSibling
+  // 22 D4.37: the id follows the link only where names are shared. This stub's
+  // instance list has one instance, so its name is unique and the cell is the
+  // link alone. The shared name is L2InstanceLink.test.tsx.
   expect(
-    id,
-    'the id follows the link, as its sibling: it is not inside the link',
-  ).not.toBeNull()
-  expect(
-    id!.classList.contains('instance-id'),
-    'the id keeps the span.instance-id of 16 17f.4',
-  ).toBe(true)
-  expect(id!.closest('a'), 'plain text: no link inside the link').toBeNull()
-  expect(text(id!), 'the id text and key are unchanged').toBe(
-    en('instance-id-shown', 'default'),
+    cell.querySelector('.instance-id'),
+    '22 D4.37: no id beside a name no other instance shares',
+  ).toBeNull()
+  expect(shownText(cell), '22 D4.37: the cell is the name alone').toBe(
+    'Coding assistant',
   )
-  expect(
-    shownText(cell),
-    'the cell reads the name and the id, on one line',
-  ).toBe(`Coding assistant ${en('instance-id-shown', 'default')}`)
-  // Muted plain text on the same line: the sheet keeps the quiet colour, and
-  // drops the block that stacked the id under the name in a cell (17f review
-  // D1, which 22 D4.34 replaces with the id outside the link).
+  // Muted plain text on the same line, when it is shown: the sheet keeps the
+  // quiet colour, and drops the block that stacked the id under the name in a
+  // cell (17f review D1, which 22 D4.34 replaces with the id outside the link).
   expect(values(declsOf('.instance-id'), 'color'), 'the id is muted').toContain(
     'var(--muted)',
   )
@@ -855,7 +852,7 @@ test("22 D4.34: the Used by cell is one link of the instance's name, with the id
   ).toEqual([])
 })
 
-test("22 D4.34: the server profile page's Used by row keeps the same shape: the name as the link, the id as plain text after it", async () => {
+test("22 D4.34 (as 22 D4.37 amends it): the server profile page's Used by row keeps the same shape: the name as the link, and nothing after it where the name is unique", async () => {
   startAt('#/profiles/server/qwen-27b')
   fakeBff({
     serverProfile: () =>
@@ -873,10 +870,12 @@ test("22 D4.34: the server profile page's Used by row keeps the same shape: the 
   const links = within(dd as HTMLElement).queryAllByRole('link')
   expect(links, 'one link').toHaveLength(1)
   expect(text(links[0]!), 'the link is the name alone').toBe('Coding assistant')
-  const id = links[0]!.nextElementSibling
-  expect(id, 'the id follows it, outside the link').not.toBeNull()
-  expect(id!.closest('a'), 'plain text').toBeNull()
-  expect(text(id!), 'the id, unchanged').toBe(
-    en('instance-id-shown', 'default'),
-  )
+  expect(
+    dd!.querySelector('.instance-id'),
+    '22 D4.37: no id beside a name no other instance shares',
+  ).toBeNull()
+  expect(
+    shownText(dd as HTMLElement),
+    '22 D4.37: the row is the name alone',
+  ).toBe('Coding assistant')
 })

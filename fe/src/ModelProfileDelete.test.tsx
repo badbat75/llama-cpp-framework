@@ -40,7 +40,9 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
+  accName,
   before,
+  type BffOptions,
   deferred,
   en,
   fakeBff,
@@ -49,7 +51,6 @@ import {
   reply,
   startAt,
   stubDialog,
-  type BffOptions,
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
@@ -145,7 +146,8 @@ function makeDirty(main: HTMLElement) {
   fireEvent.change(select, { target: { value: 'false' } })
 }
 
-/** The save bar's button group: 22 D4.10 puts the page's Delete first in it. */
+/** The save bar's button group: 22 D4.10 puts the page's Delete in it, and 22
+ *  D4.30 moves it to the group's end, after Discard and Save changes. */
 function barActions(main: HTMLElement): HTMLElement {
   const actions = main.querySelector('.save-actions')
   expect(actions, 'the bar’s button group of 2h.1').not.toBeNull()
@@ -234,7 +236,7 @@ async function signInInDialog(user: string) {
 
 // ── 22 D.1: offered while switched off ──────────────────────────────────
 
-test('22 D.1 (as 22 D4.10 moves its place): a switched-off profile offers the model-profile-delete delete as the first button of the save bar’s group, before Discard and Save changes and outside every fieldset; a switched-on profile keeps it, aria-disabled with the list’s reason; the status row of 22 D2.1 is gone', async () => {
+test('22 D.1 (as 22 D4.10 moves its place and 22 D4.30 its order): a switched-off profile offers the model-profile-delete delete as the last button of the save bar’s group, after Discard and Save changes, and outside every fieldset; a switched-on profile keeps it, aria-disabled with the list’s reason; the status row of 22 D2.1 is gone', async () => {
   const { main } = await loaded()
   const summary = main.querySelector('p.model-profile-summary')
   expect(summary, 'the summary line is there').not.toBeNull()
@@ -253,14 +255,14 @@ test('22 D.1 (as 22 D4.10 moves its place): a switched-off profile offers the mo
   expect(button.closest('fieldset'), 'outside the form').toBeNull()
   expect(
     [...actions.children].indexOf(button),
-    '22 D4.10: it is the group’s first button, apart from Save',
-  ).toBe(0)
+    '22 D4.30: it is the group’s last button, after Discard and Save changes',
+  ).toBe(actions.children.length - 1)
   expect(
     within(actions)
       .getAllByRole('button')
-      .map((b) => (b.textContent ?? '').trim()),
-    '22 D4.10: Delete, then Discard and Save changes',
-  ).toEqual([en('model-profile-delete'), en('save-discard'), en('save-button')])
+      .map((b) => accName(b)),
+    '22 D4.30: Discard, Save changes, then the Delete the bar ends with',
+  ).toEqual([en('save-discard'), en('save-button'), en('model-profile-delete')])
   expect(
     button.getAttribute('aria-disabled'),
     'a switched-off profile: the delete can act',

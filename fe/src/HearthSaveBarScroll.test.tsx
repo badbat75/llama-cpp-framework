@@ -1,17 +1,17 @@
 // H5c, the three carried issues of the Hearth shell
 // (fe/briefs/07-hearth-h5-shell.md, section 3). H5c.1 and H5c.2 are two CSS
 // rules: the controls of the sticky save bar cancel, with an equal negative
-// scroll-margin-top, the scroll-padding-top the bar puts on the page, so
+// scroll-margin-bottom, the scroll-padding-bottom the bar puts on the page, so
 // focusing Discard (a control that always sits inside that padded strip) does
 // not scroll the page. jsdom does no layout, so these tests pin the stylesheet
 // text the way HearthH2a.test.ts, HearthH4.test.ts, HearthH5a.test.ts,
 // HearthH5b.test.ts and DisabledLook.test.ts do (comments dropped, the same
 // rule regex, the same nesting depth, prop() the last value of a property in a
 // block); none of them exports a helper, so the reader is a small local copy.
-// The padding is at the TOP since 22 D2.5 moved the bar to the top of the page
-// (fe/briefs/22-model-sources.md, section 22D2): the two rules are the same
-// pair, read at the other edge, and 22 D2.6 in ModelProfileDelete2.test.tsx
-// pins the bar's own sticky rule.
+// The padding was at the TOP from 22 D2.5 to 22 L2.B1 (the user's ruling of
+// 2026-11-26, fe/briefs/22-model-sources.md), which moved the bar to the
+// bottom of the form: the two rules are the same pair, read at the other edge,
+// and 22 L2.B1 in Reflow.test.ts pins the bar's own sticky rule.
 // H5c.3 (no scroll when Discard takes the focus), H5c.4 (the About focus clears
 // the bar) and H5c.5 (the browser's own text at 200 %, 32 px initial size) are
 // measurements: the designer's UX pass, as the brief says.
@@ -166,13 +166,13 @@ const rawTopRule = (sel: string): string => {
 
 // The two halves of the rule the brief pins: the padding on the page, and the
 // margin on the bar's controls that cancels it.
-const PAD = 'scroll-padding-top'
-const MARGIN = 'scroll-margin-top'
+const PAD = 'scroll-padding-bottom'
+const MARGIN = 'scroll-margin-bottom'
 const BAR_BUTTON = '.save-bar button'
 
 // ── H5c.1: the bar's controls cancel the padding ────────────────────────
 
-test('H5c.1: the top-level .save-bar button rule cancels the page scroll padding with an equal negative scroll-margin-top, written after the html:has(.save-bar) rule, prettier-ignore as that one', () => {
+test('H5c.1 (as 22 L2.B1 amends it): the top-level .save-bar button rule cancels the page scroll padding with an equal negative scroll-margin-bottom, written after the html:has(.save-bar) rule, prettier-ignore as that one', () => {
   const bar = topBy('html:has(.save-bar)', 'the html:has(.save-bar) rule')
   const pad = prop(bar.body, PAD)
   const btn = topBy(
@@ -210,11 +210,11 @@ test('H5c.1: the top-level .save-bar button rule cancels the page scroll padding
 
 // ── H5c.2: not in the short viewport ───────────────────────────────────
 
-test('H5c.2: inside @media (max-height: 31.98rem) the .save-bar button rule zeroes the margin, after the top-level one and beside the padding the block already zeroes', () => {
+test('H5c.2 (as 22 L2.B1 amends it): inside @media (max-height: 31.98rem) the .save-bar button rule zeroes the margin, after the top-level one and beside the padding the block already zeroes', () => {
   const short = oneAt('@media (max-height: 31.98rem)')
   const btn = single(
     inside(short).filter((r) => r.compact === '.save-barbutton'),
-    'the .save-bar button rule inside the short-viewport block (the bar is static there, so a negative margin would let a focused button end above the viewport)',
+    'the .save-bar button rule inside the short-viewport block (the bar is static there, so a negative margin would let a focused button end below the viewport)',
   )
   expect(
     prop(btn.body, MARGIN),

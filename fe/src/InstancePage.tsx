@@ -936,7 +936,7 @@ function ConfirmRemove({
         <button
           type="button"
           id="confirm-remove"
-          className="primary"
+          className="primary danger"
           aria-disabled={running || undefined}
           onClick={() => void remove()}
         >

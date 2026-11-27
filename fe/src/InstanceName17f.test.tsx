@@ -307,14 +307,15 @@ test('16 17f.4: a message that names an instance keeps the id: the page of an id
   expect(text.textContent, 'the id, not a name').toContain('nosuch')
 })
 
-/** The Used by link of 17f.4, as it must read: the name alone. The id follows
- *  the link as plain text (22 D4.34 replaces the 17f review's D1, which set it
- *  inside the link after a space): what a reader hears as the link is the
- *  instance's name, and the id is still there to tell two named alike apart. */
+/** The Used by link of 17f.4, as 22 D4.37 amends it: the name alone, and
+ *  nothing after it. The id follows the link only when another instance of the
+ *  app's instance list carries the same name (22 D4.37 replaces 22 D4.34's id
+ *  line, and keeps 17f.4 for the two instances named alike). The stub names
+ *  `default` `Coding assistant` and no other instance, so both Used by places
+ *  show the link alone. Two instances sharing a name are L2InstanceLink.test.tsx. */
 const USED_BY = 'Coding assistant'
-const USED_BY_ID = en('instance-id-shown', 'default')
 
-test('16 17f.4 (as 22 D4.34 amends the 17f review D1): the Server profiles list links its Used by cell with the name alone, and the id in a span.instance-id right after the link, outside it', async () => {
+test('16 17f.4 (as 22 D4.34 amends the 17f review D1 and 22 D4.37 the id line): the Server profiles list links its Used by cell with the name alone, and shows no id after the link when no other instance has that name', async () => {
   const pool = [
     {
       id: 'qwen-27b',
@@ -333,22 +334,21 @@ test('16 17f.4 (as 22 D4.34 amends the 17f review D1): the Server profiles list 
   )
   expect(
     link.textContent,
-    '22 D4.34: the link reads the name alone, so 2.4.4 is met',
+    '22 D4.34 kept by 22 D4.37: the link reads the name alone, so 2.4.4 is met',
   ).toBe(USED_BY)
-  const span = link.nextElementSibling
-  expect(span, 'the id follows the link, as its sibling').not.toBeNull()
+  const cell = link.closest('td')
+  expect(cell, 'the link sits in the Used by cell').not.toBeNull()
   expect(
-    span!.classList.contains('instance-id'),
-    'the id is in a span.instance-id',
-  ).toBe(true)
+    (cell!.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    '22 D4.37: the cell is the name alone, no id after the link (the two instances named alike are told apart by their ids, and here no other instance is named Coding assistant)',
+  ).toBe(USED_BY)
   expect(
-    span!.closest('a'),
-    '22 D4.34: it is outside the link, plain text on the same line',
+    cell!.querySelector('.instance-id'),
+    '22 D4.37: no span.instance-id beside a name no other instance shares',
   ).toBeNull()
-  expect(span!.textContent).toBe(USED_BY_ID)
 })
 
-test('16 17f.4 (as 22 D4.34 amends the 17f review D1): the profile page links its Used by row with the name alone, and the id in a span.instance-id right after the link, outside it', async () => {
+test('16 17f.4 (as 22 D4.34 amends the 17f review D1 and 22 D4.37 the id line): the profile page links its Used by row with the name alone, and shows no id after the link when no other instance has that name', async () => {
   const { main } = await open('#/profiles/server/qwen-27b', {
     serverProfile: () => reply(200, serverProfileDoc()),
   })
@@ -356,12 +356,18 @@ test('16 17f.4 (as 22 D4.34 amends the 17f review D1): the profile page links it
   expect(link.getAttribute('href')).toBe('#/instances/default')
   expect(
     link.textContent,
-    '22 D4.34: the accessible name a reader hears is the instance name, not the name with the id glued to it',
+    '22 D4.34 kept by 22 D4.37: the accessible name a reader hears is the instance name, not the name with the id glued to it',
   ).toBe(USED_BY)
-  const span = link.nextElementSibling
-  expect(span, 'the id follows the link, as its sibling').not.toBeNull()
-  expect(span!.closest('a'), 'outside the link').toBeNull()
-  expect(span!.textContent, 'the id is in a span.instance-id').toBe(USED_BY_ID)
+  const row = link.closest('dd')
+  expect(row, 'the link sits in the Used by row').not.toBeNull()
+  expect(
+    (row!.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    '22 D4.37: the row is the name alone, no id after the link',
+  ).toBe(USED_BY)
+  expect(
+    row!.querySelector('.instance-id'),
+    '22 D4.37: no span.instance-id beside a name no other instance shares',
+  ).toBeNull()
 })
 
 // ── 17f.11: the texts ─────────────────────────────────────────────────────

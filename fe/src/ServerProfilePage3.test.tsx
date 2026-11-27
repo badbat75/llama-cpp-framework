@@ -1,13 +1,15 @@
-// Brief 22, slice 22D4 (fe/briefs/22-model-sources.md, section 22D4): the
-// server profile page's Delete in the Save bar, the parts the amended 17b tests
-// do not pin: the disabled state and the reason it shows (22 D4.10, with
-// 22 D4.14: the reason is a line of the bar, shown all the time while the
-// Delete cannot act, never a tip on hover), and that the Delete's state does
-// not follow the form's dirty state. The place of the opener and of the group,
-// the bar's order, the confirm's answers and the refusals are
-// ServerProfilePage2.test.tsx as 22 D4 amends them; the list's − is
-// ServerProfilesDelete1.test.tsx. The model page's twin is
-// ModelProfileDelete3.test.tsx.
+// Brief 22, slice 22D4 (fe/briefs/22-model-sources.md, section 22D4), as slice
+// L2's 22 L2.B2 amends it (fe/briefs/22-model-sources.md, the L2 acceptance
+// list): the server profile page's Delete in the Save bar, the parts the
+// amended 17b tests do not pin: the disabled state and the reason it shows
+// (22 D4.10; 22 D4.14 read a line of the bar, shown all the time, and L2.B2
+// replaced that: the reason is a visually hidden element the Delete describes
+// itself with, and the words float as the list rows' tip on hover and on
+// focus), and that the Delete's state does not follow the form's dirty state.
+// The place of the opener and of the group, the bar's order, the confirm's
+// answers and the refusals are ServerProfilePage2.test.tsx as 22 D4 amends
+// them; the list's − is ServerProfilesDelete1.test.tsx. The model page's twin
+// is ModelProfileDelete3.test.tsx.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -16,12 +18,12 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
-  before,
   en,
   fakeBff,
   isHidden,
@@ -107,7 +109,33 @@ function text(el: Element | null): string {
   return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
-// ── The stylesheet reader (22 D4.14 pins, the local copy) ─────────────
+/** True when `el` is not shown as the page stands: the hidden attribute and
+ *  the class the sheet hides with (test/bff.ts's isHidden, the list rows'
+ *  visually hidden reason), or a declaration of a top-level sheet rule that
+ *  reaches the element taking it out of the eye (22 L2.B2 b; jsdom lays
+ *  nothing out, so the sheet text stands in for the layout). */
+function notShown(el: Element): boolean {
+  if (isHidden(el) || el.classList.contains('visually-hidden')) return true
+  return reaches(el).some(
+    (d) =>
+      /^display:\s*none$/.test(d) ||
+      /^visibility:\s*hidden$/.test(d) ||
+      /^clip-path:\s*inset\(\s*50%\s*\)$/.test(d),
+  )
+}
+
+/** The page's shown tip, once it is there (the tip opens on a queued task, as
+ *  in ListDeleteTip.test.tsx). */
+async function shownTip(main: HTMLElement): Promise<HTMLElement> {
+  const tip = await waitFor(() => {
+    const found = main.querySelector('.hint-tip')
+    expect(found, 'the tip is shown').not.toBeNull()
+    return found
+  })
+  return tip as HTMLElement
+}
+
+// ── The stylesheet reader (22 L2.B2 pins, the local copy) ─────────────
 
 const CSS = readFileSync(
   join(import.meta.dirname, 'index.css'),
@@ -158,9 +186,9 @@ function reaches(el: Element): string[] {
   ).flatMap((r) => r.body.split(';').map((d) => norm(d)))
 }
 
-// ── 22 D4.10, D4.14: the disabled Delete and its reason ─────────────────
+// ── 22 D4.10 with 22 L2.B2: the disabled Delete and its reason ───────────
 
-test('22 D4.10, D4.14: a used profile’s bar Delete is aria-disabled and focusable, and while it cannot act a p#server-profile-delete-reason with server-profiles-delete-in-use stands in the bar after its buttons, shown all the time and named by Delete’s aria-describedby; no .hint-tip shows at rest, on hover or on focus; a press opens nothing and sends nothing, and the p is gone when Delete can act', async () => {
+test('22 D4.10, D4.14 as 22 L2.B2 amends it: a used profile’s bar Delete is aria-disabled and focusable, describes itself with a not-shown #server-profile-delete-reason element, and the words show as the list’s .hint-tip on hover and on focus; Escape closes the tip and leaves the focus on Delete; a press opens nothing and sends nothing, and a Delete that can act names no reason and shows no tip', async () => {
   const { bff, main } = await loaded({ serverProfile: () => usedDoc(TAKEN) })
   const del = deleteButton(main)
   expect(
@@ -171,10 +199,10 @@ test('22 D4.10, D4.14: a used profile’s bar Delete is aria-disabled and focusa
     (del as HTMLButtonElement).disabled,
     '22 D4.2: aria-disabled, not disabled: it stays focusable',
   ).toBe(false)
-  // 22 D4.14: the reason is a line of the bar, there without asking, and it is
-  // what the Delete names.
+  // 22 L2.B2 b: the Delete describes itself with its reason, and the reason is
+  // an element of the page, not a line the eye reads.
   const describedBy = del.getAttribute('aria-describedby')
-  expect(describedBy, '22 D4.14: the Delete names its reason').toBe(
+  expect(describedBy, '22 L2.B2 b: the Delete names its reason').toBe(
     'server-profile-delete-reason',
   )
   const reason = main.querySelector('#server-profile-delete-reason')
@@ -182,43 +210,47 @@ test('22 D4.10, D4.14: a used profile’s bar Delete is aria-disabled and focusa
   expect(reason, 'and it is the element the Delete names').toBe(
     document.getElementById(describedBy!),
   )
-  expect(reason!.tagName.toLowerCase(), '22 D4.14: a p').toBe('p')
   expect(text(reason), '22 D4.14: the list’s reason, shared').toBe(
     en('server-profiles-delete-in-use'),
   )
   expect(reason!.closest('button'), 'not inside a button').toBeNull()
   expect(
-    reason!.classList.contains('visually-hidden') || isHidden(reason),
-    '22 D4.14: shown to the eye, not only read',
-  ).toBe(false)
-  // It is not content on hover: it stands at rest, through a hover, a focus, a
-  // blur and the pointer leaving, and no .hint-tip is ever there.
-  const said = () => text(main.querySelector('#server-profile-delete-reason'))
-  expect(main.querySelector('.hint-tip'), '22 D4.14: no tip at rest').toBeNull()
+    notShown(reason!),
+    '22 L2.B2 b: the reason is visually hidden: no line of the bar, and 22 D4.14’s shown p is gone',
+  ).toBe(true)
+  // The words float: the list rows’ tip, on hover and on focus (22 L2.B2 c).
+  expect(main.querySelector('.hint-tip'), 'no tip at rest').toBeNull()
   fireEvent.mouseOver(del)
-  await flushTasks()
-  expect(
-    main.querySelector('.hint-tip'),
-    '22 D4.14: no tip on hover',
-  ).toBeNull()
-  expect(said(), 'the reason stands').toBe(en('server-profiles-delete-in-use'))
-  del.focus()
-  await flushTasks()
-  expect(main.querySelector('.hint-tip'), 'no tip on focus').toBeNull()
-  expect(
-    said(),
-    '22 D4.14: the focus leaves the reason alone: it is not hover content',
-  ).toBe(en('server-profiles-delete-in-use'))
-  del.blur()
+  const tip = await shownTip(main)
+  expect(text(tip), 'the hover shows the reason').toBe(
+    en('server-profiles-delete-in-use'),
+  )
   fireEvent.mouseOut(del, { relatedTarget: document.body })
   await flushTasks()
   expect(
     main.querySelector('.hint-tip'),
-    'no tip once the pointer and the focus are gone',
+    'the pointer leaving the box closes the tip',
   ).toBeNull()
-  expect(said(), 'and the reason is still in the bar').toBe(
+  del.focus()
+  fireEvent.focus(del)
+  const byFocus = await shownTip(main)
+  expect(text(byFocus), 'the focus shows the same reason').toBe(
     en('server-profiles-delete-in-use'),
   )
+  expect(
+    document.activeElement,
+    'showing the tip moves the focus nowhere',
+  ).toBe(del)
+  fireEvent.keyDown(document, { key: 'Escape' })
+  await flushTasks()
+  expect(
+    main.querySelector('.hint-tip'),
+    '22 D4.18 D3: Escape closes the tip',
+  ).toBeNull()
+  expect(
+    document.activeElement,
+    '22 D4.3: the focus stays on Delete: the user is where they were',
+  ).toBe(del)
   // A press of the disabled Delete sends nothing and opens nothing.
   press(del)
   expect(
@@ -228,7 +260,7 @@ test('22 D4.10, D4.14: a used profile’s bar Delete is aria-disabled and focusa
   expect(bff.to('DELETE', ROUTE), 'and sends nothing').toHaveLength(0)
   cleanup()
   vi.unstubAllGlobals()
-  // A profile that can be deleted: no reason line, no description, no tip.
+  // A profile that can be deleted: no reason, no description, no tip.
   const free = await loaded()
   const active = deleteButton(free.main)
   expect(
@@ -237,11 +269,11 @@ test('22 D4.10, D4.14: a used profile’s bar Delete is aria-disabled and focusa
   ).not.toBe('true')
   expect(
     active.getAttribute('aria-describedby'),
-    '22 D4.14: it names no reason',
+    '22 L2.B2: a verb that can act names no reason',
   ).toBeNull()
   expect(
     free.main.querySelector('#server-profile-delete-reason'),
-    '22 D4.14: the p is gone when the Delete can act',
+    '22 L2.B2: the reason element is gone with the description',
   ).toBeNull()
   fireEvent.mouseOver(active)
   active.focus()
@@ -252,42 +284,43 @@ test('22 D4.10, D4.14: a used profile’s bar Delete is aria-disabled and focusa
   ).toBeNull()
 })
 
-// ── 22 D4.14: the reason is a line of the bar (22D4 review D1) ──────────
+// ── 22 L2.B2: the reason floats, it is not a line of the bar ─────────────
 
-test('22 D4.14 (22 D4 review D1): the reason is a line of the Save bar, a child of the bar after its buttons where the confirm opens, not a box wrapped around the Delete, and no rule that reaches the reason takes it out of the flow', async () => {
+test('22 L2.B2 c (replacing 22 D4.14’s line, 22 D4 review D1): the reason of the bar’s Delete that cannot act floats over the page: the tip is the Delete’s next sibling in the box that owns the hover and the focus, the box stands in the bar, and the sheet takes the tip out of the flow, so no reason adds a line to the bar and the bar’s height never changes', async () => {
   const { main } = await loaded({ serverProfile: () => usedDoc(TAKEN) })
   const del = deleteButton(main)
   const bar = main.querySelector('.save-bar')
   expect(bar, 'the Save bar').not.toBeNull()
-  const actions = bar!.querySelector('.save-actions')
-  expect(actions, 'the bar’s buttons').not.toBeNull()
   const reason = main.querySelector('#server-profile-delete-reason')
   expect(reason, 'the reason is there, unasked').not.toBeNull()
-  expect(reason!.closest('.save-bar'), 'in the bar').toBe(bar)
   expect(
-    reason!.parentElement,
-    '22 D4.14: a line of the bar, not a box around the Delete',
+    reason!.closest('.save-bar'),
+    '22 L2.B2 b: it belongs to the bar’s Delete, not to the page',
   ).toBe(bar)
+  const box = del.closest('.hint-box')
   expect(
-    before(actions!, reason!),
-    '22 D4.14: after the buttons, where the confirm opens',
-  ).toBe(true)
-  expect(before(del, reason!), 'and after the Delete').toBe(true)
-  // 22 D4.14 as far as jsdom reaches, the sheet text: the reason is a line of
-  // the bar, so it stays in the bar's flow, and no rule that reaches it takes
-  // it out (a `position: absolute` or `fixed` would). The 22D4 amendment's
-  // 22 D4.16 retired the old 22 D4.15 read of `.hint-tip`: the list's tip is
-  // `position: fixed` now (ListDeleteTip.test.tsx pins it), and the page's
-  // reason is not a tip.
-  const decls = reaches(reason!)
+    box,
+    '22 L2.B2 c: the Delete stands in the box that owns the tip, as a list row’s − does (22 D4.13)',
+  ).not.toBeNull()
   expect(
-    decls.length,
-    'the sheet has rules reaching the reason (the `p` rule)',
+    box!.closest('.save-bar'),
+    'the box stands in the bar: the Delete did not leave it',
+  ).toBe(bar)
+  fireEvent.mouseOver(del)
+  const tip = await shownTip(main)
+  expect(tip.parentElement, 'the tip is a child of the box').toBe(box)
+  expect(
+    tip.previousElementSibling,
+    '22 D4.13, kept by 22 L2.B2 c: the tip is the Delete’s next sibling, so the pointer crosses no gap on the way to it',
+  ).toBe(del)
+  // The sheet text, as far as jsdom reaches: the tip is out of the flow, so
+  // showing it changes no size in the bar (22 L2.B2 c: "changes no size in the
+  // bar"). Reflow.test.ts pins the .hint-tip rule itself.
+  const decls = reaches(tip)
+  expect(
+    decls.filter((d) => /^position:\s*(absolute|fixed)$/.test(d)).length,
+    'the tip takes no room in the bar: it is out of the flow',
   ).toBeGreaterThan(0)
-  expect(
-    decls.filter((d) => /^position:\s*(absolute|fixed)$/.test(d)),
-    '22 D4.14: no absolute, no fixed, nothing on a layer of its own',
-  ).toEqual([])
 })
 
 // ── 22 D4.10: the state does not follow dirty ────────────────────────────

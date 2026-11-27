@@ -11,6 +11,7 @@ import {
   type RefObject,
 } from 'react'
 import { flushSync } from 'react-dom'
+import { HintTip, useHint } from './Hint.tsx'
 import { t } from './strings.ts'
 
 /** What the status line says. `saving` while a save runs; `unsaved` while
@@ -206,17 +207,20 @@ export function useSaveBarPadding(): RefObject<HTMLDivElement | null> {
  * holds Save switched off beside the bar's own rules, and the caller's save
  * refuses too.
  *
- * A profile page adds its Delete (22 D4.10): `deleteId`, `deleteLabel` and
- * `onDelete` put the verb first in the bar's group, before Discard and Save,
- * `deleteDisabled` keeps it there switched off, and `deleteHint` is the reason
- * it cannot act: while the verb is switched off the bar shows that reason as a
- * line under its buttons, with the id `<deleteId>-reason`, and names it with
- * the verb's description (22 D4.14). A verb switched off with no `deleteHint`
- * is held for a reason that is no reason to delete nothing: the bar shows no
- * line and names nothing. The page owns what the verb says and does, the bar
- * only places it. `children` is what the page puts under the
- * bar's buttons (22 D4.11): the delete's confirm, and the paragraph a refused
- * delete leaves. */
+ * A profile page adds its Delete (22 D4.10, ordered by 22 D4.30 with the user's
+ * L2.A2 of 2026-11-26): `deleteId`, `deleteLabel` and `onDelete` put the verb
+ * last in the bar's group, after Discard and Save, the sheet pushing it to the
+ * bar's end in `--danger`. `deleteDisabled` keeps it there switched off, and
+ * `deleteHint` is the reason it cannot act (22 D4.14, as 22 L2.B2 reads it):
+ * the verb describes itself with an element of the reason, id
+ * `<deleteId>-reason`, that the sheet hides, and the words float as the list
+ * rows' tip on hover and on focus, so the bar shows no line of them. The group
+ * of verbs is the box that owns the tip's handlers (22 D4.13), as a list row's
+ * box is. A verb switched off with no `deleteHint` is held for a reason that is
+ * no reason to delete nothing: the bar names nothing and shows no tip. The page
+ * owns what the verb says and does, the bar only places it. `children` is what
+ * the page puts under the bar's buttons (22 D4.11): the delete's confirm, and
+ * the paragraph a refused delete leaves. */
 export function SaveBar({
   bar,
   status,
@@ -269,6 +273,19 @@ export function SaveBar({
   // Save waits for a write of the page's own too (24 A2 review D1); Discard is
   // local, so it is not held.
   const saveHeld = !dirty || saving || saveDisabled || undefined
+  // The reason the bar's Delete cannot act, told as the list rows' tip (22
+  // L2.B2). A verb that can act has none, and one held for a reason that is no
+  // reason to delete nothing has none: no description, no tip (22 D4.14).
+  const deleteReason =
+    onDelete !== undefined && deleteDisabled === true ? deleteHint : undefined
+  const box = useRef<HTMLDivElement>(null)
+  const anchor = useRef<HTMLButtonElement>(null)
+  const tip = useRef<HTMLSpanElement>(null)
+  const hint = useHint(deleteReason !== undefined, box)
+  // The box is the bar's whole row of verbs, so a show asks whether the pointer
+  // or the focus is on the Delete: the reason is the Delete's, not the row's.
+  const onVerb = (target: EventTarget | null) =>
+    target instanceof Node && anchor.current?.contains(target) === true
   return (
     <div className="save-bar" ref={bar}>
       <div className="save-messages">
@@ -310,24 +327,28 @@ export function SaveBar({
           </button>
         )}
       </div>
-      <div className="save-actions">
-        {onDelete === undefined ? null : (
-          <button
-            id={deleteId}
-            type="button"
-            className="secondary"
-            onClick={onDelete}
-            aria-disabled={deleteDisabled ? 'true' : undefined}
-            aria-expanded={deleteExpanded ? 'true' : 'false'}
-            aria-describedby={
-              deleteDisabled && deleteHint !== undefined
-                ? `${deleteId}-reason`
-                : undefined
-            }
-          >
-            {deleteLabel}
-          </button>
-        )}
+      {/* The row of verbs is also the box that owns the Delete's tip (22 L2.B2
+          c asks the bar's Delete to keep the list rows' shape, 22 D4.13): the
+          verb is the row's last child and the tip its next sibling, so the
+          pointer crosses no gap on the way to it and Escape closes it with the
+          focus on the verb (22 D4.3). The row holds Discard and Save too, so a
+          show asks whether the pointer or the focus is on the Delete. */}
+      <div
+        ref={box}
+        className="save-actions hint-box"
+        onMouseOver={(e) => {
+          if (onVerb(e.target)) hint.show()
+        }}
+        onMouseOut={(e) => hint.leave(e, tip)}
+        onMouseLeave={hint.hide}
+        onFocus={(e) => {
+          if (onVerb(e.target)) hint.show()
+        }}
+        onBlur={hint.hide}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') hint.hide()
+        }}
+      >
         <button
           type="button"
           className="secondary"
@@ -345,15 +366,39 @@ export function SaveBar({
         >
           {saving ? t('save-saving') : t('save-button')}
         </button>
+        {onDelete === undefined ? null : (
+          <button
+            id={deleteId}
+            ref={anchor}
+            type="button"
+            className="secondary save-bar-delete"
+            onClick={onDelete}
+            aria-disabled={deleteDisabled ? 'true' : undefined}
+            aria-expanded={deleteExpanded ? 'true' : 'false'}
+            aria-describedby={
+              deleteReason === undefined ? undefined : `${deleteId}-reason`
+            }
+          >
+            {/* The verb's words (the second review of 2026-11-27, D4): the full
+                label, as its own text, at every width. The short verb of the
+                narrow bar was withdrawn: the bar's row wraps below 480 px, so a
+                shorter word buys no row, and the eye reads a word a reader does
+                not say. */}
+            {deleteLabel}
+          </button>
+        )}
+        {deleteReason === undefined || !hint.shown ? null : (
+          <HintTip tipRef={tip} anchorRef={anchor} reason={deleteReason} />
+        )}
       </div>
-      {/* The reason the Delete cannot act (22 D4.14): a line of the bar, after
-          its buttons where the confirm opens, shown all the time while the
-          verb is switched off, and named by its description. No tip: the words
-          are seen without pointing, so the page has no hover state. */}
-      {onDelete === undefined ||
-      deleteDisabled !== true ||
-      deleteHint === undefined ? null : (
-        <p id={`${deleteId}-reason`}>{deleteHint}</p>
+      {/* The reason the Delete cannot act (22 D4.14, as 22 L2.B2 reads it): the
+          element the verb describes itself with, kept out of the eye by the
+          sheet, and shown as the tip above. The bar shows no line of it, so the
+          confirm and a refusal keep their place under its buttons (22 D4.11). */}
+      {deleteReason === undefined ? null : (
+        <p id={`${deleteId}-reason`} className="visually-hidden">
+          {deleteReason}
+        </p>
       )}
       {children}
     </div>

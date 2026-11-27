@@ -35,6 +35,7 @@ import {
   fakeBff,
   isHidden,
   reply,
+  rowName,
   shownText,
   startAt,
   stubDialog,
@@ -119,11 +120,16 @@ function cellsOf(row: Element): Element[] {
   return [...row.querySelectorAll('td, th')]
 }
 
+/** The row's name as the row is looked up and as its controls are named: the
+ *  id alone. 22 D4.35 adds the engine as a muted line under the name, and the
+ *  designer's ruling of 2026-11-27 keeps that line out of the name. */
+function nameOf(row: Element): string {
+  return rowName(cellsOf(row)[0]!)
+}
+
 /** The row of the profile `id`, by its name cell. */
 function rowOf(main: HTMLElement, id: string): HTMLElement {
-  const row = dataRows(main).find(
-    (r) => (cellsOf(r)[0]?.textContent ?? '').trim() === id,
-  )
+  const row = dataRows(main).find((r) => nameOf(r) === id)
   expect(row, `the row of ${id}`).not.toBeUndefined()
   return row!
 }
@@ -297,7 +303,7 @@ test('22 D4.1 (as 22 D4.21 changes its icon, as 22 D4.23 moves it to its own cel
   const rs = dataRows(main)
   expect(rs, 'one row per profile').toHaveLength(LIST.length)
   for (const row of rs) {
-    const id = text(cellsOf(row)[0])
+    const id = nameOf(row)
     const cells = cellsOf(row)
     const cell = cells[cells.length - 1]!
     const minus = minusOf(main, id)
@@ -746,7 +752,7 @@ test('22 D4.4: pressing an active − inserts right after the row a tr.confirm-r
   type(filterField(main), 'Coder-30')
   await flushTasks()
   expect(
-    dataRows(main).map((r) => text(cellsOf(r)[0])),
+    dataRows(main).map(nameOf),
     'the filter hides Qwen3-27B',
   ).not.toContain('Qwen3-27B')
   expect(confirmRow(main), '22 D4.4: and its confirm went').toBeNull()
@@ -797,10 +803,10 @@ test('22 D4.6: a 204 removes the profile’s row and the confirm row, the region
   const done = await within(main).findByText(
     en('model-profiles-deleted', 'Old-Coder'),
   )
-  expect(
-    dataRows(main).map((r) => text(cellsOf(r)[0])),
-    'the row is gone',
-  ).toEqual(['Qwen3-27B', 'Coder-30B'])
+  expect(dataRows(main).map(nameOf), 'the row is gone').toEqual([
+    'Qwen3-27B',
+    'Coder-30B',
+  ])
   expect(confirmRow(main), 'and so is the confirm row').toBeNull()
   expect(done.getAttribute('role'), '22 D4.6: the region’s status line').toBe(
     'status',
@@ -914,10 +920,10 @@ test('22 D4.7: a 404 no-model-profile-named reads the list again, puts api-no-mo
   expect(kept.getAttribute('role'), 'the region’s alert').toBe('alert')
   expect(before(kept, table(main)), 'above the table').toBe(true)
   expect(confirmRow(main), 'the confirm row is gone').toBeNull()
-  expect(
-    dataRows(main).map((r) => text(cellsOf(r)[0])),
-    'the row is gone with the file',
-  ).toEqual(['Qwen3-27B', 'Coder-30B'])
+  expect(dataRows(main).map(nameOf), 'the row is gone with the file').toEqual([
+    'Qwen3-27B',
+    'Coder-30B',
+  ])
   expect(
     document.activeElement,
     '22 D4.7: the focus moved as after a 204',
@@ -991,10 +997,10 @@ test('22 D4.7: a 504 client-timeout shows delete-unknown in the group, then read
   await within(gone.main).findAllByText(en('delete-unknown'))
   await flushTasks()
   expect(reads, 'the list was read again').toBe(2)
-  expect(
-    dataRows(gone.main).map((r) => text(cellsOf(r)[0])),
-    'the row is gone',
-  ).toEqual(['Qwen3-27B', 'Coder-30B'])
+  expect(dataRows(gone.main).map(nameOf), 'the row is gone').toEqual([
+    'Qwen3-27B',
+    'Coder-30B',
+  ])
   expect(confirmRow(gone.main), 'the confirm row went with it').toBeNull()
   const moved = within(gone.main).getByText(en('delete-unknown'))
   expect(moved.getAttribute('role'), 'it moved to the region’s alert').toBe(
@@ -1014,10 +1020,9 @@ test('22 D4.7: a 504 client-timeout shows delete-unknown in the group, then read
   press(verb)
   await within(g2).findByText(en('delete-unknown'))
   await flushTasks()
-  expect(
-    dataRows(kept.main).map((r) => text(cellsOf(r)[0])),
-    'the row is still there',
-  ).toContain('Old-Coder')
+  expect(dataRows(kept.main).map(nameOf), 'the row is still there').toContain(
+    'Old-Coder',
+  )
   expect(confirmRow(kept.main), 'the confirm row stays').not.toBeNull()
   expect(groupStatus(g2).textContent, 'and its status line is empty').toBe('')
   expect(document.activeElement, 'the focus stays on confirm-delete').toBe(verb)
@@ -1070,10 +1075,9 @@ test('22 D4.7: a 401 shows session-ended-retry with a Sign in in the group; a 50
     expect(document.activeElement, `${what}: the focus stays on the verb`).toBe(
       verb,
     )
-    expect(
-      dataRows(main).map((r) => text(cellsOf(r)[0])),
-      `${what}: the row stays`,
-    ).toContain('Old-Coder')
+    expect(dataRows(main).map(nameOf), `${what}: the row stays`).toContain(
+      'Old-Coder',
+    )
     expect(
       bff.to('GET', '/api/profiles/model').length,
       `${what}: nothing read again`,

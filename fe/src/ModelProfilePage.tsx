@@ -1964,82 +1964,9 @@ function Content({
         )}
       </div>
       <section>
-        <h2>{t('model-profile-settings-title')}</h2>
-        {/* 22 D2.5: the Save bar is the first thing in the settings section,
-            right after its heading, so Save and Discard are reached without
-            scrolling to the end of the cards; the sheet sticks it to the
-            viewport's top (22 D2.6). 22 D4.10 puts the page's Delete first in
-            its group, and 22 D4.11 the confirm and a refusal under its
-            buttons, so both outlive the cards and the bar grows for them. */}
-        <SaveBar
-          bar={bar}
-          status={status}
-          alert={alerts.alert}
-          dirty={dirty}
-          saving={phase === 'saving'}
-          reloadId={reloadId}
-          onReload={
-            alerts.alert?.action === 'reload' ? askReload.press : undefined
-          }
-          signInId={signInId}
-          onSignIn={
-            alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
-          }
-          saveId={saveId}
-          saveDisabled={switching}
-          onDiscard={discard}
-          onSave={save}
-          deleteId="model-profile-delete"
-          deleteLabel={t('model-profile-delete')}
-          onDelete={openDelete}
-          deleteDisabled={!canDelete || switching}
-          deleteExpanded={confirming}
-          deleteHint={
-            canDelete ? undefined : t('model-profiles-delete-needs-off')
-          }
-          restartNames={restart.map((id) => nameOf(id)).join(', ')}
-        >
-          {/* 16 17d.4a: the restart the save left to make, a row of the bar
-              under its buttons, the bar being sticky so the offer stays in
-              reach. An edit answers it, as it answers the status line. */}
-          {phase === 'saved-restart-ids' && !dirty && !switching && (
-            <RestartOffer
-              ids={restart}
-              nameOf={nameOf}
-              renewals={renewals}
-              onChanged={onInstances}
-              onSignIn={(control) => {
-                offerControl.current = control
-                askSignIn.open()
-              }}
-            />
-          )}
-          {canDelete && confirming && (
-            <ConfirmDelete
-              id={doc.id}
-              status={deleteStatus}
-              alert={deleteAlert}
-              running={deleting}
-              onConfirm={() => void doDelete()}
-              onCancel={closeConfirm}
-              onSignIn={() => setAskingDeleteSignIn(true)}
-            />
-          )}
-          {/* 22 D2.4: the refusal of a delete whose read again took the Delete
-              and its group with it: its words go on living in the bar's own
-              paragraph (22 D.4, 22 D4.11, 17b review D2). It is no live region
-              of the form: it is the answer outliving the control that asked. */}
-          {refusal !== null && (
-            <p
-              id="model-profile-delete-refused"
-              role="alert"
-              tabIndex={-1}
-              className="save-alert"
-            >
-              {refusal}
-            </p>
-          )}
-        </SaveBar>
+        {/* 22 D4.32: the heading is for the outline, so the page keeps one
+            title above the form; the eye sees the cards' own headings. */}
+        <h2 className="visually-hidden">{t('model-profile-settings-title')}</h2>
         {dropped && (
           <p role="alert" className="alert">
             {t('server-edits-dropped')}
@@ -2161,6 +2088,82 @@ function Content({
           gpu={gpu}
           tensor={tensor}
         />
+        {/* 22 L2.B1 (the user's ruling of 2026-11-26, reversing 22 D2.5 and
+            D2.6): the Save bar is the settings section's last child, after
+            every card, and the sheet sticks it to the viewport's bottom edge,
+            so Tab walks the fields before the bar and the bar floats over the
+            end of the form. 22 D4.30 with L2.A2 orders its group Discard, Save
+            changes, Delete; 22 D4.11 keeps the confirm and a refusal in the
+            bar, so both outlive the cards and the bar grows for them. */}
+        <SaveBar
+          bar={bar}
+          status={status}
+          alert={alerts.alert}
+          dirty={dirty}
+          saving={phase === 'saving'}
+          reloadId={reloadId}
+          onReload={
+            alerts.alert?.action === 'reload' ? askReload.press : undefined
+          }
+          signInId={signInId}
+          onSignIn={
+            alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
+          }
+          saveId={saveId}
+          saveDisabled={switching}
+          onDiscard={discard}
+          onSave={save}
+          deleteId="model-profile-delete"
+          deleteLabel={t('model-profile-delete')}
+          onDelete={openDelete}
+          deleteDisabled={!canDelete || switching}
+          deleteExpanded={confirming}
+          deleteHint={
+            canDelete ? undefined : t('model-profiles-delete-needs-off')
+          }
+          restartNames={restart.map((id) => nameOf(id)).join(', ')}
+        >
+          {/* 16 17d.4a: the restart the save left to make, a row of the bar
+              under its buttons, the bar being sticky so the offer stays in
+              reach. An edit answers it, as it answers the status line. */}
+          {phase === 'saved-restart-ids' && !dirty && !switching && (
+            <RestartOffer
+              ids={restart}
+              nameOf={nameOf}
+              renewals={renewals}
+              onChanged={onInstances}
+              onSignIn={(control) => {
+                offerControl.current = control
+                askSignIn.open()
+              }}
+            />
+          )}
+          {canDelete && confirming && (
+            <ConfirmDelete
+              id={doc.id}
+              status={deleteStatus}
+              alert={deleteAlert}
+              running={deleting}
+              onConfirm={() => void doDelete()}
+              onCancel={closeConfirm}
+              onSignIn={() => setAskingDeleteSignIn(true)}
+            />
+          )}
+          {/* 22 D2.4: the refusal of a delete whose read again took the Delete
+              and its group with it: its words go on living in the bar's own
+              paragraph (22 D.4, 22 D4.11, 17b review D2). It is no live region
+              of the form: it is the answer outliving the control that asked. */}
+          {refusal !== null && (
+            <p
+              id="model-profile-delete-refused"
+              role="alert"
+              tabIndex={-1}
+              className="save-alert"
+            >
+              {refusal}
+            </p>
+          )}
+        </SaveBar>
       </section>
       {askReload.asking && (
         <DiscardDialog onKeep={askReload.keep} onDiscard={askReload.confirm} />
@@ -2223,7 +2226,7 @@ function ConfirmDelete({
         <button
           type="button"
           id="confirm-delete"
-          className="primary"
+          className="primary danger"
           aria-disabled={running || undefined}
           onClick={onConfirm}
         >

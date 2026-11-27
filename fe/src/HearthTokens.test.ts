@@ -794,7 +794,11 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     '.model-profiles-switch-status: min-height: 1lh',
     '.model-profiles-filter-row input: min-height: var(--control-h)',
     '.model-profiles-filter-row input: min-width: 0',
-    '.model-profiles-filter-status: min-height: 1lh',
+    // 22 D4.33 as its D2 review (2026-11-27) amends it: the filter's status
+    // line reserves a line while empty, which is the gap the review measures
+    // (35 px under the hint), so it keeps no height of its own. The switch's
+    // status line above, which sits between the table and its offer, keeps the
+    // 1lh floor (17d.5a).
     // H6a.7: the id shrinks inside its tile; H6a.8: the pill is 28 px.
     '.tile-id: min-width: 0',
     // 17b.5 (brief 17 U17b): the fact row and its value cell are flex/grid

@@ -23,6 +23,7 @@ import {
   en,
   fakeBff,
   reply,
+  rowName,
   shownText,
   startAt,
   type BffOptions,
@@ -146,9 +147,15 @@ function dataRows(main: HTMLElement): HTMLElement[] {
 
 /** The rows' cells' text: id, engine, On/Off, the row's − of 22 D4.1 left out
  *  (its words are its accessible name, in a `.visually-hidden` span). */
+/** The rows' cells' text: id, engine, On/Off. The name cell is the id alone:
+ *  22 D4.35 adds the engine there as a muted second line for the narrow page,
+ *  a copy of the Engine column, and the row is named by the id (the designer's
+ *  ruling of 2026-11-27), pinned in L2ModelsList.test.tsx. */
 function rows(main: HTMLElement): string[][] {
   return dataRows(main).map((row) =>
-    [...row.querySelectorAll('td, th')].map((c) => shownText(c)),
+    [...row.querySelectorAll('td, th')].map((c, i) =>
+      i === 0 ? rowName(c) : shownText(c),
+    ),
   )
 }
 

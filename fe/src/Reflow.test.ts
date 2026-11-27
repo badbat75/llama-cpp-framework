@@ -452,11 +452,11 @@ test('10 R1.7: .signin-page gains margin-inline: auto after its four declaration
 // instance button at the end of the instance page's run row, drawn with
 // --danger and --space-5 before it.
 const CLASSES =
-  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed confirm-group confirm-row dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight hint-box hint-tip icon inactive instance-header instance-id intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert run-remove save-actions save-alert save-bar save-messages save-status saved saved-restart secondary server-profiles session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked status-cell subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
+  `about alert app-name art-bar art-bar-on art-cable art-door art-ground art-knob art-leaf art-line art-panel art-stem art-sun assets assets-card badge banner banner-tools blocks-slider boot-alert boot-status card check check-list check-list-actions chip chip-full chips chips-profile chips-row collapsed confirm-group confirm-row danger dialog dialog-actions engine field field-control field-error field-hint field-label form-error full-value gpu-blocks-line gpu-id gpu-weight hint-box hint-tip icon inactive instance-header instance-id intro jump jump-label jump-toggle layout mark menu-button model-profile-back model-profile-summary model-profiles model-profiles-filter model-profiles-filter-hint model-profiles-filter-row model-profiles-filter-status model-profiles-note model-profiles-switch model-profiles-switch-alert model-profiles-switch-status mono muted nav nav-instance nav-label note notice number off open port primary run-actions run-alert run-remove save-actions save-alert save-bar save-messages save-status saved saved-restart secondary server-profiles session shape shape-changing shape-failed shape-running shape-stopped signin signin-actions signin-art signin-page signin-panel skeleton skeleton-box skip-link stacked status-cell subgroup tag-add tag-new tag-options tags-alert tags-profile tags-sign-in tags-status theme-switch theme-switch-label tile tile-engine tile-facts tile-head tile-id tiles unit visually-hidden weight-group`.split(
     /\s+/,
   )
 
-test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8, brief 21 TP1 review D1, brief 22 22D4 and brief 16 17d review D1 amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there, and the confirm-row, hint-tip and status-cell of brief 22 22D4 (22 D4.4, 22 D4.3, 22 D4.1) with the hint-box and inactive its 22D4 review adds (D1, D2), page-status gone with the status row (22 D4.9), the create form’s field wrapper of brief 22 22C1 review D1, and the quants field of brief 22 22C2 review A1', () => {
+test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17a, brief 19 LS1 and its LS1 review, brief 20 N.11, brief 16 17a review D1, brief 16 17f.8, brief 21 TP1 review D1, brief 22 22D4 and brief 16 17d review D1 and brief 22 CD amend its section 3 list): the classes the sheet gains are table-scroll, the six of brief 12, the three of brief 14, the six of brief 15 with its R5 pill and its C2 list, the two of brief 17 U17a, the block slider of brief 19 LS1 and its gpu-blocks-line, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the Tensor placement classes of brief 21 in their own namespace, and the ids a selector names are the mount point #root, the GPU fieldset the LS1 review places in the grid and the Tensor placement card its D1 places there, and the confirm-row, hint-tip and status-cell of brief 22 22D4 (22 D4.4, 22 D4.3, 22 D4.1) with the hint-box and inactive its 22D4 review adds (D1, D2), page-status gone with the status row (22 D4.9), the create form’s field wrapper of brief 22 22C1 review D1, the quants field of brief 22 22C2 review A1, and the danger of brief 22 CD', () => {
   const used = new Set<string>()
   const ids = new Set<string>()
   for (const r of RULES)
@@ -500,6 +500,17 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
   // (`hf-show-quants`, `hf-quants-loading`, `hf-quant-legend`,
   // `hf-quant-default`), as 17f review D3 keeps the rename form.
   const ofQuants = (c: string) => /^hf[-a-z0-9]*$/.test(c)
+  // Brief 22 slice L2, its design review (2026-11-27): the code review names
+  // the Save bar's Delete by a class of its own (`save-bar-delete`, so a verb
+  // added to the bar does not inherit the end-of-row margin and the danger
+  // colour), and advice 2 moves a card's About into the row of its h3, which is
+  // laid by the sheet. (The round's advice 1, a short verb of the narrow bar in
+  // spans of its own, is withdrawn by the round's second review, D4: its two
+  // classes leave the sheet with the spans.) The coder names those classes, so
+  // they are kept in this slice's namespace, as 17f review D3 keeps the rename
+  // form.
+  const ofL2 = (c: string) =>
+    /^(save-bar-delete|card-heading|card-about)[-a-z0-9]*$/.test(c)
   const ofTensorCard = (id: string) => /tensor|\bot\b/.test(id)
   expect(
     [...used]
@@ -510,7 +521,8 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
           !ofModels(c) &&
           !ofOffer(c) &&
           !ofCreate(c) &&
-          !ofQuants(c),
+          !ofQuants(c) &&
+          !ofL2(c),
       )
       .sort(),
     'the classes of the sheet, with table-scroll, the six of brief 12 section 3, the three of brief 14, the six of brief 15 section 3 with the pill its section 10 R5 adds (its R1: the chip x has no class), the skeleton of brief 17 U17a, the blocks-slider of brief 19 LS1, the nav-instance of brief 20, the server-profiles of brief 16 17a review D1, the instance-id of brief 16 17f.8, the confirm-row and hint-tip of brief 22 22D4 with the hint-box and inactive of its 22D4 review, page-status gone with the status row of 22D2 (22 D4.9), tags-save gone, and nothing else outside the Tensor placement namespace, the rename form of brief 16 17f review D3, the restart offer of brief 16 17d review D1 and the quants field of brief 22 22C2 review A1 (R1.8: a class the designer did not brief is a look nothing asked for)',
@@ -522,6 +534,10 @@ test('10 R1.8 (as brief 15 section 10 R1 and R5, brief 15 slice C2, brief 17 U17
   expect(
     [...used].filter(ofCard).sort(),
     '21 TP1 review D1: the card of brief 21 is styled by at least one class of its own namespace: the row items the review wraps each label and its control in',
+  ).not.toEqual([])
+  expect(
+    [...used].filter(ofL2).sort(),
+    '22 L2 review: the Save bar’s Delete and the card’s heading row are styled by at least one class of this slice’s namespace: the class the code review gives the Delete, and the row advice 2 places its About in (a look keyed on a class, not on a place in the group)',
   ).not.toEqual([])
   const cardIds = [...ids].filter(ofTensorCard).sort()
   expect(
@@ -1171,4 +1187,386 @@ test("22 22C2 re-check (adviser note a): the radio sits on its label's first lin
     ),
     'Adviser note (a): the field control keeps align-items: center: the fix belongs to the radio label, not to the row that centres every control of every field',
   ).toBe('center')
+})
+
+// ── Brief 22, slice L2: 22 CD.2 (the destructive verb filled in danger),
+// 22 L2.B1 (the Save bar sticky at the bottom edge) and 22 D4.35 (the Models
+// list Engine column folded under the name below 480 px).
+// The DOM half of the bar's look (22 D4.30 with L2.A2: the Delete pushed to the
+// bar end and drawn --danger) is pinned against the rendered pages in
+// L2SaveBar.test.tsx, which asks the sheet for the rules that reach the control
+// and names no class of its own; the CD.1 verbs, the D4.31 card intros and the
+// D4.32 head are DOM too, in L2SaveBar.test.tsx and L2PageHead.test.tsx, and so
+// are L2.B1's place (the bar the settings section's last child, its three stops
+// the page's last) and L2.B2's reason (a floating tip, not a line of the bar).
+// What jsdom cannot see is the designer's, of the UX check's page states: the
+// last card's bottom lying at or above the bar's top when the page is scrolled
+// to its end (L2.B1 c), the bar at most 40 % of a 320 by 568 viewport with no
+// sideways scroll (L2.B1 e), the tip wholly inside the viewport at 1280 and
+// 320 px (L2.B2 c), the D4.35 table needing no sideways scroll inside its box at
+// 320 px with its trash can inside the box's right edge, the D4.32 gaps and the
+// D4.33 hint line.
+//
+// The theme tokens and the WCAG contrast arithmetic are a small local copy of
+// HearthTokens.test.ts, which exports nothing and whose tests would register
+// here if it were imported.
+
+// The custom properties of a block, in the order it declares them.
+const customProps = (body: string): [string, string][] =>
+  [...body.matchAll(/(--[\w-]+)\s*:\s*([^;]+)/g)].map((m) => [
+    m[1]!,
+    m[2]!.trim(),
+  ])
+
+// The tokens of the light theme (the top-level :root) and of the dark one
+// (the :root:not([data-theme='light']) rule of the prefers-color-scheme: dark
+// block, 08 H4.10).
+const lightTokens = (): [string, string][] =>
+  customProps(topBy(':root', 'the :root token block').body)
+const darkTokens = (): [string, string][] => {
+  const [open, end] = atRanges('@media (prefers-color-scheme: dark)')[0]!
+  return customProps(
+    single(
+      RULES.filter(
+        (r) =>
+          r.depth > 0 &&
+          r.at > open &&
+          r.at < end &&
+          r.compact === ":root:not([data-theme='light'])",
+      ),
+      "the :root:not([data-theme='light']) rule of the dark media block",
+    ).body,
+  )
+}
+
+// The value of one token; a miss throws naming it, so a contrast pair that
+// lacks a token goes red on the token, not on NaN.
+const valueOf = (pairs: [string, string][], name: string): string => {
+  const hits = pairs.filter((p) => p[0] === name).map((p) => p[1])
+  if (hits.length !== 1)
+    throw new Error(`${name} is declared ${hits.length} times in the block`)
+  return hits[0]!
+}
+
+// WCAG 2.2 relative luminance and contrast ratio (the 0.04045 threshold), from
+// the hex values read from the sheet.
+const rgbOf = (hex: string): [number, number, number] => {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex)
+  if (!m) throw new Error(`not a 6-digit hex colour: "${hex}"`)
+  return [
+    parseInt(m[1].slice(0, 2), 16),
+    parseInt(m[1].slice(2, 4), 16),
+    parseInt(m[1].slice(4, 6), 16),
+  ]
+}
+const chan = (v: number): number => {
+  const c = v / 255
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+}
+const luminance = (hex: string): number => {
+  const [r, g, b] = rgbOf(hex)
+  return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
+}
+const contrast = (a: string, b: string): number => {
+  const ls = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (ls[0]! + 0.05) / (ls[1]! + 0.05)
+}
+
+// The selector parts of a rule, one string each.
+const parts = (r: Rule): string[] => r.flat.split(',').map((p) => p.trim())
+// The Models table's second column: its body cell, and its header. The column
+// is named by its place, as the sheet names it today (index.css 820), so no
+// class the coder gives it is pinned here.
+const engineCell = (p: string): boolean =>
+  p.includes('.model-profiles') &&
+  /\btd\b/.test(p) &&
+  p.includes('nth-child(2)')
+const engineHead = (p: string): boolean =>
+  p.includes('.model-profiles') &&
+  /\bth\b/.test(p) &&
+  p.includes('nth-child(2)')
+// The rules of every @media (max-width: 479.98px) block: the sheet's very
+// narrow block (index.css 660), where a column folds.
+const narrow = (): Rule[] => {
+  const ranges = atRanges('@media (max-width: 479.98px)')
+  expect(
+    ranges.length,
+    'the sheet has the @media (max-width: 479.98px) block of index.css 660, where 22 D4.35 folds the Engine column',
+  ).toBeGreaterThan(0)
+  return RULES.filter((r) =>
+    ranges.some(([open, end]) => r.depth > 0 && r.at > open && r.at < end),
+  )
+}
+
+test('22 CD.2: .primary.danger fills with --danger and writes in --on-accent, is written before the shared aria-disabled rule, and its pair clears 4.5:1 in both themes', () => {
+  const danger = topBy(
+    '.primary.danger',
+    'the rule of the destructive verb (22 CD.1 gives the class)',
+  )
+  declares(
+    danger,
+    '22 CD.2',
+    [
+      ['background', 'var(--danger)'],
+      ['border-color', 'var(--danger)'],
+      ['color', 'var(--on-accent)'],
+    ],
+    'the three declarations CD.2 gives, no new token and no fourth: the shared .primary rule (index.css 377) draws the pill, the padding and the weight, and this rule only changes the pair',
+  )
+  // The order: a switched-off verb keeps the shared inactive look, so the
+  // inactive rule is written after this one (CD.2: "the rule sits before
+  // .primary[aria-disabled='true']").
+  const inactive = TOP.filter((r) =>
+    parts(r).some((p) => p === ".primary[aria-disabled='true']"),
+  )
+  expect(
+    inactive.length,
+    'the shared aria-disabled rule of index.css 2647 names .primary: CD.2 says the danger rule sits before it',
+  ).toBeGreaterThan(0)
+  for (const r of inactive)
+    expect(
+      danger.at,
+      `"${r.flat}": 22 CD.2 writes .primary.danger before the aria-disabled rule, so the Remove of an instance that runs again (16 17c.7) keeps the inactive look`,
+    ).toBeLessThan(r.at)
+  // The pair, from the tokens as the sheet writes them. The brief's own
+  // arithmetic gives 6.5:1 light and 8.7:1 dark; the pin is the floor of
+  // WCAG 1.4.3, which is what the rule has to clear.
+  for (const [theme, tokens] of [
+    ['light', lightTokens()],
+    ['dark', darkTokens()],
+  ] as const) {
+    const ink = valueOf(tokens, '--on-accent')
+    const fill = valueOf(tokens, '--danger')
+    expect(
+      contrast(ink, fill),
+      `22 CD.2, ${theme} theme: ${ink} on ${fill} is the text of the verb that destroys, and clears the 4.5:1 of WCAG 1.4.3`,
+    ).toBeGreaterThanOrEqual(4.5)
+  }
+})
+
+// L2.B1 b: the bar's box, flipped to the bottom edge.
+test('22 L2.B1: the sheet sticks the Save bar to the bottom edge: .save-bar is sticky at bottom 0 with no top, its edge and its round corners on the top, and its background, z-index and shadow kept', () => {
+  const bar = topBy('.save-bar', 'the bar rule')
+  expect(prop(bar.body, 'position'), '22 L2.B1 b: sticky').toBe('sticky')
+  expect(prop(bar.body, 'bottom'), 'at the viewport’s bottom edge').toBe('0')
+  expect(
+    prop(bar.body, 'top'),
+    '22 L2.B1 b reverses 22 D2.6’s top: no top edge is stuck, which would leave the bar in flow at the top and floating at the bottom',
+  ).toBe('')
+  expect(
+    prop(bar.body, 'z-index'),
+    'the layer is the same as today (L2.B1 b: the same z-index)',
+  ).toBe('1')
+  expect(
+    prop(bar.body, 'background'),
+    'the same fill as the card it sits over (H1a.8, kept)',
+  ).toBe('var(--bg)')
+  expect(prop(bar.body, 'box-shadow'), 'the lift is kept').toBe('var(--shadow)')
+  // The edge and the corners follow the bar: a top border replaces the bottom
+  // one, and only the top corners are round.
+  expect(
+    prop(bar.body, 'border-top'),
+    'L2.B1 b: the coloured 1px --control edge moves to the top (the cue that survives forced colours, H2b.4)',
+  ).toBe('1px solid var(--control)')
+  expect(
+    prop(bar.body, 'border-bottom'),
+    'and leaves the bottom edge, which is flush',
+  ).toBe('')
+  expect(
+    prop(bar.body, 'border-radius'),
+    'L2.B1 b: the card corner on the two top corners only',
+  ).toBe('var(--radius-card) var(--radius-card) 0 0')
+})
+
+// L2.B1 d: the focus-not-obscured pair, moved to the bottom edge.
+test('22 L2.B1: the page pads its bottom edge for the bar and the bar’s controls cancel that padding: html:has(.save-bar) declares scroll-padding-bottom with the 7rem floor, .save-bar button the equal negative scroll-margin-bottom, and the top pair is gone', () => {
+  // The same calc the top padding has today (2h.135): the pin is the value as
+  // written, Prettier and a reflow of the calc aside.
+  const PAD = 'calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3))'
+  const pad = topBy('html:has(.save-bar)', 'the page padding rule')
+  expect(
+    norm(prop(pad.body, 'scroll-padding-bottom')),
+    '22 L2.B1 d: the padding moves to the bottom edge, the same value',
+  ).toBe(PAD)
+  expect(
+    prop(pad.body, 'scroll-padding-top'),
+    '22 L2.B1 d: nothing sticks to the top edge any more, so the page pads nothing there (WCAG 2.4.11)',
+  ).toBe('')
+  const btn = topBy('.save-bar button', 'the bar’s controls rule')
+  // The margin's calc multiplies the padding's inner expression by -1, the same
+  // reading as HearthSaveBarScroll.test.tsx's H5c.1: nesting the padding's own
+  // calc inside would ask for calc(-1 * (calc(...))), which no sheet writes.
+  const inner = PAD.replace(/^calc\((.*)\)$/, '$1')
+  expect(
+    norm(prop(btn.body, 'scroll-margin-bottom')),
+    '22 L2.B1 d: a control of the bar cancels the padding with the equal negative margin, at the bottom edge (H5c.1, now at the bottom)',
+  ).toBe(`calc(-1 * (${inner}))`)
+  expect(
+    prop(btn.body, 'scroll-margin-top'),
+    '22 L2.B1 d: the top cancel goes with the top padding, so a focused bar control is not pushed off the top of the viewport (H5c.2)',
+  ).toBe('')
+})
+
+// L2.B1 e: the short-viewport rule, flipped the same way.
+test('22 L2.B1: the max-height 31.98rem rule is flipped too: the bar is static, at the form’s end, and the bottom padding and margin are 0 (WCAG 1.4.10)', () => {
+  const ranges = atRanges('@media (max-height: 31.98rem)')
+  expect(
+    ranges.length,
+    'the sheet keeps the short-viewport block of 2h.135 (L2.B1 e: it stays)',
+  ).toBeGreaterThan(0)
+  const short = RULES.filter((r) =>
+    ranges.some(([open, end]) => r.depth > 0 && r.at > open && r.at < end),
+  )
+  expect(
+    prop(
+      single(
+        short.filter((r) => r.compact === '.save-bar'),
+        'the .save-bar rule inside the short-viewport block',
+      ).body,
+      'position',
+    ),
+    '22 L2.B1 e: on a short viewport the bar is static, so it rests at the form’s end',
+  ).toBe('static')
+  expect(
+    norm(
+      prop(
+        single(
+          short.filter((r) => r.compact === 'html:has(.save-bar)'),
+          'the html:has(.save-bar) rule inside the short-viewport block',
+        ).body,
+        'scroll-padding-bottom',
+      ),
+    ),
+    '22 L2.B1 e: the bottom padding is zeroed there',
+  ).toBe('0')
+  expect(
+    norm(
+      prop(
+        single(
+          short.filter((r) => r.compact === '.save-barbutton'),
+          'the .save-bar button rule inside the short-viewport block',
+        ).body,
+        'scroll-margin-bottom',
+      ),
+    ),
+    '22 L2.B1 e: the cancel is zeroed with it, so a focused bar control is not pulled past the viewport',
+  ).toBe('0')
+  // The top pair, gone from the block as it is from the top level.
+  for (const r of short) {
+    expect(
+      prop(r.body, 'scroll-padding-top'),
+      `"${r.flat}": L2.B1 e leaves no top padding of the short viewport behind, where nothing sticks any more`,
+    ).toBe('')
+    expect(
+      prop(r.body, 'scroll-margin-top'),
+      `"${r.flat}": L2.B1 e leaves no top cancel of the short viewport behind`,
+    ).toBe('')
+  }
+})
+
+// L2.B2 c: the reason of a page Delete that cannot act is the list's floating
+// tip, so it takes no room in the bar.
+test('22 L2.B2: the reason of a page Delete that cannot act floats over the page: .hint-tip is position: fixed on a layer above the Save bar', () => {
+  const tip = topBy('.hint-tip', 'the tip rule of 22 D4.16')
+  expect(
+    prop(tip.body, 'position'),
+    '22 L2.B2 c: the bar’s Delete uses the list rows’ component, whose tip is out of the flow, so showing it changes no size in the bar',
+  ).toBe('fixed')
+  expect(
+    Number(prop(tip.body, 'z-index')),
+    '22 L2.B2 c: the tip is above the sticky bar, which sits on layer 1, so the reason of a Delete at the viewport’s bottom edge is never behind the bar',
+  ).toBeGreaterThan(
+    Number(prop(topBy('.save-bar', 'the bar rule').body, 'z-index')),
+  )
+})
+
+test('22 D4.35: below 480 px the Models list hides the words of the Engine column and keeps its header in the tree, and nothing hides that column at 480 px and wider', () => {
+  const inNarrow = narrow()
+  // The column is not shown: the second cell of every row is taken out.
+  expect(
+    inNarrow
+      .filter(
+        (r) =>
+          parts(r).some(engineCell) && norm(prop(r.body, 'display')) === 'none',
+      )
+      .map((r) => r.flat),
+    '22 D4.35: a rule of the @media (max-width: 479.98px) block hides the Engine cell of every row of the Models table with display: none, so its words are not shown below 480 px (the row keeps its second cell, whose place the name cell fills with the muted line: L2ModelsList.test.tsx pins the DOM)',
+  ).not.toEqual([])
+  // The header: hidden from the eye, kept in the tree. The shape is the
+  // sheet's own .visually-hidden one (index.css 350), which a media rule
+  // writes because a class toggled by width would need script (the sheet's own
+  // note above index.css 658). clip-path and position are two of its
+  // declarations, the ones no other rule of the sheet pairs.
+  expect(
+    inNarrow
+      .filter(
+        (r) =>
+          parts(r).some(engineHead) &&
+          norm(prop(r.body, 'position')) === 'absolute' &&
+          norm(prop(r.body, 'clip-path')) === 'inset(50%)',
+      )
+      .map((r) => r.flat),
+    '22 D4.35: a rule of the same block hides the Engine header the way .visually-hidden hides (position: absolute, clip-path: inset(50%)), so the header is out of the eye and in the accessibility tree, and its sort button stays reachable',
+  ).not.toEqual([])
+  // The trap: display: none on the header takes the button out of the tree,
+  // and the column can no longer be sorted. No rule of the sheet, in any
+  // block, does it.
+  for (const r of RULES)
+    for (const p of parts(r))
+      if (engineHead(p))
+        expect(
+          norm(prop(r.body, 'display')),
+          `"${r.flat}": 22 D4.35 keeps the Engine header reachable, so the header is never display: none (CSS Display: the whole subtree leaves the accessibility tree, and the sort button with it)`,
+        ).not.toBe('none')
+  // At 480 px and wider nothing changes (the third item of D4.35): the column
+  // is hidden nowhere but in a max-width block.
+  for (const r of RULES)
+    if (parts(r).some(engineCell) && norm(prop(r.body, 'display')) === 'none')
+      expect(
+        r.depth,
+        `"${r.flat}": 22 D4.35 hides the Engine column below 480 px only, so the rule sits in a @media block and not at the top level, where it would hide the column at every width`,
+      ).toBeGreaterThan(0)
+})
+
+test('22 L2 D4.32 and D4.33 (the sheet): the page switch and its word are --space-2 apart, the state line leaves --space-5 before the first card, and the filter sits --space-4 above the table', () => {
+  // The three gaps the brief gives in tokens, each pinned as "some top-level
+  // rule of this subject declares this token in one of the spacing
+  // properties": the property (gap, a margin, the shorthand) is the coder's
+  // choice, the token and the subject are the brief's.
+  const SPACING = [
+    'gap',
+    'row-gap',
+    'margin',
+    'margin-top',
+    'margin-bottom',
+    'margin-inline-start',
+    'margin-inline-end',
+  ]
+  const spaced = (subject: string, token: string): string[] =>
+    TOP.filter((r) => r.compact.includes(subject))
+      .filter((r) =>
+        SPACING.some((p) => norm(prop(r.body, p)).includes(`var(${token})`)),
+      )
+      .map((r) => r.flat)
+  for (const [subject, token, what] of [
+    [
+      '.model-profiles-switch',
+      '--space-2',
+      "22 D4.32: the word sits --space-2 beside the page switch, so it reads as the switch's, not as the next line's",
+    ],
+    [
+      '.model-profile-summary',
+      '--space-5',
+      '22 D4.32: the state line is followed by --space-5 before the first card, so the eye reads the state with the title and the cards as the form',
+    ],
+    [
+      '.model-profiles-filter',
+      '--space-4',
+      '22 D4.33: the filter sits --space-4 above the table, so the filter is not read as a row of it',
+    ],
+  ] as const)
+    expect(
+      spaced(subject, token),
+      `22 L2: a top-level rule of ${subject} spaces it by var(${token}) (${what})`,
+    ).not.toEqual([])
 })

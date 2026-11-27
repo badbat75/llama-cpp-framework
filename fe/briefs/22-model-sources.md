@@ -2221,3 +2221,114 @@ behave the same:
   - `fe/ux/check.js`'s `server-profile-delete-disabled` state changes from "expect the bar's `p`" to
     the list's pattern: focus Delete, then expect the `.hint-tip`. That reverses the 22D4 rerun's
     fix.
+
+## L2 review (designer, 2026-11-27)
+
+Built code (uncommitted L2 with CD, B1 and B2). Measured with `build/ux-review/l2r.js`, `l2b.js` and
+`l2d.js` in Chromium, Firefox and WebKit at 1280 by 900 and 320 by 640 px. Screenshots:
+`build/ux-review/shots/l2-*.png`.
+
+Met in all three browsers:
+- B1 (bar at the bottom). The bar is the last child of its section, `sticky`, `bottom: 0`, with a
+  top border and only its top corners round.
+  - At the end of the scroll the last card's bottom is 24 px above the bar's top: nothing hidden.
+  - 70 Tab presses on the model page and 60 on the server page: no focused field ends under the
+    bar (read 150 ms after each press).
+  - The bar is 73 or 65 px high at 1280 and 121 px at 320 (19 % of 640).
+- Item 1 (order). Discard, Save changes (`primary`), then Delete, 16 px from the bar's right edge,
+  in `--danger`.
+- B2 (no reason line).
+  - No visible reason `p`.
+  - `aria-describedby` names a 1 by 1 px element holding the reason.
+  - On focus, the tip opens above Delete, wholly in the viewport, and Escape closes it. It is
+    placed as the list rows' tip is (left at Delete's left, right-aligned near the viewport's
+    edge), which keeps the two consistent.
+- CD (red confirm verbs). The list confirm's Delete is `primary danger` on `rgb(179, 38, 30)`, with
+  Cancel `secondary`.
+- D4.32 (page head). The settings `h2` is `visually-hidden`.
+- D4.35 (Engine under the name). At 320 px the Engine `th` is hidden, the engine line sits under the
+  name, there is no inner scroll, and the trash can is inside the box.
+- D4.36 (On/Off words). Kept.
+- D4.37 and the rulings (names). Used by shows the name alone, with no `ID` span. The switch, the
+  link and "Delete model profile Qwen3-27B" are each found by the id alone.
+- The card About toggles are Tab stops.
+- UX check, one browser at a time: Chromium 246 and WebKit 246, 0 failing; Firefox 240 (run
+  without `model-profiles-delete`, the known 22D4 pair), 0 failing.
+
+**D1, D4.31 not met in effect (the brief's flaw, not the coder's).** The GPU distribution card still
+opens with 8 lines of text at 1280 px. D4.31's detail keeps "the first `\n`-separated line"
+visible, but that line is 594 characters (Tensor placement: 434), so nothing got shorter. Fix:
+- **Shorter intro keys.** `model-profile-gpu-distribution-intro` becomes its first sentence:
+  `Which GPUs run THIS model and how much each holds, saved to models.ini.` Likewise
+  `model-profile-tensor-placement-intro`: `Exceptions to the GPU distribution above: tensors that go
+  on a device of their own, whatever their layer does.`
+- **New keys for the rest.** Two new keys, `model-profile-gpu-distribution-about` and
+  `model-profile-tensor-placement-about`, hold the rest of each old string word for word, the
+  `\n` breaks included. They fill the card's About panel.
+- **Tests.** The visible intro is the whole `-intro` key, and the panel shows the `-about` key.
+
+**D2, D4.33's gap not met.** From the filter's hint to the table there are 95 px of empty space
+(1280 px). The cause is two empty status lines that reserve room:
+- `.model-profiles-filter-status` has `margin: var(--space-2) 0; min-height: 1lh`
+  (`fe/src/index.css` 1030-1033);
+- `.model-profiles-switch-status` has `min-height: 1lh` (952-955).
+
+Fix: the filter status loses both its margin and its `min-height`. It only fills while the
+visitor types in the filter, and the rows move then anyway. The switch status keeps its 1lh,
+since 17d.5a keeps rows from moving under the pointer. Test: the hint's bottom to the switch
+status's top is `--space-4` (16 px), give or take 1 px.
+
+Adviser notes (preferences, ranked):
+1. **The bar at 320 px is two rows.** "Delete model profile" wraps onto its own row, so the bar
+   takes 121 px of a 640 px screen. Below 480 px, Delete could show only "Delete" while its
+   accessible name stays "Delete model profile". That meets
+   [2.5.3](https://www.w3.org/TR/WCAG22/#label-in-name), since the name contains the visible word.
+   The bar would be one row, about 65 px.
+2. **The card About toggle sits under the intro.** On the model page it sits after the intro and
+   before the model facts line. A Field's About sits beside its label; beside the card's `h3`
+   would match it and read as the card's help.
+3. **The Models header at 320 px.** "Model profile" and its sort icon wrap onto two lines, and
+   "Status" sits over the switch and trash columns together. Minor.
+
+### L2 review round re-check (designer, 2026-11-27)
+
+`build/ux-review/l2e.js` and `l2f.js` in Chromium, Firefox and WebKit at 1280 and 320 px.
+
+- D1 met.
+  - At 1280 px each intro is one sentence (one line for GPU distribution, two for Tensor placement).
+  - The About panel holds the rest and opens with `aria-expanded="true"`.
+- D2 met. The hint's bottom to the switch status's top is 16 px, and the hint to the table 43 px.
+- UX check: Chromium 246 and WebKit 246, 0 failing; Firefox 240 without the 22D4 pair, 0 failing.
+
+**D3, advice 2 built otherwise.** The card's About stands at the card's right edge, 467 px from the
+title at 1280 px, and its pill outline is removed. The cause:
+- `.card-heading > h3 { flex: 1 }` (`fe/src/index.css` 1550-1553) pushes it right;
+- `.card-heading .about { padding-inline: 0; border-color: transparent }` (1558-1561) removes the
+  outline.
+
+The advice was to sit beside the `h3` as a Field's About sits beside its label (the "GPU split mode"
+About of the same card, 8 px after its label, pill outlined). Fix: delete both rules. The DOM does
+not change, so no pinned DOM relation moves. Test: the About's left is the title text's right plus
+`--space-2`, give or take 1 px, and it keeps the `.about` border.
+
+**D4, the page Delete is empty below 480 px.**
+- What shows: at 320 px Delete is a 34 px oval with no text, because both of its spans are
+  `display: none`.
+- Cause: the narrow block's `.save-bar-delete-short { display: inline }` (index.css 731-733) comes
+  before the global `.save-bar-delete-short { display: none }` (2737-2739). Both have the same
+  specificity, so the later rule wins.
+- Fix: go back to one label, the full "Delete model profile" / "Delete server profile", and
+  remove both spans and their rules. My advice 1 assumed the bar would then fit one row, and it
+  cannot: at 320 px Discard (88 px), Save changes (143 px) and even a short Delete exceed the bar's
+  256 px inner width. The short verb gains no row, only a less clear button.
+- Test: Delete's visible text equals its accessible name at 320 and 1280 px.
+
+### L2 final re-check (designer, 2026-11-27)
+
+`build/ux-review/l2e.js` in Chromium, Firefox and WebKit at 1280 and 320 px.
+- D3 met. Each card's About starts 8 px after its title and keeps its 1 px `.about` outline.
+- D4 met. Delete reads "Delete model profile" at both widths, with no `aria-label`. At 320 px the
+  bar has two rows, 121 px high, as expected.
+
+UX check: Chromium 246 and WebKit 246, 0 failing; Firefox 240 without the 22D4 pair, 0 failing. L2
+accepted.

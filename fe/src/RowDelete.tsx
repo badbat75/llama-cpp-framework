@@ -255,7 +255,7 @@ export function RowConfirm({
         <button
           type="button"
           id="confirm-delete"
-          className="primary"
+          className="primary danger"
           aria-disabled={running || undefined}
           onClick={onConfirm}
         >

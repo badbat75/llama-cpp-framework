@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import App from './App.tsx'
 import { t } from './strings.ts'
 import {
+  accName,
   before,
   en,
   fakeBff,
@@ -27,8 +28,10 @@ import {
   startAt,
 } from './test/bff.ts'
 import {
+  cardAboutToggle,
   cardHeadings,
   fieldAboutToggles,
+  MODEL_PROFILE_CARDS,
   saveBarTabStops,
 } from './test/modelProfileCards.ts'
 
@@ -50,6 +53,15 @@ const BODY_ID = 'model-profile-assets-body'
 const HINT_KEY = 'model-profile-engine-hint'
 /** The card headings in the page order of 83 (the ten jump buttons' names). */
 const TITLES = cardHeadings()
+/** The About toggle 22 D4.31 gives the GPU distribution card, a Tab stop right
+ *  after its h3 (the designer’s ruling of 2026-11-27). The first card of 83
+ *  after Assets is that card, so its own About is the stop right after the
+ *  Assets toggle, before the first field’s About of 91. */
+const GPU_CARD_ABOUT = cardAboutToggle(
+  MODEL_PROFILE_CARDS.find(
+    (card) => card.heading === 'model-profile-gpu-distribution',
+  )!,
+)!
 
 beforeEach(() => startAt(HASH))
 
@@ -138,7 +150,8 @@ function tabbableElements(root: HTMLElement): HTMLElement[] {
 /** The name Tab shows: a control's text, or the label that names an input
  * (the reader of ModelProfileContent.test.tsx). */
 function nameOf(el: HTMLElement): string {
-  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return textOf(el)
+  // The accessible name, `aria-label` first (test/bff.ts's accName).
+  if (!['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return accName(el)
   const aria = el.getAttribute('aria-label')
   if (aria) return aria
   const id = el.getAttribute('id')
@@ -283,27 +296,30 @@ describe('H11b.3: the strings', () => {
 })
 
 describe('H11b.4: the tab order', () => {
-  test("H11b.4 (22 D2.5, 22 D4.10): Tab in main goes the back link, the save bar with its Delete, the jump toggle, the ten jumps, the Assets toggle, then the first field's About toggle of 91: the Engine About toggle and select are out", async () => {
+  test("H11b.4 (22 D2.5 as 22 L2.B1 amends it, 22 D4.10, 22 D4.31): Tab in main goes the back link, the jump toggle, the ten jumps, the Assets toggle, the GPU distribution card’s own About of 22 D4.31, the first field's About toggle of 91, and the save bar with its Delete last: the Engine About toggle and select are out", async () => {
     const { main } = await form()
     const names = tabbableElements(main).map(nameOf)
-    const start = [
+    const head = [
       en('model-profile-back'),
       // 24 A2.1: the state line's switch, named by the h1 (its text is the id).
       ID,
-      // 22 D2.5 moved the bar to the top of the settings section, so its stops
-      // sit right after the back link, before the jump list. 22 D4.10 puts the
-      // bar's Delete first in it.
-      ...saveBarTabStops(),
+      // 22 L2.B1 moved the bar to the end of the settings section, so the
+      // jumps lead the page.
       en('model-profile-jump-label'),
       ...TITLES,
       ASSETS,
-      // The first field's About toggle of 91: the first card of 83 after
-      // Assets is the Hardware card, so its first field.
+      // 22 D4.31 (the designer’s ruling of 2026-11-27): the card’s About is a
+      // Tab stop right after the card’s h3, so the GPU distribution card, the
+      // first card of 83 after Assets, opens with its own About.
+      GPU_CARD_ABOUT,
+      // The first field’s About toggle of 91: it follows the card’s own About.
       fieldAboutToggles()[0],
     ]
-    expect(names.slice(0, start.length), 'the page start, H11b.4').toEqual(
-      start,
-    )
+    expect(names.slice(0, head.length), 'the page start, H11b.4').toEqual(head)
+    expect(
+      names.slice(-saveBarTabStops().length),
+      '22 L2.B1: the bar’s Discard, Save changes and Delete are the page’s last stops',
+    ).toEqual(saveBarTabStops())
     expect(
       names.filter(
         (n) => n === ENGINE || n === `${en('field-about')} ${ENGINE}`,

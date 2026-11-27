@@ -692,6 +692,33 @@ main > * {
   .run-actions .run-remove {
     margin-inline-start: 0;
   }
+
+  /* The Engine column folds below 480 px (22 D4.35): its words are the name
+     cell's second line, so the cell of the column is taken out, and the line
+     takes its place. */
+  .model-profiles td:nth-child(2) {
+    display: none;
+  }
+
+  .model-profiles td:first-child .muted {
+    display: block;
+  }
+
+  /* The header keeps the sort: `display: none` on a `th` takes its whole
+     subtree, the sort button with it, out of the accessibility tree (CSS
+     Display), so the head is hidden the way `.visually-hidden` hides, as the
+     block hides the theme switch's label above. */
+  .model-profiles th:nth-child(2) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
 }
 
 /* Wide: the nav is a fixed column; no Menu button, and no divider between it
@@ -822,6 +849,15 @@ tr:last-child td {
   overflow-wrap: normal;
 }
 
+/* The engine as the name cell's second line (22 D4.35): every row carries it
+   under its name, so the narrow block can hide the Engine column and the row
+   still says what runs it. At 480 px and wider the column shows it, so the
+   line is not shown: the two are the same words, and a row read twice reads
+   twice. The narrow block shows it, and the sheet's `.muted` gives its colour. */
+.model-profiles td:first-child .muted {
+  display: none;
+}
+
 /* The Actions column of both lists (22 D4.23, D4.24, D4.26): the last, holding
    the row's trash can alone. `width: 1%` shrinks it to the button, so the
    spare width of the table goes to the text columns; `white-space: nowrap`
@@ -876,13 +912,15 @@ tr:last-child td {
 }
 
 /* Each row's switch (02-models.md 2c.39): the drawn checkbox centred in a
-   24 by 24 px label, its hit area, then its word. */
+   24 by 24 px label, its hit area, then its word. The word sits --space-2
+   beside the box (22 D4.32), so it reads as the switch's and not as the next
+   line's. */
 .model-profiles-switch {
   display: inline-grid;
   place-content: center;
   min-width: 24px;
   min-height: 24px;
-  margin-right: var(--space-1);
+  margin-inline-end: var(--space-2);
   vertical-align: middle;
   cursor: pointer;
 }
@@ -922,12 +960,15 @@ tr:last-child td {
 }
 
 /* The filter over the model profiles (02-models.md 2b): field and Clear on one
-   line, at most 24rem wide, the browser's own clear glyph hidden. */
+   line, at most 24rem wide, the browser's own clear glyph hidden. The hint
+   under it is one line (22 D4.33), and the block leaves --space-4 before what
+   follows, so the filter is not read as a row of the table. */
 .model-profiles-filter {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   max-width: 24rem;
+  margin-bottom: var(--space-4);
 }
 
 .model-profiles-filter label {
@@ -984,11 +1025,6 @@ tr:last-child td {
   margin: 0;
   color: var(--muted);
   font-size: var(--fs-sm);
-}
-
-.model-profiles-filter-status {
-  margin: var(--space-2) 0;
-  min-height: 1lh;
 }
 
 .model-profiles-note {
@@ -1324,9 +1360,11 @@ tr:last-child td {
 /* The line under the model profile's h1 (08-hearth-h10-h11.md H11a.9): the
    engine of the read and the model file it points at, in the page's muted
    text. overflow-wrap breaks a long file name in its column (1.4.10), so a
-   long name needs no sideways scroll at 320 px. */
+   long name needs no sideways scroll at 320 px. The line is followed by
+   --space-5 before the first card (22 D4.32): the eye reads the state with the
+   title, and the cards as the form. */
 .model-profile-summary {
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-5);
   color: var(--muted);
   overflow-wrap: anywhere;
 }
@@ -1478,6 +1516,28 @@ tr:last-child td {
   border: 1px solid transparent;
   border-radius: var(--radius-card);
   box-shadow: var(--shadow);
+}
+
+/* The row of a card's heading, there only when a control stands beside the
+   title (22 D4.31 review A2: the card's About sits next to its h3, the way a
+   field's About follows its label). The row wraps, so the longest title and the
+   verb keep their room at the largest browser text (1.4.4), and the heading
+   keeps the scroll margin the jump lands on. */
+.card-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+/* The heading's own block margins go, since the row is what gives the space.
+   The title takes none of the row's free space (the second review of 2026-11-27,
+   D3): a stretched title pushes its own About to the end of the row, far from
+   the words it explains. The row's gap is what separates the two, and the verb
+   drops below the title when they do not fit on one line (1.4.4). */
+.card-heading > h3 {
+  margin: 0;
 }
 
 /* A note between a card's fields (DESIGN.md 5.2, 02e-model-profile-cards.md 90): the
@@ -2525,18 +2585,18 @@ input[type='checkbox'][aria-invalid='true'] {
 
 /* ── Save bar (DESIGN.md 5.2) ─────────────────────────────────────────── */
 
-/* A field focused near the top is never hidden behind the sticky bar:
+/* A field focused near the bottom is never hidden behind the sticky bar:
    --save-bar-height is the bar's rendered height, written by SaveBar's
    useSaveBarPadding as the bar resizes. The max() floor is the height a bar
    with a notice needs, so a focused field clears the bar before the height the
    observer writes lands: after a refused save the bar grows with its alert,
-   after the scroll of the marked field. The bar sits at the top of the page
-   since 22 D2.5, so the padding is at the top. */
+   after the scroll of the marked field. 22 L2.B1 b moved the bar to the bottom
+   edge of the viewport (it reverses 22 D2.5), so the padding is at the bottom. */
 html:has(.save-bar) {
   /* The declaration is pinned as written (DESIGN.md 5.2, 2h.135): Prettier
      would break this long calc across lines. */
   /* prettier-ignore */
-  scroll-padding-top: calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3));
+  scroll-padding-bottom: calc(max(var(--save-bar-height, 7rem), 7rem) + var(--space-3));
 }
 
 /* A control of the bar always lies inside the strip the padding above adds to
@@ -2549,14 +2609,14 @@ html:has(.save-bar) {
   /* The padding above, negated, and pinned as written like that one: Prettier
      would break this long calc across lines. */
   /* prettier-ignore */
-  scroll-margin-top: calc(-1 * (max(var(--save-bar-height, 7rem), 7rem) + var(--space-3)));
+  scroll-margin-bottom: calc(-1 * (max(var(--save-bar-height, 7rem), 7rem) + var(--space-3)));
 }
 
 /* The bar is lifted like the card it sits over, and flush at the viewport's
-   top edge: only its bottom corners are round (22 D2.6). */
+   bottom edge: only its top corners are round (22 L2.B1 b). */
 .save-bar {
   position: sticky;
-  top: 0;
+  bottom: 0;
   z-index: 1;
   display: flex;
   flex-wrap: wrap;
@@ -2564,22 +2624,22 @@ html:has(.save-bar) {
   gap: var(--space-2) var(--space-4);
   padding: var(--space-3) var(--space-4);
   background: var(--bg);
-  border-bottom: 1px solid var(--control);
-  border-radius: 0 0 var(--radius-card) var(--radius-card);
+  border-top: 1px solid var(--control);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
   box-shadow: var(--shadow);
 }
 
 /* A short viewport (landscape phone, 400% zoom): the bar is not sticky. */
 @media (max-height: 31.98rem) {
   html:has(.save-bar) {
-    scroll-padding-top: 0;
+    scroll-padding-bottom: 0;
   }
 
   /* The bar is static here and the page has no padding to cancel, so the
-     cancel goes too: a negative margin would let a focused button end above
+     cancel goes too: a negative margin would let a focused button end below
      the viewport (H5c.2). */
   .save-bar button {
-    scroll-margin-top: 0;
+    scroll-margin-bottom: 0;
   }
 
   .save-bar {
@@ -2619,28 +2679,46 @@ html:has(.save-bar) {
    (1.4.4, 1.4.10). The min-width is 0 and not auto: a flex row whose content
    is wider than the bar never shrinks below that content. The wrapped rows
    keep the buttons at the end of the bar, where the primary action is, and the
-   DOM and the Tab order stay as they are (1.3.2). */
+   DOM and the Tab order stay as they are (1.3.2). The row is also the box that
+   owns the bar Delete's tip (22 L2.B2 c, the list rows' shape): it carries
+   `.hint-box`, and takes back the two declarations the list rows' column box
+   writes, this box being a row. */
 .save-actions {
   display: flex;
+  flex-direction: row;
+  align-items: center;
   flex: 0 1 auto;
   min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-2);
   margin-left: auto;
-  /* The bar's Delete shows its reason under itself (22 D4 review D1): the tip
-     is the group's child, and the Delete is its first child, so the group's
-     left edge is the Delete's and the reason starts under the Delete. */
+  /* The tip of 22 D4.16 floats against the viewport, so nothing here is its
+     anchor: the Delete's own rect is. */
   position: relative;
 }
 
-/* The page's Delete, the group's first button (22 D4.10): the destructive verb
-   sits apart from Discard and Save changes, with the sheet's widest step of
-   room after it. No class marks it, so the rule names the one button of a bar
-   that is a disclosure: the Delete opens the confirm, Discard and Save open
-   nothing. */
-.save-actions > [aria-expanded]:first-child {
-  margin-inline-end: var(--space-5);
+/* The page's Delete, named by a class of its own (22 D4.30 with the user's
+   L2.A2 of 2026-11-26, which moves 22 D4.10's verb from the group's first place
+   to its last, and the code review of 2026-11-27, which takes the verb out of
+   `:last-of-type`: a rule keyed on the place in the group gives the end-of-row
+   margin and the destructive colour to any verb added after this one). The free
+   space before it puts it at the end of the row; Save changes stays the bar's
+   only primary. */
+.save-bar-delete.secondary {
+  margin-inline-start: auto;
+  color: var(--danger);
+}
+
+/* The verb that destroys (22 CD.2): a confirm's own verb, a `primary` with the
+   sheet's danger fill, so the ask reads as the step that cannot be undone. The
+   rule sits before the shared `aria-disabled` one, so a verb kept switched off
+   keeps the inactive look of that rule. Both themes' `--on-accent` on
+   `--danger` clear WCAG 1.4.3 (the pair is pinned in Reflow.test.ts). */
+.primary.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-accent);
 }
 
 /* aria-disabled, not disabled, so focus stays; drawn inactive. */

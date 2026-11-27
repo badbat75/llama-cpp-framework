@@ -20,6 +20,7 @@ import {
   instanceName,
   type Instance,
   type InstancesStore,
+  type NameOf,
   useInstanceNames,
 } from './Instances.tsx'
 import { Mark } from './Mark.tsx'
@@ -703,8 +704,9 @@ function Page({
   session: Session | undefined
   /** The host's name the shell read once for this session (13 N.3, N.5). */
   host: string | null
-  /** The name of an instance by its id, from the app's list (16 17f.4). */
-  nameOf: (id: string) => string
+  /** The name of an instance by its id, from the app's list (16 17f.4), with
+   *  the shared-name rule a Used by link needs (22 D4.37). */
+  nameOf: NameOf
   /** The app's instance list read again (16 17d.2a). */
   onInstances: () => void
   filterText: string

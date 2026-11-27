@@ -687,51 +687,6 @@ export default function ServerForm({
 
   return (
     <>
-      {/* 22 D2.5: the bar is the first thing of the form, before the cards, so
-          Save and Discard are reached without scrolling to the end; the sheet
-          sticks it to the viewport's top (22 D2.6). */}
-      <SaveBar
-        bar={bar}
-        status={status}
-        alert={alerts.alert}
-        dirty={dirty}
-        saving={phase === 'saving'}
-        reloadId={`${fid}-reload`}
-        onReload={
-          alerts.alert?.action === 'reload' ? askReload.press : undefined
-        }
-        signInId={signInId}
-        onSignIn={
-          alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
-        }
-        saveId={saveId}
-        onDiscard={discard}
-        onSave={save}
-        deleteId={pageDelete?.id}
-        deleteLabel={pageDelete?.label}
-        onDelete={pageDelete?.onOpen}
-        deleteDisabled={pageDelete?.disabled}
-        deleteExpanded={pageDelete?.expanded}
-        deleteHint={pageDelete?.reason}
-        restartNames={instance === null ? '' : nameOf(instance)}
-      >
-        {/* 16 17d.3a: the restart the save left to make, a row of the bar under
-            its buttons, the bar being sticky so the offer stays in reach. An
-            edit answers it, as it answers the status line. */}
-        {phase === 'saved-restart-ids' && !dirty && instance !== null && (
-          <RestartOffer
-            ids={[instance]}
-            nameOf={nameOf}
-            renewals={renewals}
-            onChanged={onInstances}
-            onSignIn={(control) => {
-              offerControl.current = control
-              askSignIn.open()
-            }}
-          />
-        )}
-        {pageDelete?.children}
-      </SaveBar>
       <Card title={t('server-network')}>
         <DefaultBoxField
           id={`${fid}-Port`}
@@ -969,6 +924,54 @@ export default function ServerForm({
           />
         </div>
       </Card>
+      {/* 22 D2.5 with the user's L2.B1 of 2026-11-26: the bar is the form's last
+          element, after every card, and the sheet sticks it to the viewport's
+          bottom edge, so Tab walks the fields before the bar and the bar floats
+          over the end of the form. 22 D4.30 with L2.A2 orders its group
+          Discard, Save changes, Delete; 22 D4.11 keeps the confirm in the bar,
+          so it outlives the cards and the bar grows for it. */}
+      <SaveBar
+        bar={bar}
+        status={status}
+        alert={alerts.alert}
+        dirty={dirty}
+        saving={phase === 'saving'}
+        reloadId={`${fid}-reload`}
+        onReload={
+          alerts.alert?.action === 'reload' ? askReload.press : undefined
+        }
+        signInId={signInId}
+        onSignIn={
+          alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
+        }
+        saveId={saveId}
+        onDiscard={discard}
+        onSave={save}
+        deleteId={pageDelete?.id}
+        deleteLabel={pageDelete?.label}
+        onDelete={pageDelete?.onOpen}
+        deleteDisabled={pageDelete?.disabled}
+        deleteExpanded={pageDelete?.expanded}
+        deleteHint={pageDelete?.reason}
+        restartNames={instance === null ? '' : nameOf(instance)}
+      >
+        {/* 16 17d.3a: the restart the save left to make, a row of the bar under
+            its buttons, the bar being sticky so the offer stays in reach. An
+            edit answers it, as it answers the status line. */}
+        {phase === 'saved-restart-ids' && !dirty && instance !== null && (
+          <RestartOffer
+            ids={[instance]}
+            nameOf={nameOf}
+            renewals={renewals}
+            onChanged={onInstances}
+            onSignIn={(control) => {
+              offerControl.current = control
+              askSignIn.open()
+            }}
+          />
+        )}
+        {pageDelete?.children}
+      </SaveBar>
       {askReload.asking && (
         <DiscardDialog onKeep={askReload.keep} onDiscard={askReload.confirm} />
       )}

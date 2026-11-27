@@ -186,34 +186,37 @@ test('H9b.4: the disclosure and the entries are the stops right after the save b
   ).toEqual([toggle, ...buttons])
 
   // In the page, the disclosure and the entries are the stops right after the
-  // save bar, which 22 D2.5 moved to the top of the settings section (H10.10).
+  // state line's switch: 22 L2.B1 (the user's ruling of 2026-11-26) moved the
+  // save bar to the end of the settings section, so its stops left the head of
+  // the order (H10.10, 22 D2.5).
   const stops = tabbables(main)
   expect(stops[0], 'the back link stays the first stop of the page').toBe(
     screen.getByRole('link', { name: en('model-profile-back') }),
   )
   // 24 A2.1: the state line's switch is the stop right after the back link.
   const sw = within(main).getByRole('switch')
-  // 22 D2.5 puts the bar right after the switch, 22 D4.10 its Delete first.
+  // 22 D4.10 puts the page's Delete in the bar and 22 D4.30 moves it to the
+  // bar's end.
   const barStops = [
-    within(main).getByRole('button', { name: en('model-profile-delete') }),
     within(main).getByRole('button', { name: en('save-discard') }),
     within(main).getByRole('button', { name: en('save-button') }),
+    within(main).getByRole('button', { name: en('model-profile-delete') }),
   ]
   expect(
     stops[1],
     '24 A2.1: the state line’s switch is the stop right after the back link',
   ).toBe(sw)
   expect(
-    stops.slice(2, barStops.length + 2),
-    '22 D2.5, 22 D4.10: the bar’s Delete, Discard and Save are the stops right after the switch',
-  ).toEqual(barStops)
-  expect(
-    stops.slice(barStops.length + 2, buttons.length + barStops.length + 3),
-    'H10.10: the disclosure then the entries are the next stops, in their order',
+    stops.slice(2, buttons.length + 3),
+    'H10.10 with 22 L2.B1: the disclosure then the entries are the stops right after the switch',
   ).toEqual([toggle, ...buttons])
+  expect(
+    stops.slice(-barStops.length),
+    '22 L2.B1, 22 D4.10, 22 D4.30: the bar’s Discard, Save and Delete are the page’s last stops',
+  ).toEqual(barStops)
 
-  // The reading order of the rail page: back link, save bar (22 D2.5), region,
-  // Assets card, cards.
+  // The reading order of the rail page: back link, region, Assets card, cards,
+  // save bar (22 L2.B1 moved the bar after the fields).
   const section = railOf(main).section
   const assets = within(section).getByRole('heading', {
     level: 3,
@@ -234,12 +237,12 @@ test('H9b.4: the disclosure and the entries are the stops right after the save b
         'back link',
         screen.getByRole('link', { name: en('model-profile-back') }),
       ],
-      ['save bar', bar],
       ['nav.jump', nav],
       ['Assets card', assets],
       ['first card', firstCard],
+      ['save bar', bar],
     ]),
-    'H9b.4: the rail sits between the save bar and the fields it jumps to',
+    'H9b.4 with 22 L2.B1: the rail sits between the page head and the fields it jumps to, and the bar closes the form',
   ).toEqual([])
 })
 
@@ -277,8 +280,9 @@ test('H9b.6 and H9b.5: no new element, class or text, and the cards and the save
   ).toEqual([])
 
   // H9b.5: the cards and the save bar are the same markup the rail shares the
-  // grid with: cards as the sections of the rail section, the bar its second
-  // child, right after the settings heading (22 D2.5).
+  // grid with: cards as the sections of the rail section, the bar its last
+  // child (22 D2.5 put it right after the settings heading, 22 L2.B1 moved it
+  // to the end of the form).
   const cards = Array.from(section.children).filter(
     (el) => el.tagName === 'SECTION' && el !== section,
   )
@@ -296,7 +300,7 @@ test('H9b.6 and H9b.5: no new element, class or text, and the cards and the save
     'the settings heading is the first child',
   ).toBe('H2')
   expect(
-    (children[1] as HTMLElement).className,
-    'H9b.5, 22 D2.5: the save bar is the child right after it',
+    (children[children.length - 1] as HTMLElement).className,
+    'H9b.5, 22 L2.B1: the save bar is the section’s last child',
   ).toContain('save-bar')
 })

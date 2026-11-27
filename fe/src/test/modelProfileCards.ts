@@ -323,20 +323,44 @@ export function fieldAboutToggles(): string[] {
   return fieldLabels().map((label) => `${en('field-about')} ${label}`)
 }
 
-/** Every button a card holds, in card and field order: the About toggle of
- * every field, then, at the end of its own card, the controls of the card's
- * `extraStops`. The page's own buttons (the jump disclosure and entries, the
- * Assets disclosure, the save bar) are no card's controls, so a test that
+/** The cards whose intro sits behind an About of the card itself (22 D4.31:
+ *  the GPU distribution and the Tensor placement card show only the first line
+ *  of their intro, the rest is in the card's panel). Their toggle is the card's
+ *  first stop, right after the card's h3, before the first field's About (the
+ *  designer's ruling of 2026-11-27): a reader who tabs the page reaches it as
+ *  they reach a card, and the panel is the card's own words. */
+const CARD_INTRO_PANEL = [
+  'model-profile-gpu-distribution',
+  'model-profile-tensor-placement',
+]
+
+/** The accessible name of a card's own About toggle, or null when the card has
+ *  no intro panel. */
+export function cardAboutToggle(card: Card): string | null {
+  return CARD_INTRO_PANEL.includes(card.heading)
+    ? `${en('field-about')} ${en(card.heading)}`
+    : null
+}
+
+/** Every button a card holds, in card and field order: the About toggle of a
+ * card with an intro panel (22 D4.31, right after the card's h3), the About
+ * toggle of every field, then, at the end of its own card, the controls of the
+ * card's `extraStops`. The page's own buttons (the jump disclosure and entries,
+ * the Assets disclosure, the save bar) are no card's controls, so a test that
  * names every button of main puts them around this. */
 export function cardButtons(): string[] {
-  return MODEL_PROFILE_CARDS.flatMap((card) => [
-    ...card.fields.map(
-      (field) => `${en('field-about')} ${labelText(fieldLabel(field))}`,
-    ),
-    ...(card.extraStops ?? [])
-      .map(extraStopButton)
-      .filter((b): b is string => b !== null),
-  ])
+  return MODEL_PROFILE_CARDS.flatMap((card) => {
+    const about = cardAboutToggle(card)
+    return [
+      ...(about === null ? [] : [about]),
+      ...card.fields.map(
+        (field) => `${en('field-about')} ${labelText(fieldLabel(field))}`,
+      ),
+      ...(card.extraStops ?? [])
+        .map(extraStopButton)
+        .filter((b): b is string => b !== null),
+    ]
+  })
 }
 
 /** The identity a field is listed under: its label's strings key, or the
@@ -633,17 +657,21 @@ export function controlEnabled(
   return boxed === undefined || boxed in values
 }
 
-/** Every field's tab stops in the order of 91: each field's About toggle,
- * then the controls 2h.1, 2h.4, 2h.5, 2h.6, 2h.7, 2h.8 and 2h.9 made editable
- * and left enabled on this read (141, 155, 156, 170, 176, 190, 191): a boxed
- * field's default box, named by the box's own text and only while the field's
- * enable rule leaves the box enabled (176), and its input while the box is
- * unticked; a checkbox, named by its toggle text (87). The whole-page tab path
- * of every model profile page test is this list, read with the values of its
- * fixture. */
+/** Every field's tab stops in the order of 91: a card with an intro panel opens
+ * with its own About toggle (22 D4.31, the designer's ruling of 2026-11-27: the
+ * toggle is a real Tab stop, right after the card's h3, before the first
+ * field's About), then each field's About toggle, then the controls 2h.1, 2h.4,
+ * 2h.5, 2h.6, 2h.7, 2h.8 and 2h.9 made editable and left enabled on this read
+ * (141, 155, 156, 170, 176, 190, 191): a boxed field's default box, named by
+ * the box's own text and only while the field's enable rule leaves the box
+ * enabled (176), and its input while the box is unticked; a checkbox, named by
+ * its toggle text (87). The whole-page tab path of every model profile page
+ * test is this list, read with the values of its fixture. */
 export function fieldTabStops(values: Record<string, string>): string[] {
   const stops: string[] = []
   for (const card of MODEL_PROFILE_CARDS) {
+    const about = cardAboutToggle(card)
+    if (about !== null) stops.push(about)
     for (const field of card.fields) {
       const label = labelText(fieldLabel(field))
       stops.push(`${en('field-about')} ${label}`)
@@ -666,33 +694,43 @@ export function fieldTabStops(values: Record<string, string>): string[] {
 
 /** The tab stops at the top of the page's main: the back link, then the state
  *  line's switch (24 A2.1: named by the h1, so its name is the fixture's id),
- *  then the save
- *  bar's two buttons (22 D2.5 moved the bar to the top of the settings section,
- *  so its stops left the end of the order), then 2h.10's 197 with H10 inserted
- *  (fe/briefs/08-hearth-h10-h11.md, H10.10): the jump disclosure named by
- *  `model-profile-jump-label`, then the section jump list's buttons, one per
- *  card of 83 in page order, each named by its card's title (196), then the
- *  Assets card's disclosure (H11b.4: the Engine About toggle and select are
- *  gone, the Assets toggle is the stop right after the jumps). The card h3s are
- *  not tab stops: only a jump button gives one the focus. 22 D4.10 moved the
- *  delete of 22 D2.1 into the bar, as its first button: it is there whether the
- *  profile is switched on or off, so every list here carries it. */
+ *  then 2h.10's 197 with H10 inserted (fe/briefs/08-hearth-h10-h11.md, H10.10):
+ *  the jump disclosure named by `model-profile-jump-label`, then the section
+ *  jump list's buttons, one per card of 83 in page order, each named by its
+ *  card's title (196), then the Assets card's disclosure (H11b.4: the Engine
+ *  About toggle and select are gone, the Assets toggle is the stop right after
+ *  the jumps). The card h3s are not tab stops: only a jump button gives one the
+ *  focus. 22 D2.5 put the save bar between the switch and the jumps, and 22
+ *  L2.B1 (the user's ruling of 2026-11-26) moved the bar to the end of the
+ *  form: its stops left the head of the order for the tail, pageBottomTabStops.
+ *  22 D4.10 moved the delete of 22 D2.1 into the bar and 22 D4.30 put it at the
+ *  bar's end: it is there whether the profile is switched on or off, so every
+ *  list here carries it. */
 export function pageTopTabStops(): string[] {
   return [
     en('model-profile-back'),
     // 24 A2.1: the state line's switch, named by the h1, so its accessible
     // name is the id of the profile the fixture reads.
     MODEL_PROFILE_ID,
-    ...saveBarTabStops(),
     en('model-profile-jump-label'),
     ...cardHeadings(),
     en('model-profile-assets'),
   ]
 }
 
-/** The save bar's buttons, in the bar's order (2h.1's 141), at the top of
- *  the settings section since 22 D2.5. 22 D4.10 puts the page's Delete first,
- *  and the `--space-5` gap after it leaves Discard and Save changes together. */
+/** The tab stops at the end of the page's main: the save bar's buttons, the
+ *  last element of the form since 22 L2.B1, in the bar's order (2h.1's 141
+ *  with 22 D4.30 and L2.A2: Discard, Save changes, and the page's Delete
+ *  pushed to the bar's end with `margin-inline-start: auto`). WCAG 2.4.3: the
+ *  bar's stops are the page's last, in this order. */
+export function pageBottomTabStops(): string[] {
+  return saveBarTabStops()
+}
+
+/** The save bar's buttons, in the bar's order (2h.1's 141), at the end of the
+ *  settings section since 22 L2.B1. 22 D4.10 puts the page's Delete in the
+ *  bar, and 22 D4.30 moves it to the bar's end, after Discard and Save
+ *  changes, where the sheet pushes it with `margin-inline-start: auto`. */
 export function saveBarTabStops(): string[] {
-  return [en('model-profile-delete'), en('save-discard'), en('save-button')]
+  return [en('save-discard'), en('save-button'), en('model-profile-delete')]
 }
