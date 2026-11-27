@@ -783,7 +783,7 @@ fn nothing_names_the_registry_value_the_framework_dropped() {
         }
     }
     rust_files(&repo().join("xtask").join("src"), &mut files);
-    let skip = repo().join("xtask/src/common/msi/tests");
+    let skip = repo().join("xtask/src/common/msi_tests");
     let hits: Vec<String> = files
         .iter()
         .filter(|f| !f.starts_with(&skip))

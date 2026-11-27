@@ -376,7 +376,7 @@ fn the_msi_guard_checks_the_old_and_the_new_apps_entry() {
 /// The install directory: the one recorded under `Software\private-ai`,
 /// else the default `private-ai` under Program Files. No carry-over of a
 /// 2.4 folder from `Software\llama.cpp`, which is llama.cpp's own key now
-/// (`the_framework_reads_no_engine_key_for_its_folder` in common/msi.rs's
+/// (`the_framework_reads_no_engine_key_for_its_folder` in common/msi_tests.rs's
 /// tests pins the rest).
 #[test]
 fn the_msi_install_dir_follows_the_new_key_only() {

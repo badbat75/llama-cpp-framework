@@ -594,7 +594,7 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `OUR_CONFIG_FILES` hold the 2.4 names, and a packaged machine has both sets on disk (here
   `/etc/llama.cpp` holds `presets.ini` beside `models.ini`).
 - "Text-checked" in `installer/AGENTS.md` means xtask's tests read the `.wxs` and evaluate its conditions
-  (`msi/tests/engine_lifecycle.rs`), never a WiX compile.
+  (`msi_tests/engine_lifecycle.rs`), never a WiX compile.
 - The GUI's state placeholder is the ROOT, id not joined (`gui.rs`'s `InstanceDirs`), while the launch and
   the readers join the id (`launch::instance_command`, `slot_state::restore_newest`, `cli.rs` with
   `default`): "the placeholder names the instance's folder" is wrong, and the shipped Linux file names
