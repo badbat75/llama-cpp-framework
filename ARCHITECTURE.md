@@ -4011,6 +4011,121 @@ manager's sync. Type-checked only, so the Windows path is first run in GR4's CI.
 
 The Windows virtual account length is checked at GR4's Windows CI run (the user starts it).
 
+#### Amendment: generated ids for every profile, names as editable fields (user, 2026-11-27): accepted (user, 2026-11-27)
+
+**The requirement** (user, 2026-11-27, reversing the coordinator's "names plus a Rename verb", RN).
+Every profile kind (server, instance, model) gets a hidden generated id, by the rules of "Amendment:
+generated ids" above. Every reference holds the id; the display name is one editable value, so a
+rename touches that value and nothing cascades.
+
+**Where the id and the name live:**
+
+| Kind | Id | Name | References to it |
+| --- | --- | --- | --- |
+| Server profile | the file name, `server@<id>.ini` | `Name` in `[Server]` | `ServerProfile = <id>` in `instance-profiles.ini` |
+| Model profile | the section header in `models.ini`, `[<id>]` | the key `display-name` in that section; not a llama-server argument, and stripped at the render | the entries `[<p>/<m>]` of `instance-profiles.ini`; the tag record's sections |
+| Instance profile | the section header in `instance-profiles.ini`, `[<id>]`, and the prefix of its entries `[<id>/<m>]` | `Name` in `[<id>]` | `InstanceProfile = <id>` in `instances.ini` |
+| Instance | the section header in `instances.ini` (above) | `Label`, as today | none |
+
+An id is 32 lowercase hex digits (`Uuid::new_v4().simple()`), valid as a file name, an INI section,
+an entry half (no `/`) and a unit name.
+
+**Invariant: an engine never sees a profile id** (user, 2026-11-27, a firm rule). Profile ids live
+only in the manager's own source files and their references: `models.ini`, `instance-profiles.ini`,
+`server@<id>.ini`, `instances.ini`, the tag record and `rekey-map.ini`. Every file an engine reads is
+rendered with the display names resolved. That covers `models@<id>.ini`, `launch@<id>.ini`, and any
+file a later engine loads.
+- **The render** writes each model section's header as the model profile's name, and leaves out the
+  name keys (`display-name`, `Name`, `ServerProfile`, `InstanceProfile`). The launch argv likewise
+  carries no profile id.
+- **The test:** every rendered file and every launch argv in the manager's tests holds no substring
+  that is a profile id of the fixture. Each render slice pins it (UR1, UR2, IP3c).
+- **What the rule does not cover, to be confirmed by the user:** the *instance* id still names the
+  render files themselves (`models@<id>.ini`), the unit, and the state and log paths the launch passes
+  (`--slot-save-path .../state/<id>`). Those are names of places, not profile references, so they
+  stay. Rendering them by name would make a rename move folders, which the id was introduced to
+  avoid.
+
+**Names.**
+- Unique per kind on the node, ignoring case.
+- Server and instance profile names follow the label text rule: 1 to 64 characters, no control
+  characters, no `;` or `#`.
+- **A model profile's name is the model name clients send**, so it keeps today's model profile id
+  rule (`checks::model_profile_id`: `a-zA-Z0-9.-_`). The render writes each section's header as
+  that name: `[<display-name>]`, with the `display-name` key left out. llama-server's router serves
+  a preset under its section name, so opencode's `"model": <name>` keeps working.
+- A rename of a model profile changes the name it is served under at each instance's next start
+  (drift). Outside clients follow by hand.
+- **Keeping the old name for a while: not possible in router mode.** The router controls the model
+  alias and removes or overwrites it at load ("some arguments are controlled by router (e.g., host,
+  port, API key, HF repo, model alias)", `tools/server/README.md`, presets, llama.cpp v1.0.0). A
+  second section under the old name would load the model twice.
+- **Recommended**: the rename answers the instances that serve the model, and the page warns before
+  the rename lands: "Clients that ask for `<old>` must be changed to `<new>`".
+
+**Addressing and showing.**
+- The bff addresses every profile by its id in URLs (`/api/profiles/server/{id}`,
+  `.../model/{id}`, `.../instance/{id}`, `.../instance/{p}/models/{m}`): an opaque handle, as for
+  instances. Every row and page carries `name`. A create takes `name` and answers the new id. A
+  rename is `PUT .../{id}/name {name}`, a manager `Set<Kind>ProfileName(As)`, one value written, no
+  revision needed beyond the name's uniqueness.
+- `pai` takes profiles by name, resolved through the lists, and prints names.
+- The manager puts names, never ids, into refusal arguments.
+
+**Records that cite a model profile.**
+- bench.db's runs store the profile's name and its keys at record time: a historical fact, kept as
+  it is. A later rename does not rewrite history.
+- Joining runs across a rename needs the id beside the name: a nullable column for new runs, a
+  `schema.sql` change in the public database. It is recommended, but after 2.99.1.
+- The tags record (`model-tags`) is keyed by the id.
+- The `optimize-preset` skill and the guides cite names, as history.
+
+**macOS** keeps `pai`'s per-user `models.ini`, read by llama-server directly. It has no manager and no
+render, so it is untouched: its section names stay the served names.
+
+**The migration (step 0 of UL0's re-key, before the instances, at the same manager start).**
+1. **Backup** once as `<name>.pre-uuid`: `models.ini`, `instance-profiles.ini`, the tag record,
+   every `server@*.ini`, and `instances.ini` (shared with UL0's backup).
+2. **Intent**: write the map `rekey-map.ini` with one section per kind and `old = <new id>` lines,
+   every new id chosen once. A resumed step reuses it.
+3. **Apply the map**, each rewrite idempotent (an old name present is mapped; a new id is left
+   alone):
+   - `models.ini`: header `[old]` becomes `[<id>]` with `display-name = old` added;
+   - the tag record's sections;
+   - `server@old.ini`: written as `server@<id>.ini` with `Name = old`, then the old file is
+     removed (skipped when the new one exists);
+   - `instance-profiles.ini`: headers, entry prefixes and halves, `ServerProfile` values, plus
+     `Name = old`;
+   - `instances.ini`: the `InstanceProfile` values.
+4. **Render** every instance. Each section's header is its name, the old id, so **the served names
+   and the render's key sets are unchanged**.
+5. **Remove** `rekey-map.ini`, then go on to the instances' re-key (UL0 steps 1 to 9).
+
+A crash anywhere before step 5 resumes by applying the map again. The restore script puts back the
+`.pre-uuid` files and removes the `server@<id>.ini` files the map names.
+
+**Slices** (replacing RN):
+1. **UR1** (`pai-core`, pure, test first): the shared id generator; the name keys and rules per kind;
+   the render header from `display-name` with the key stripped; the map apply function. Done when:
+   applying the map to a fixture install gives renders with the same served names and key sets; a
+   second apply changes nothing.
+2. **UR2** (`pai-manager`): UL0 step 0 with the backups, the map and its resume; every method
+   addressing by id; `SetServerProfileName`, `SetModelProfileName`, `SetInstanceProfileName` with
+   the uniqueness and text rules; names in refusal arguments; the tag record by id. Done when: a
+   rename writes one value and every render keeps its bytes except the renamed model's header; a
+   crash after each step of step 3 completes with the same ids.
+3. **UR3** (`pai-bff`, contract, with IP4): ids in URLs, `name` on rows and pages, creates by name,
+   the `name` routes.
+4. **UR4** (`fe`, briefs 05 rename, 16, 22 and 26, with IP5 and IP6): no id on screen; names edited in
+   place; the model rename warning.
+5. **UR5** (`pai-cli`, with IP7): name selectors and names in output.
+6. **UR6** (bench, after 2.99.1): the id column for new runs, through the `bench-spec` and schema
+   review.
+7. **UR7** (docs agent, with IP9 and UL5).
+
+UR1 to UR5 and UR7 land in 2.99.1, with UL0 in the same deploy (the user's go-ahead and the one
+restart of the running instances). UR6 follows.
+
 ### ROCm host memory as GTT (user, 2026-11-24): accepted (user, 2026-11-24), every instance, confirmed under load
 
 The finding and its measures are `PLAN.md` "ROCm host memory as GTT, under test": with
