@@ -3900,14 +3900,15 @@ port).
    (label "embedding") and `inkling` (label "llm").
 
 **Decisions.**
-- **The id**: a version 4 UUID in its simple form, 32 lowercase hex digits with no dashes (the `uuid`
-  crate's `Uuid::new_v4().simple()`, https://docs.rs/uuid/latest/uuid/struct.Uuid.html, its
-  randomness from `getrandom`). It fits `paths::valid_instance_id` (1 to 32 of `a-z0-9-`, starting
-  with a letter or digit) unchanged, so every path, unit, service and section rule holds.
-  - The Windows virtual account `NT SERVICE\llama.cpp_<id>` becomes 42 characters. Whether every
-    Win32 call that takes it accepts that length is **unverified until the Windows CI run** (the
-    services are type-checked only).
-  - A collision is refused as `instance-exists` and retried once.
+- **The id** (user, 2026-11-27, replacing a 32-hex UUID): **8 random lowercase hex digits**, from 4
+  bytes of the OS's random source (`getrandom`). For example `3f9a2c1e`, giving `llama.cpp@3f9a2c1e`.
+  It fits `paths::valid_instance_id` (1 to 32 of `a-z0-9-`, starting with a letter or digit)
+  unchanged, so every path, unit, service and section rule holds.
+  - The Windows virtual account `NT SERVICE\llama.cpp_<id>` becomes 18 characters, the service name
+    within it. It is type-checked only until GR4's Windows CI run.
+  - **Collisions** (user, 2026-11-27): 2^32 values make a clash rare but possible. So the manager
+    draws the id **under its `writing` lock**, checks it against every id of the same kind on the
+    node, and draws again on a clash. Two concurrent creates therefore cannot draw the same id.
 - **Uniqueness**: on one node, **the port is unique per engine** whatever the host. That is stricter
   than today's binding rule, which lets `127.0.0.1:8581` and `192.168.1.5:8581` coexist; the
   stricter rule is what makes `<engine> :<port>` a name.
@@ -3938,13 +3939,14 @@ port).
   from the instance `default`.
 
 **The re-key at the migration** (user, 2026-11-27). Every instance whose id is not a generated
-one (not 32 hex digits) is re-keyed by the manager at its start, after IP2's migration and before
+one (not 8 hex digits) is re-keyed by the manager at its start, after IP2's migration and before
 the renders. The step is idempotent, and it runs on a fresh install too: llama.cpp's package keeps
 shipping `[default]`, which the first start re-keys. Per instance, from the old id `o` to the new id
 `n`:
 1. **Backup**, once for the whole step: `instances.ini.pre-uuid` beside IP2's `.2.99.0` set.
 2. **Intent**: write `RekeyTo = <n>` into `o`'s section. The id is chosen once and survives a
-   crash, so a resumed step never makes a second id.
+   crash, so a resumed step never makes a second id. It is drawn under the `writing` lock against
+   every instance id on the node, the `RekeyTo` values already written included.
 3. **Read** the old unit's boot state (`GetUnitFileState`, the SCM start type) and whether it is
    running. Write both into the section as `RekeyBoot` and `RekeyRun`.
 4. **Stop** `o` if it runs, and wait for it to stop. Its `ExecStop=` saves the slots into `o`'s
@@ -3993,13 +3995,15 @@ restarts llama-server.
 enabled; start what should run. On Windows the services are re-created under the old names by the
 manager's sync. Type-checked only, so the Windows path is first run in GR4's CI.
 
-**Slices** (all in 2.99.1, folded into the instance profile slices being built):
-0. **UL0** (`pai-manager`, test first): the re-key above. Done when: a fixture with `default` (enabled, running) and `inkling` (disabled, stopped) ends with two generated ids, the labels and addresses kept, `default`'s state folder moved, the new `default` enabled and started once, `inkling`'s new unit disabled and not started, the old units disabled, the old renders gone; a crash injected after steps 2, 4, 7 and 8 completes to the same end with one start; the `ServiceControl` and the clock are fakes. **Real-machine check**: the deploy with the user's go-ahead, then `systemctl list-units 'llama.cpp@*'` shows two uuid units, Strata served.
+**Slices** (moved to **2.99.2** by the user's scope freeze of 2026-11-27; they follow the instance
+profile slices of 2.99.1):
+0. **UL0** (`pai-manager`, test first): the re-key above. Done when: a fixture with `default` (enabled, running) and `inkling` (disabled, stopped) ends with two generated ids, the labels and addresses kept, `default`'s state folder moved, the new `default` enabled and started once, `inkling`'s new unit disabled and not started, the old units disabled, the old renders gone; a crash injected after steps 2, 4, 7 and 8 completes to the same end with one start; the `ServiceControl` and the clock are fakes. **Real-machine check**: the deploy with the user's go-ahead, then `systemctl list-units 'llama.cpp@*'` shows two units named by 8-hex ids, Strata served.
 1. **UL1** (`pai-core`, `pai-manager`, test first): the id generator; the new `CreateInstance`; the
    per-engine port rule in `CreateInstance` and `SetInstanceAddress`; the label form rule;
    `instance_display`, with display names in refusal arguments; the `ListInstances` fields. Done when:
    a create with no port gets 8581, then 8582; a second instance on a held port is refused naming the
-   holder's display; a label `llama.cpp :9000` is refused; an id is 32 hex digits and valid.
+   holder's display; a label `llama.cpp :9000` is refused; an id is 8 hex digits and valid; a drawn id that clashes with an existing one is drawn again (a
+   seeded fake source); two concurrent creates get different ids.
 2. **UL2** (`pai-bff`, contract, with IP4): `POST /api/instances` `{instanceProfile, label?,
    hostname?, port?}` answering 201 `{id, port, display}`; `display` on every instance row; the URLs
    keep the id.
@@ -4027,8 +4031,10 @@ rename touches that value and nothing cascades.
 | Instance profile | the section header in `instance-profiles.ini`, `[<id>]`, and the prefix of its entries `[<id>/<m>]` | `Name` in `[<id>]` | `InstanceProfile = <id>` in `instances.ini` |
 | Instance | the section header in `instances.ini` (above) | `Label`, as today | none |
 
-An id is 32 lowercase hex digits (`Uuid::new_v4().simple()`), valid as a file name, an INI section,
-an entry half (no `/`) and a unit name.
+An id is 8 random lowercase hex digits, the rule of "Amendment: generated ids" above (for example
+`server@b07d41aa.ini`). It is valid as a file name, an INI section, an entry half (no `/`) and a unit
+name. It is drawn under the `writing` lock against every id of the same kind on the node, and drawn
+again on a clash.
 
 **Invariant: an engine never sees a profile id** (user, 2026-11-27, a firm rule). Profile ids live
 only in the manager's own source files and their references: `models.ini`, `instance-profiles.ini`,
@@ -4087,7 +4093,9 @@ render, so it is untouched: its section names stay the served names.
 1. **Backup** once as `<name>.pre-uuid`: `models.ini`, `instance-profiles.ini`, the tag record,
    every `server@*.ini`, and `instances.ini` (shared with UL0's backup).
 2. **Intent**: write the map `rekey-map.ini` with one section per kind and `old = <new id>` lines,
-   every new id chosen once. A resumed step reuses it.
+   every new id chosen once. A resumed step reuses it. Each id is drawn under the `writing` lock and
+   checked against the existing ids of its kind and against every id already drawn in the same pass,
+   so the map never holds a clash.
 3. **Apply the map**, each rewrite idempotent (an old name present is mapped; a new id is left
    alone):
    - `models.ini`: header `[old]` becomes `[<id>]` with `display-name = old` added;
@@ -4123,7 +4131,7 @@ A crash anywhere before step 5 resumes by applying the map again. The restore sc
    review.
 7. **UR7** (docs agent, with IP9 and UL5).
 
-UR1 to UR5 and UR7 land in 2.99.1, with UL0 in the same deploy (the user's go-ahead and the one
+UR1 to UR5 and UR7 land in **2.99.2** (the user's scope freeze, 2026-11-27), with UL0 in the same deploy (the user's go-ahead and the one
 restart of the running instances). UR6 follows.
 
 ### ROCm host memory as GTT (user, 2026-11-24): accepted (user, 2026-11-24), every instance, confirmed under load
@@ -4476,8 +4484,9 @@ An instance profile is the unit the director deploys. "Profile P on node N as in
   model store);
 - then `CreateInstance(X, P)` on N.
 
-Ids are shared across the director's nodes. A node that already holds the same id with different
-content refuses rather than renames. The single-node pool file of option A copies as sections; option
+Ids are unique per node only (8 random hex digits, checked on the node): the director qualifies them
+by node (`node/id`) and never assumes they are global; it addresses a profile by the name it carries
+when it copies one to another node. The single-node pool file of option A copies as sections; option
 B would copy as files. Neither changes this flow.
 
 ### Decision (user, 2026-11-26)
@@ -5629,8 +5638,8 @@ The director reuses the node's instance profiles ("Instance profiles", part 1) a
 - then `CreateInstance(X, P)` on N, the port proposed by N's manager (P1: the address is the
   instance's, per node).
 
-Ids are shared across the director's nodes. A node holding the same id with different content refuses
-rather than renames. Nothing of this is built before step 14.
+Ids are unique per node only (user, 2026-11-27): the director qualifies every id by node (`node/id`)
+and never assumes one is global. Nothing of this is built before step 14.
 
 
 **Desired state and reconciliation** (user, 2026-11-27; not built). The director pushes desired state:
