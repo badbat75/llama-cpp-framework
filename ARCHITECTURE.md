@@ -3887,6 +3887,130 @@ port).
   the stub received the trimmed label, and the list carries `label`; the docs agent adds the route to
   `fe/briefs/api-contract.md` and `crates/bff/README.md`.
 
+#### Amendment: generated ids, instances named by label or engine:port (user, 2026-11-27): accepted (user, 2026-11-27)
+
+**The requirement** (user, 2026-11-27):
+1. The user never types or sees an instance id. The manager generates it at create.
+2. It stays fixed when the port changes, as the stable key of the unit (`llama.cpp@<id>`), the Windows
+   service and its virtual account, the state folder, the log and the `instances.ini` section.
+3. Every user-facing reference names the instance by its label, else `<engine> :<port>`.
+4. engine:port is unique on the node at every moment.
+5. (corrected by the user the same day, replacing "existing ids stay") Existing instances lose
+   their ids at the 2.99.1 migration: every instance gets a generated id, on this machine `default`
+   (label "embedding") and `inkling` (label "llm").
+
+**Decisions.**
+- **The id**: a version 4 UUID in its simple form, 32 lowercase hex digits with no dashes (the `uuid`
+  crate's `Uuid::new_v4().simple()`, https://docs.rs/uuid/latest/uuid/struct.Uuid.html, its
+  randomness from `getrandom`). It fits `paths::valid_instance_id` (1 to 32 of `a-z0-9-`, starting
+  with a letter or digit) unchanged, so every path, unit, service and section rule holds.
+  - The Windows virtual account `NT SERVICE\llama.cpp_<id>` becomes 42 characters. Whether every
+    Win32 call that takes it accepts that length is **unverified until the Windows CI run** (the
+    services are type-checked only).
+  - A collision is refused as `instance-exists` and retried once.
+- **Uniqueness**: on one node, **the port is unique per engine** whatever the host. That is stricter
+  than today's binding rule, which lets `127.0.0.1:8581` and `192.168.1.5:8581` coexist; the
+  stricter rule is what makes `<engine> :<port>` a name.
+  - `CreateInstance` and `SetInstanceAddress` refuse a port another instance of the engine holds,
+    with the existing `AddressInUse`, its argument the holder's display name.
+  - A label must not have the form `<engine> :<digits>`, so a label never reads as another
+    instance's fallback: `instance-bad-label`. Labels stay unique ignoring case.
+- **The display name** is one `pai-core` function, `instance_display(record, id)`: the label, else
+  `<engine> :<port>` (`llama.cpp :8581`). The manager puts display names, never ids, into every
+  refusal argument that names an instance (`instance-profile-in-use`, `model-profile-in-use`'s
+  holders, `AddressInUse`, `instance-running`), so `pai` and the bff show them as they come.
+- **The API keeps the id as an opaque handle in URLs** (`/api/instances/{id}/...`, `#/instances/<id>`).
+  Addressing by engine:port would let a port change between a list and an action reach another
+  instance. The id is in every row for the links and is never shown.
+- **`CreateInstance(engine, instanceProfile, label, hostname, port)`**. There is no id argument;
+  `port` may be empty, and then the manager proposes the lowest free one from 8581. It answers the
+  new id and the port. This supersedes IP3's `CreateInstance(id, p)`.
+- **`ListInstances`** rows: `{id, engine, label, hostname, port, display, instanceProfile, state,
+  converged, reason, pendingRestart}`.
+- **`pai`** takes an instance as `<label>`, `:<port>` or `<engine>:<port>` (`--instance`), resolved
+  through `ListInstances`; with none given it keeps today's target, `default`. Its output names the
+  display name.
+- **`default`'s protection** (`instance-protected`, `service.rs` 2884) goes: it guarded the fixed id
+  the packages ship, and no fixed id survives the manager's start. `pai` with no `--instance` targets
+  the node's only instance, and asks for `--instance` when there are several.
+- **The instance profile migration is not affected.** Instance profile ids are names the user
+  chooses and sees, not instance ids. The migrated profile keeps the name `default` because it came
+  from the instance `default`.
+
+**The re-key at the migration** (user, 2026-11-27). Every instance whose id is not a generated
+one (not 32 hex digits) is re-keyed by the manager at its start, after IP2's migration and before
+the renders. The step is idempotent, and it runs on a fresh install too: llama.cpp's package keeps
+shipping `[default]`, which the first start re-keys. Per instance, from the old id `o` to the new id
+`n`:
+1. **Backup**, once for the whole step: `instances.ini.pre-uuid` beside IP2's `.2.99.0` set.
+2. **Intent**: write `RekeyTo = <n>` into `o`'s section. The id is chosen once and survives a
+   crash, so a resumed step never makes a second id.
+3. **Read** the old unit's boot state (`GetUnitFileState`, the SCM start type) and whether it is
+   running. Write both into the section as `RekeyBoot` and `RekeyRun`.
+4. **Stop** `o` if it runs, and wait for it to stop. Its `ExecStop=` saves the slots into `o`'s
+   state folder; Windows' parent saves them as it stops.
+5. **Move** the default state folder `.../state/<o>` to `.../state/<n>` (one rename, the same
+   filesystem; skipped when `n` already exists, which is the resumed case). A `StateDir` the user set
+   is no id path and does not move. On Windows the logs `llama-server@<o>.log` and `.previous.log`
+   are renamed. On Linux the journal history stays under `llama.cpp@<o>.service`
+   (`journalctl -u llama.cpp@<o>` still reads it).
+6. **Render** `models@<n>.ini` (and `launch@<n>.ini` once IP3c lands).
+7. **Commit**: `instances.ini` with the section renamed from `o` to `n`, every key kept (label,
+   instance profile, address) and `RekeyTo` dropped, written whole in one atomic write. This is the
+   point after which `n` is the instance.
+8. **Units**:
+   - Linux: enable `llama.cpp@<n>` if `RekeyBoot` was enabled, and disable `llama.cpp@<o>`
+     (`EnableUnitFiles`, `DisableUnitFiles`, `Reload`).
+   - Windows: create the service `llama.cpp_<n>` with the old start type, through the instance
+     create path, which grants the new virtual account `NT SERVICE\llama.cpp_<n>` its own ACEs on
+     the state and log folders (a new name is a new SID). Then delete `llama.cpp_<o>` and remove the
+     old SID's ACEs.
+9. **Start** `n` if `RekeyRun` was set, then drop `RekeyBoot` and `RekeyRun`. Delete
+   `models@<o>.ini`.
+
+**Crash safety.** At the next start:
+- A section still named `o` with `RekeyTo` resumes from step 3, using the kept `RekeyBoot` and
+  `RekeyRun` when present. Stopping is idempotent, and a move whose target exists is skipped.
+- A section `n` still holding `RekeyBoot` or `RekeyRun` resumes from step 8.
+- After that, a unit link, service or render named by an id that is neither in the record nor a
+  `RekeyTo` is removed.
+- Only what was running is restarted, once.
+
+**The event.** It all happens in the deploy that installs the manager carrying UL0, at the
+manager's start: the user's go-ahead for that deploy is the go-ahead for stopping and starting the
+running instances once. The coordinator's standing deploy go-ahead does not cover this, because it
+restarts llama-server.
+
+**Before that deploy:**
+- Strata's unit must order on `After=llama.cpp.target` (RS2, built) instead of
+  `llama.cpp@default.service`, which stops existing. That is a change in the strata-framework
+  project.
+- opencode and Strata reach the instances by port, which the re-key keeps.
+- The web UI's bookmarks with old ids stop resolving.
+
+**Restore** (IP9 documents it as one script): stop and disable every `llama.cpp@<n>`; put back
+`instances.ini.pre-uuid`; move each `state/<n>` back to `state/<o>`; enable the old units that were
+enabled; start what should run. On Windows the services are re-created under the old names by the
+manager's sync. Type-checked only, so the Windows path is first run in GR4's CI.
+
+**Slices** (all in 2.99.1, folded into the instance profile slices being built):
+0. **UL0** (`pai-manager`, test first): the re-key above. Done when: a fixture with `default` (enabled, running) and `inkling` (disabled, stopped) ends with two generated ids, the labels and addresses kept, `default`'s state folder moved, the new `default` enabled and started once, `inkling`'s new unit disabled and not started, the old units disabled, the old renders gone; a crash injected after steps 2, 4, 7 and 8 completes to the same end with one start; the `ServiceControl` and the clock are fakes. **Real-machine check**: the deploy with the user's go-ahead, then `systemctl list-units 'llama.cpp@*'` shows two uuid units, Strata served.
+1. **UL1** (`pai-core`, `pai-manager`, test first): the id generator; the new `CreateInstance`; the
+   per-engine port rule in `CreateInstance` and `SetInstanceAddress`; the label form rule;
+   `instance_display`, with display names in refusal arguments; the `ListInstances` fields. Done when:
+   a create with no port gets 8581, then 8582; a second instance on a held port is refused naming the
+   holder's display; a label `llama.cpp :9000` is refused; an id is 32 hex digits and valid.
+2. **UL2** (`pai-bff`, contract, with IP4): `POST /api/instances` `{instanceProfile, label?,
+   hostname?, port?}` answering 201 `{id, port, display}`; `display` on every instance row; the URLs
+   keep the id.
+3. **UL3** (`fe`, brief 16's 17f revised and the Overview, with IP6): no id anywhere on screen; the
+   heading and tiles show the display name; the create form has no id field.
+4. **UL4** (`pai-cli`, with IP7): the instance selectors and display names in output.
+5. **UL5** (docs agent): the id rule and the display name in the bff README, the packaging guide and
+   AGENTS.md.
+
+The Windows virtual account length is checked at GR4's Windows CI run (the user starts it).
+
 ### ROCm host memory as GTT (user, 2026-11-24): accepted (user, 2026-11-24), every instance, confirmed under load
 
 The finding and its measures are `PLAN.md` "ROCm host memory as GTT, under test": with
