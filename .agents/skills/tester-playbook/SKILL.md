@@ -201,6 +201,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   then judge with solos plus the full-run map. Never edit the probe.
 - State a pre-existing failure of states or tests the slice did not touch (UX check, flaky full-suite
   files) as pre-existing, with a proof the file is untouched (`git diff <path>`); do not chase them.
+- Measure the temp-dir leak of a suite, do not hunt it by eye: `T=$(mktemp -d -p /mnt/data/tmp-tests);
+  TMPDIR=$T cargo test -p <crate> --no-fail-fast; find $T -mindepth 1 -maxdepth 1 | wc -l` (target 0, and
+  `find $T -mindepth 2 -maxdepth 3` names the fixture files, so the signature names the producing test).
+  The guard of the class is `crates/core/src/tests/redirect_lint.rs` (scans every crate: a redirect with
+  no guard bound in the four lines above, `into_path()`, `keep()`, a `TempDir` in a static).
 
 ### The e2e phases (data root, the configurator)
 
@@ -1023,6 +1028,11 @@ frozen list.
   falls back to `crates/bff/fe-fixture`): set it only to escape a stale `fe/dist`. `PAI_BFF_FE_DIR` in the
   shell does nothing.
 - `--test '*'` names no target for `pai-manager`.
+- `cargo test -p pai-manager ip3c` runs nothing (every phase is a call inside the one `data_root_e2e`):
+  the filter is `data_root_e2e`, with `--test-threads=1`, and the phases red one at a time. To show each
+  phase's own red, swap the phase calls in `src/tests/mod.rs` temporarily, then put them back.
+- `cargo fmt -p <crate>` rewrites EVERY file of the crate, the other agents' uncommitted work included:
+  format one file with `rustfmt --edition 2021 <file>` (the crates' edition), and check with `--check`.
 - The manager's D-Bus unit tests and the GPU-probe flooding test are load-sensitive (slow under a loaded
   machine, bound reds at 0..1800 ms).
 - A test that touches the live `bench.db` path hangs the crate's suites behind the machine-wide lock.
@@ -1047,6 +1057,16 @@ frozen list.
   22 D4.31 review A2), so every `section.card > h3` selector in the older tests finds NOTHING
   (`HearthAssets` H11a.11's ten-card order): grep `card > h3` when a heading gains a neighbour. A role
   query (`getByRole('heading', { name })`) is unaffected, which hides the break in the DOM-shape pins only.
+
+- `redirect_for_tests` sets `PRIVATE_AI_DATA_ROOT` for the WHOLE process and never restores it, so a
+  `TempDir` bound in a nested block is the leak: the block drops it, the redirect still points there, and
+  the next write under the data root recreates `$TMPDIR/.tmpXXXXXX/<tree>` that nothing owns (one per
+  test). The safe shapes are NOT leaks, do not "fix" them: a helper returning `(TempDir, PathBuf)`, a
+  closure `|| -> (TempDir, PathBuf)`, `let (_d, on, off) = helper()`; the guard travels with the path.
+- A source lint that matches braces to find a block range is worthless on this code: `format!("{x}")` and
+  raw strings move the depth, so an fn-level guard reads as a 500-line block and every write in the file
+  is flagged (hf.rs gave 24 false flags). Keep a lint to per-line rules and prove a scope rule by running
+  the suite with a fresh `TMPDIR`.
 
 ### Mutants and scratch copies
 

@@ -6,6 +6,8 @@
 //! touch `paths::` (or anything that resolves the config dir): cargo runs
 //! tests on parallel threads, so they would race this one nondeterministically.
 
+mod redirect_lint;
+
 #[test]
 fn data_root_e2e() {
     // ── System config paths (paths.rs `system_config_dir`, instances) ────
