@@ -297,23 +297,73 @@ pub fn try_instance_ids() -> std::io::Result<Vec<String>> {
     Ok(ids.into_iter().collect())
 }
 
-/// The server profile the instance `id` names: the `ServerProfile` of its
-/// section of [`instances_ini`], the file whose section the instance is. The
-/// section is the one named by `id` exactly, as [`instance_ids`] counts
-/// sections: a header that differs in case names no instance. `None` when the
-/// record has no such section, the section carries no key, the key has an
-/// empty value, or the name builds no server profile file: every one of them
-/// is an instance with no profile to read, and the launch of such a section
+/// The server profile the instance `id` names, the file whose section the
+/// instance is. From the model data model of `ARCHITECTURE.md` "Instance
+/// profiles" the record names an INSTANCE profile, and the server profile sits
+/// one step behind it: the `ServerProfile` of that instance profile's section of
+/// [`instance_profiles_ini`]. A record the migration has not written names the
+/// server profile itself, and its key answers. The section is the one named by
+/// `id` exactly, as [`instance_ids`] counts sections: a header that differs in
+/// case names no instance. `None` when the record has no such section, the
+/// section names no profile, the profile it names has no section in the pool,
+/// the name is empty, or the name builds no server profile file: every one of
+/// them is an instance with no profile to read, and the launch of such a section
 /// refuses for the same reason.
 pub fn instance_server_profile(id: &str) -> Option<String> {
-    let section = crate::ini::read_all(&instances_ini())
+    let record = crate::ini::read_all(&instances_ini());
+    let section = record.iter().find(|s| s.id == id)?;
+    let named = |keys: &std::collections::BTreeMap<String, String>, key: &str| {
+        keys.get(key)
+            .map(|s| s.trim().to_string())
+            .filter(|name| !name.is_empty() && valid_instance_id(name))
+    };
+    // The instance profile, and the server profile the pool's section for it
+    // names: a pool with no such section names no server profile.
+    if let Some(profile) = named(&section.keys, "InstanceProfile") {
+        let pool = crate::ini::read_all(&instance_profiles_ini());
+        let pool = pool.iter().find(|s| s.id == profile)?;
+        return named(&pool.keys, "ServerProfile");
+    }
+    named(&section.keys, "ServerProfile")
+}
+
+/// The address the instance `id` listens on: the `Hostname` and `Port` of its
+/// section of [`instances_ini`], where the model data model of
+/// `ARCHITECTURE.md` "Instance profiles" keeps them, as the effective values the
+/// migration moved out of the server profile. Each key answers on its own: a
+/// section carrying `Port` and no `Hostname` sets the port of the host the
+/// server profile names, and a section carrying neither, as the record of an
+/// install the migration has not written, sets nothing and leaves the server
+/// profile to answer.
+pub fn instance_address(id: &str) -> (Option<String>, Option<i32>) {
+    let Some(section) = crate::ini::read_all(&instances_ini())
         .into_iter()
-        .find(|s| s.id == id)?;
-    section
+        .find(|s| s.id == id)
+    else {
+        return (None, None);
+    };
+    let host = section
         .keys
-        .get("ServerProfile")
+        .get("Hostname")
         .map(|s| s.trim().to_string())
-        .filter(|name| !name.is_empty() && valid_instance_id(name))
+        .filter(|name| !name.is_empty());
+    let port = section
+        .keys
+        .get("Port")
+        .and_then(|s| s.trim().parse::<i32>().ok())
+        .filter(|port| (1..=65535).contains(port));
+    (host, port)
+}
+
+/// `instance-profiles.ini`: the pool of instance profiles, one `[<p>]` section
+/// each naming the server profile it runs, and one `[<p>/<m>]` section per model
+/// profile the profile is given (`ARCHITECTURE.md`, "Instance profiles", the
+/// placement and memory amendment). The manager owns it: the record's
+/// `InstanceProfile` keys and this file are read together by
+/// [`instance_server_profile`], and the render of an instance is its profile's
+/// entry sections over the model profile pool.
+pub fn instance_profiles_ini() -> PathBuf {
+    engine_config_dir().join("instance-profiles.ini")
 }
 
 pub fn server_ini() -> PathBuf {

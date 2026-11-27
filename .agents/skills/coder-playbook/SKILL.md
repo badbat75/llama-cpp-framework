@@ -155,6 +155,32 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (a profile section on disk wins over what the stripped pool could rebuild: the pool has lost the
   moved keys), and never invents a value from an input that already lost it (a server profile whose
   `Port` line moved out gives the record no `DEFAULT_PORT`).
+- A migration fixture that proves "a backup that stands is never overwritten" puts its sentinel on a
+  name the tree has NO live file for (a file the migration only backs up, never writes, is overwritten
+  by its own backup): a sentinel on a file the seed writes collides with the same block's pin that that
+  backup holds the seed's bytes.
+- A start-time backup is keyed on the TEXT the start writes for the file: one that already holds it is
+  not an old-shape file and gets no `.2.99.0` (the migration is idempotent, so backing up the new shape
+  as the install's text is a lie, and `instance-profiles.ini`, created by the first start, has no old
+  text at all). The copy goes to `<name>.2.99.0.tmp` and is renamed, so a death mid-copy leaves no
+  truncated backup for the next start to keep, and a failed copy leaves no entry.
+- An idempotent-start pin ("a second start adds no file and changes no byte and no mtime") needs the
+  skip in EVERY writer that runs at the manager's start, not just the migration's: `render_all_locked`
+  renders every instance every start, so `models@<id>.ini` moves both ways. Gate the render's skip on
+  the record being migrated: a tree the migration has not written is rendered as always, because the
+  phase that pins a render that failed at that start needs the write attempted.
+- The server profile files the migration strips the address out of are named through
+  `paths::instance_server_profile` (the record section's `ServerProfile` while unmigrated, the instance
+  profile's from the migration on), never by reading `ServerProfile` off the record: a tree that stopped
+  with `instances.ini` already written has no such key left, and reading it names no profile, leaving
+  the address in the file the clean migration strips.
+- A migration fixture names keys from `checks::PLACEMENT_KEYS` and nothing else (core's own fixture uses
+  `n-cpu-moe`, `device`, `ctx-size`): a rule keyed on "this model has a moved key" (the `unassigned`
+  profile) never fires for a section whose only extra key is not in that list, and a list membership a
+  fixture implies cannot be added on the strength of a doc line, the union of `WEB_MODEL_PROFILE_KEYS`
+  and `MODEL_PROFILE_KEYS_NOT_ON_WEB` being pinned twice (core's key-set test, and `pai-app`'s
+  `web_key_lists_are_exactly_what_render_section_writes`). `ARCHITECTURE.md`'s moves list names
+  `main-gpu`, which is no key of this project at all, so a pin on it has no production fix.
 - `set_key` and `remove_key` keep the section's trailing blank separator line (a trimming writer eats it);
   `parse_sections` drops key lines before the first header; a section copied from a file with no final
   newline needs one appended; `ini::detect_eol` styles a writer's appended section. Writers outside core
@@ -443,7 +469,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   enabled state from `EDITABLE_BY_ID`, so an unknown id is expected DISABLED), and `2e.91` in
   ModelProfileCards1 to 5. A card of a new sub-slice that adds a field is that list's job.
 - One new focusable control reddens by one position every document-wide "tab stops are exactly" test
-  (a page's, or the banner's): amend the tester's lists, never production.
+  (a page's, or the banner's): amend the tester's lists, never production. The lists are not only
+  page-wide: a card owns one too (`GD1.12` in ModelProfileGpu3, `21 T.9` and `21 T.13` in
+  TensorPlacement1/2, the page start in HearthAssetsEngine), and each reads only the controls inside
+  ITS card, so a control added to a card head (a card's own About toggle, 22 D4.31) is the card list's
+  FIRST entry, while `fieldTabStops` / `cardButtons` of `fe/src/test/modelProfileCards.ts` already
+  carry it. Both shapes must be amended, never the control's place.
 - Each of those lists names the controls ITS OWN way: a `nameOf`-based list names an input by its
   `aria-labelledby` (a switch named by the h1 appears as the profile's id), a textContent-based one gives
   an input `''`, and HearthJumpRail compares the elements. Amend each list with what ITS mapping yields.
@@ -667,6 +698,20 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 ### The web UI (fe/)
 
 - `npx vitest` from the repo root has no config and reds every test with `window is not defined`.
+- A card-head control the tab-stop lists do not name (the card About toggle of 22 D4.31) must carry
+  `tabIndex={-1}`: the tester's amended `fieldTabStops` (`fe/src/test/modelProfileCards.ts`) excludes it,
+  and 2e.91 of `ModelProfileCards1` to `5` (503 tests) reddens the moment it joins the Tab path.
+- What goes into the Models list row's naming span (`${uid}-name-${i}`, the `aria-labelledby` target of
+  its switch) lands in that switch's accessible name AND in `row.querySelector('td').textContent`, which
+  the list readers use as the row id (`idsIn`, `cellText`, `MODEL_LIST.find(m => m.id === text(cells[0]))`).
+  A second line under the name (22 D4.35's engine) therefore reddens every file that names a row control
+  by its id. jsdom applies NO CSS, so a line a media query hides is in the name at every width. The
+  pre-existing pins 2c.38 and 2d.60 force the line INSIDE that span (the label's text must equal the
+  cell's), so the names cannot stay id-only: count the files and report them, never touch the tests.
+- A tab-stop assertion whose slice is one element shorter than the expected array can NEVER pass: a
+  disclosure plus N entries is N+1 stops, so `stops.slice(2, buttons.length + 2)` against
+  `[toggle, ...buttons]` is off by one (24 A2.1's switch takes a stop too). Check the arithmetic before
+  hunting a production cause; report it. A test pinning `stops.slice(2, n+3)` is the shape that passes.
 - A vitest file filter is a SUBSTRING of the path: `ModelProfiles` also runs `ModelProfilesFilter`,
   `ModelProfilesOverMemory` and `ModelProfileSave16`. To tell your reds from another slice's uncommitted
   work, build a second `git archive HEAD` copy with ONLY that slice's production files plus the working
@@ -700,6 +745,11 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   that wraps a cell's controls in a `span` (22 D4.25) leaves it red: the wrapper is not the
   `aria-hidden` word and precedes the switch. The behaviour holds, the witness is the tester's to
   retarget.
+- A Models list row read with raw cell text (`rows()` of ModelProfilesOverMemory, and 2c.38 comparing
+  the element `aria-labelledby` points at) carries 22 D4.35's muted engine line, so `['qwen-27b',
+  'llama.cpp', …]` and a label saying `id + engine` are unsatisfiable together with D4.35: the tester's
+  `rowName(cell)` of `fe/src/test/bff.ts` drops `.muted`, and the designer's ruling of 2026-11-27 makes
+  the id ALONE the name of the row's switch, link and delete.
 - Specificity: `button` and `.secondary` are (0,1,0), `.jump button` is (0,1,1); `input[role='switch']`
   and `input[type='checkbox']` tie, so source order decides.
 - A form that reuses the field-shape classes (`.field-hint` in 17f2) inherits the 720 px block's

@@ -1212,11 +1212,12 @@ pub fn serve() -> zbus::Result<Connection> {
         // tree, and the cached Vulkan child.
         .with_node_facts(HostNodeFacts::for_node()),
     );
-    // The instances read `models@<id>.ini`, so the pool on disk is rendered
+    // An install of the old model files is migrated before anything reads them,
+    // and the instances read `models@<id>.ini`, so the pool on disk is rendered
     // before anyone can ask for it. A render that fails leaves the files as
     // they are, names its instance in the log, and the next write of a pool
     // file renders again.
-    let failures = core.render_failures();
+    let failures = core.start_up();
     core.report_render_failures(&failures);
     zbus::blocking::connection::Builder::system()?
         .serve_at(OBJECT_PATH, ManagerInterface::new(core))?

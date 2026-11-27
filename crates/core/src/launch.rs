@@ -275,11 +275,14 @@ pub fn instance_command(
     // The instance's own snapshot folder, below the engine's state root: it is
     // the default `with_instance_defaults` fills in when the profile leaves
     // `StateDir` unset, and `ensure_dir` below creates it before the spawn.
-    let cfg = with_instance_defaults(
-        crate::server_cfg::load_from(&ini),
-        cfg!(any(windows, target_os = "linux")),
-        &crate::paths::instance_models_dir(),
-        &crate::paths::instance_state_dir().join(instance),
+    let cfg = with_record_address(
+        with_instance_defaults(
+            crate::server_cfg::load_from(&ini),
+            cfg!(any(windows, target_os = "linux")),
+            &crate::paths::instance_models_dir(),
+            &crate::paths::instance_state_dir().join(instance),
+        ),
+        instance,
     );
     // Before the spawn, as in `start()`: llama.cpp refuses a missing
     // `--slot-save-path` directory during argument parsing.
@@ -320,6 +323,30 @@ pub fn with_instance_defaults(
     }
     if unset(&cfg.state_dir) {
         cfg.state_dir = Some(state.to_string_lossy().into_owned());
+    }
+    cfg
+}
+
+/// The server config `cfg` with the address of the instance `instance` over it:
+/// the `Hostname` and `Port` of its section of `paths::instances_ini()`
+/// (`paths::instance_address`), where the model data model of `ARCHITECTURE.md`
+/// "Instance profiles" keeps them as the effective values the migration moved
+/// out of the server profile. Each key answers on its own, and a record that
+/// carries neither, as the record of an install the migration has not written,
+/// leaves the profile's own answer standing. The launch reads it, and so does
+/// the manager's read of an instance's config (`manager`'s `instance_cfg`), so
+/// the two never drift apart.
+pub fn with_record_address(
+    cfg: crate::server_cfg::ServerConfig,
+    instance: &str,
+) -> crate::server_cfg::ServerConfig {
+    let (host, port) = crate::paths::instance_address(instance);
+    let mut cfg = cfg;
+    if host.is_some() {
+        cfg.hostname = host;
+    }
+    if port.is_some() {
+        cfg.port = port;
     }
     cfg
 }

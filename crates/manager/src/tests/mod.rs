@@ -134,6 +134,36 @@ fn data_root_e2e() {
     #[cfg(not(windows))]
     crate::manager::service::manager_gt5a_rocm_load_mode_e2e();
 
+    // ── Manager core: IP2, the migration of the model data model at start ─
+    crate::manager::service::manager_ip2_migration_e2e();
+
+    // ── Manager core: IP2, the resolution through the record after it ────
+    crate::manager::service::manager_ip2_resolution_e2e();
+
+    // ── Manager core: IP2, the stray assignments.ini deleted at start ────
+    crate::manager::service::manager_ip2_stray_assignments_e2e();
+
+    // ── Manager core: IP2, the refusals of the gone files and moved keys ──
+    crate::manager::service::manager_ip2_write_refusals_e2e();
+
+    // ── Manager core: IP2 review D1, the backups once and of the old shape ─
+    crate::manager::service::manager_ip2_backups_once_e2e();
+
+    // ── Manager core: IP2 review D2, a profile's port from the record ─────
+    crate::manager::service::manager_ip2_server_profile_port_from_record_e2e();
+
+    // ── Manager core: IP2 review D3, no backup at its final name until whole ─
+    crate::manager::service::manager_ip2_backup_atomic_e2e();
+
+    // ── Manager core: IP2 review D4a, a start after a crash mid-migration ──
+    crate::manager::service::manager_ip2_crash_mid_migration_e2e();
+
+    // ── Manager core: IP2 review D4b, a failed migration serves the old tree ─
+    crate::manager::service::manager_ip2_failed_migration_serves_e2e();
+
+    // ── Manager core: IP2 review D5, the render of an instance given nothing ─
+    crate::manager::service::manager_ip2_empty_render_e2e();
+
     // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
     // Served peer to peer on a socket pair, no bus.
     #[cfg(target_os = "linux")]

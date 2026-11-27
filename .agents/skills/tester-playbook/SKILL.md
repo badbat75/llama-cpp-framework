@@ -196,7 +196,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   by interleaving solo runs in the tree and in a HEAD worktree (own `CARGO_TARGET_DIR`, removed after)
   and by showing no symbol of the slice sits on the verb's path.
 - Prove each phase alone when a refusal aborts at its own phase, and report the later ones as blocked,
-  not passed.
+  not passed. For a manager phase (all in `service.rs`, one `data_root_e2e`): a temporary
+  `tests/ip2_probe.rs`-style module with one `#[test]` per phase, run
+  `--lib -- --test-threads=1 <probe-filter>`, shows every phase's day-one panic at once (each phase
+  redirects the data root to its own tempdir, so solos are safe); delete the module before reporting.
 - Prove each later red of a test that masks its own reds by cutting the earlier block out of the real
   source (a python line-range delete that asserts its two anchor lines first), running
   `--lib data_root_e2e` (~7 s incremental), and restoring with `cp` + `cmp -s`.
@@ -267,6 +270,20 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Pin a rule about the KEYS of a request through the raw-wire tables (`manager/pipe.rs`,
   `manager/dbus.rs`): the client tables' variants carry fixed keys.
 - Pin a manager verb in one phase over all three transports (direct, pipe, D-Bus).
+- Compare two trees by the NAMES that differ (a set diff over `(name, text)` maps), never the whole
+  `Vec<(name, bytes)>`: an `assert_eq!` of a whole tree prints a wall of bytes the report cannot read (one
+  such red here printed 40 KB).
+- A tree compare across TWO tempdir fixtures is never byte-equal: the files name their model files by
+  absolute path. Normalise with the fixture's root spelled `<root>`, and plant the NORMALISED texts at the
+  crash points (a file the run rewrites then lands with the new root's paths, one it leaves alone keeps the
+  placeholder).
+- Show every phase's day-one state in ONE invocation with a temporary gate per phase (an early
+  `return;` gated on an env var listing the phases whose red was already seen): drop it with a script
+  that asserts `grep -c` of the marker answers 0. Name the phases that came green in the report (an
+  absence rule is a day-one guard).
+- A test helper that hands back a manager spells its generics
+  (`Manager<fakes::FakeService, fakes::FakeAuthority, fakes::FakeResolver>`): bare `Manager` is
+  `error[E0107]: missing generics`, and a compile red is not a red.
 
 ### The bff (Rust)
 
@@ -713,11 +730,32 @@ frozen list.
   stops read `llama.cpp :9090, instance lab` and `Start llama.cpp :9090` (17f.3's reader-only id, 24 A1.3's
   hidden instance): spell the expected names as `` `${name}${en('instance-id-said', id)}` `` and
   `` `${en(key)} ${name}` ``, the way OverviewRun's `tileButton` names the verb.
+- When a list row gains a second line under its name (22 D4.35 puts the engine there, muted, inside the
+  name cell), sweep EVERY place a test derives a row's id from its first cell: `querySelector('td, th')?.textContent`,
+  `text(cells[0])`, `map((r) => text(cellsOf(r)[0]))` in `ListColumns`, `ModelProfiles`,
+  `ModelProfilesDelete1`, `ModelProfilesFilter`, `ModelProfilesOverMemory`, `ModelProfilesSwitch`,
+  `U17cSort`, `ModelProfilePage`. Read it through `rowName(cell)` (`fe/src/test/bff.ts`: the cell's text
+  without its `.muted` runs). The id alone names the row's controls, so a reader built on the cell's whole
+  text reds on the engine copy, and a reader that spells the engine stays red after the fix.
 - Amend `MODEL_PROFILE_CARDS` in `fe/src/test/modelProfileCards.ts` when a card gains always-visible
   controls (`extraStops`: a strings key is a button, `{about: key}` its Field's About toggle,
   `{input: key}` a text input, no button), and `EDITABLE_BY_ID` in `ModelProfileSave1.test.tsx` 2h.130,
   which keeps a LOCAL copy of the editable-field map ("a test file imports no other test file"), so a new
   editable control lands in both.
+- A card control that joins the tab path (22 D4.31: the card's own About toggle behind its two-line intro)
+  is added ONCE, in `fieldTabStops` and `cardButtons` of `fe/src/test/modelProfileCards.ts`, and the reds
+  that follow name what is MISSING from the path (`ModelProfileCards1..5` 2e.91, `ModelProfileContent`
+  2d.71 and 2d.78). `ModelProfilePage` 2d.67 lists every button of main with `queryAllByRole('button')`,
+  which counts a `tabIndex={-1}` button, so it goes green while the tab path stays red: that pair tells
+  "the control exists in DOM order" from "it is a Tab stop", so state both when reporting.
+- When that card control becomes a TAB STOP (the designer's ruling of 2026-11-27: a card's own About sits
+  right after the card's h3), the order lists of the OLDER tests move and the coder's helpers do not reach
+  them: in a whole-page head, the stop right after the card before it is the card's About, not
+  `fieldAboutToggles()[0]` (spell it `cardAboutToggle(MODEL_PROFILE_CARDS.find((c) => c.heading ===
+  '<card key>'))`), and in a card-scoped `tabbable(cardOf(main, CARD))` list it lands at the FRONT, so
+  every `slice(0, n)` grows by one and a `toBeGreaterThan(n)` of a later stop shifts with it. Grep
+  `field-about` and the card's heading key in `fe/src/*.test.tsx` to find the lists, and keep the pin
+  tight: pin the card About THEN the first field's About, so the ruling's order is the contract.
 - A control that MOVES on the model profile page (a bar, a link) reds the whole-page tab-order snapshots in
   seven places: `2e.91` in each of `ModelProfileCards1..5.test.tsx`, `2d.71` and `2d.78` in
   `ModelProfileContent.test.tsx`, plus `H9b.4`/`H9b.5` in `HearthJumpRail.test.tsx` (the bar's place among
@@ -828,6 +866,15 @@ frozen list.
   here" is not proof a later guard passes.
 - A text red is often a missing strings key: `en()` throws `no English for <key> in the test`. Look the
   key up in `fe/src/strings/en_US.json` first.
+- Changing a string in `test/bff.ts`'s `EN` (splitting an `-intro` key, adding a `-about` key) goes red
+  in every test that locates a control by that text (`ModelProfileGpu5`'s `factsEl` finds the card intro
+  with `en(key)`): fan-out, not a typo. Prove it by patching `strings/en_US.json` the same way, running
+  the file (its reds clear, the new behaviour's reds stay), and restoring the json from a backup.
+- The fe files' local CSS reader (`[^{}]+\{([^{}]*)\}`) captures the rules nested in an `@media` block
+  too, and `el.matches(sel)` ignores the block: a `display` pin that means "at the wide width" has to
+  filter the rules by the at-rule's own offsets (`atRanges` + the match index).
+- A card's About toggle renders only when its intro key has more than one line, so a shorter intro drops
+  it from the Tab path: the card tab-order tests (`TensorPlacement1` 21 T.9) are part of that fan-out.
 
 ### Mutants and scratch copies
 
@@ -1058,3 +1105,4 @@ frozen list.
 - No jest-dom matchers are configured: `toContainElement` is a typecheck red (TS2339), not a test red.
   Pin containment with `expect(row.contains(el), 'msg').toBe(true)`.
 - Never leave CPU burners running and never start them unless the brief asks for a load test: they compete with the local model and Strata on the same machine. Always name every red test of a full run (grep the log for FAIL), never "name lost".
+- A labelling element that also carries a decorative muted line names the control with it: the Models row's switch read `Qwen3-27Bllama.cpp` once 22 D4.35 put the engine inside the `aria-labelledby` target, so 77 `getByRole('switch', {name: id})` and tab-name pins went red across ten files from ONE markup defect. Report the fan-out as one defect, sweep the test-side id readers to `rowName`, and pin the rule (the labelling element holds the id alone, the line sits beside it) in the slice's own file.

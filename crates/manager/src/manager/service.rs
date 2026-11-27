@@ -344,14 +344,35 @@ pub fn config_file(name: &str) -> Option<ConfigFile> {
     }
 }
 
-/// `assignments.ini`: which model profiles each instance is given. The manager owns
-/// it, so a client reads it and never writes it.
+/// `assignments.ini`: which model profiles each instance is given. The model
+/// data model retired it (`ARCHITECTURE.md`, "Instance profiles"): the entry
+/// sections of an instance profile are the model list. A client reads it and
+/// never writes it, and the manager's start removes it, with
+/// [`MODELS_DISABLED_FILE`], once every instance of the record names an
+/// instance profile.
 pub const ASSIGNMENTS_FILE: &str = "assignments.ini";
 
+/// `models.ini.disabled`: the switched-off model profiles. The model data model
+/// retired it: a profile switched off sits in `models.ini` with no instance
+/// profile naming it. A client reads it and never writes it, and the manager's
+/// start removes it with [`ASSIGNMENTS_FILE`].
+pub const MODELS_DISABLED_FILE: &str = "models.ini.disabled";
+
 /// `instances.ini`: what an instance is, one section per instance with its
-/// `ServerProfile`. The manager owns it, so a client reads it and never
-/// writes it.
+/// `InstanceProfile` and the `Hostname` and `Port` it listens on. The manager
+/// owns it, so a client reads it and never writes it.
 pub const INSTANCES_FILE: &str = "instances.ini";
+
+/// `instance-profiles.ini`: the pool of instance profiles, one `[<p>]` section
+/// each naming the server profile it runs, and one `[<p>/<m>]` section per
+/// model profile the profile is given (`ARCHITECTURE.md`, "Instance profiles",
+/// the placement and memory amendment). The manager owns it, so a client reads
+/// it and never writes it.
+pub const INSTANCE_PROFILES_FILE: &str = "instance-profiles.ini";
+
+/// The suffix of the backup of a file the model data model migration moved,
+/// carrying the release that had it as it stood: `models.ini.2.99.0`.
+const BACKUP_SUFFIX: &str = ".2.99.0";
 
 /// The engine this manager serves, the one every instance and every server
 /// profile names: the only value `CreateServerProfile` and `DeleteServerProfile`
@@ -1255,6 +1276,17 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let run = || -> Result<(), ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             let file = config_file(name).ok_or(ManagerError::BadFileName)?;
+            // The two files the model data model retires (`ARCHITECTURE.md`,
+            // "Instance profiles"): the instance profiles and their entry
+            // sections are the model list, and the record is the address, so
+            // `assignments.ini` and the file of the switched-off model profiles
+            // are read by nobody, and the manager's start removes them. A client
+            // reads them and never writes them: `config_file` answers no served
+            // file for `assignments.ini`, and the switched-off file is the
+            // served file that is retired.
+            if name == MODELS_DISABLED_FILE {
+                return Err(ManagerError::BadFileName);
+            }
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
             body(&file)
@@ -1754,7 +1786,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             };
             let enabled = on_disk("models.ini")?;
             let disabled = on_disk("models.ini.disabled")?;
-            let assignments = on_disk(ASSIGNMENTS_FILE)?;
+            let profiles = on_disk(INSTANCE_PROFILES_FILE)?;
+            let assignments =
+                assignment_text(&record, &profiles, &on_disk(ASSIGNMENTS_FILE)?, instance)
+                    .unwrap_or_default();
             check_render_of_full(
                 &assignments,
                 instance,
@@ -1797,14 +1832,26 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             )
             .map_err(ManagerError::Invalid)?;
             std::fs::create_dir_all(&dir).map_err(io)?;
-            let text = pai_core::ini::text::set_key(&record, instance, "ServerProfile", profile);
-            write_served_file(
-                &dir.join(INSTANCES_FILE),
-                &ConfigFile::Models,
-                &text,
-                &*self.group,
-            )
-            .map_err(io)
+            // A record the migration wrote names an instance profile, and the
+            // switch moves that profile's `ServerProfile` key in the pool: the
+            // record keeps its instance profile and its address. A record the
+            // migration has not written names the server profile itself, and the
+            // switch writes that key of the section, as it did.
+            let (file, text) = if record_is_migrated(&record) {
+                let profiles = read_record(&dir.join(INSTANCE_PROFILES_FILE)).map_err(io)?;
+                let target =
+                    instance_profile_of(&record, instance).ok_or(ManagerError::NoInstance)?;
+                (
+                    INSTANCE_PROFILES_FILE,
+                    pai_core::ini::text::set_key(&profiles, &target, "ServerProfile", profile),
+                )
+            } else {
+                (
+                    INSTANCES_FILE,
+                    pai_core::ini::text::set_key(&record, instance, "ServerProfile", profile),
+                )
+            };
+            write_served_file(&dir.join(file), &ConfigFile::Models, &text, &*self.group).map_err(io)
         };
         let answer = run();
         self.record_action("set_server_profile", instance, Some(&who), &answer);
@@ -2200,27 +2247,14 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         let mut rows: Vec<InstanceInfo> = pai_core::ini::parse_sections(&record)
             .iter()
             .map(|section| {
-                let profile =
-                    profile_file(&section.id).and_then(|file| std::fs::read_to_string(file).ok());
-                let (port, profile_tags) = match profile {
-                    Some(text) => {
-                        let cfg = crate::server_cfg::from_text(&text);
-                        (
-                            u16::try_from(cfg.port.unwrap_or(crate::server_cfg::DEFAULT_PORT))
-                                .unwrap_or(0),
-                            cfg.tags,
-                        )
-                    }
+                let (port, profile_tags) = match instance_cfg(&section.id) {
+                    Some(cfg) => (u16::try_from(cfg.port_or_default()).unwrap_or(0), cfg.tags),
                     None => (0, Vec::new()),
                 };
                 InstanceInfo {
                     id: section.id.clone(),
                     engine: ENGINE.to_string(),
-                    server_profile: section
-                        .keys
-                        .get("ServerProfile")
-                        .map(|name| name.trim().to_string())
-                        .filter(|name| !name.is_empty()),
+                    server_profile: crate::paths::instance_server_profile(&section.id),
                     port,
                     profile_tags,
                     instance_tags: list(section.keys.get("Tags")),
@@ -2240,8 +2274,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// Every server profile the engine's directory holds: each
     /// `server@<id>.ini` whose name the id rule accepts, in id order, with the
-    /// port and the tags of its `[Server]` section (no `Port` key is
-    /// `server_cfg::DEFAULT_PORT`, as `instances` reads a profile) and the first
+    /// port and the tags of its `[Server]` section (the port as the record of
+    /// the instance running the profile holds it, the address the migration
+    /// moved out of the file, as `instances` reads it; no `Port` in the record
+    /// and no `Port` in the file is `server_cfg::DEFAULT_PORT`) and the first
     /// section of `instances.ini` naming it, `None` when no section does: the
     /// profile serves nothing. A section naming a file that is not there is no
     /// row, the list being of files. Answered to any caller, as `instances` is:
@@ -2274,12 +2310,25 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                             ),
                             None => (0, Vec::new()),
                         };
+                        let instance = record_holder(&record, &id);
+                        // The port as the record of the instance running the
+                        // profile holds it: the migration moves the address
+                        // into the record and takes it out of the profile file,
+                        // so a list reading the file alone answers
+                        // `server_cfg::DEFAULT_PORT` of a migrated install. A
+                        // profile no instance uses, and a record carrying no
+                        // `Port`, keep the file's own answer.
+                        let port = instance
+                            .as_deref()
+                            .and_then(|holder| crate::paths::instance_address(holder).1)
+                            .and_then(|port| u16::try_from(port).ok())
+                            .unwrap_or(port);
                         Some(ServerProfileInfo {
                             id: id.clone(),
                             engine: ENGINE.to_string(),
                             port,
                             tags,
-                            instance: record_holder(&record, &id),
+                            instance,
                         })
                     })
                     .collect()
@@ -2294,6 +2343,12 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// stopped it: empty when every render landed. The manager's start calls
     /// this and hands the result to [`Self::report_render_failures`], so a
     /// render that failed at the start is not silent.
+    ///
+    /// Every instance the record lists is rendered, an instance given no model
+    /// profile included: its render is the pool's global section and no model
+    /// profile section, the file a new instance assigned nothing is given
+    /// (`ARCHITECTURE.md`, "Instance profiles", the placement and memory
+    /// amendment).
     pub fn render_failures(&self) -> Vec<(String, ManagerError)> {
         // The same lock a write holds, so a render never mixes with a write.
         let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
@@ -2313,6 +2368,197 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             self.action_log.record(&format!(
                 "action=\"render\" target={id:?} caller=- principal=- outcome={:?}",
                 error_kind(err)
+            ));
+        }
+    }
+
+    /// The manager's start, before any service answers: migrate the model
+    /// data model of an install of the old files (`pai_core::migrate_model`,
+    /// with its `<name>.2.99.0` backups, the writes in the crash-safe order
+    /// and the stray `assignments.ini` rule), reporting what did not land, then
+    /// write the render of every instance and answer with the ones that did not
+    /// land, for the caller to report as it logs (Linux `dbus::serve`, Windows
+    /// `windows::entry`).
+    pub fn start_up(&self) -> Vec<(String, ManagerError)> {
+        self.report_migrations(&self.migrate_model());
+        self.render_failures()
+    }
+
+    /// The model data model migration of [`pai_core::migrate_model`], taken
+    /// under the `writing` lock a write holds, so no service answers between
+    /// two of its writes and none reads a half-migrated file. Answers the
+    /// failures, in the order they happened, empty when the start migrated the
+    /// tree (a tree already migrated answers none).
+    fn migrate_model(&self) -> Vec<MigrationFailure> {
+        let _guard = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        self.migrate_model_files()
+    }
+
+    /// The migration over the engine's config folder: every file read once,
+    /// [`pai_core::migrate_model`] answering the new texts, and every write
+    /// through the manager's own writer, so a migrated file keeps the mode of
+    /// the file it replaces and the group of an instance file. The writes go in
+    /// the order `migrate_model` documents, and the two files the new shape has
+    /// no place for go last, once the record is the migration's own. A read that
+    /// fails stops the migration with the reason: the tree is left as it stands
+    /// and the next start reads it again, and a tree that is already migrated
+    /// answers the same bytes it has.
+    fn migrate_model_files(&self) -> Vec<MigrationFailure> {
+        let dir = crate::paths::engine_config_dir();
+        let mut failures: Vec<MigrationFailure> = Vec::new();
+        let Some(instances) = read_tree(&dir, INSTANCES_FILE, &mut failures) else {
+            return failures;
+        };
+        let Some(assignments) = read_tree(&dir, ASSIGNMENTS_FILE, &mut failures) else {
+            return failures;
+        };
+        let Some(models) = read_tree(&dir, "models.ini", &mut failures) else {
+            return failures;
+        };
+        let Some(models_disabled) = read_tree(&dir, "models.ini.disabled", &mut failures) else {
+            return failures;
+        };
+        let Some(instance_profiles) = read_tree(&dir, INSTANCE_PROFILES_FILE, &mut failures) else {
+            return failures;
+        };
+        // Every server profile the instances run, read as it stands: the
+        // migration answers each one with its address out. A profile whose file
+        // is not there is left out: the migration creates no file.
+        let mut server_profiles: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for name in server_profile_names() {
+            let file = format!("server@{name}.ini");
+            match std::fs::read_to_string(dir.join(&file)) {
+                Ok(text) => {
+                    server_profiles.insert(name, text);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    failures.push(MigrationFailure {
+                        name: file,
+                        error: e.kind(),
+                    });
+                    return failures;
+                }
+            }
+        }
+        let old = pai_core::migrate_model::OldFiles {
+            models,
+            models_disabled,
+            instance_profiles,
+            assignments,
+            instances,
+            server_profiles,
+        };
+        let new = pai_core::migrate_model::migrate_model(&old);
+        // The two files the new shape has no place for: the record the migration
+        // wrote names an instance profile for every instance, so the address sits
+        // in it and the pool is merged. A record with no section names no instance
+        // and is migrated the same: a stray `assignments.ini` is a file nothing
+        // reads.
+        let retired: &[&str] = if record_is_migrated(&new.instances) {
+            &[ASSIGNMENTS_FILE, "models.ini.disabled"]
+        } else {
+            &[]
+        };
+        // The backup of every file this start changes, written before any of
+        // them is written, so the install's own text survives the migration.
+        // Each one carries the text the start writes for it, and a file that
+        // already holds it is no old-shape file: the migration is idempotent, so
+        // a start of a migrated tree reads the new shape and answers the same
+        // bytes, and `instance-profiles.ini` has no old text at all (IP2 review
+        // D1). The two retired files are changed by being gone, so they are
+        // listed with no text of theirs.
+        let mut changes: Vec<(String, Option<&str>)> = vec![
+            (
+                INSTANCE_PROFILES_FILE.to_string(),
+                Some(&new.instance_profiles),
+            ),
+            (INSTANCES_FILE.to_string(), Some(&new.instances)),
+            ("models.ini".to_string(), Some(&new.models)),
+        ];
+        changes.extend(
+            new.server_profiles
+                .iter()
+                .map(|(name, text)| (format!("server@{name}.ini"), Some(text.as_str()))),
+        );
+        changes.extend(retired.iter().map(|name| (name.to_string(), None)));
+        for (name, text) in &changes {
+            if let Err(e) = ensure_backup(&dir, name, *text) {
+                failures.push(MigrationFailure {
+                    name: name.clone(),
+                    error: e.kind(),
+                });
+            }
+        }
+        if failures.is_empty() {
+            // The writes, in the order `migrate_model` documents: the pool of
+            // instance profiles, the record, the merged pool of model profiles,
+            // every server profile with the address out of it.
+            write_migrated(
+                &dir,
+                &ConfigFile::Models,
+                INSTANCE_PROFILES_FILE,
+                &new.instance_profiles,
+                &*self.group,
+                &mut failures,
+            );
+            write_migrated(
+                &dir,
+                &ConfigFile::Models,
+                INSTANCES_FILE,
+                &new.instances,
+                &*self.group,
+                &mut failures,
+            );
+            write_migrated(
+                &dir,
+                &ConfigFile::Models,
+                "models.ini",
+                &new.models,
+                &*self.group,
+                &mut failures,
+            );
+            for (name, text) in &new.server_profiles {
+                write_migrated(
+                    &dir,
+                    &ConfigFile::ServerProfile(name.clone()),
+                    &format!("server@{name}.ini"),
+                    text,
+                    &*self.group,
+                    &mut failures,
+                );
+            }
+        }
+        // The removals, last: the record, the instance profiles and the pool are
+        // written, so `assignments.ini` and `models.ini.disabled` are files
+        // nothing reads. A file that is not there is already gone.
+        if failures.is_empty() {
+            for name in retired {
+                match std::fs::remove_file(dir.join(name)) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => failures.push(MigrationFailure {
+                        name: (*name).to_string(),
+                        error: e.kind(),
+                    }),
+                }
+            }
+        }
+        failures
+    }
+
+    /// One record for each migration failure that stopped the start, so a tree
+    /// left half-migrated is not silent: the action is `migrate`, the target
+    /// the file, the outcome the io kind. The manager acts for itself at its
+    /// start, so caller and principal are the bare `-`, as with a render
+    /// failure. A log, like the action records: the manager's own words, not
+    /// user text.
+    fn report_migrations(&self, failures: &[MigrationFailure]) {
+        for failure in failures {
+            self.action_log.record(&format!(
+                "action=\"migrate\" target={:?} caller=- principal=- outcome={:?}",
+                failure.name, failure.error
             ));
         }
     }
@@ -2344,17 +2590,44 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     fn render_all_locked(&self) -> Vec<(String, ManagerError)> {
         let dir = crate::paths::engine_config_dir();
         let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
-        let (enabled, disabled) = (on_disk("models.ini"), on_disk("models.ini.disabled"));
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
+        // The model profile pool, and the two files a render is built from:
+        // the render of an instance profile adds its entry sections, the render
+        // of an unmigrated record reads the pair of pool files.
+        let pool = on_disk("models.ini");
+        let profiles = on_disk(INSTANCE_PROFILES_FILE);
+        let record = on_disk(INSTANCES_FILE);
+        let disabled = on_disk(MODELS_DISABLED_FILE);
+        // The shape of the record, which decides below whether a render that
+        // already holds its text is rewritten.
+        let migrated = record_is_migrated(&record);
         let mut failures = Vec::new();
         for id in crate::paths::instance_ids() {
             let path = match crate::paths::instance_models(&id) {
                 Some(path) => path,
                 None => continue,
             };
+            // The instance profile the record names, once the migration has
+            // written it: the render is the entry sections of that profile, and
+            // a profile that names no model profile renders the empty file, the
+            // way a new instance's does. A record the migration has not written
+            // renders its section of `assignments.ini`, as before.
+            let text = match instance_profile_of(&record, &id) {
+                Some(profile) => render_instance(&id, &pool, &profiles, &profile),
+                None => render_of(&id, &pool, &disabled),
+            };
+            // A render of the migrated tree that already holds the text the pool
+            // gives is left where it stands: the start renders every instance
+            // every time, and a start of a migrated install changes no byte and
+            // no mtime (IP2 review D1). A tree the migration has not written is
+            // rendered as the manager always rendered it: the render is derived
+            // from the files the migration retires, and one that does not land
+            // at that start is the start's answer (IP2 review D4b).
+            if migrated && std::fs::read_to_string(&path).is_ok_and(|now| now == text) {
+                continue;
+            }
             // A render holds model profile text alone, so it carries the model profile
             // file's mode and needs no group of its own.
-            let text = render_of(&id, &enabled, &disabled);
             if let Err(e) = write_served_file(&path, &ConfigFile::Models, &text, &*self.group) {
                 failures.push((id, io(e)));
             }
@@ -2775,13 +3048,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             if skip(&other) {
                 continue;
             }
-            let Some(path) = profile_file(&other) else {
+            // The address the instance listens on: its server profile's, with
+            // the record's `Hostname` and `Port` over it, the way the launch
+            // binds (`ARCHITECTURE.md`, "Instance profiles").
+            let Some(cfg) = instance_cfg(&other) else {
                 continue;
             };
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let theirs = binding(&crate::server_cfg::from_text(&text), &self.resolver);
+            let theirs = binding(&cfg, &self.resolver);
             if theirs.is_ok_and(|b| addresses_collide(mine, &b)) {
                 return Err(ManagerError::AddressInUse(other));
             }
@@ -2946,6 +3219,18 @@ const BFF_NAME: &str = "private-ai-bff";
 /// `server@<profile>.ini`, `None` when the section names no profile.
 fn profile_file(id: &str) -> Option<std::path::PathBuf> {
     crate::paths::instance_ini(&crate::paths::instance_server_profile(id)?)
+}
+
+/// The server config of the instance `id`, as its launch reads it: the text of
+/// the server profile its instance profile names, with the `Hostname` and
+/// `Port` of its section of the record over it (`ARCHITECTURE.md`, "Instance
+/// profiles", where the model data model moved the address: the same
+/// `launch::with_record_address` the launch reads). `None` when the
+/// instance names no profile, names one that builds no path, or that file
+/// cannot be read.
+fn instance_cfg(id: &str) -> Option<ServerConfig> {
+    let cfg = crate::server_cfg::from_text(&std::fs::read_to_string(profile_file(id)?).ok()?);
+    Some(crate::launch::with_record_address(cfg, id))
 }
 
 /// The `[Server] Devices` of the server profile instance `id` names, as the
@@ -3192,13 +3477,16 @@ fn one_value_refusal(key: &'static str, value: &str) -> ManagerError {
     })
 }
 
-/// The first section of the record text `text` that names the server profile
-/// `profile`: the instance running it, `None` when no section does.
+/// The first section of the record text `text` that runs the server profile
+/// `profile`: the instance running it, `None` when no section does. From the
+/// model data model a section runs a profile one step behind, through its
+/// instance profile, so this is the same rule the launch reads
+/// ([`pai_core::paths::instance_server_profile`]).
 fn record_holder(text: &str, profile: &str) -> Option<String> {
     pai_core::ini::parse_sections(text)
         .into_iter()
-        .find(|section| section.keys.get("ServerProfile").map(|name| name.trim()) == Some(profile))
         .map(|section| section.id)
+        .find(|id| crate::paths::instance_server_profile(id).as_deref() == Some(profile))
 }
 
 /// The `judge_model_files` of [`check_contents`] and [`Manager::check_and_write`]:
@@ -3260,7 +3548,7 @@ fn check_contents(
                 crate::server_cfg::from_text(&on_disk(&format!("server@{name}.ini"))).devices;
             let devices = crate::server_cfg::from_text(contents).devices;
             let changed = held != devices;
-            let assignments = on_disk(ASSIGNMENTS_FILE);
+            let assignments = assignments_all();
             for id in crate::paths::instance_ids() {
                 if crate::paths::instance_server_profile(&id).as_deref() == Some(name) {
                     check_render(&id, &enabled, &disabled, models_max)?;
@@ -3292,12 +3580,21 @@ fn check_contents(
             Ok(())
         }
         ConfigFile::Models => {
-            let (old, off) = (on_disk("models.ini"), on_disk("models.ini.disabled"));
+            let (old, off) = (on_disk("models.ini"), on_disk(MODELS_DISABLED_FILE));
             checks::models_file(contents, &old, &off, NO_MODELS_MAX)?;
+            // A placement or memory key left in a model profile section lives in
+            // the instance profile's entry section (`ARCHITECTURE.md`, "Instance
+            // profiles", the placement and memory amendment): from the migration
+            // on, a pool that carries one is a second source of truth for where
+            // the weights go. A tree the migration has not written keeps its
+            // keys in the pool, which is where they were.
+            if record_is_migrated(&on_disk(INSTANCES_FILE)) {
+                checks::model_profile_placement(contents)?;
+            }
             checks::model_profile_ids_free(contents, &old, &off)?;
             check_renders(&enabled, &disabled)?;
             if judge_model_files {
-                check_model_files(&on_disk(ASSIGNMENTS_FILE), &enabled, &disabled, &old, &off)?;
+                check_model_files(&assignments_all(), &enabled, &disabled, &old, &off)?;
             }
             // The memory the render puts in effect, after the model files: a
             // model profile whose file is not on the node has no header to
@@ -3307,7 +3604,7 @@ fn check_contents(
             // The cards the render's model profiles name, on the same render
             // rule (L4): a GPU the write puts in effect outside the instance's
             // server profile refuses.
-            check_device_bound(&on_disk(ASSIGNMENTS_FILE), &enabled, &disabled, &old, &off)
+            check_device_bound(&assignments_all(), &enabled, &disabled, &old, &off)
         }
         ConfigFile::ModelsDisabled => {
             let (old, enabled_file) = (on_disk("models.ini.disabled"), on_disk("models.ini"));
@@ -3315,40 +3612,250 @@ fn check_contents(
             checks::model_profile_ids_free(contents, &old, &enabled_file)?;
             check_renders(&enabled, &disabled)?;
             if judge_model_files {
-                check_model_files(
-                    &on_disk(ASSIGNMENTS_FILE),
-                    &enabled,
-                    &disabled,
-                    &enabled_file,
-                    &old,
-                )?;
+                check_model_files(&assignments_all(), &enabled, &disabled, &enabled_file, &old)?;
             }
             check_profile_memory(&enabled, &disabled, &enabled_file, &old, gpus)?;
-            check_device_bound(
-                &on_disk(ASSIGNMENTS_FILE),
-                &enabled,
-                &disabled,
-                &enabled_file,
-                &old,
-            )
+            check_device_bound(&assignments_all(), &enabled, &disabled, &enabled_file, &old)
         }
     }
 }
 
-/// The text of instance `id`'s render `models@<id>.ini`, from the pool pair
-/// and the `assignments.ini` on disk: what the checks judge and what
-/// [`Manager::render_failures`] writes. The render of a ROCm instance carries
-/// the load rule of `ARCHITECTURE.md` "ROCm instances load models with
-/// `load-mode = none`" (GT5a), added by [`with_rocm_load_mode`].
-fn render_of(id: &str, enabled: &str, disabled: &str) -> String {
-    let assignment =
-        std::fs::read_to_string(crate::paths::engine_config_dir().join(ASSIGNMENTS_FILE))
-            .ok()
-            .and_then(|text| pai_core::ini::text::section_text(&text, id));
+/// Why one file of the model data model migration did not land: its name in the
+/// engine's config folder, and the io kind of the read, the write or the delete
+/// that stopped it.
+struct MigrationFailure {
+    name: String,
+    error: std::io::ErrorKind,
+}
+
+/// The key every record section carries once the migration has written it: the
+/// instance profile the instance runs. Its server profile is one step behind,
+/// in that profile's section of `INSTANCE_PROFILES_FILE`.
+const INSTANCE_PROFILE_KEY: &str = "InstanceProfile";
+
+/// The instance profile the instance `id` runs: the `InstanceProfile` its
+/// section of the record `record` names. A record the migration has not written
+/// names none, and the instance is read the way it was before: its section of
+/// `assignments.ini`, its `ServerProfile` key for the address.
+fn instance_profile_of(record: &str, id: &str) -> Option<String> {
+    record_key(record, id, INSTANCE_PROFILE_KEY)
+}
+
+/// The key `key` of the section `section` of the text `text`, trimmed, `None`
+/// when the section is absent, the key is absent, or its value is blank.
+fn record_key(text: &str, section: &str, key: &str) -> Option<String> {
+    pai_core::ini::section_keys(text, section)
+        .into_iter()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// The model profile ids of the entry sections of the instance profile
+/// `profile`: its `[<profile>/<m>]` sections, in the file's own order. The entry
+/// sections ARE the model list, so this is the list of model profiles the
+/// instance is given, and an empty list is an instance given nothing.
+fn entry_models(profiles: &str, profile: &str) -> Vec<String> {
+    let head = format!("{profile}/");
+    pai_core::ini::parse_sections(profiles)
+        .into_iter()
+        .filter_map(|section| section.id.strip_prefix(&head).map(|id| id.to_string()))
+        .collect()
+}
+
+/// The text of instance `id`'s render `models@<id>.ini`, from the pool `pool`
+/// and the instance profile `profile` of the pool of profiles `profiles`: the
+/// entry sections are the model profiles the instance is given, each one the
+/// pool's section with the entry's placement and memory keys over it
+/// (`ARCHITECTURE.md`, "Instance profiles", the placement and memory
+/// amendment). The render of a ROCm instance carries the load rule of
+/// `ARCHITECTURE.md` "ROCm instances load models with `load-mode = none`"
+/// (GT5a), added by [`with_rocm_load_mode`].
+fn render_instance(id: &str, pool: &str, profiles: &str, profile: &str) -> String {
     with_rocm_load_mode(
         id,
-        pai_core::assign::render(enabled, disabled, assignment.as_deref()),
+        pai_core::assign::render_profile(pool, profiles, profile),
     )
+}
+
+/// The record is in the new shape: every section of it names its instance
+/// profile, the key the migration wrote in place of `ServerProfile`.
+/// `pai_core::migrate_model` answers the record and the instance profiles
+/// unchanged from that point on; the manager reads the same rule as the
+/// leave-ahead of `assignments.ini` and `models.ini.disabled`, the two files the
+/// new shape has no place for: the address an instance listens on sits in the
+/// record before any server profile gives it up, so the two go once the record
+/// is the migration's own. A record with no section names no instance to move:
+/// migrated, and a stray `assignments.ini` is a file nothing reads.
+fn record_is_migrated(record: &str) -> bool {
+    pai_core::ini::parse_sections(record)
+        .iter()
+        .all(|section| section.keys.contains_key(INSTANCE_PROFILE_KEY))
+}
+
+/// The backup of a file the migration changes, `<name>.2.99.0` of `<name>`,
+/// written once: a backup that is already there is kept as it is, so the
+/// install's own text survives every later start, and a file that is not there
+/// needs no backup of its own. `new` is the text this start writes for the
+/// file, `None` when the start takes the file away: a file that already holds
+/// what the start writes is left where it is, so no start backs up the new
+/// shape as the install's own text (IP2 review D1). The copy goes to a temp
+/// name and is renamed into place, so a start that dies mid-copy leaves no
+/// truncated backup for the next start to keep as the install's text, and a
+/// copy that fails leaves no entry at all (IP2 review D3).
+fn ensure_backup(dir: &std::path::Path, name: &str, new: Option<&str>) -> std::io::Result<()> {
+    let backup = dir.join(format!("{name}{BACKUP_SUFFIX}"));
+    if backup.exists() {
+        return Ok(());
+    }
+    let live = dir.join(name);
+    let text = match std::fs::read_to_string(&live) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    if Some(text.as_str()) == new {
+        return Ok(());
+    }
+    let tmp = dir.join(format!("{name}{BACKUP_SUFFIX}.tmp"));
+    std::fs::copy(&live, &tmp)
+        .and_then(|_| std::fs::rename(&tmp, &backup))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp);
+        })
+}
+
+/// The text of the file `name` of the engine's config folder, an empty text when
+/// the file is missing. `None` when the read failed for any other reason, the
+/// reason answered in `failures`: a tree that cannot be read is left as it
+/// stands, and the start says so.
+fn read_tree(
+    dir: &std::path::Path,
+    name: &str,
+    failures: &mut Vec<MigrationFailure>,
+) -> Option<String> {
+    match std::fs::read_to_string(dir.join(name)) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(String::new()),
+        Err(e) => {
+            failures.push(MigrationFailure {
+                name: name.to_string(),
+                error: e.kind(),
+            });
+            None
+        }
+    }
+}
+
+/// One migrated file, written as a served file: the writer of
+/// [`Manager::write_file`], so a migrated file keeps the mode of the file it
+/// replaces, and the group of an instance file. A file whose bytes already
+/// match is skipped: the migration is idempotent, so a start of a migrated
+/// tree rewrites nothing, and a file the start does not change keeps its own
+/// mtime (IP2 review D1). A write that failed is answered in `failures`, in
+/// order with the rest.
+fn write_migrated(
+    dir: &std::path::Path,
+    file: &ConfigFile,
+    name: &str,
+    text: &str,
+    group: &dyn FileGroup,
+    failures: &mut Vec<MigrationFailure>,
+) {
+    if std::fs::read_to_string(dir.join(name)).is_ok_and(|now| now == text) {
+        return;
+    }
+    if let Err(e) = write_served_file(&dir.join(name), file, text, group) {
+        failures.push(MigrationFailure {
+            name: name.to_string(),
+            error: e.kind(),
+        });
+    }
+}
+
+/// The server profile names the instances run, each one once, in name order:
+/// the files the migration takes its address out of. The names are the rule the
+/// launch reads (`paths::instance_server_profile`): the `ServerProfile` of the
+/// record's own section while the record is unmigrated, and from the migration
+/// on the `ServerProfile` of the instance profile the record names, so a tree
+/// that stopped with the record written still names the profiles it has to
+/// strip (IP2 review D4a).
+fn server_profile_names() -> Vec<String> {
+    let mut names: Vec<String> = pai_core::paths::instance_ids()
+        .iter()
+        .filter_map(|id| crate::paths::instance_server_profile(id))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The text of instance `id`'s render `models@<id>.ini`, from the pool pair and
+/// the model list the instance is given: what the checks judge. From the model
+/// data model the entry sections of the instance profile ARE that list, so
+/// [`assignment_of`] reads the record and `instance-profiles.ini` and answers
+/// them spelled as `assignments.ini` spelled them; before the migration that
+/// file answers the instance's section as it stands. The render of a ROCm
+/// instance carries the load rule of `ARCHITECTURE.md` "ROCm instances load
+/// models with `load-mode = none`" (GT5a), added by [`with_rocm_load_mode`].
+fn render_of(id: &str, enabled: &str, disabled: &str) -> String {
+    with_rocm_load_mode(
+        id,
+        pai_core::assign::render(enabled, disabled, assignment_of(id).as_deref()),
+    )
+}
+
+/// The model list of instance `id`, spelled as `assignments.ini` spells it: a
+/// `[<id>]` section with one `on` key per model profile the instance is given.
+/// The entry sections of the instance profile the record names are that list
+/// (`ARCHITECTURE.md`, "Instance profiles", the placement and memory
+/// amendment), no entry included, which is an instance given nothing. A record
+/// the migration has not written names no instance profile, and `assignments`
+/// answers the instance's section as it stands; a record with no section for
+/// `id` is an instance given nothing too.
+fn assignment_text(record: &str, profiles: &str, assignments: &str, id: &str) -> Option<String> {
+    if let Some(profile) = instance_profile_of(record, id) {
+        let mut text = format!("[{id}]\n");
+        for model in entry_models(profiles, &profile) {
+            text.push_str(&format!("{model} = on\n"));
+        }
+        return Some(text);
+    }
+    pai_core::ini::text::section_text(assignments, id)
+}
+
+/// The three files the model lists are read from: the record, the instance
+/// profile pool, and `assignments.ini`. A file that is not there is an empty one.
+fn assignment_files() -> (String, String, String) {
+    let dir = crate::paths::engine_config_dir();
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
+    (
+        read(INSTANCES_FILE),
+        read(INSTANCE_PROFILES_FILE),
+        read(ASSIGNMENTS_FILE),
+    )
+}
+
+/// [`assignment_text`] over the files on disk.
+fn assignment_of(id: &str) -> Option<String> {
+    let (record, profiles, assignments) = assignment_files();
+    assignment_text(&record, &profiles, &assignments, id)
+}
+
+/// Every instance's model list as one `assignments.ini`: [`assignment_text`] for
+/// each section of the record, in the record's own order. The checks that judge
+/// every instance's render take the model list in this shape, so they read the
+/// entry sections of the instance profiles from the migration on, and the file
+/// itself before it.
+fn assignments_all() -> String {
+    let (record, profiles, assignments) = assignment_files();
+    let mut text = String::new();
+    for section in pai_core::ini::parse_sections(&record) {
+        if let Some(assignment) = assignment_text(&record, &profiles, &assignments, &section.id) {
+            text.push_str(&assignment);
+        }
+    }
+    text
 }
 
 /// The render `text` of instance `id`, with `load-mode = none` in its `[*]`
@@ -5219,6 +5726,10 @@ pub(crate) fn manager_e2e() {
             m.write_file(&alice, "models.ini", &model_profiles, false),
             Ok(())
         );
+        // The switched-off file is retired by the model data model
+        // (`ARCHITECTURE.md`, "Instance profiles"): a profile switched off
+        // sits in `models.ini` with no instance profile naming it, so a client
+        // reads the file and never writes it.
         assert_eq!(
             m.write_file(
                 &alice,
@@ -5226,7 +5737,7 @@ pub(crate) fn manager_e2e() {
                 &real_model_files(dir.path(), "[Old]\nmodel = /m/old.gguf\n"),
                 false
             ),
-            Ok(())
+            Err(ManagerError::BadFileName)
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("server@default.ini")).expect("written"),
@@ -5238,7 +5749,6 @@ pub(crate) fn manager_e2e() {
                 "instances.ini",
                 "server@default.ini",
                 "models.ini",
-                "models.ini.disabled",
                 "models@default.ini"
             ]),
             "exactly the files written, no temp file left"
@@ -5915,12 +6425,13 @@ pub(crate) fn manager_instance_files_e2e() {
             "the old file is kept"
         );
         assert_eq!(names(), before, "no temp file left");
-        // The model profile files need no group: still written.
+        // The model profile file needs no group: still written. The switched-off
+        // file is read only, so it is no longer the one this shows.
         assert_eq!(
             m.write_file(
                 &alice,
-                "models.ini.disabled",
-                "[Old]\nmodel = /m/old.gguf\n",
+                "models.ini",
+                &real_model_files(dir.path(), "[Old]\nmodel = /m/old.gguf\n"),
                 false
             ),
             Ok(())
@@ -6426,10 +6937,9 @@ pub(crate) fn manager_engine_dir_e2e() {
         m.write_file(&alice, "models.ini", &model_profiles, false),
         Ok(())
     );
-    assert_eq!(
-        m.write_file(&alice, "models.ini.disabled", &disabled, false),
-        Ok(())
-    );
+    // The switched-off file is a client's read, never a write, so this seeds it
+    // as an install that has one leaves it.
+    std::fs::write(engine.join("models.ini.disabled"), &disabled).expect("disabled");
     for (name, text) in [
         ("server@default.ini", ini),
         ("models.ini", &model_profiles),
@@ -6453,7 +6963,6 @@ pub(crate) fn manager_engine_dir_e2e() {
         };
         assert_eq!(mode("server@default.ini"), 0o640);
         assert_eq!(mode("models.ini"), 0o644);
-        assert_eq!(mode("models.ini.disabled"), 0o644);
     }
     assert_eq!(names(&framework), framework_before, "nothing written there");
     for (name, text) in [
@@ -6613,10 +7122,10 @@ pub(crate) fn manager_waits_e2e() {
             Err(ManagerError::NotAuthorized),
             "a caller polkit refuses is refused at once"
         );
-        let disabled = "[Qwen3.8-Flash-Next]\nmodel = /models/Qwen3.8-Flash-Next-IQ3_S.gguf\n";
+        let pool = model_profiles.clone();
         let write = {
             let (m, bob) = (m.clone(), bob.clone());
-            on_thread(move || m.write_file(&bob, "models.ini.disabled", disabled, false))
+            on_thread(move || m.write_file(&bob, "models.ini", &pool, false))
         };
         assert_eq!(answer(&gate, "bob's write", write), Ok(()));
 
@@ -6651,10 +7160,6 @@ pub(crate) fn manager_waits_e2e() {
             std::fs::read_to_string(sys.join("models.ini")).unwrap(),
             model_profiles,
             "the refused write left models.ini"
-        );
-        assert_eq!(
-            std::fs::read_to_string(sys.join("models.ini.disabled")).unwrap(),
-            disabled
         );
     }
 
@@ -7157,33 +7662,38 @@ pub(crate) fn manager_checks_e2e() {
         assert_eq!(read("models.ini"), Some(added));
     }
 
-    // ── models.ini.disabled: switching off is never refused ─────────────
+    // ── models.ini.disabled is a read, not a write ───────────────────────
     {
         let m = manager(true);
-        // The broken model profile moves out of models.ini unchanged: accepted.
+        // The file is retired with the model data model (`ARCHITECTURE.md`,
+        // "Instance profiles"): a profile switched off sits in `models.ini`
+        // with no instance profile naming it. So the manager's own verbs keep
+        // it (the create and the delete move a section), and a client's write
+        // of it is the name refusal, whatever the text.
         assert_eq!(
             m.write_file(&alice, "models.ini.disabled", &broken, false),
-            Ok(())
+            Err(ManagerError::BadFileName)
         );
-        assert_eq!(read("models.ini.disabled"), Some(broken.clone()));
-        // A disabled model profile edited now gets the model profile rules.
+        assert_eq!(
+            read("models.ini.disabled"),
+            None,
+            "the refused write created no file"
+        );
         let edited = real_model_files(
             dir.path(),
             &format!("{broken}[parked]\nmodel = /models/p.gguf\nfit-target = 2048MiB\n"),
         );
         assert_eq!(
             m.write_file(&alice, "models.ini.disabled", &edited, false),
-            invalid("fit-target-format", &["2048MiB", "MiB"])
+            Err(ManagerError::BadFileName)
         );
-        assert_eq!(read("models.ini.disabled"), Some(broken.clone()));
-        // No startup count: llama-server never reads this file.
         let many = real_model_files(
             dir.path(),
             &format!("{broken}{}", flagged(&["a", "b", "c", "d", "e"])),
         );
         assert_eq!(
             m.write_file(&alice, "models.ini.disabled", &many, false),
-            Ok(())
+            Err(ManagerError::BadFileName)
         );
         // Switching the broken one back on: new in models.ini, so checked.
         let enabled = real_model_files(dir.path(), "[new]\nmodel = /models/new.gguf\n");
@@ -7248,24 +7758,21 @@ pub(crate) fn manager_checks_e2e() {
             invalid("model-profile-name-taken", &["parked"])
         );
         assert_eq!(read("models.ini"), Some(enabled.clone()), "old kept");
-        // A new parked model profile named like an enabled one.
+        // A new parked model profile named like an enabled one: the file is a
+        // read, so the write is the name refusal, and the file is left.
         let namesake = real_model_files(
             dir.path(),
             &format!("{parked}[NEW]\nmodel = /models/other.gguf\n"),
         );
         assert_eq!(
             m.write_file(&alice, "models.ini.disabled", &namesake, false),
-            invalid("model-profile-name-taken", &["NEW"])
+            Err(ManagerError::BadFileName)
         );
         assert_eq!(read("models.ini.disabled"), Some(parked.clone()));
         // Switching the parked one on writes models.ini first: a move.
         let on = real_model_files(dir.path(), &format!("{enabled}{parked}"));
         assert_eq!(m.write_file(&alice, "models.ini", &on, false), Ok(()));
         assert_eq!(read("models.ini"), Some(on));
-        assert_eq!(
-            m.write_file(&alice, "models.ini.disabled", "", false),
-            Ok(())
-        );
     }
 
     // ── Floats, enums, JSON and min <= max: refused, the file kept ───────
@@ -7312,7 +7819,7 @@ pub(crate) fn manager_checks_e2e() {
             "{enum_refused:?}"
         );
         assert_eq!(
-            m.write_file(&alice, "models.ini.disabled", &with("top-p = inf\n"), false),
+            m.write_file(&alice, "models.ini", &with("top-p = inf\n"), false),
             invalid("not-a-number", &["top-p", "inf"])
         );
         assert_eq!(
@@ -7489,19 +7996,21 @@ pub(crate) fn manager_assignments_e2e() {
         "the refused write changed nothing"
     );
     std::fs::write(sys.join("models.ini"), &on_disk).expect("hand-edited pool");
-    assert_eq!(
-        m.write_file(&alice, "models.ini.disabled", &off, false),
-        Ok(())
-    );
+    // The switched-off pool is a client's read, never a write, so this seeds it
+    // as an install that has one leaves it; the pool write below is the one
+    // that re-renders.
+    std::fs::write(sys.join("models.ini.disabled"), &off).expect("models.ini.disabled");
+    assert_eq!(m.write_file(&alice, "models.ini", &pool, false), Ok(()));
     assert_eq!(
         read("models@default.ini"),
-        Some(render(&on_disk, &off, Some(section("default").as_str()))),
-        "the render takes the global section from the pool file on disk"
+        Some(render(&pool, &off, Some(section("default").as_str()))),
+        "the render takes the pool as the write left it: the global section of the
+         hand edit is gone with it"
     );
     assert_eq!(
         read("models@lan-3.ini"),
-        Some(render(&on_disk, &off, None)),
-        "the global section reaches every instance: lan-3 is the global section alone"
+        Some(render(&pool, &off, None)),
+        "lan-3 is the pool alone: every instance is re-rendered by the write"
     );
     assert_eq!(m.write_file(&alice, "models.ini", &pool, false), Ok(()));
     assert_eq!(
@@ -9539,34 +10048,30 @@ pub(crate) fn manager_model_file_check_e2e() {
         );
         kept(&before);
 
-        // The switch off, on both sides: taking the model profile out of the
-        // switched-on file, and putting it into the switched-off one, are never
-        // refused, not even while the assignment keeps it on. The state a real
+        // The switch off, in the one file the model data model leaves: the pool
+        // write that leaves the model profile with no instance naming it
+        // (`ARCHITECTURE.md`, "Instance profiles"). Never refused by a resource
+        // check, not even while the assignment keeps it on. The state a real
         // switch off starts from, seeded directly: the model profile in the
-        // switched-on file, its file not there, in effect on `default`.
+        // pool, its file not there, in effect on `default`.
         pool_files(&save, "");
         assignments("[default]\nnew = on\n");
-        let answer = m.write_file(
-            &desktop,
-            "models.ini.disabled",
-            &format!("[new]\nmodel = {}\n", path("new.gguf")),
-            false,
-        );
         assert_eq!(
-            answer,
-            Ok(()),
-            "a switch off never fails a resource check, whatever the file: {answer:?}"
-        );
-        assert_eq!(
-            text_of("models.ini.disabled"),
-            format!("[new]\nmodel = {}\n", path("new.gguf")),
-            "and landed"
+            m.write_file(
+                &desktop,
+                "models.ini.disabled",
+                &format!("[new]\nmodel = {}\n", path("new.gguf")),
+                false,
+            ),
+            Err(ManagerError::BadFileName),
+            "the switched-off file is a client's read, never a write"
         );
         assignments("[default]\nnew = inherit\n");
         assert_eq!(
             m.write_file(&desktop, "models.ini", &on_disk, false),
             Ok(()),
-            "the other half of the switch, the model profile out of the switched-on file, lands"
+            "the switch off, a model profile out of the pool with its file missing, \
+             never fails a resource check: the pool write lands"
         );
         assert_eq!(text_of("models.ini"), on_disk, "and landed");
     }
@@ -9599,10 +10104,14 @@ pub(crate) fn manager_model_file_check_e2e() {
             Ok(()),
             "the switch on lands where every instance has the model profile off"
         );
+        // The switch's second half is retired with the switched-off file
+        // (`ARCHITECTURE.md`, "Instance profiles"): the model profile stays in
+        // `models.ini`, and no instance profile naming it is what switches it
+        // off.
         assert_eq!(
             m.write_file(&desktop, "models.ini.disabled", "", false),
-            Ok(()),
-            "and so does the model profile leaving the switched-off file"
+            Err(ManagerError::BadFileName),
+            "the switched-off file is a read, never a write"
         );
     }
 
@@ -9802,11 +10311,13 @@ pub(crate) fn manager_model_file_check_e2e() {
                     "(d) the switch off of `c`: `c` out of `models.ini` lands: {answer:?}"
                 ));
             } else {
+                // The other half of the switch is retired with the switched-off
+                // file: the profile stays in `models.ini`, unassigned.
                 let off = format!("[c]\nmodel = {}\n", path("c.gguf"));
                 let second = m.write_file(&desktop, "models.ini.disabled", &off, false);
-                if second != Ok(()) {
+                if second != Err(ManagerError::BadFileName) {
                     fails.push(format!(
-                        "(d) the switch off of `c`: `c` into `models.ini.disabled` lands: {second:?}"
+                        "(d) the switch off of `c`: the write of `models.ini.disabled` is the name refusal: {second:?}"
                     ));
                 }
             }
@@ -9876,23 +10387,20 @@ pub(crate) fn manager_model_file_check_e2e() {
         );
     }
 
-    // ── A switched-off model profile in effect: the disabled file is checked ─
+    // ── A model profile in effect with no file: the pool is checked ────────
     //
-    // `assign::render` takes BOTH pool files, so a model profile that sits in
-    // `models.ini.disabled` is in effect on every instance whose section of
-    // `assignments.ini` says `on` for it. A save of the switched-off file
-    // changes that instance's render, so it is judged by the model-file check
-    // exactly as a save of `models.ini` is: it refuses what the write ADDS, on
+    // `assign::render` takes the pool and the instance's section, so a model
+    // profile the instance has `on` sits in that instance's render. A save of
+    // the pool changes that render, so it is judged by the model-file check
+    // exactly as every other pool save is: it refuses what the write ADDS, on
     // every render the write moves, and nothing else.
     // S9C-PIN-1 BEGIN
     {
-        // The switched-on file holds `ok`, the switched-off one `p` and `q`,
-        // every file there. `default` has `p = on`, `lan-2` has `p = off`, and
-        // no instance says anything about `q`.
+        // The pool holds `p` and `q`, every file there. `default` has `p = on`,
+        // `lan-2` has `p = off`, and no instance says anything about `q`.
         let sec = |id: &str, file: &str, ctx: &str| {
             format!("[{id}]\nmodel = {}\nctx-size = {ctx}\n", path(file))
         };
-        let on = sec("ok", "ok.gguf", "4096");
         let off = format!(
             "{}\n{}",
             sec("p", "p.gguf", "4096"),
@@ -9902,7 +10410,9 @@ pub(crate) fn manager_model_file_check_e2e() {
             make("ok.gguf");
             make("p.gguf");
             make("q.gguf");
-            pool_files(&on, &off);
+            // The pool is the one file the phase writes; the switched-off file
+            // is a client's read (`ARCHITECTURE.md`, "Instance profiles").
+            pool_files(&off, "");
             assignments("[default]\np = on\n\n[lan-2]\np = off\n");
         };
 
@@ -9916,10 +10426,10 @@ pub(crate) fn manager_model_file_check_e2e() {
             &format!("model = {}\nctx-size", path("p-gone.gguf")),
         );
         let before = snapshot(&WATCH);
-        let answer = m.write_file(&desktop, "models.ini.disabled", &save, false);
+        let answer = m.write_file(&desktop, "models.ini", &save, false);
         assert!(
             named(&answer, "p", "default", &path("p-gone.gguf")),
-            "a save of `models.ini.disabled` that puts a model profile with no file in effect on an instance that has it `on` is refused: {answer:?}"
+            "a save of the pool that puts a model profile with no file in effect on an instance that has it `on` is refused: {answer:?}"
         );
         kept(&before);
     }
@@ -9929,7 +10439,6 @@ pub(crate) fn manager_model_file_check_e2e() {
         let sec = |id: &str, file: &str, ctx: &str| {
             format!("[{id}]\nmodel = {}\nctx-size = {ctx}\n", path(file))
         };
-        let on = sec("ok", "ok.gguf", "4096");
         let off = format!(
             "{}\n{}",
             sec("p", "p.gguf", "4096"),
@@ -9939,7 +10448,9 @@ pub(crate) fn manager_model_file_check_e2e() {
             make("ok.gguf");
             make("p.gguf");
             make("q.gguf");
-            pool_files(&on, &off);
+            // The pool is the one file the phase writes; the switched-off file
+            // is a client's read (`ARCHITECTURE.md`, "Instance profiles").
+            pool_files(&off, "");
             assignments("[default]\np = on\n\n[lan-2]\np = off\n");
         };
 
@@ -9950,13 +10461,13 @@ pub(crate) fn manager_model_file_check_e2e() {
             &format!("model = {}\nctx-size", path("q.gguf")),
             &format!("model = {}\nctx-size", path("q-gone.gguf")),
         );
-        let answer = m.write_file(&desktop, "models.ini.disabled", &save, false);
+        let answer = m.write_file(&desktop, "models.ini", &save, false);
         assert_eq!(
             answer,
             Ok(()),
-            "a switched-off model profile no instance has `on` is in no render, so a missing file is not in effect anywhere: {answer:?}"
+            "a model profile no instance has `on` is in no render, so a missing file is not in effect anywhere: {answer:?}"
         );
-        assert_eq!(text_of("models.ini.disabled"), save, "and the save landed");
+        assert_eq!(text_of("models.ini"), save, "and the save landed");
     }
     // S9C-PIN-2 END
     // S9C-PIN-3 BEGIN
@@ -9964,7 +10475,6 @@ pub(crate) fn manager_model_file_check_e2e() {
         let sec = |id: &str, file: &str, ctx: &str| {
             format!("[{id}]\nmodel = {}\nctx-size = {ctx}\n", path(file))
         };
-        let on = sec("ok", "ok.gguf", "4096");
         let off = format!(
             "{}\n{}",
             sec("p", "p.gguf", "4096"),
@@ -9974,7 +10484,9 @@ pub(crate) fn manager_model_file_check_e2e() {
             make("ok.gguf");
             make("p.gguf");
             make("q.gguf");
-            pool_files(&on, &off);
+            // The pool is the one file the phase writes; the switched-off file
+            // is a client's read (`ARCHITECTURE.md`, "Instance profiles").
+            pool_files(&off, "");
             assignments("[default]\np = on\n\n[lan-2]\np = off\n");
         };
 
@@ -9985,30 +10497,22 @@ pub(crate) fn manager_model_file_check_e2e() {
         seed();
         rm("p.gguf");
         let edit_p = off.replace("ctx-size = 4096", "ctx-size = 8192");
-        let answer = m.write_file(&desktop, "models.ini.disabled", &edit_p, false);
+        let answer = m.write_file(&desktop, "models.ini", &edit_p, false);
         assert_eq!(
             answer,
             Ok(()),
-            "a save of the switched-off file that edits only `ctx-size` of a model profile already in effect with a missing file lands: {answer:?}"
+            "a save of the pool that edits only `ctx-size` of a model profile already in effect with a missing file lands: {answer:?}"
         );
-        assert_eq!(
-            text_of("models.ini.disabled"),
-            edit_p,
-            "and the save landed"
-        );
+        assert_eq!(text_of("models.ini"), edit_p, "and the save landed");
 
         let edit_q = edit_p.replace("ctx-size = 1024", "ctx-size = 2048");
-        let second = m.write_file(&desktop, "models.ini.disabled", &edit_q, false);
+        let second = m.write_file(&desktop, "models.ini", &edit_q, false);
         assert_eq!(
             second,
             Ok(()),
-            "a save of the switched-off file that edits only another model profile, beside one in effect with a missing file, lands: {second:?}"
+            "a save of the pool that edits only another model profile, beside one in effect with a missing file, lands: {second:?}"
         );
-        assert_eq!(
-            text_of("models.ini.disabled"),
-            edit_q,
-            "and the save landed"
-        );
+        assert_eq!(text_of("models.ini"), edit_q, "and the save landed");
     }
     // S9C-PIN-3 END
 }
@@ -10492,16 +10996,21 @@ pub(crate) fn manager_memory_check_e2e() {
     // ── A switch off, and an assignment that loads nothing ───────────────
     {
         let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
-        // Switching the over-memory model profile off: it goes to the disabled
-        // file, where llama-server never reads it.
+        // The switched-off file is a client's read, never a write: a model
+        // profile switched off sits in the pool with no instance profile
+        // naming it (`ARCHITECTURE.md`, "Instance profiles").
         pool_files("", "");
         assignments("[default]\nqwen = off\n");
         assert_eq!(
             m.write_file(&desktop, "models.ini.disabled", &on_text, false),
-            Ok(()),
-            "a model profile switched off is in no render and lands"
+            Err(ManagerError::BadFileName),
+            "the switched-off file is not served for a write"
         );
-        assert_eq!(text_of("models.ini.disabled"), on_text, "the switch landed");
+        assert_eq!(
+            text_of("models.ini.disabled"),
+            "",
+            "the refused write created nothing of its own"
+        );
 
         // In the pool, assigned to nobody.
         pool_files(&on_text, "");
@@ -10513,20 +11022,21 @@ pub(crate) fn manager_memory_check_e2e() {
         );
     }
 
-    // ── A switched-off model profile in effect: the disabled file is measured
+    // ── A model profile in effect on an instance is measured on its render
     //
-    // `assign::render` takes BOTH pool files, so a model profile sitting in
-    // `models.ini.disabled` is in effect on every instance whose section of
-    // `assignments.ini` says `on` for it. A save of that switched-off file
-    // moves that instance's render, so the memory check judges it exactly as
-    // it judges a save of `models.ini` (the model-file check of slice 9 does).
+    // `assign::render` takes the pool and the instance's section, so a model
+    // profile the instance has `on` sits in that instance's render. A save that
+    // puts an over-memory profile there moves that render, so the memory check
+    // judges it (the model-file check of slice 9 judges the same way). The
+    // switched-off file left the picture with the model data model, so this is
+    // the pool alone.
     {
         pool_files("", "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
         // The write puts the over-memory model profile in effect on `default`.
         let before = snapshot(&WATCH);
-        let answer = m.write_file(&desktop, "models.ini.disabled", &on_text, false);
+        let answer = m.write_file(&desktop, "models.ini", &on_text, false);
         assert!(
             over(
                 &answer,
@@ -10535,18 +11045,18 @@ pub(crate) fn manager_memory_check_e2e() {
                 need(trained, "f16", "f16"),
                 usable(small)
             ),
-            "a save of `models.ini.disabled` that puts an over-memory model profile in effect \
+            "a save of the pool that puts an over-memory model profile in effect \
              on an instance that has it `on` is refused: {answer:?}"
         );
         kept(&before);
 
-        // The same write, sized to fit the card, lands in the same file.
+        // The same write, sized to fit the card, lands.
         assert_eq!(
-            m.write_file(&desktop, "models.ini.disabled", &fits_text, false),
+            m.write_file(&desktop, "models.ini", &fits_text, false),
             Ok(()),
-            "a switched-off model profile that fits the node lands in the switched-off file"
+            "a model profile that fits the node lands"
         );
-        assert_eq!(text_of("models.ini.disabled"), fits_text, "the save landed");
+        assert_eq!(text_of("models.ini"), fits_text, "the save landed");
     }
 
     // ── The growth rule: a save that changes nothing of the need lands ────
@@ -16168,12 +16678,12 @@ pub(crate) fn manager_profiles_in_use_e2e() {
         Some(flagged(&["a", "b"]).as_str()),
         "a refused pool write leaves the file it had"
     );
-    // The other pool file is judged the same way, against the profile's max.
+    // The other pool file is a client's read, never a write: the model data
+    // model retired it (`ARCHITECTURE.md`, "Instance profiles").
     assert_eq!(
         m.write_file(&alice, "models.ini.disabled", &flagged(&["f"]), false),
-        Ok(()),
-        "the off pool of an instance running big (max 2) fits: the id-named \
-         file's max 1 is not read"
+        Err(ManagerError::BadFileName),
+        "the switched-off file is not served for a write"
     );
 
     // ── An instance whose profile cannot be read is skipped ───────────────
@@ -17768,32 +18278,32 @@ pub(crate) fn manager_write_file_if_e2e() {
 
     // ── A missing file: Changed, and nothing is created ──────────────────
     {
-        let (dir, sys) = root(&[("models.ini", &model_profiles)]);
+        let (_dir, sys) = root(&[("models.ini", &model_profiles)]);
         let log = FakeActionLog::new();
         let lines = log.lines.clone();
         let m = core(true, FakePasswords::new(), log);
-        let disabled = real_model_files(dir.path(), "[Old]\nmodel = /models/old.gguf\n");
+        let ini = "[Server]\nPort = 8080\nHostname = 127.0.0.1\n";
         assert_eq!(
-            m.write_file_if(&desktop, "models.ini.disabled", &disabled, &model_profiles),
+            m.write_file_if(&desktop, "server@default.ini", ini, &model_profiles),
             Err(ManagerError::Changed),
             "the caller expects a file that is not there"
         );
         assert_eq!(
-            m.write_file_if(&desktop, "models.ini.disabled", &disabled, &disabled),
+            m.write_file_if(&desktop, "server@default.ini", ini, ini),
             Err(ManagerError::Changed),
             "an expected equal to the contents does not make the file exist"
         );
         assert!(
-            !sys.join("models.ini.disabled").exists(),
+            !sys.join("server@default.ini").exists(),
             "a refused compare-and-swap creates no file"
         );
         assert_eq!(listing(&sys), ["models.ini"], "nothing created");
         assert_eq!(
             records(&lines),
             vec![
-                r#"action="write_file_if" target="models.ini.disabled" caller=":1.42" principal=- outcome="Changed""#
+                r#"action="write_file_if" target="server@default.ini" caller=":1.42" principal=- outcome="Changed""#
                     .to_string(),
-                r#"action="write_file_if" target="models.ini.disabled" caller=":1.42" principal=- outcome="Changed""#
+                r#"action="write_file_if" target="server@default.ini" caller=":1.42" principal=- outcome="Changed""#
                     .to_string(),
             ],
             "a missing file is recorded as Changed, not as a failure"
@@ -20777,11 +21287,10 @@ pub(crate) fn manager_model_profile_create_e2e() {
         Ok(()),
         "the pool stands first, so the renders exist"
     );
-    assert_eq!(
-        m.write_file(&desktop, "models.ini.disabled", &pool_off, false),
-        Ok(()),
-        "and its switched-off half"
-    );
+    // The switched-off half is a client's read, never a write, so the fixture
+    // seeds it as an install that has one leaves it; the creates below are the
+    // manager's own verbs, which keep the file.
+    std::fs::write(sys.join("models.ini.disabled"), &pool_off).expect("models.ini.disabled");
     let render_of = text_of("models@default.ini");
     assert!(
         !render_of.contains("[On-Profile]") && !render_of.contains("[Off-Profile]"),
@@ -22876,5 +23385,1095 @@ pub(crate) fn manager_gt5a_rocm_load_mode_e2e() {
         bytes_of("models.ini.disabled"),
         disabled_bytes,
         "GT5a 8: a render never writes the switched-off pool"
+    );
+}
+
+/// The 2.99.0 files of a two-instance install, seeded by the IP2 phases:
+/// instance `default` runs the server profile `default` (127.0.0.1:8581) and
+/// is given `alpha` and `beta`; instance `lab` runs `lab` (0.0.0.0:8681, one
+/// rocm card) and is given `alpha` alone, so `alpha` sits in two renders and
+/// the migration copies its keys into both entries; `gamma` is switched off
+/// and assigned to nobody, so its placement moves to the profile
+/// `unassigned`. The model files are real, under `root`. Answers the four
+/// pool and record texts, so a phase can compare the bytes.
+#[cfg(test)]
+fn ip2_seed(root: &std::path::Path, sys: &std::path::Path) -> (String, String, String, String) {
+    std::fs::create_dir_all(sys).expect("engine config dir");
+    let models = real_model_files(
+        root,
+        "[*]\ntemp = 0.7\n\n[alpha]\nmodel = /models/alpha.gguf\ndevice = cuda0\nctx-size = 4096\n\n[beta]\nmodel = /models/beta.gguf\nn-cpu-moe = 8\n",
+    );
+    let disabled = real_model_files(
+        root,
+        "[gamma]\nmodel = /models/gamma.gguf\ndevice = cuda1\n",
+    );
+    let assignments = "[default]\nalpha = on\nbeta = on\n\n[lab]\nalpha = on\n".to_string();
+    let instances =
+        "[default]\nServerProfile = default\nLabel = First\n\n[lab]\nServerProfile = lab\n"
+            .to_string();
+    std::fs::write(sys.join("models.ini"), &models).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), &disabled).expect("models.ini.disabled");
+    std::fs::write(sys.join("assignments.ini"), &assignments).expect("assignments.ini");
+    std::fs::write(sys.join(INSTANCES_FILE), &instances).expect(INSTANCES_FILE);
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8581\nModelsMax = 3\n",
+    )
+    .expect("server@default.ini");
+    std::fs::write(
+        sys.join("server@lab.ini"),
+        "[Server]\nHostname = 0.0.0.0\nPort = 8681\nDevices = rocm0\n",
+    )
+    .expect("server@lab.ini");
+    (models, disabled, assignments, instances)
+}
+
+/// E2E phase: IP2, the migration of the model data model at the manager's
+/// start (`ARCHITECTURE.md` "Migration and rollback", the IP2 slice):
+/// `pai_core::migrate_model` run over the engine's config dir before the
+/// renders. It backs up `instances.ini`, `assignments.ini`, `models.ini` and
+/// `models.ini.disabled` as `<name>.2.99.0`, once: a backup that is already
+/// there is never overwritten. It then writes the new texts, merges the
+/// switched-off pool into `models.ini` with every moved key out of it, moves
+/// the address into the record and the placement into `instance-profiles.ini`
+/// (with `unassigned` for the model no render holds), and only then deletes
+/// `assignments.ini` and `models.ini.disabled`. The start runs it every time:
+/// a second start of a migrated install changes no byte.
+#[cfg(test)]
+pub(crate) fn manager_ip2_migration_e2e() {
+    use fakes::{FakeAuthority, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    let (models, disabled, assignments, instances) = ip2_seed(dir.path(), &sys);
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(fakes::FakeGroup::new());
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let bytes = |name: &str| std::fs::read(sys.join(name)).ok();
+
+    // A backup that stands already is the first start's bytes: the sentinel must
+    // survive every start. It stands for a file the seed DOES have, one the
+    // migration moves, so the rule has teeth: the migration must keep the
+    // install's own bytes and not overwrite them with the live file's.
+    // (IP2 review D1 moved it off `instance-profiles.ini`, a name the first start
+    // has no live file for: standing there it hid the backup the second start
+    // added of the NEW shape.)
+    std::fs::write(sys.join("server@default.ini.2.99.0"), "SENTINEL").expect("sentinel");
+
+    m.start_up();
+
+    assert!(
+        m.render_failures().is_empty(),
+        "the renders of the migrated install land"
+    );
+
+    // ── The backups, once ─────────────────────────────────────────────────
+    assert_eq!(
+        bytes("instances.ini.2.99.0").as_deref(),
+        Some(instances.as_bytes()),
+        "instances.ini backed up as it stood"
+    );
+    assert_eq!(
+        bytes("assignments.ini.2.99.0").as_deref(),
+        Some(assignments.as_bytes()),
+        "assignments.ini backed up as it stood"
+    );
+    assert_eq!(
+        bytes("models.ini.2.99.0").as_deref(),
+        Some(models.as_bytes()),
+        "models.ini backed up as it stood"
+    );
+    assert_eq!(
+        bytes("models.ini.disabled.2.99.0").as_deref(),
+        Some(disabled.as_bytes()),
+        "models.ini.disabled backed up as it stood"
+    );
+    // The sentinel of the seed: a name the migration moves, whose backup stands
+    // already, so the bytes that stand are the install's own and not the live
+    // file's copied over them.
+    assert_eq!(
+        bytes("server@default.ini.2.99.0").as_deref(),
+        Some("SENTINEL".as_bytes()),
+        "an existing backup is never overwritten"
+    );
+    // `instance-profiles.ini` is the new shape's own file: the first start has no
+    // old-shape text of it to keep, so it writes no backup of it (IP2 review D1).
+    assert_eq!(
+        bytes("instance-profiles.ini.2.99.0"),
+        None,
+        "the file the migration creates is not backed up"
+    );
+
+    // ── instance-profiles.ini: the profiles, the entries, unassigned ─────
+    let profiles =
+        pai_core::instance_profiles::parse(&read("instance-profiles.ini").expect("profiles file"));
+    let profile = |id: &str| profiles.iter().find(|p| p.id == id).cloned();
+    let entry_models = |id: &str| -> Vec<String> {
+        profile(id)
+            .map(|p| p.entries.iter().map(|e| e.model.clone()).collect())
+            .unwrap_or_default()
+    };
+    let entry_keys = |id: &str, model: &str| -> Vec<(String, String)> {
+        profile(id)
+            .and_then(|p| p.entries.into_iter().find(|e| e.model == model))
+            .map(|e| e.keys)
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        profile("default").and_then(|p| p.server_profile),
+        Some("default".into()),
+        "default's profile names its server profile"
+    );
+    assert_eq!(
+        entry_models("default"),
+        ["alpha", "beta"],
+        "the entries are the models its render held, in render order"
+    );
+    assert_eq!(
+        entry_models("lab"),
+        ["alpha"],
+        "alpha is in two renders: the keys are copied, not moved"
+    );
+    assert!(
+        entry_keys("default", "alpha")
+            .iter()
+            .any(|(k, v)| k == "device" && v == "cuda0"),
+        "alpha's device moved into its entry: {:?}",
+        entry_keys("default", "alpha")
+    );
+    assert!(
+        entry_keys("default", "alpha")
+            .iter()
+            .any(|(k, v)| k == "ctx-size" && v == "4096"),
+        "the memory-sized keys move too: {:?}",
+        entry_keys("default", "alpha")
+    );
+    assert!(
+        entry_keys("lab", "alpha")
+            .iter()
+            .any(|(k, v)| k == "device" && v == "cuda0"),
+        "the copy under lab carries the same keys: {:?}",
+        entry_keys("lab", "alpha")
+    );
+    assert!(
+        entry_keys("default", "beta")
+            .iter()
+            .any(|(k, v)| k == "n-cpu-moe" && v == "8"),
+        "beta's n-cpu-moe moved into its entry: {:?}",
+        entry_keys("default", "beta")
+    );
+    assert_eq!(
+        profile("unassigned").and_then(|p| p.server_profile),
+        Some("default".into()),
+        "the migration-made profile is of the only server profile"
+    );
+    assert_eq!(
+        entry_models("unassigned"),
+        ["gamma"],
+        "the model no render holds goes to unassigned"
+    );
+    assert!(
+        entry_keys("unassigned", "gamma")
+            .iter()
+            .any(|(k, v)| k == "device" && v == "cuda1"),
+        "gamma's placement is kept in its unassigned entry: {:?}",
+        entry_keys("unassigned", "gamma")
+    );
+
+    // ── The record: the profile, the address, the gone keys ──────────────
+    let rec = |id: &str| -> std::collections::BTreeMap<String, String> {
+        pai_core::ini::parse_sections(&read(INSTANCES_FILE).expect(INSTANCES_FILE))
+            .into_iter()
+            .find(|s| s.id == id)
+            .map(|s| s.keys.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        rec("default").get("InstanceProfile").map(String::as_str),
+        Some("default"),
+        "the record names the instance profile"
+    );
+    assert_eq!(
+        rec("default").get("Hostname").map(String::as_str),
+        Some("127.0.0.1"),
+        "the address moved into the record"
+    );
+    assert_eq!(
+        rec("default").get("Port").map(String::as_str),
+        Some("8581"),
+        "the port moved into the record"
+    );
+    assert_eq!(
+        rec("default").get("Label").map(String::as_str),
+        Some("First"),
+        "the label is kept"
+    );
+    assert!(
+        !rec("default").contains_key("ServerProfile"),
+        "ServerProfile leaves the record: {:?}",
+        rec("default")
+    );
+    assert_eq!(
+        rec("lab").get("InstanceProfile").map(String::as_str),
+        Some("lab"),
+        "lab names its profile"
+    );
+    assert_eq!(
+        rec("lab").get("Port").map(String::as_str),
+        Some("8681"),
+        "lab's port is in the record"
+    );
+
+    // ── The merged pool, every moved key out of it ───────────────────────
+    let pool = pai_core::ini::parse_sections(&read("models.ini").expect("models.ini"));
+    let pk = |id: &str| -> std::collections::BTreeMap<String, String> {
+        pool.iter()
+            .find(|s| s.id == id)
+            .map(|s| s.keys.clone())
+            .unwrap_or_default()
+    };
+    assert!(pk("alpha").contains_key("model"), "the file keys stay");
+    for key in ["device", "ctx-size"] {
+        assert!(
+            !pk("alpha").contains_key(key),
+            "{key} left the model profile: {:?}",
+            pk("alpha")
+        );
+    }
+    assert!(
+        !pk("beta").contains_key("n-cpu-moe"),
+        "n-cpu-moe left the model profile: {:?}",
+        pk("beta")
+    );
+    assert!(
+        pk("gamma").contains_key("model") && !pk("gamma").contains_key("device"),
+        "the switched-off profile merged into the pool, placement out: {:?}",
+        pk("gamma")
+    );
+
+    // ── The server profiles give up the address ──────────────────────────
+    for name in ["server@default.ini", "server@lab.ini"] {
+        let sk = pai_core::ini::parse_sections(&read(name).expect(name))
+            .into_iter()
+            .find(|s| s.id == "Server")
+            .map(|s| s.keys.clone())
+            .unwrap_or_default();
+        assert!(
+            !sk.contains_key("Hostname") && !sk.contains_key("Port"),
+            "{name} gave up the address: {sk:?}"
+        );
+    }
+    assert!(
+        pai_core::ini::parse_sections(&read("server@default.ini").expect("profile"))
+            .into_iter()
+            .find(|s| s.id == "Server")
+            .map(|s| s.keys.contains_key("ModelsMax"))
+            == Some(true),
+        "the other keys stay"
+    );
+
+    // ── The gone files ────────────────────────────────────────────────────
+    assert_eq!(read("assignments.ini"), None, "assignments.ini is deleted");
+    assert_eq!(
+        read("models.ini.disabled"),
+        None,
+        "models.ini.disabled is deleted"
+    );
+
+    // ── A second start adds no file ──────────────────────────────────────
+    // The names only: the full rule of the second start, bytes and mtimes of
+    // every file included, is `manager_ip2_backups_once_e2e` (IP2 review D1),
+    // where a failure names the files that moved instead of printing them.
+    let names = || -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(&sys)
+            .expect("listing")
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    let before = names();
+    m.start_up();
+    assert_eq!(names(), before, "the second start adds no file");
+}
+
+/// E2E phase: IP2, the resolution through the record: after the migration at
+/// the start, every `models@<id>.ini` renders the same sections, with the
+/// same key and value set in each, in the same order (the relaxed check,
+/// `ARCHITECTURE.md`), and the launch of every instance answers the same
+/// argv, `--host` and `--port` included; the address the list answers is the
+/// record's, and GT5's rocm load rule is resolved through the instance
+/// profile.
+#[cfg(test)]
+pub(crate) fn manager_ip2_resolution_e2e() {
+    use fakes::{FakeAuthority, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    let (models, disabled, _assignments, _instances) = ip2_seed(dir.path(), &sys);
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(fakes::FakeGroup::new());
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+
+    // The section shape a render must keep: one entry per section, id with
+    // its key and value set, in the file's own order.
+    let shape = |text: &str| -> Vec<(String, std::collections::BTreeMap<String, String>)> {
+        pai_core::ini::parse_sections(text)
+            .into_iter()
+            .map(|s| (s.id, s.keys))
+            .collect()
+    };
+    let exe = std::path::PathBuf::from("/usr/bin/llama-server");
+    let args_of = |id: &str| -> Vec<std::ffi::OsString> {
+        crate::launch::instance_command(id, &exe)
+            .expect("the instance launches")
+            .get_args()
+            .map(std::ffi::OsString::from)
+            .collect()
+    };
+
+    // The install as it stands: the renders of the 2.99.0 manager, seeded on
+    // disk, and the launch they answer.
+    let ids = ["default", "lab"];
+    let mut pre_shapes = Vec::new();
+    let mut pre_args = Vec::new();
+    for id in ids {
+        let text = render_of(id, &models, &disabled);
+        std::fs::write(sys.join(format!("models@{id}.ini")), &text).expect("seed render");
+        pre_shapes.push(shape(&text));
+        pre_args.push(args_of(id));
+    }
+
+    m.start_up();
+
+    // Precondition: the start migrated the install; the pins below are the
+    // post-migration resolution.
+    assert_eq!(
+        pai_core::ini::parse_sections(&read(INSTANCES_FILE).expect(INSTANCES_FILE))
+            .into_iter()
+            .find(|s| s.id == "default")
+            .and_then(|s| s.keys.get("InstanceProfile").cloned()),
+        Some("default".into()),
+        "the start migrated the install: the record names the instance profile"
+    );
+    assert!(
+        m.render_failures().is_empty(),
+        "the post-migration renders land"
+    );
+
+    for (i, id) in ids.iter().enumerate() {
+        let text = read(&format!("models@{id}.ini")).expect("render");
+        assert_eq!(
+            shape(&text),
+            pre_shapes[i],
+            "the render of {id} keeps its sections, its key and value sets and the order"
+        );
+        assert_eq!(
+            args_of(id),
+            pre_args[i],
+            "the launch argv of {id} is unchanged (--host, --port, --models-preset)"
+        );
+    }
+
+    // The binding: the address the record carries is the one the instance
+    // list answers.
+    let ports: Vec<(String, u16)> = m.instances().into_iter().map(|r| (r.id, r.port)).collect();
+    assert_eq!(
+        ports,
+        vec![("default".into(), 8581u16), ("lab".into(), 8681)],
+        "the address resolves through the record"
+    );
+
+    // GT5: the rocm instance's load rule is resolved through the instance
+    // profile: the render still carries it, and the plain instance's not.
+    #[cfg(target_os = "linux")]
+    {
+        let lab = read("models@lab.ini").expect("lab render");
+        assert!(
+            lab.contains("load-mode = none"),
+            "GT5 resolves the rocm rule through the instance profile: {lab}"
+        );
+        assert!(
+            !read("models@default.ini")
+                .expect("default render")
+                .contains("load-mode"),
+            "the non-rocm instance keeps no rule"
+        );
+    }
+}
+
+/// E2E phase: IP2, the stray `assignments.ini` rule (the package pitfall,
+/// `ARCHITECTURE.md`): llama.cpp's package copies a missing `assignments.ini`
+/// back at its next upgrade, so a start of a migrated install deletes a
+/// stray one and touches nothing else.
+#[cfg(test)]
+pub(crate) fn manager_ip2_stray_assignments_e2e() {
+    use fakes::{FakeAuthority, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    let _seed = ip2_seed(dir.path(), &sys);
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(fakes::FakeGroup::new());
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+    let bytes = |name: &str| std::fs::read(sys.join(name)).ok();
+
+    m.start_up();
+    assert_eq!(
+        read("assignments.ini"),
+        None,
+        "the start migrated the install: assignments.ini is gone"
+    );
+
+    // The package's next upgrade copies it back.
+    std::fs::write(sys.join("assignments.ini"), "[default]\nalpha = on\n").expect("stray");
+    let record = bytes(INSTANCES_FILE);
+    let pool = bytes("models.ini");
+    let render = bytes("models@default.ini");
+
+    m.start_up();
+
+    assert_eq!(
+        read("assignments.ini"),
+        None,
+        "a stray assignments.ini is deleted at the start"
+    );
+    assert_eq!(
+        bytes(INSTANCES_FILE),
+        record,
+        "the stray delete leaves the record alone"
+    );
+    assert_eq!(bytes("models.ini"), pool, "and the pool");
+    assert_eq!(bytes("models@default.ini"), render, "and every render");
+}
+
+/// E2E phase: IP2, the write refusals of the gone files and of the moved
+/// keys: `WriteFile` of `assignments.ini` and of `models.ini.disabled` is
+/// refused (the names are no longer served files), and a `models.ini` write
+/// carrying a key that moved to the instance profile's entry is refused with
+/// `model-profile-placement-key`, naming the key. The keys that stayed land.
+#[cfg(test)]
+pub(crate) fn manager_ip2_write_refusals_e2e() {
+    use fakes::{FakeAuthority, FakeResolver, FakeService};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    let _seed = ip2_seed(dir.path(), &sys);
+    let m = Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(fakes::FakeGroup::new());
+    let alice = Caller(":1.42".into());
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).ok();
+
+    m.start_up();
+
+    // ── The gone files answer the name refusal ────────────────────────────
+    assert_eq!(
+        m.write_file(&alice, "assignments.ini", "[default]\nalpha = on\n", false),
+        Err(ManagerError::BadFileName),
+        "assignments.ini is not a served file any more"
+    );
+    assert_eq!(
+        m.write_file_if(&alice, "assignments.ini", "[default]\nalpha = on\n", ""),
+        Err(ManagerError::BadFileName),
+        "not even a compare-and-swap"
+    );
+    assert_eq!(
+        m.write_file(
+            &alice,
+            "models.ini.disabled",
+            "[epsilon]\nmodel = /models/epsilon.gguf\n",
+            false
+        ),
+        Err(ManagerError::BadFileName),
+        "the switch file is gone"
+    );
+    assert_eq!(
+        read("models.ini.disabled"),
+        None,
+        "the refused write created no file"
+    );
+
+    // ── A moved key in a models.ini write is refused, naming it ──────────
+    let moved = real_model_files(
+        dir.path(),
+        "[alpha]\nmodel = /models/alpha.gguf\ndevice = cuda0\n",
+    );
+    let answer = m.write_file(&alice, "models.ini", &moved, false);
+    assert!(
+        matches!(&answer, Err(ManagerError::Invalid(r))
+            if r.key == "model-profile-placement-key" && r.values == ["device"]),
+        "a moved key is refused, naming it: {answer:?}"
+    );
+
+    // The keys that stayed land.
+    let stayed = real_model_files(
+        dir.path(),
+        "[alpha]\nmodel = /models/alpha.gguf\ntemp = 0.7\n",
+    );
+    assert_eq!(
+        m.write_file(&alice, "models.ini", &stayed, false),
+        Ok(()),
+        "a models.ini of the stayed keys lands"
+    );
+}
+
+/// The engine's config folder as a sorted list of (name, text), the text read
+/// exactly as it stands.
+#[cfg(test)]
+fn ip2_tree_raw(sys: &std::path::Path) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = std::fs::read_dir(sys)
+        .expect("listing")
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                std::fs::read_to_string(e.path()).expect("text"),
+            )
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+/// [`ip2_tree_raw`] with the fixture's own folder spelled `<root>` in every text:
+/// the files name their model files by absolute path, so two trees seeded the
+/// same way differ by the folder they sit in and by nothing else. The IP2
+/// crash-phase fixtures compare whole trees with it.
+#[cfg(test)]
+fn ip2_tree(root: &std::path::Path, sys: &std::path::Path) -> Vec<(String, String)> {
+    let root = root.to_string_lossy().into_owned();
+    ip2_tree_raw(sys)
+        .into_iter()
+        .map(|(name, text)| (name, text.replace(root.as_str(), "<root>")))
+        .collect()
+}
+
+/// The names the two tree listings do not agree on: a file one of them has and
+/// the other has not, or has with other bytes. The names alone, so a failure
+/// reads as a list of files and not a wall of text.
+#[cfg(test)]
+fn ip2_tree_map(tree: &[(String, String)]) -> std::collections::BTreeMap<&str, &str> {
+    tree.iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect()
+}
+
+#[cfg(test)]
+fn ip2_tree_diff(a: &[(String, String)], b: &[(String, String)]) -> Vec<String> {
+    let (a, b) = (ip2_tree_map(a), ip2_tree_map(b));
+    let names: std::collections::BTreeSet<&str> = a.keys().chain(b.keys()).copied().collect();
+    names
+        .into_iter()
+        .filter(|n| a.get(n) != b.get(n))
+        .map(|n| n.to_string())
+        .collect()
+}
+
+/// A manager over the redirected tree, for the IP2 fix-round phases (the review
+/// of the slice, D1 to D5).
+#[cfg(test)]
+pub(crate) fn ip2_manager() -> Manager<fakes::FakeService, fakes::FakeAuthority, fakes::FakeResolver>
+{
+    use fakes::{FakeAuthority, FakeResolver, FakeService};
+    Manager::new(
+        FakeService::new(),
+        FakeAuthority::new(true),
+        FakeResolver::lan(),
+    )
+    .with_group(fakes::FakeGroup::new())
+}
+
+/// E2E phase: IP2 review D1: the backups are written once, and only of the OLD
+/// shape. Nothing is planted here: the first start of the install backs up the
+/// old-shape files it moves, and no other name, a second start adds no file and
+/// changes no byte and no mtime of any file (so the `instance-profiles.ini` the
+/// first start wrote in the NEW shape is never backed up as the install's own
+/// text), and a server profile created after the migration gets no `.2.99.0`.
+#[cfg(test)]
+pub(crate) fn manager_ip2_backups_once_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    let _seed = ip2_seed(dir.path(), &sys);
+    let m = ip2_manager();
+
+    // Every file of the engine's config folder: name, bytes, and the moment it
+    // was last written.
+    let snapshot = || -> Vec<(String, Vec<u8>, std::time::SystemTime)> {
+        let mut v: Vec<(String, Vec<u8>, std::time::SystemTime)> = std::fs::read_dir(&sys)
+            .expect("listing")
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .map(|e| {
+                (
+                    e.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(e.path()).expect("read"),
+                    std::fs::metadata(e.path())
+                        .expect("metadata")
+                        .modified()
+                        .expect("mtime"),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let backups = |tree: &[(String, Vec<u8>, std::time::SystemTime)]| -> Vec<String> {
+        tree.iter()
+            .map(|(name, _, _)| name.clone())
+            .filter(|name| name.ends_with(BACKUP_SUFFIX))
+            .collect()
+    };
+
+    m.start_up();
+    let first = snapshot();
+    assert_eq!(
+        backups(&first),
+        vec![
+            "assignments.ini.2.99.0",
+            "instances.ini.2.99.0",
+            "models.ini.2.99.0",
+            "models.ini.disabled.2.99.0",
+            "server@default.ini.2.99.0",
+            "server@lab.ini.2.99.0",
+        ],
+        "IP2 review D1: the first start backs up the old-shape files it moves, and no \
+         other name: the file it creates has no old text to keep"
+    );
+
+    // A second start of the migrated install leaves the tree where it stands. The
+    // sleep puts a clock tick between the two starts, so a file rewritten with the
+    // same bytes shows on its mtime. The diff names what moved, so a failure reads
+    // as a list of files and not a wall of bytes.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    m.start_up();
+    let moved = |after: &[(String, Vec<u8>, std::time::SystemTime)]| -> Vec<String> {
+        let before: std::collections::BTreeMap<&str, (&[u8], &std::time::SystemTime)> = first
+            .iter()
+            .map(|(name, bytes, mtime)| (name.as_str(), (bytes.as_slice(), mtime)))
+            .collect();
+        let names: std::collections::BTreeSet<&str> = after
+            .iter()
+            .map(|(name, _, _)| name.as_str())
+            .chain(before.keys().copied())
+            .collect();
+        names
+            .into_iter()
+            .filter(|name| match before.get(name) {
+                // Stands in the new tree only: the start added the file.
+                None => true,
+                Some((bytes, mtime)) => after
+                    .iter()
+                    .any(|(n, b, m)| n == name && (b != *bytes || m != *mtime)),
+            })
+            .map(|n| n.to_string())
+            .collect()
+    };
+    assert_eq!(
+        moved(&snapshot()),
+        Vec::<String>::new(),
+        "IP2 review D1: a second start adds no file and changes no byte and no mtime \
+         (a new-shape file backed up as the install's own text, or a file rewritten \
+         every start)"
+    );
+
+    // A server profile written after the migration is no old-shape file: the next
+    // start backs nothing up of it.
+    std::fs::write(sys.join("server@gamma.ini"), "[Server]\nDevices = cuda0\n").expect("gamma");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    m.start_up();
+    assert_eq!(
+        backups(&snapshot()),
+        backups(&first),
+        "IP2 review D1: a server profile created after the migration gets no `.2.99.0`"
+    );
+}
+
+/// E2E phase: IP2 review D2: `server_profiles` answers each profile's port as
+/// the record of the instance using it holds it. The migration moves the address
+/// into `instances.ini` and takes it out of every `server@<id>.ini`, so a list
+/// that reads the profile file alone answers `server_cfg::DEFAULT_PORT` for a
+/// migrated install. The rule the server-profile list phase pins stays: a profile
+/// no instance uses answers its file's own `Port`, and a file with no `Port` is
+/// `DEFAULT_PORT`.
+#[cfg(test)]
+pub(crate) fn manager_ip2_server_profile_port_from_record_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    let _seed = ip2_seed(dir.path(), &sys);
+    let m = ip2_manager();
+    // A profile no instance uses, with no `Port` of its own: the row keeps the
+    // file's answer before and after the migration.
+    std::fs::write(sys.join("server@gamma.ini"), "[Server]\nDevices = cuda0\n").expect("gamma");
+    let rows = || -> Vec<(String, u16, Option<String>)> {
+        m.server_profiles()
+            .into_iter()
+            .map(|r| (r.id, r.port, r.instance))
+            .collect()
+    };
+    let want = || -> Vec<(String, u16, Option<String>)> {
+        vec![
+            ("default".to_string(), 8581, Some("default".to_string())),
+            (
+                "gamma".to_string(),
+                u16::try_from(crate::server_cfg::DEFAULT_PORT).expect("DEFAULT_PORT"),
+                None,
+            ),
+            ("lab".to_string(), 8681, Some("lab".to_string())),
+        ]
+    };
+
+    // The install as it stands: the file answers its own `Port`, and a file with
+    // no `Port` and no section naming it is `DEFAULT_PORT`.
+    assert_eq!(
+        rows(),
+        want(),
+        "the unmigrated install: each profile file answers its own `Port`"
+    );
+
+    m.start_up();
+    // Precondition: the migration ran, and the profile file gave the address up.
+    assert!(
+        !pai_core::ini::section_keys(
+            &std::fs::read_to_string(sys.join("server@default.ini")).expect("profile"),
+            "Server"
+        )
+        .into_iter()
+        .any(|(k, _)| k == "Port"),
+        "the migration took `Port` out of the profile file"
+    );
+    assert_eq!(
+        pai_core::ini::section_keys(
+            &std::fs::read_to_string(sys.join(INSTANCES_FILE)).expect(INSTANCES_FILE),
+            "default"
+        )
+        .into_iter()
+        .find(|(k, _)| k == "Port")
+        .map(|(_, v)| v),
+        Some("8581".to_string()),
+        "the record of the instance using the profile holds the port"
+    );
+    // The list answers the record's port, not the default. A profile no instance
+    // uses keeps the file's own answer, no `Port` being `DEFAULT_PORT` (the rule
+    // the server-profile list phase pins).
+    assert_eq!(
+        rows(),
+        want(),
+        "IP2 review D2: after the migration the row carries the port as the record of \
+         the instance using the profile holds it, and an unused profile keeps the file's \
+         own answer"
+    );
+}
+
+/// E2E phase: IP2 review D3: a crash mid-backup leaves no truncated
+/// `<name>.2.99.0`. A backup is a file the NEXT start keeps as the install's own
+/// text, so a backup that appears at its final name before it is whole is a
+/// truncated install the recovery reads. The manager has no write seam to fail
+/// mid-copy, so this pins the observable half of the rule: a start whose backup
+/// write fails leaves NO entry at any backup name, and no temp name of its own,
+/// and says so through the renders it cannot write. The fixture closes the
+/// engine's folder to writes (a unix mode, the mode the manager ships these files
+/// with), so no write of the start lands, whichever name it aims at.
+#[cfg(test)]
+pub(crate) fn manager_ip2_backup_atomic_e2e() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::engine_config_dir();
+        let _seed = ip2_seed(dir.path(), &sys);
+        let m = ip2_manager();
+
+        std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+        let failures = m.start_up();
+        std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o755)).expect("chmod back");
+
+        assert!(
+            failures.iter().any(|(id, e)| id == "default"
+                && matches!(e, ManagerError::Io(std::io::ErrorKind::PermissionDenied))),
+            "IP2 review D3: a start that cannot write says so: {failures:?}"
+        );
+        let names: Vec<String> = std::fs::read_dir(&sys)
+            .expect("listing")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names.iter().any(|n| n.ends_with(BACKUP_SUFFIX)),
+            "IP2 review D3: a backup that failed leaves no entry at its final name, so \
+             no truncated one is there for the next start to keep: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.ends_with(".tmp")),
+            "IP2 review D3: and no temp file of a write that did not finish: {names:?}"
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        // The fixture is a unix mode, the mode the manager ships these files
+        // with; Windows has no per-file mode to close the folder with.
+    }
+}
+
+/// E2E phase: IP2 review D4a: a start that finds the tree stopped mid-migration
+/// finishes it. Two crash points: just past the write of `instance-profiles.ini`,
+/// and just past the write of `instances.ini`. The fixture runs a clean migration
+/// in one tree, and plants in a second one what the crash left: the backups (they
+/// go before every write) and the new text of every file written so far, over the
+/// seed's old text of the rest. The start there must end with a tree equal, byte
+/// for byte, to the clean one.
+#[cfg(test)]
+pub(crate) fn manager_ip2_crash_mid_migration_e2e() {
+    // The clean migration, in its own tree: the tree every crash must end in. The
+    // crash leaves exactly these texts, so the fixture plants them (the folder is
+    // spelled `<root>`, the one placeholder that survives the move to the other
+    // tree: a file the start rewrites lands with the new tree's own paths).
+    let clean = {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::engine_config_dir();
+        let _seed = ip2_seed(dir.path(), &sys);
+        ip2_manager().start_up();
+        ip2_tree(dir.path(), &sys)
+    };
+    assert!(
+        clean.iter().any(|(name, _)| name == INSTANCES_FILE),
+        "the clean migration wrote the record"
+    );
+
+    for crash_after in [INSTANCE_PROFILES_FILE, INSTANCES_FILE] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::engine_config_dir();
+        let _seed = ip2_seed(dir.path(), &sys);
+        for (name, text) in &clean {
+            // What the crash left: every backup the clean start wrote (they go
+            // first), the pool of instance profiles (its write is the first), and
+            // the record when the crash is the later one.
+            let written = name.ends_with(BACKUP_SUFFIX)
+                || *name == INSTANCE_PROFILES_FILE
+                || (*name == INSTANCES_FILE && crash_after == INSTANCES_FILE);
+            if written {
+                std::fs::write(sys.join(name), text).expect("plant");
+            }
+        }
+        // Precondition: the planted tree really is a half-migrated one: it is not
+        // the clean tree the start must end in.
+        assert_ne!(
+            ip2_tree(dir.path(), &sys),
+            clean,
+            "IP2 review D4a: the fixture planted a real mid-migration state"
+        );
+        ip2_manager().start_up();
+        assert_eq!(
+            ip2_tree_diff(&ip2_tree(dir.path(), &sys), &clean),
+            Vec::<String>::new(),
+            "IP2 review D4a: a start after a crash just past `{crash_after}` ends equal \
+             to a clean migration (these files differ)"
+        );
+    }
+}
+
+/// E2E phase: IP2 review D4b: a failed migration leaves the manager serving the
+/// tree as it stands, with the retired files in place. Two failures: a file that
+/// cannot be read (a folder where `models.ini` should be), and a backup that
+/// cannot be written (the engine's folder closed to writes). Both leave
+/// `assignments.ini` and `models.ini.disabled` where they are, the record as the
+/// install wrote it, no backup at all, and the instance list answering the
+/// address the old files hold.
+#[cfg(test)]
+pub(crate) fn manager_ip2_failed_migration_serves_e2e() {
+    // ── A file that cannot be read ────────────────────────────────────────
+    {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::engine_config_dir();
+        let (_models, disabled, assignments, instances) = ip2_seed(dir.path(), &sys);
+        std::fs::remove_file(sys.join("models.ini")).expect("remove");
+        std::fs::create_dir(sys.join("models.ini")).expect("folder in place of the file");
+        let m = ip2_manager();
+        m.start_up();
+        assert_eq!(
+            std::fs::read_to_string(sys.join(INSTANCES_FILE))
+                .ok()
+                .as_deref(),
+            Some(instances.as_str()),
+            "IP2 review D4b: the unreadable file stopped the migration: the record is \
+             the install's own"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join(ASSIGNMENTS_FILE))
+                .ok()
+                .as_deref(),
+            Some(assignments.as_str()),
+            "IP2 review D4b: the retired file is not deleted"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sys.join(MODELS_DISABLED_FILE))
+                .ok()
+                .as_deref(),
+            Some(disabled.as_str()),
+            "IP2 review D4b: nor the switched-off pool"
+        );
+        let names: Vec<String> = std::fs::read_dir(&sys)
+            .expect("listing")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names.iter().any(|n| n.ends_with(BACKUP_SUFFIX)),
+            "IP2 review D4b: a migration that stopped at a read wrote no backup: {names:?}"
+        );
+        let ports: Vec<(String, u16)> = m.instances().into_iter().map(|r| (r.id, r.port)).collect();
+        assert_eq!(
+            ports,
+            vec![("default".to_string(), 8581u16), ("lab".to_string(), 8681)],
+            "IP2 review D4b: the manager serves the old files: the address is the \
+             profile's own"
+        );
+    }
+
+    // ── A backup that cannot be written ──────────────────────────────────
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::paths::redirect_for_tests(dir.path());
+        let sys = crate::paths::engine_config_dir();
+        let (models, disabled, _assignments, instances) = ip2_seed(dir.path(), &sys);
+        let m = ip2_manager();
+        // The renders of the install as it stands, written before the folder
+        // closes: they are the unmigrated ones the manager keeps serving.
+        let renders: Vec<(String, String)> = ["default", "lab"]
+            .into_iter()
+            .map(|id| {
+                let text = render_of(id, &models, &disabled);
+                std::fs::write(sys.join(format!("models@{id}.ini")), &text).expect("render");
+                (id.to_string(), text)
+            })
+            .collect();
+        std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+        let failures = m.start_up();
+        std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o755)).expect("chmod back");
+
+        assert!(
+            failures.iter().any(|(id, _)| id == "default"),
+            "IP2 review D4b: the start says what did not land: {failures:?}"
+        );
+        for (id, text) in renders {
+            assert_eq!(
+                std::fs::read_to_string(sys.join(format!("models@{id}.ini"))).ok(),
+                Some(text),
+                "IP2 review D4b: the instance keeps the render of the install as it stood"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(sys.join(INSTANCES_FILE))
+                .ok()
+                .as_deref(),
+            Some(instances.as_str()),
+            "IP2 review D4b: the failed backup stopped the writes: the record is the \
+             install's own"
+        );
+        assert!(
+            std::fs::read_to_string(sys.join(ASSIGNMENTS_FILE)).is_ok(),
+            "IP2 review D4b: the retired file is not deleted by a failed migration"
+        );
+        assert!(
+            std::fs::read_to_string(sys.join(MODELS_DISABLED_FILE)).is_ok(),
+            "IP2 review D4b: nor the switched-off pool"
+        );
+        let ports: Vec<(String, u16)> = m.instances().into_iter().map(|r| (r.id, r.port)).collect();
+        assert_eq!(
+            ports,
+            vec![("default".to_string(), 8581u16), ("lab".to_string(), 8681)],
+            "IP2 review D4b: the manager serves the unmigrated install"
+        );
+    }
+}
+
+/// E2E phase: IP2 review D5: the render of an instance given no model profile.
+/// `render_failures`' doc says such an instance is "left alone"; the render the
+/// manager writes is the empty one (the pool's global section, and no model
+/// profile), as it was before the migration for an instance with no assignment.
+/// The empty render is the old behaviour, so the code is right and the doc is the
+/// mismatch: this pins the render lands, and carries no model profile.
+#[cfg(test)]
+pub(crate) fn manager_ip2_empty_render_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    let _seed = ip2_seed(dir.path(), &sys);
+    let m = ip2_manager();
+    m.start_up();
+    assert!(
+        m.render_failures().is_empty(),
+        "the migrated install's renders land"
+    );
+
+    // An instance given nothing: the record names an instance profile, and that
+    // profile has no entry section.
+    std::fs::write(
+        sys.join(INSTANCES_FILE),
+        format!(
+            "{}\n[bare]\nInstanceProfile = bare\n",
+            std::fs::read_to_string(sys.join(INSTANCES_FILE)).expect(INSTANCES_FILE)
+        ),
+    )
+    .expect("record");
+    std::fs::write(
+        sys.join(INSTANCE_PROFILES_FILE),
+        format!(
+            "{}\n[bare]\nServerProfile = default\n",
+            std::fs::read_to_string(sys.join(INSTANCE_PROFILES_FILE)).expect("profiles")
+        ),
+    )
+    .expect("profiles");
+
+    assert!(
+        m.render_failures().is_empty(),
+        "IP2 review D5: the render of an instance given nothing lands"
+    );
+    let text = std::fs::read_to_string(sys.join("models@bare.ini"));
+    assert!(
+        text.is_ok(),
+        "IP2 review D5: an instance given no model profile is NOT left alone: its \
+         render is written (the doc says \"left alone\", the code writes the empty render)"
+    );
+    let ids: Vec<String> = pai_core::ini::parse_sections(&text.expect("render"))
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    assert!(
+        ids.iter().all(|id| id == "*"),
+        "IP2 review D5: the empty render is the pool's global section and no model \
+         profile section: {ids:?}"
     );
 }
