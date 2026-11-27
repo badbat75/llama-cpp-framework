@@ -370,7 +370,7 @@ Their tests move with their cards. Each brief gets a line at its top pointing he
 ## 11. Out of scope
 
 - Instance profiles across nodes, and the director (`ARCHITECTURE.md` step 14).
-- Renaming an instance profile, and copying one.
+- Renaming an instance profile (copying one is slice CP, section 12).
 - Reordering the model entries: they keep the add order.
 - A "restart needed" mark that outlives the page (invariant 4's later step).
 
@@ -389,3 +389,85 @@ Their tests move with their cards. Each brief gets a line at its top pointing he
 6. **The add route is a proposal.** The page needs `POST .../models` for the add and `PUT
    .../models/{m}` for the entry's values. IP4's list names `PUT` for both, so the coordinator
    settles it with the architect.
+
+## 12. CP: every profile kind can be created as a copy (user, 2026-11-27)
+
+The user: every profile kind can be created as a copy. Model profiles already can (brief 22, the
+"A copy of another model profile" choice, 22 C). CP gives the same choice to the server profile and
+instance profile create forms. It lands with or after IP6, since the server profile form loses its
+Port field in IP6 (26.16).
+
+**CP.0 What the bff serves.** The create routes take `from`, as the model profile create does
+(`POST /api/profiles/model` `{"id", "from"}`):
+- `POST /api/profiles/server` `{"engine", "id"}` creates from the defaults. With `{"engine", "id",
+  "from"}` it copies `server@<from>.ini` byte for byte, comments included, under the new id.
+- `POST /api/profiles/instance` `{"id", "server"}` creates as today (26.4). With `{"id", "from"}` it
+  copies the `[<from>]` section's `ServerProfile` and every `[<from>/<m>]` entry, with its placement
+  and memory keys, in the same order. `server` and `from` together are refused 422
+  `instance-profile-bad-source` (field `values`); the form never sends both.
+- **Refusals for `from`.** 422 `no-server-profile-named` or `no-instance-profile-named` (field
+  `from`) when the source is gone, and the create's other refusals as today. No instance uses the
+  copy, so it renders nowhere.
+
+**CP.1 The choice.**
+- **Where.** Each form gains a `fieldset` `model-profile-start-from` ("Start from", the existing key)
+  right after Name. It holds two native radios with the Radio group look (8 px gap, `fe/DESIGN.md`):
+  - server profiles: `server-source-defaults` ("llama-server's defaults") and `server-source-copy`
+    ("A copy of another server profile");
+  - instance profiles: `instance-profile-source-new` ("A server profile") and
+    `instance-profile-source-copy` ("A copy of another instance profile").
+- **Checked on open.** The first radio.
+- **Switching.** It keeps each choice's value and moves no focus
+  ([3.2.2](https://www.w3.org/TR/WCAG22/#on-input)), and only the checked choice's control shows
+  (22 P.1).
+- **The copy radio.** It shows only when the pool holds at least one profile of that kind, as
+  22 C.1's copy radio does.
+
+**CP.2 The copy select.**
+- **Server profiles.** The field is `server-profile-copy-from` ("Server profile to copy"), its hint
+  `server-profile-copy-hint`: "Every setting of that profile is copied, comments included. No
+  instance profile uses the copy until you choose it in one." Its first option is
+  `server-profile-copy-choose` ("Choose a server profile"), and the rest are the pool's ids.
+- **Instance profiles.** The field is `instance-profile-copy-from` ("Instance profile to copy"), its
+  hint `instance-profile-copy-hint`: "Its server profile and every model with its placement and
+  memory settings are copied. No instance runs the copy until you choose it on an instance's page."
+  Its first option is `instance-profile-copy-choose` ("Choose an instance profile").
+- For the instance profile form, the "A server profile" choice holds 26.4's Server profile select,
+  unchanged.
+
+**CP.3 The checks and the request.**
+- **The checks.** The page checks run in 26.4's order, the Name checks first. Copy with the empty
+  option selected gives `field-error-choose` under the copy select, with `aria-invalid`, and the
+  focus moves there once the error has rendered (22 C.4).
+- **Bodies:**
+  - server, from the defaults: `{"engine": "llama.cpp", "id"}`;
+  - server, as a copy: `{"engine": "llama.cpp", "id", "from"}`;
+  - instance, from a server profile: `{"id", "server"}`;
+  - instance, as a copy: `{"id", "from"}`.
+- **Refusals.** A refusal with `field` `from` goes under the copy select, through `writeFailure`
+  with the existing `api-no-server-profile-named` and `api-no-instance-profile-named`.
+  `instance-profile-bad-source` goes in the alert as `api-other`.
+- **Success.** A 201 goes to the new profile's page with its `h1` focused, as today.
+
+**CP.4 Strings.**
+- New: `server-source-defaults`, `server-source-copy`, `server-profile-copy-from`,
+  `server-profile-copy-hint`, `server-profile-copy-choose`, `instance-profile-source-new`,
+  `instance-profile-source-copy`, `instance-profile-copy-from`, `instance-profile-copy-hint`,
+  `instance-profile-copy-choose`.
+- Reused: `model-profile-start-from`, `field-error-choose`, the create texts.
+
+**CP acceptance list.**
+1. Each form has the Start from fieldset after Name, with the two radios in CP.1's order, the first
+   checked on open. With an empty pool of that kind there is no copy radio.
+2. Switching keeps both values and moves no focus. Only the checked choice's control is shown.
+3. Copy with nothing chosen gives `field-error-choose` under the select, focused after it renders,
+   and sends nothing.
+4. Each of the four bodies of CP.3 is sent exactly as written.
+5. A 422 with `field` `from` lands under the copy select. A 201 lands on the new page with its `h1`
+   focused.
+6. At 320 px and at 200 % text the radios wrap with no sideways scroll, each label at least 24 px
+   high ([1.4.10](https://www.w3.org/TR/WCAG22/#reflow),
+   [2.5.8](https://www.w3.org/TR/WCAG22/#target-size-minimum)).
+7. The strings of CP.4 exist with these texts.
+8. `fe/ux/check.js` gains `server-profiles-new-copy` and `instance-profiles-new-copy` (the form open,
+   copy checked).

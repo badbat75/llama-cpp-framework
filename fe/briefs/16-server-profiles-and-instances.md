@@ -1757,3 +1757,5 @@ Tester's acceptance list:
 - 17e's Model profiles section goes (26.13).
 - 17a's create form takes an instance profile (26.15).
 - The server profile loses its address, and the instance page gains it (26.14, 26.16).
+- 17b's create form gains "Start from: llama-server's defaults / a copy of another server profile":
+  slice CP, `fe/briefs/26-instance-profiles.md` section 12. After IP6 its Port field goes (26.16).
