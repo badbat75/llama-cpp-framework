@@ -4868,6 +4868,22 @@ chose:
   restart" on `default` until the user restarts it.
 - **IP4**: the instance rows gain `converged`, `reason`, `pendingRestart`; every re-rendering save
   answers `running` and `notConverged`.
+- **Recorded at the IP3c review (2026-11-27):**
+  - Fit is judged against the instance's pair **on disk** (the last good one), not against the
+    sources as the write found them. Otherwise the next unrelated save would write a non-fitting
+    pair and drop the instance from `notConverged`.
+  - A save asks the state only of the instances whose pair drifts from their `applied` record, to
+    build `running`.
+  - An instance started before `applied` existed reads `pendingRestart` until its next start, so
+    after the IP3c deploy `default` and `inkling` show it once.
+  - **Model files present stay an intrinsic check on a node.** A missing file is a fact of the whole
+    node, so every instance would refuse alike. It becomes a fit check per node with the director
+    (step 14).
+  - **`ModelsMax` against the render's `load-on-startup` count is a fit check of the instance**,
+    because each instance has its own server profile.
+  - The states reach the bff on every transport. The bus's `Instances` row keeps its signature, and
+    a sibling method `InstanceStates(As)` answers `{id, converged, reason, pendingRestart}` per
+    instance, as the pipe's `ListInstances` does.
 - **IP6** (briefs 26, 16 and the Overview): the two marks and the status lists.
 
 ## Removing pai-config (user, 2026-11-26/27): accepted (user, 2026-11-27)
@@ -4995,6 +5011,53 @@ A placeholder for later, nothing scheduled:
   `sysctl`.
 - **Unverified until a macOS CI run**: every launchctl flag, PAM and Metal on the runner. A real Mac
   is needed for a model on Metal.
+
+## Isolated data-root tests (TS2, decided 2026-11-28, test-only)
+
+**The problem.** The data root is the process-wide environment variable `PRIVATE_AI_DATA_ROOT`, set
+by `paths::redirect_for_tests` (`crates/core/src/paths.rs` 800). Every path function reads it on
+each call. So every phase that redirects runs inside one `data_root_e2e` test per crate (pai-core,
+pai-app, pai-cli, and pai-manager with 82 phases): the phases run in sequence, stop at the first
+failure, and take minutes.
+
+**The options.**
+- **(a) Thread a `Paths` value** through `Manager`, the D-Bus and pipe servers and the core paths
+  API. Large production churn across `service.rs`, `dbus.rs`, `pipe.rs` and `paths.rs`, the files
+  IP4, IP3c's fixes and GR are changing now. A missed call site silently reads the real tree.
+  Rejected for now.
+- (a') A thread-local root. The manager's work also runs on threads it does not own (zbus's
+  executor, the `blocking` pool, spawned workers), where a thread-local is unset and the real root
+  would be read. Rejected as unsafe.
+- (b) cargo-nextest, one process per test. It is not installed, and `cargo test --workspace` is the
+  user's command (AGENTS.md "Commands"). Rejected as a requirement; it can still be used, since (c)
+  works under it.
+- **(c) Chosen: each phase is its own `#[test]` that re-runs itself in a child process.** The parent
+  test spawns `std::env::current_exe()` with `--exact <its test path> --nocapture` and a marker
+  variable. The child, seeing the marker, sets the redirect and runs the body. libtest runs the
+  parents in parallel, so the phases run in parallel, each in its own process with its own global
+  root, under plain `cargo test`. pai-core already does this for `real_paths_follow_the_new_names`
+  (`crates/core/src/tests/mod.rs` 44). No production code changes.
+
+**The helper** lives in `pai-core`'s `test-support` feature, one function shaped like
+`isolated(test_path, body)`:
+- In the child (marker equal to `test_path`): make a tempdir, call `redirect_for_tests`, run `body`.
+- In the parent: spawn the child, forward its output, and fail unless it exited 0 **and** its
+  output reports exactly one test passed. A mistyped path makes libtest run 0 tests and exit 0,
+  which must fail, not pass.
+
+**Slices (the tester's):**
+1. **TS2a** (`pai-core` test-support): the helper and its own tests. A passing body passes; a
+   panicking body fails the parent with the child's message; a wrong test path fails ("0 tests");
+   each child gets a different root.
+2. **TS2b** (`pai-manager`): `data_root_e2e`'s 82 phases become 82 `#[test]`s through the helper,
+   unchanged bodies. Done when: the test count goes up by 81 with no assertion changed; each phase
+   runs alone (`cargo test -p pai-manager <phase>`); the wall time of the crate's tests is measured
+   before and after.
+3. **TS2c**: the same for pai-core's, pai-app's and pai-cli's `data_root_e2e`.
+
+A phase that still fails intermittently alone (the `Err(Unavailable)` seen near `dbus_client.rs`
+774) is a timing defect of that phase, to be fixed in its own right. Isolation removes only the
+interference between phases.
 
 ## Part 2: the director (`PLAN.md` step 14, R13)
 
