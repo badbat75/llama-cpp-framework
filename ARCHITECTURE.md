@@ -4525,6 +4525,103 @@ stays a render rule for an entry that leaves it unset.
 10. **IP9** (docs agent): `AGENTS.md`, `crates/bff/README.md`, the packaging guide, the restore
     command, and the `optimize-preset` skill (it tunes an entry now).
 
+### Convergence: idempotent apply, drift and the last good render (user, 2026-11-27): accepted (user, 2026-11-27)
+
+**The requirement** (user, 2026-11-27). Applying a profile to an instance is idempotent. When a
+model profile or a server profile that an instance profile uses changes, every node that uses that
+instance profile checks the conditions and applies the deltas to reach the final state. The user
+chose:
+1. Re-render at once on every node; the same profiles in always give the same files out. A running
+   instance shows **pending restart** (drift), and the page, or later the director, offers Restart.
+   Nothing restarts on its own.
+2. A node where the changed profile no longer fits (GPUs or memory fail the checks) refuses the new
+   render, keeps running the **last applied** one, and reports the instance **not converged** with
+   the check's reason. The save still lands where it fits.
+
+**Checked on this node (2026-11-27, the tree after IP1, IP2 and IP3a).**
+- A model profile save re-renders every instance whose instance profile has an entry for it:
+  **met**. Every write goes through `check_and_write` and then `render_all_locked` (`service.rs`
+  3108), which renders every instance from its instance profile. A render whose text is unchanged is
+  left as it stands.
+- A server profile save re-renders every instance whose instance profile names it: **met for what
+  is rendered** (GT5's `load-mode` follows `Devices` through the same `render_all_locked`). The
+  server profile itself is not rendered: the launch reads `server@<s>.ini` at start.
+- Both answer the affected running instances: **not met**.
+  - The model profile save's `running`/`restart` comes from `pai_core::assign::rows` over
+    `assignments.ini` (`crates/bff/src/model_profiles.rs` 260, 612), a file IP2's migration removes,
+    so after the migration it names no instance.
+  - The server profile save answers one instance, the profile's single holder
+    (`crates/bff/src/server_profiles.rs` 20-27), the exclusivity rule P1 removed.
+  - This is a regression of the restart offer from IP2 on, and it must be fixed in 2.99.1.
+- Today a fit failure on any instance refuses the whole save (`check_contents` judges every render),
+  which is the opposite of choice 2.
+- llama-server reads `models@<id>.ini` only at its start or on an explicit `GET /models?reload=1`
+  (`tools/server/README.md`, "GET /models", llama.cpp v1.0.0), so a re-render changes nothing in a
+  running instance until it restarts.
+
+**The design.**
+- **Two checks, two outcomes.**
+  - *Intrinsic* checks judge the profile alone: the section rule, ids, key types and ranges, the
+    tensor-rule syntax, the placement-key refusal. They refuse the save, as today.
+  - *Fit* checks judge one instance on this node: the model files present, the memory estimate,
+    `ModelsMax` and `load-on-startup`, the entry's devices against the server profile's `Devices`,
+    the address. They no longer refuse the save. They decide, per instance, whether its new render is
+    written.
+- **The rendered pair is the last good state.** Each instance gets two rendered files beside
+  `models@<id>.ini`: the existing one, and **`launch@<id>.ini`**. The latter is the server profile's
+  text with the instance's address, which the launch reads in place of resolving `server@<s>.ini`
+  (`launch::instance_command`, falling back to the resolution before the first render). After any
+  write, `render_all_locked` builds both texts for every instance:
+  - Fit passes: both are written (unchanged text still left alone).
+  - Fit fails: neither is written. The pair on disk stays the last good one, and the instance is
+    **not converged** with the first failing check's keyed refusal.
+  - Same inputs, same pair: the render is a pure function of the profiles.
+- **Not converged is derived, not stored.** It lives in the manager's memory, recomputed at its
+  start (which renders every instance) and at every write. A file would only add a second truth.
+  `ListInstances` gains `converged` (bool) and `reason` (`{key, args}` or null).
+- **Drift (pending restart) is derived too.** `pai-manager run-instance` writes the SHA-256 of the
+  pair it launches with into the instance's state folder (`.../state/<id>/applied`), which the
+  instance's account can write and the manager can read (Linux before the exec; Windows the parent).
+  `ListInstances` gains **`pendingRestart`**: the instance is running and the hash of the pair on
+  disk differs from `applied`. A change reverted before a restart therefore shows no drift. Boot
+  starts by systemd or the SCM need no manager bookkeeping.
+- **The save's answer.** Every save that can re-render (model profile, server profile, instance
+  profile and its entries, the instance's profile and address) answers `{running: [<instance id>…],
+  notConverged: [{instance, key, args}…]}`. `running` lists the affected instances that are up and
+  now drift. `notConverged` lists the affected ones that kept their last good pair. The manager
+  computes both, not the bff (`assign::rows` leaves the bff).
+- **The page.** The instance rows (Overview tile, instance page) show a "Pending restart" mark with
+  the existing Restart, and a "Not converged" mark with the reason's text and a link to the instance
+  profile. A save's status lists both sets, and the restart offer covers `running`. Wording is the
+  designer's (briefs 16, 26 and the Overview's).
+- **Later, not now.** A model-only change could apply without a restart through `GET
+  /models?reload=1`, which unloads only the changed running models. It is one more apply mode to
+  test; it waits for a need.
+
+**Slices.**
+- **IP3b** (building): the entry save, the server switch, and also the model and server profile saves
+  answer `running` from the manager over the instance profiles. **Must land in 2.99.1** (it fixes the
+  regression).
+- **IP3c** (new, `pai-core` and `pai-manager`, test first):
+  - the intrinsic and fit split in `check_contents`;
+  - `launch@<id>.ini` rendered and read by the launch;
+  - per-instance writes in `render_all_locked`, with not-converged in memory;
+  - the `applied` hash from `run-instance`;
+  - `ListInstances`' three fields; the saves' `notConverged`.
+  Done when:
+  - a model profile save that fits instance A and fails B's memory check lands: A's pair rewritten,
+    B's pair byte-identical, B reported not converged with the memory refusal;
+  - a later save that fits B converges it;
+  - a running instance whose pair changed reads `pendingRestart`, and one whose change was reverted
+    does not;
+  - a manager restart reports the same states.
+  Recommended for 2.99.1: the release changes the data model and the save semantics now.
+  **Real-machine check:** after the deploy, a model profile save on this machine shows "pending
+  restart" on `default` until the user restarts it.
+- **IP4**: the instance rows gain `converged`, `reason`, `pendingRestart`; every re-rendering save
+  answers `running` and `notConverged`.
+- **IP6** (briefs 26, 16 and the Overview): the two marks and the status lists.
+
 ## Removing pai-config (user, 2026-11-26/27): accepted (user, 2026-11-27)
 
 The requirement (user, relayed 2026-11-26, narrowed 2026-11-27): the native GUI `pai-config` is
@@ -5295,6 +5392,16 @@ The director reuses the node's instance profiles ("Instance profiles", part 1) a
 
 Ids are shared across the director's nodes. A node holding the same id with different content refuses
 rather than renames. Nothing of this is built before step 14.
+
+
+**Desired state and reconciliation** (user, 2026-11-27; not built). The director pushes desired state:
+the instance profile, its model sections and its server profile. Each node's manager applies it as
+on one node ("Convergence", part 1): the intrinsic checks refuse a profile the director should
+never have sent, the fit checks decide per instance, and each instance converges or keeps its last
+good pair with a reason. The node reports `converged`, `reason` and `pendingRestart` per instance
+through the same `ListInstances` fields. The director shows them per node and offers Restart. It
+never restarts on its own. A node that missed a push converges at the next one, because the apply is
+idempotent.
 
 ### Slices
 
