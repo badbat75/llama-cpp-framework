@@ -24075,13 +24075,15 @@ pub(crate) fn manager_model_files_walk_bound_e2e() {
         .with_passwords(FakePasswords::new())
     };
     // A fresh redirect per block: the bound counts the entries of the tree, so
-    // no block may inherit another's files.
-    let fresh = || -> std::path::PathBuf {
+    // no block may inherit another's files. The TempDir travels with the path:
+    // a guard dropped here would delete the folder, and the block's fixture
+    // writes would recreate it as a tree nothing owns (the /tmp leak).
+    let fresh = || -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
         crate::paths::redirect_for_tests(dir.path());
         let models = crate::paths::instance_models_dir();
         std::fs::create_dir_all(&models).expect("models dir");
-        models
+        (dir, models)
     };
     let file = |models: &std::path::Path, rel: &str| {
         let p = models.join(rel);
@@ -24103,7 +24105,7 @@ pub(crate) fn manager_model_files_walk_bound_e2e() {
 
     // ── The walk stops inside the first folder: the marker is never reached ─
     {
-        let models = fresh();
+        let (_dir, models) = fresh();
         for i in 0..250 {
             file(&models, &format!("side{i:03}.txt"));
         }
@@ -24125,7 +24127,7 @@ pub(crate) fn manager_model_files_walk_bound_e2e() {
 
     // ── Entries, not rows: 150 rows under the rows bound, 250 entries over ──
     {
-        let models = fresh();
+        let (_dir, models) = fresh();
         for i in 0..150 {
             file(&models, &format!("m{i:03}.gguf"));
         }
@@ -24153,7 +24155,7 @@ pub(crate) fn manager_model_files_walk_bound_e2e() {
 
     // ── Below the bound: the whole tree, the flag false ────────────────────
     {
-        let models = fresh();
+        let (_dir, models) = fresh();
         for i in 0..150 {
             file(&models, &format!("m{i:03}.gguf"));
         }
