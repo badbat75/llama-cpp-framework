@@ -1,5 +1,9 @@
 # Brief 19: layer sliders on the model profile page (slices LS1 and LS2)
 
+> **Moved (IP6, 2026-11-27):** these sliders now live on the instance profile's model entry page,
+> `#/profiles/instance/<p>/models/<m>`. Their criteria hold there as `fe/briefs/26-instance-profiles.md`
+> 26.10 and 26.17 restate them.
+
 `PLAN.md` step 10, "GPU distribution on the model profile page", order of 2026-11-21, slice 2g of
 `ARCHITECTURE.md` "Layers, MoE and tensor placement on the web model profile page" (accepted, user
 2026-11-21: the sliders read the SAVED model; an `hf-repo` not downloaded gives no layer facts; the

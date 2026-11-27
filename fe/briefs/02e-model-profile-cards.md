@@ -1,5 +1,9 @@
 # Brief 02e: the preset page's plain cards, read-only
 
+> **Revised (IP5, 2026-11-27):** the model profile page keeps only the fields of
+> `checks::MODEL_PROFILE_STAY_KEYS`. The others move to the instance profile's entry page: see
+> `fe/briefs/22-model-sources.md` "IP5" and `fe/briefs/26-instance-profiles.md` 26.10.
+
 Written by the designer on 2026-11-16 for `PLAN.md` step 10, web UI slice 2e (the slice table of
 [02-models.md](02-models.md) section 0). Applies `fe/DESIGN.md` ("D5.2" points to its sections) and
 builds on 2d ([02-models.md](02-models.md) section 2d): everything there stays true unless a line

@@ -1,5 +1,9 @@
 # Brief 14: GPU distribution on the model profile page (slices GD1 and GD2)
 
+> **Moved (IP6, 2026-11-27):** this card now lives on the instance profile's model entry page,
+> `#/profiles/instance/<p>/models/<m>`. Its criteria hold there as `fe/briefs/26-instance-profiles.md`
+> 26.10 and 26.17 restate them.
+
 `PLAN.md` step 10 item 13 (user, 2026-11-20: "Non vedo gli slider per la spartizione dei layer"):
 the web UI edits a model profile's `device`, `split-mode` and `tensor-split` as `pai-config`'s GPU
 table does. Row 2f of [02-models.md](02-models.md) (read) and the GPU half of 2j (write), built

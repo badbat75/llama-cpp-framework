@@ -1,5 +1,9 @@
 # Brief 21: tensor placement on the model profile page (slice 2j: TP1, TP2, TP3)
 
+> **Moved (IP6, 2026-11-27):** this card now lives on the instance profile's model entry page,
+> `#/profiles/instance/<p>/models/<m>`. Its criteria hold there as `fe/briefs/26-instance-profiles.md`
+> 26.10 and 26.17 restate them.
+
 `PLAN.md` step 10, order of 2026-11-21, slice 6 ("2j web UI") of `ARCHITECTURE.md` "Layers, MoE and
 tensor placement on the web model profile page" (accepted, user 2026-11-21), section (3) "2j:
 `override-tensor` on the web". J1 (the key on the web, its two shape rules, the tensor list, `-ot`

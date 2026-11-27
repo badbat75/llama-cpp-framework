@@ -1746,3 +1746,14 @@ Tester's acceptance list:
 7. Tests to amend: `InstancePage.test.tsx` 1387-1405 and 1489, `RestartOffer17d.test.tsx` 1249-1256
    and 1340-1346, `Boot.test.tsx` 1043. In `fe/ux/check.js`, `instance-page` (361) and
    `instance-server-switch` (450) still find the `h2` and need no change.
+
+## Revised by IP6 (2026-11-27)
+
+`fe/briefs/26-instance-profiles.md` revises this brief for instance profiles (`ARCHITECTURE.md`,
+"Instance profiles"):
+- 17d's Server profile section becomes the Instance profile section (26.13).
+- **17d2 is withdrawn**; its rules (the heading once, the link by id, the switch only when it can
+  act) carry into 26.13.
+- 17e's Model profiles section goes (26.13).
+- 17a's create form takes an instance profile (26.15).
+- The server profile loses its address, and the instance page gains it (26.14, 26.16).

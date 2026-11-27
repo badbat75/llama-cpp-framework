@@ -2332,3 +2332,135 @@ not change, so no pinned DOM relation moves. Test: the About's left is the title
 
 UX check: Chromium 246 and WebKit 246, 0 failing; Firefox 240 without the 22D4 pair, 0 failing. L2
 accepted.
+
+## IP5: the plain Models list and the hardware-free model profile page (designer, 2026-11-27)
+
+The source is `ARCHITECTURE.md`, "Instance profiles" (accepted 2026-11-26), with its "placement and
+memory" amendment. It decides three things:
+- a model profile is hardware-independent;
+- the switch and `models.ini.disabled` go;
+- the keys of `checks::PLACEMENT_KEYS` move to the instance profile's entry `[<p>/<m>]`, and the model
+  profile keeps `checks::MODEL_PROFILE_STAY_KEYS` (`crates/core/src/checks.rs` 411 and 464, commit
+  9ba6c80a).
+
+IP5 is the web UI half on the model profile side. The moved cards' new home is brief 26 (IP6). The
+bff routes are IP4's (`ARCHITECTURE.md` IP4); what this brief needs from them is under **IP5.0**.
+
+**IP5.0 What the bff serves (IP4).** The tester stubs these shapes; the coordinator reconciles
+them with IP4's contract before the coder starts.
+- **`GET /api/profiles/model` rows.**
+  - Gone: `enabled`, `assignments`.
+  - New: `usedBy: [<instance profile id>, …]`, the instance profiles that list the model, in their
+    file order.
+  - `removable` is `usedBy` empty.
+- **`GET /api/profiles/model/{id}`.** It loses `enabled` and every key of `PLACEMENT_KEYS`, and
+  gains `usedBy` as above.
+- **`PUT /api/profiles/model/{id}`.**
+  - It refuses a moved key with 422 `model-profile-placement-key` and `field` set to the key.
+  - It answers `running: [<instance id>, …]`, the running instances whose render lists the model.
+- **Removed.** `PUT /api/profiles/model/{id}/enabled` answers 404.
+
+**IP5.1 The Models list is plain.**
+- Columns, in this order: Model profile (`model-profiles-column-name`), Engine
+  (`model-profiles-column-engine`), Used by (`model-profiles-column-used-by`, new: "Used by"),
+  Actions.
+- The Status column, the row switch, its On/Off word, the switch status region
+  (`.model-profiles-switch-status`), its alert and its restart offer (17d.5b) all go.
+- The note `model-profiles-off-note` goes.
+- The `+` after the table stays (C.1a), as do the filter, the sort and D4.35's engine line below
+  480 px.
+
+**IP5.2 Used by.** The cell lists the instance profiles of `usedBy`, each a link to
+`#/profiles/instance/<p>` named by its id alone (the D4.37 rule). They are separated by a comma and
+a space, and wrap. With none, the muted `model-profiles-unused` ("No instance profile") shows.
+Below 480 px the column stays, after the name cell. This mirrors the server list's Used by.
+
+**IP5.3 The row's minus.** The trash can stays in the Actions column, with its tip, focus and
+confirm as now (22D4, CD).
+- It can act when `usedBy` is empty.
+- Otherwise it is `aria-disabled` and its reason is `model-profiles-delete-in-use`: "An instance
+  profile uses it: remove it from that instance profile to delete this one." This replaces
+  `model-profiles-delete-needs-off`.
+
+**IP5.4 The model profile page head.**
+- The state line's switch and its texts go.
+- The head reads: the back link, the `h1` (the id), the summary line (engine and model, as now),
+  then a **Used by** row in the page's `dl.assets` shape, as on the server profile page
+  (`ServerProfilePage.tsx` 439). It holds the instance profile links of IP5.2, or "No instance
+  profile".
+- The settings `h2` stays visually hidden (D4.32).
+
+**IP5.5 The cards that stay, and their order.**
+- **One rule.** Each card keeps only the fields and notes whose key is in `MODEL_PROFILE_STAY_KEYS`,
+  and a card left with no field is not drawn. The cards keep today's order, so the page reads:
+  1. **Assets**: unchanged (the files: `model`, `hf-repo`, `hf-file`, `mmproj`, `model-draft`).
+  2. **Embeddings**: `embeddings`, `pooling`.
+  3. **KV cache**: `cache-reuse` alone. Its card intro becomes the new key
+     `model-profile-kv-cache-reuse-intro`, "How much of the last prompt's cache a new request may
+     reuse. The cache's size and types are set per model in the instance profile."
+  4. **Chat / reasoning**: unchanged, with `output-budget-note`.
+  5. **Sampling overrides**: unchanged.
+  6. **Advanced**: `chat-template-kwargs` (`load-on-startup` moves).
+  7. **Vision**: `image-tokens-note`, `image-min-tokens`, `image-max-tokens` (`mmproj-offload`
+     and `mmproj-device` move). Its `needsFile` note stays.
+  8. **Speculative decoding**: the draft group keeps `spec-draft-n-max`, `spec-draft-p-min` and
+     `spec-draft-n-min` (`spec-draft-n-ubatch`, `draft-cache-note` and the draft cache types move).
+     Every n-gram group stays.
+- **Cards that go whole:** GPU distribution, Tensor placement, Hardware config and Resource /
+  context. The page reads no `model-info` and no `/api/node/devices` any more; they move with
+  their cards (brief 26).
+- **The jump list.** "On this page" lists the eight cards above, in that order.
+- **A note under the head.** One `p.intro` after the Used by row, the new key
+  `model-profile-placement-elsewhere`: "Where the model runs, its context and its memory are set
+  per model in each instance profile that lists it."
+  - When `usedBy` is not empty, the first instance profile's entry page,
+    `#/profiles/instance/<p>/models/<id>`, follows as a link named `model-profile-placement-link`
+    ("Placement in {0}", where `{0}` is the instance profile's id).
+  - When it is empty, no link.
+
+**IP5.6 The Save bar.** It stays at the bottom with Discard, Save changes and Delete (L2). Delete
+can act when `usedBy` is empty, and otherwise carries the tip `model-profiles-delete-in-use`
+(L2.B2). A save that answers `running` non-empty shows the restart offer it shows today (17d.4a),
+one Restart per running instance, named by the instance's name.
+
+**IP5.7 Refusals.** A 422 `model-profile-placement-key` goes in the bar's alert as
+`api-model-profile-placement-key`: "This setting now belongs to the instance profile: {0} cannot be
+saved in a model profile." Here `{0}` is the key. The form never sends one, so this only shows for a
+hand-edited file.
+
+**IP5.8 Strings.**
+- New: `model-profiles-column-used-by`, `model-profiles-unused`, `model-profiles-delete-in-use`,
+  `model-profile-kv-cache-reuse-intro`, `model-profile-placement-elsewhere`,
+  `model-profile-placement-link`, `api-model-profile-placement-key`.
+- Removed (the tester checks the code has no use left):
+  - `model-profiles-column-status`, `model-profiles-off-note`, `model-profiles-delete-needs-off`;
+  - the switch's keys on the list and the page;
+  - the intros of the four cards that go. These four move with their cards to brief 26; they are not
+    deleted.
+
+**IP5 acceptance list.**
+1. The list's header cells are, in order, Model profile, Engine, Used by, Actions. No `role="switch"`
+   is in `main` (IP5.1).
+2. A row whose `usedBy` is `["default","unassigned"]` shows two links named `default` and
+   `unassigned`, to `#/profiles/instance/default` and `#/profiles/instance/unassigned`. A row with
+   `[]` shows "No instance profile" (IP5.2).
+3. The minus of a used row is `aria-disabled`, with the description
+   `model-profiles-delete-in-use` and the tip on focus. An unused row's minus opens the confirm
+   (IP5.3).
+4. The page has no `role="switch"`, and its Used by row lists the same links (IP5.4).
+5. The page's card titles, in DOM order, are exactly the eight of IP5.5, and the jump list matches
+   them. No field of a `PLACEMENT_KEYS` key is rendered: the tester loops over the list and checks
+   that no control with the key's id exists. Every `MODEL_PROFILE_STAY_KEYS` key that today has a
+   control still has one.
+6. The placement note and its link follow IP5.5, and there is no link when `usedBy` is empty.
+7. Delete, the restart offer and the refusal follow IP5.6 and IP5.7.
+8. Below 480 px: no sideways scroll, and the Used by cell wraps (1.4.10).
+9. `fe/ux/check.js`:
+   - `model-profiles-restart-offer` and `model-profile-switch` go;
+   - `model-profile-blocks` and `model-profile-placement` move to brief 26's entry page states;
+   - the stub drops `enabled` and serves `usedBy`.
+
+Decisions taken overnight (recommended options, for the user to overrule):
+- Used by replaces Status on the list and the page, because it says why a Delete is switched off.
+- Today's card order is kept, which leaves `cache-reuse` alone in KV cache. Moving it into Advanced
+  would read slightly better; it is left as is, to keep one rule, filter by key.
