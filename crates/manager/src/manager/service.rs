@@ -208,11 +208,20 @@ pub enum ManagerError {
     /// The engine has no server profile of this name, so no
     /// `server@<name>.ini` to point an instance at.
     NoServerProfile(String),
+    /// The pool has no instance profile of this name (`ARCHITECTURE.md`
+    /// "Instance profiles").
+    NoInstanceProfile(String),
     /// The server profile of this name is the one the instance of this id runs.
     ServerProfileInUse(String, String),
-    /// A server profile of this name is already there: a create writes over
+    /// A server profile with this name is already there: a create writes over
     /// nothing.
     ServerProfileExists(String),
+    /// An instance profile with this name is already there: a create writes
+    /// over nothing (`ARCHITECTURE.md` "Instance profiles").
+    InstanceProfileExists(String),
+    /// The instance profile of this name is the one the instance of this id
+    /// runs.
+    InstanceProfileInUse(String, String),
     /// This host name of the file being written does not resolve.
     UnresolvableHost(String),
     /// The service manager failed.
@@ -239,12 +248,20 @@ pub fn error_reply(e: &ManagerError) -> (String, String) {
         ManagerError::BadFileName => ("BadFileName", "BadFileName".to_string()),
         ManagerError::AddressInUse(id) => ("AddressInUse", id.clone()),
         ManagerError::NoServerProfile(name) => ("NoServerProfile", name.clone()),
+        ManagerError::NoInstanceProfile(name) => ("NoInstanceProfile", name.clone()),
         // The profile and the instance, split by the client at the separator
         // `Refusal::encode` uses.
         ManagerError::ServerProfileInUse(name, id) => {
             ("ServerProfileInUse", format!("{name}\u{1f}{id}"))
         }
         ManagerError::ServerProfileExists(name) => ("ServerProfileExists", name.clone()),
+        // The instance profile refusals: the in-use one carries the profile
+        // and the instance split at the separator, as the server profile's
+        // does.
+        ManagerError::InstanceProfileExists(name) => ("InstanceProfileExists", name.clone()),
+        ManagerError::InstanceProfileInUse(name, id) => {
+            ("InstanceProfileInUse", format!("{name}\u{1f}{id}"))
+        }
         ManagerError::UnresolvableHost(host) => ("UnresolvableHost", host.clone()),
         ManagerError::Service(e) => ("Service", e.0.clone()),
         ManagerError::Io(kind) => ("Io", kind.to_string()),
@@ -266,8 +283,11 @@ fn error_kind(e: &ManagerError) -> &'static str {
         ManagerError::BadFileName => "BadFileName",
         ManagerError::AddressInUse(_) => "AddressInUse",
         ManagerError::NoServerProfile(_) => "NoServerProfile",
+        ManagerError::NoInstanceProfile(_) => "NoInstanceProfile",
         ManagerError::ServerProfileInUse(_, _) => "ServerProfileInUse",
         ManagerError::ServerProfileExists(_) => "ServerProfileExists",
+        ManagerError::InstanceProfileExists(_) => "InstanceProfileExists",
+        ManagerError::InstanceProfileInUse(_, _) => "InstanceProfileInUse",
         ManagerError::UnresolvableHost(_) => "UnresolvableHost",
         ManagerError::Service(_) => "Service",
         ManagerError::Io(_) => "Io",
@@ -383,6 +403,17 @@ const ENGINE: &str = "llama.cpp";
 /// controls and the web UI calls the node's own. `RemoveInstance` refuses it;
 /// every other id is the administrator's to create and remove.
 const PROTECTED_INSTANCE: &str = "default";
+
+/// The port a new instance starts looking for: the node's first instance port,
+/// the one a node holding nothing from here up is given. Every port of the
+/// node's bindings belongs to an instance it runs or to the web service, so a
+/// create walks up from here until it finds one nothing holds
+/// ([`proposed_port`]).
+const FIRST_PROPOSED_PORT: u16 = 8581;
+
+/// The last port a new instance is looked for at: the highest a socket carries.
+/// The walk of [`proposed_port`] runs from [`FIRST_PROPOSED_PORT`] to here.
+const LAST_PROPOSED_PORT: u16 = u16::MAX;
 
 /// The `models_max` of the pool checks: the `load-on-startup` count is judged
 /// per instance, against that instance's own `ModelsMax` and its own render,
@@ -995,6 +1026,10 @@ pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     /// answers `truncated` ([`MODELS_WALK_MAX_ENTRIES`], lowered by
     /// [`Self::with_walk_max_entries`]).
     walk_max_entries: usize,
+    /// The bounds of the port walk of [`Manager::create_instance`]:
+    /// [`FIRST_PROPOSED_PORT`] ..= [`LAST_PROPOSED_PORT`], narrowed by
+    /// [`Self::with_port_search`].
+    port_search: (u16, u16),
     /// Held by a write from its address check to its rename, so a check
     /// sees every write before it (and `write_served_file`'s one temp
     /// name per file is never shared). Taken only after the authorization:
@@ -1014,6 +1049,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             node: Box::new(NoNodeFacts),
             action_log: Box::new(NoActionLog),
             walk_max_entries: MODELS_WALK_MAX_ENTRIES,
+            port_search: (FIRST_PROPOSED_PORT, LAST_PROPOSED_PORT),
             writing: std::sync::Mutex::new(()),
         }
     }
@@ -1060,6 +1096,14 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// visited, in place of [`MODELS_WALK_MAX_ENTRIES`].
     pub fn with_walk_max_entries(mut self, entries: usize) -> Self {
         self.walk_max_entries = entries;
+        self
+    }
+
+    /// This manager proposing the port of a new instance only inside
+    /// `first ..= last`, in place of [`FIRST_PROPOSED_PORT`] ..=
+    /// [`LAST_PROPOSED_PORT`].
+    pub fn with_port_search(mut self, first: u16, last: u16) -> Self {
+        self.port_search = (first, last);
         self
     }
 
@@ -2077,6 +2121,407 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
+    // ── The instance profile verbs ────────────────────────────────────────
+    // The pool of instance profiles, its entries, the instance's profile and
+    // its address (`ARCHITECTURE.md` "Instance profiles", slice IP3). A write
+    // of the pool or of the record is a write of a served file: the principal
+    // gate and `configure`, the `writing` lock, one action record for the
+    // whole call, and the render of every instance from what is on disk. The
+    // two reads take the same lock, so the text a read hands back as its
+    // revision is one no write is changing.
+
+    /// The node's instance profiles, in the pool's own order: each one its id,
+    /// the server profile its section names, and the model profiles its entry
+    /// sections give it. The rows carry no revision: the pool is one text, so
+    /// only [`Self::instance_profile`] answers it. A read: no action record, no
+    /// service manager, no byte written.
+    pub fn instance_profiles<W: AsRequester>(
+        &self,
+        who: &W,
+    ) -> Result<Vec<pai_core::client::InstanceProfileInfo>, ManagerError> {
+        let who = who.as_requester();
+        self.authorize_as(&who, Action::Configure)?;
+        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(profile_rows(&self.pool_text()?))
+    }
+
+    /// The instance profile `profile`, with the text of `instance-profiles.ini`
+    /// as its revision: the pair a page of the pool sends back to
+    /// [`Self::set_instance_profile`], which refuses when the pool no longer
+    /// holds it. A profile the pool has no section for is
+    /// [`ManagerError::NoInstanceProfile`], naming it. A read, as
+    /// [`Self::instance_profiles`].
+    pub fn instance_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+    ) -> Result<pai_core::client::InstanceProfileInfo, ManagerError> {
+        let who = who.as_requester();
+        self.authorize_as(&who, Action::Configure)?;
+        let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        let text = self.pool_text()?;
+        let row = profile_rows(&text)
+            .into_iter()
+            .find(|row| row.id == profile)
+            .ok_or_else(|| ManagerError::NoInstanceProfile(profile.to_string()))?;
+        Ok(pai_core::client::InstanceProfileInfo {
+            revision: text,
+            ..row
+        })
+    }
+
+    /// Writes a new instance profile `profile` running the server profile
+    /// `server_profile`: the section is appended in the pool's own shape
+    /// ([`pai_core::instance_profiles::add_profile`]), every byte before it the
+    /// file's. The checks answer first: an id the rule refuses is the keyed
+    /// `instance-profile-bad-id`, a name the pool has is
+    /// [`ManagerError::InstanceProfileExists`], a server profile the engine has
+    /// no file for is [`ManagerError::NoServerProfile`]. The new profile is
+    /// switched on and runs nothing: it writes no record, and no instance
+    /// renders it.
+    pub fn create_instance_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+        server_profile: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            if !crate::paths::valid_instance_id(profile) {
+                return Err(one_value_refusal("instance-profile-bad-id", profile));
+            }
+            let text = self.pool_text()?;
+            if profile_rows(&text).iter().any(|row| row.id == profile) {
+                return Err(ManagerError::InstanceProfileExists(profile.to_string()));
+            }
+            let no_profile = || ManagerError::NoServerProfile(server_profile.to_string());
+            let path = crate::paths::instance_ini(server_profile).ok_or_else(no_profile)?;
+            if std::fs::symlink_metadata(&path).is_err() {
+                return Err(no_profile());
+            }
+            self.write_pool(
+                &text,
+                &pai_core::instance_profiles::add_profile(&text, profile, server_profile),
+            )
+        };
+        let answer = run();
+        self.record_action("create_instance_profile", profile, Some(&who), &answer);
+        answer
+    }
+
+    /// Removes the instance profile `profile`, with its entry sections: the
+    /// entry sections are cut out first, then the profile's own section, every
+    /// other byte of the file the file's own. A profile the pool has no section
+    /// for is [`ManagerError::NoInstanceProfile`]. A profile is in use, and is
+    /// [`ManagerError::InstanceProfileInUse`] naming the profile and the
+    /// instance, two ways: an instance's record section names it, or the profile
+    /// carries the id of an instance the record has, the profile of that
+    /// instance's own, and the refusal names the profile the instance runs
+    /// today. A profile in use is removed by switching its instances away and
+    /// removing them first. The record is never written.
+    pub fn delete_instance_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let text = self.pool_text()?;
+            let row = profile_rows(&text)
+                .into_iter()
+                .find(|row| row.id == profile)
+                .ok_or_else(|| ManagerError::NoInstanceProfile(profile.to_string()))?;
+            let record =
+                read_record(&crate::paths::engine_config_dir().join(INSTANCES_FILE)).map_err(io)?;
+            // In use, in each of the two ways a profile is in use: an instance's
+            // record section names it, and the profile carries the id of an
+            // instance the record has, the profile the migration gave that
+            // instance of its own. The refusal names the profile and the
+            // instance, so the page can point at the instance and at the profile
+            // it really runs.
+            if let Some(holder) = instance_profile_holder(&record, profile) {
+                return Err(ManagerError::InstanceProfileInUse(
+                    profile.to_string(),
+                    holder,
+                ));
+            }
+            if let Some(owner) = instance_owning_profile(&record, profile) {
+                let runs = instance_profile_of(&record, &owner)
+                    .or_else(|| record_key(&record, &owner, "ServerProfile"))
+                    .unwrap_or_else(|| profile.to_string());
+                return Err(ManagerError::InstanceProfileInUse(runs, owner));
+            }
+            // The entry sections first, then the profile's own: every section
+            // cut here is one the parse of the text returned listed, and the
+            // pool is not moving under the `writing` lock.
+            let mut next = text.clone();
+            for entry in &row.entries {
+                next = cut_section(&next, &format!("{profile}/{entry}"))?;
+            }
+            let next = cut_section(&next, profile)?;
+            self.write_pool(&text, &next)
+        };
+        let answer = run();
+        self.record_action("delete_instance_profile", profile, Some(&who), &answer);
+        answer
+    }
+
+    /// Gives the instance profile `profile` the model profile `model`: an
+    /// empty `[<profile>/<model>]` entry appended in the pool's own shape
+    /// ([`pai_core::instance_profiles::add_entry`]). A profile the pool has no
+    /// section for is [`ManagerError::NoInstanceProfile`], a model profile the
+    /// pool has no section for is the keyed `no-model-profile-named`, naming
+    /// the model. A model the profile already lists is no refusal and writes no
+    /// byte: the entry's own keys are its state. Every instance running the
+    /// profile renders again, so the model lands in its render.
+    pub fn add_instance_profile_model<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+        model: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let text = self.pool_text()?;
+            if !profile_rows(&text).iter().any(|row| row.id == profile) {
+                return Err(ManagerError::NoInstanceProfile(profile.to_string()));
+            }
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            let pool =
+                read_record(&crate::paths::engine_config_dir().join("models.ini")).map_err(io)?;
+            if !pool_holds(&pool, model) {
+                return Err(one_value_refusal("no-model-profile-named", model));
+            }
+            self.write_pool(
+                &text,
+                &pai_core::instance_profiles::add_entry(&text, profile, model),
+            )
+        };
+        let answer = run();
+        self.record_action("add_instance_profile_model", profile, Some(&who), &answer);
+        answer
+    }
+
+    /// Takes the model profile `model` away from the instance profile
+    /// `profile`: its entry section goes, every other byte of the file the
+    /// file's own. A profile the pool has no section for is
+    /// [`ManagerError::NoInstanceProfile`]; an entry the profile does not list
+    /// is no refusal and writes no byte. Every instance running the profile
+    /// renders again, so the model leaves its render.
+    pub fn remove_instance_profile_model<W: AsRequester>(
+        &self,
+        who: &W,
+        profile: &str,
+        model: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let text = self.pool_text()?;
+            if !profile_rows(&text).iter().any(|row| row.id == profile) {
+                return Err(ManagerError::NoInstanceProfile(profile.to_string()));
+            }
+            let section = format!("{profile}/{model}");
+            let next = match pai_core::ini::text::delete_section(&text, &section) {
+                Some(next) => next,
+                // No entry of that model: the profile does not list it, so
+                // there is nothing to take away.
+                None => return Ok(()),
+            };
+            self.write_pool(&text, &next)
+        };
+        let answer = run();
+        self.record_action(
+            "remove_instance_profile_model",
+            profile,
+            Some(&who),
+            &answer,
+        );
+        answer
+    }
+
+    /// Points the instance `instance` at the instance profile `profile`: the
+    /// `InstanceProfile` key of its section of the record, every other key of
+    /// the section and every other section kept. The checks answer in this
+    /// order: an instance the record has no section for is
+    /// [`ManagerError::NoInstance`], a profile the pool has no section for is
+    /// [`ManagerError::NoInstanceProfile`], and a pool no longer holding
+    /// `revision`, the text the caller read, is [`ManagerError::Changed`]. The
+    /// pool is never written: the switch moves the record's pointer, and every
+    /// instance renders again from what is on disk.
+    pub fn set_instance_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        instance: &str,
+        profile: &str,
+        revision: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let record = self.read_record_locked()?;
+            if !pai_core::ini::parse_sections(&record)
+                .iter()
+                .any(|section| section.id == instance)
+            {
+                return Err(ManagerError::NoInstance);
+            }
+            let pool = self.pool_text()?;
+            if !profile_rows(&pool).iter().any(|row| row.id == profile) {
+                return Err(ManagerError::NoInstanceProfile(profile.to_string()));
+            }
+            if pool != revision {
+                return Err(ManagerError::Changed);
+            }
+            let text =
+                pai_core::ini::text::set_key(&record, instance, INSTANCE_PROFILE_KEY, profile);
+            self.write_record(&text)
+        };
+        let answer = run();
+        self.record_action("set_instance_profile", instance, Some(&who), &answer);
+        answer
+    }
+
+    /// Sets the address of the instance `instance` to `host` and `port`: the
+    /// record's `Hostname` and `Port` keys of its section, every other key of
+    /// the section and every other section kept. The empty host removes the
+    /// key, leaving the server profile's bind; the port travels as text, as
+    /// every address text on the wire. The checks answer in this order: an
+    /// instance the record has no section for is [`ManagerError::NoInstance`],
+    /// a record no longer holding `revision` is [`ManagerError::Changed`], a
+    /// port outside [`pai_core::checks::PORT`] is the keyed
+    /// `not-whole-number-in-range`, a host carrying a control character is
+    /// [`ManagerError::UnresolvableHost`], and an address another instance or
+    /// the web service holds is [`ManagerError::AddressInUse`] naming who holds it
+    /// ([`Self::check_binding`], the instance itself out of the walk: it moves
+    /// its own address). The instance's render is written from what is on disk.
+    pub fn set_instance_address<W: AsRequester>(
+        &self,
+        who: &W,
+        instance: &str,
+        host: &str,
+        port: &str,
+        revision: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            let record = self.read_record_locked()?;
+            if !pai_core::ini::parse_sections(&record)
+                .iter()
+                .any(|section| section.id == instance)
+            {
+                return Err(ManagerError::NoInstance);
+            }
+            if record != revision {
+                return Err(ManagerError::Changed);
+            }
+            let port =
+                pai_core::ini::parse_int_in(port, &pai_core::checks::PORT).ok_or_else(|| {
+                    ManagerError::Invalid(pai_core::checks::Refusal {
+                        key: "not-whole-number-in-range",
+                        values: vec![
+                            "Port".to_string(),
+                            port.trim().to_string(),
+                            pai_core::checks::PORT.start().to_string(),
+                            pai_core::checks::PORT.end().to_string(),
+                        ],
+                    })
+                })?;
+            let host = host.trim();
+            // A host is written as the record's `Hostname`, so a control
+            // character in it forges a line of the file: it is no host of this
+            // node, and the answer lands before anything is written.
+            if host.chars().any(char::is_control) {
+                return Err(ManagerError::UnresolvableHost(host.to_string()));
+            }
+            // The binding the instance would have after the write: its own
+            // server profile's address, as `instance_cfg` reads it, with the
+            // `Hostname` and `Port` this verb writes over it. An empty host
+            // removes the record's key, leaving the profile's bind.
+            let mut cfg = crate::server_cfg::from_text(
+                &profile_file(instance)
+                    .and_then(|file| std::fs::read_to_string(file).ok())
+                    .unwrap_or_default(),
+            );
+            if !host.is_empty() {
+                cfg.hostname = Some(host.to_string());
+            }
+            cfg.port = Some(port);
+            let mine = binding(&cfg, &self.resolver).map_err(ManagerError::UnresolvableHost)?;
+            self.check_binding(&mine, |id| id == instance)?;
+            let text = pai_core::ini::text::set_key(&record, instance, "Port", &port.to_string());
+            let text = if host.is_empty() {
+                pai_core::ini::text::remove_key(&text, instance, "Hostname")
+            } else {
+                pai_core::ini::text::set_key(&text, instance, "Hostname", host)
+            };
+            self.write_record(&text)
+        };
+        let answer = run();
+        self.record_action("set_instance_address", instance, Some(&who), &answer);
+        answer
+    }
+
+    /// The text of `instances.ini`, read as [`read_record`] does: a file that
+    /// is not there reads as an empty one, and a read that fails for any other
+    /// reason is the verb's own answer before anything is written. Taken under
+    /// the `writing` lock, as every write of the record is.
+    fn read_record_locked(&self) -> Result<String, ManagerError> {
+        read_record(&crate::paths::engine_config_dir().join(INSTANCES_FILE))
+            .map_err(|e| ManagerError::Io(e.kind()))
+    }
+
+    /// The text of `instance-profiles.ini`, as [`read_pool`] reads it.
+    fn pool_text(&self) -> Result<String, ManagerError> {
+        read_pool().map_err(|e| ManagerError::Io(e.kind()))
+    }
+
+    /// Writes the instance profile pool `text` over the text `before` the file
+    /// holds, then renders every instance from what is on disk: the entry
+    /// sections of a profile ARE its model list, so a pool write changes what
+    /// the instances running it render. A text that did not change writes no
+    /// byte and renders nothing. The write stands whatever the renders do, as
+    /// [`Self::check_and_write`]'s does: the caller is told the first failure
+    /// in id order.
+    fn write_pool(&self, before: &str, text: &str) -> Result<(), ManagerError> {
+        if text == before {
+            return Ok(());
+        }
+        self.write_served(INSTANCE_PROFILES_FILE, text)
+    }
+
+    /// Writes the record `instances.ini` whole, then renders every instance:
+    /// the record carries the address an instance listens on and the instance
+    /// profile it runs, so a record write changes what the instance renders.
+    fn write_record(&self, text: &str) -> Result<(), ManagerError> {
+        self.write_served(INSTANCES_FILE, text)
+    }
+
+    /// The write every served file of the engine's config directory shares:
+    /// the directory made, the file written as [`write_served_file`] writes it,
+    /// and the render of every instance after it.
+    fn write_served(&self, name: &str, text: &str) -> Result<(), ManagerError> {
+        let io = |e: std::io::Error| ManagerError::Io(e.kind());
+        let dir = crate::paths::engine_config_dir();
+        std::fs::create_dir_all(&dir).map_err(io)?;
+        write_served_file(&dir.join(name), &ConfigFile::Models, text, &*self.group).map_err(io)?;
+        match self.render_all_locked().first() {
+            Some((_, err)) => Err(err.clone()),
+            None => Ok(()),
+        }
+    }
+
     /// Creates the instance `id` of the engine `engine`, running the server
     /// profile `server_profile`. Nothing is asked of the service manager: the
     /// Linux unit template and the Windows `sync` serve an id the record names,
@@ -2088,17 +2533,23 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// never an empty one), a record section with the id (`instance-exists`),
     /// the profile: a name the id rule refuses or one with no
     /// `server@<name>.ini` is [`ManagerError::NoServerProfile`], a profile a
-    /// section of the record already runs is
+    /// section of the record runs at the profile's own address is
     /// [`ManagerError::ServerProfileInUse`] naming that instance, and the
-    /// profile's own address is judged against every instance and against the
-    /// web service ([`Self::check_binding`], the new instance out of the walk
-    /// because the record does not name it yet). Then, in this order: the
+    /// profile's own address is judged against those instances and against the
+    /// web service ([`Self::check_binding`]; the new instance is out of the walk
+    /// because the record does not name it yet, and an instance with a
+    /// `Hostname` or a `Port` in its section is out too, because it binds an
+    /// address of its own), and the port the node proposes
+    /// ([`proposed_port`]), a node holding every port of its range refused
+    /// `no-free-port`. Then, in this order: the
     /// `assignments.ini` section of an id used before, so the new instance is
     /// assigned nothing; its render `models@<id>.ini`, of the pool as it is on
-    /// disk; and the record last. A create that wrote the render and failed on
-    /// the record leaves a file no instance reads, never an instance with no
-    /// render. Guarded as a write of a served file is: the principal gate and
-    /// `configure`, the `writing` lock, one action record for the whole call.
+    /// disk; and the record last, with the `Port` proposed and no `Hostname`,
+    /// so the profile's bind stands. A
+    /// create that wrote the render and failed on the record leaves a file no
+    /// instance reads, never an instance with no render. Guarded as a write of
+    /// a served file is: the principal gate and `configure`, the `writing`
+    /// lock, one action record for the whole call.
     pub fn create_instance<W: AsRequester>(
         &self,
         who: &W,
@@ -2129,7 +2580,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             if std::fs::symlink_metadata(&path).is_err() {
                 return Err(no_profile());
             }
-            if let Some(holder) = record_holder(&record, server_profile) {
+            if let Some(holder) = record_profile_owner(&record, server_profile) {
                 return Err(ManagerError::ServerProfileInUse(
                     server_profile.to_string(),
                     holder,
@@ -2138,7 +2589,16 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             let contents = std::fs::read_to_string(&path).map_err(io)?;
             let mine = binding(&crate::server_cfg::from_text(&contents), &self.resolver)
                 .map_err(ManagerError::UnresolvableHost)?;
-            self.check_binding(&mine, |_| false)?;
+            // The profile's address is judged against the instances that bind
+            // it, the ones taking their address from a server profile. An
+            // instance with a `Hostname` or a `Port` in its record section binds
+            // an address of its own, so it is out of the walk: instances share a
+            // server profile by sitting on their own ports, which is why the
+            // create proposes one.
+            self.check_binding(&mine, |other| record_owns_address(&record, other))?;
+            // The port answered before any write: a node holding every port of
+            // the range refuses, and the create leaves no file behind.
+            let port = proposed_port(self.port_search.0, self.port_search.1)?;
             // A section an id used before left behind: the new instance is
             // assigned nothing, so its render starts no model profile.
             pai_core::ini::delete_section(&dir.join(ASSIGNMENTS_FILE), id).map_err(io)?;
@@ -2156,8 +2616,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             )
             .map_err(io)?;
             // The record last, and appended: every byte of the file, the notes
-            // of the other sections included, stays as it was.
-            append_record(&dir.join(INSTANCES_FILE), &record, id, server_profile).map_err(io)?;
+            // of the other sections included, stays as it was. The new instance
+            // is given an address of the node's own, never the address of the
+            // server profile it runs, which several instances share: the first
+            // port from [`FIRST_PROPOSED_PORT`] up that no section of the record
+            // holds. `SetInstanceAddress` is the verb that moves it later.
+            append_record(&dir.join(INSTANCES_FILE), &record, id, server_profile, port)
+                .map_err(io)?;
             Ok(())
         };
         let answer = run();
@@ -3034,12 +3499,17 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// Refuse when the binding `mine` collides with the address of another
     /// instance: the walk every check of an address shares, the save of a
-    /// server profile and the switch of an instance to another one. `skip`
+    /// server profile, the switch of an instance to another one, the write of
+    /// an instance's address and the create of an instance. `skip`
     /// answers the instances to leave out of the walk, the ones that hold the
     /// address for the reason the check is about: the profile being saved, for
     /// a save, and the instance being switched, for a switch. An instance
     /// whose section names no profile, whose profile builds no path, or whose
-    /// profile file cannot be read, is skipped too.
+    /// profile file cannot be read, is skipped too. The walk is
+    /// [`crate::paths::instance_ids`], the ids a section of the record carries
+    /// and the manager accepts: a section whose name is no instance id is
+    /// never run (`launch::instance_command`'s `InvalidId`), so it holds no
+    /// address.
     fn check_binding<F>(&self, mine: &Binding, skip: F) -> Result<(), ManagerError>
     where
         F: Fn(&str) -> bool,
@@ -3273,17 +3743,19 @@ fn read_record(path: &std::path::Path) -> std::io::Result<String> {
 }
 
 /// Adds the section of the new instance to the record `path`, over the record
-/// text `existing` that is there: the header and its one key, appended after
-/// every byte, so the notes of the other sections and the file's own spacing
-/// are untouched. A record whose last line has no ending gets a line ending of
-/// the file's own style first, so the section it ends with keeps the keys it
-/// names and the new header starts a line of its own. A record the install
-/// never copied is created by this.
+/// text `existing` that is there: the header, its server profile and the
+/// `Port` `port` it listens on, appended after every byte, so the notes of the
+/// other sections and the file's own spacing are untouched. A record whose
+/// last line has no ending gets a line ending of the file's own style first,
+/// so the section it ends with keeps the keys it names and the new header
+/// starts a line of its own. A record the install never copied is created by
+/// this.
 fn append_record(
     path: &std::path::Path,
     existing: &str,
     id: &str,
     server_profile: &str,
+    port: u16,
 ) -> std::io::Result<()> {
     use std::io::Write;
     let mut record = std::fs::OpenOptions::new()
@@ -3293,7 +3765,42 @@ fn append_record(
     if !existing.is_empty() && !existing.ends_with('\n') {
         record.write_all(pai_core::ini::detect_eol(existing).as_bytes())?;
     }
-    record.write_all(format!("[{id}]\nServerProfile = {server_profile}\n").as_bytes())
+    record
+        .write_all(format!("[{id}]\nServerProfile = {server_profile}\nPort = {port}\n").as_bytes())
+}
+
+/// The port [`create_instance`](Manager::create_instance) gives a new instance:
+/// the first port of `first ..= last` the node holds nothing on. The ports the
+/// node holds are the address of every instance the record names with an id the
+/// manager accepts ([`crate::paths::instance_ids`]), read as its launch reads it
+/// ([`instance_cfg`]: the server profile's, with the record's `Hostname` and
+/// `Port` over it), so an instance whose section names no `Port` holds its
+/// server profile's port, and the web service's own `Listen` port
+/// ([`pai_core::bff_cfg::listen`]). A port outside the range is no answer, so a
+/// node holding every port of it is refused `no-free-port`, naming the two ends
+/// of the range it walked; the walk is bounded by `last`, it never runs past it.
+fn proposed_port(first: u16, last: u16) -> Result<u16, ManagerError> {
+    let mut held: Vec<u16> = Vec::new();
+    for id in crate::paths::instance_ids() {
+        if let Some(cfg) = instance_cfg(&id) {
+            // A `Port` a hand edit wrote outside a port (0, 70000) holds
+            // nothing, as a value that is no number at all does.
+            if let Ok(port) = u16::try_from(cfg.port_or_default()) {
+                held.push(port);
+            }
+        }
+    }
+    if let Some(addr) = pai_core::bff_cfg::listen() {
+        held.push(addr.port());
+    }
+    (first..=last)
+        .find(|port| !held.contains(port))
+        .ok_or_else(|| {
+            ManagerError::Invalid(pai_core::checks::Refusal {
+                key: "no-free-port",
+                values: vec![first.to_string(), last.to_string()],
+            })
+        })
 }
 
 /// `engine` if this manager serves it ([`ENGINE`], the one engine of a node),
@@ -3489,6 +3996,40 @@ fn record_holder(text: &str, profile: &str) -> Option<String> {
         .find(|id| crate::paths::instance_server_profile(id).as_deref() == Some(profile))
 }
 
+/// Whether the section of the instance `id` in the record text `text` carries an
+/// address of its own: a `Hostname` or a `Port` key with a value. The migration
+/// writes both out of the server profile, and [`proposed_port`] feeds the
+/// `Port` of a new section, so such an instance binds an address nobody else
+/// holds, and its server profile's address is not its address.
+fn record_owns_address(text: &str, id: &str) -> bool {
+    record_key(text, id, "Hostname").is_some() || record_key(text, id, "Port").is_some()
+}
+
+/// The first section of the record text `text` that runs the server profile
+/// `profile` AT the profile's own address: it names `profile` in its own
+/// `ServerProfile` key and carries no address of its own. That is the instance
+/// a create collides with: the record shape that binds the profile's
+/// `Hostname` and `Port`, so a second instance of that shape would bind the very
+/// same address. A section that runs a profile through its instance profile, or
+/// carries a `Hostname` or a `Port` of its own, has an address of its own, so
+/// the profile is there to share: "any number of instances on one node may
+/// share an instance profile or a server profile, and `AddressInUse` is judged
+/// on the records alone" (`ARCHITECTURE.md`, "Instance profiles", the port
+/// option P1).
+fn record_profile_owner(text: &str, profile: &str) -> Option<String> {
+    pai_core::ini::parse_sections(text)
+        .into_iter()
+        .find(|section| {
+            let held = |key: &str| section.keys.get(key).is_some_and(|v| !v.trim().is_empty());
+            section
+                .keys
+                .get("ServerProfile")
+                .is_some_and(|name| name.trim() == profile)
+                && !(held("Hostname") || held("Port"))
+        })
+        .map(|section| section.id)
+}
+
 /// The `judge_model_files` of [`check_contents`] and [`Manager::check_and_write`]:
 /// a write that judges the model files of the model profiles it puts in effect.
 const MODEL_FILES_JUDGE: bool = true;
@@ -3639,6 +4180,74 @@ const INSTANCE_PROFILE_KEY: &str = "InstanceProfile";
 /// `assignments.ini`, its `ServerProfile` key for the address.
 fn instance_profile_of(record: &str, id: &str) -> Option<String> {
     record_key(record, id, INSTANCE_PROFILE_KEY)
+}
+
+/// The instance profile pool `instance-profiles.ini`, read as [`read_record`]
+/// reads the record: a file the install has none of reads as an empty one, and
+/// every other failure is the verb's own answer before anything is written.
+/// Taken under the `writing` lock, as every write of the pool is.
+fn read_pool() -> std::io::Result<String> {
+    read_record(&crate::paths::engine_config_dir().join(INSTANCE_PROFILES_FILE))
+}
+
+/// The pool text `text` as the rows the manager answers: each profile its id,
+/// the server profile its section names (blank when it names none), and the
+/// model profiles of its entry sections, in the file's own order. The rows
+/// carry no revision: [`Manager::instance_profile`] answers the text of the
+/// whole file, the pair a page sends back to a switch.
+fn profile_rows(text: &str) -> Vec<pai_core::client::InstanceProfileInfo> {
+    pai_core::instance_profiles::parse(text)
+        .into_iter()
+        .map(|profile| pai_core::client::InstanceProfileInfo {
+            id: profile.id,
+            server_profile: profile.server_profile.unwrap_or_default(),
+            entries: profile
+                .entries
+                .into_iter()
+                .map(|entry| entry.model)
+                .collect(),
+            revision: String::new(),
+        })
+        .collect()
+}
+
+/// The first instance whose record section runs the instance profile
+/// `profile`: the holder that keeps a profile from being deleted. The record is
+/// walked in its own order, so a profile two instances run is named with the
+/// first of them.
+fn instance_profile_holder(record: &str, profile: &str) -> Option<String> {
+    pai_core::ini::parse_sections(record)
+        .into_iter()
+        .find(|section| {
+            section
+                .keys
+                .get(INSTANCE_PROFILE_KEY)
+                .is_some_and(|held| held.trim() == profile)
+        })
+        .map(|section| section.id)
+}
+
+/// The instance whose record section carries the id `profile`: the profile of
+/// an instance's own, the one the migration wrote for every instance from its
+/// id (`migrate_model`). It is that instance's profile in the strongest sense,
+/// so a delete of it is refused while the instance is listed, and the refusal
+/// names the profile the instance runs today, which is what the caller has to
+/// know to finish the job.
+fn instance_owning_profile(record: &str, profile: &str) -> Option<String> {
+    pai_core::ini::parse_sections(record)
+        .into_iter()
+        .find(|section| section.id == profile)
+        .map(|section| section.id)
+}
+
+/// The text `text` with the section `section` cut out, every other byte kept
+/// ([`pai_core::ini::text::delete_section`]). Every section cut through here is
+/// one the parse of the same text listed under the `writing` lock, so a `None`
+/// is a file that moved under the lock: the verb's own answer, as a read
+/// failure is.
+fn cut_section(text: &str, section: &str) -> Result<String, ManagerError> {
+    pai_core::ini::text::delete_section(text, section)
+        .ok_or(ManagerError::Io(std::io::ErrorKind::NotFound))
 }
 
 /// The key `key` of the section `section` of the text `text`, trimmed, `None`
@@ -14190,7 +14799,8 @@ pub(crate) fn manager_server_profile_crud_e2e() {
 /// one order: a stale `[id]` section of `assignments.ini` (only a hand edit
 /// leaves one) is deleted, the render `models@<id>.ini` is written from
 /// [`Manager`]'s own render, and only then is `[id]` with
-/// `ServerProfile = <profile>` appended to `instances.ini`: the record is the
+/// `ServerProfile = <profile>` and the `Port` the node proposes (the first free
+/// one at or above 8581) appended to `instances.ini`: the record is the
 /// birth, so every refusal (`unknown-engine` first, then `instance-bad-id`,
 /// `instance-exists`, `NoServerProfile`, `ServerProfileInUse`,
 /// `UnresolvableHost` and `AddressInUse`, an instance's and the web service's
@@ -14456,9 +15066,11 @@ pub(crate) fn manager_instance_crud_e2e() {
         let record = text_of(INSTANCES_FILE);
         assert_eq!(
             &record[SEEDED.len()..],
-            "[newone]\nServerProfile = free\n",
-            "the section is appended, naming the profile, and every byte before \
-             it is the seed's, the note included"
+            "[newone]\nServerProfile = free\nPort = 8581\n",
+            "the section is appended, naming the profile and carrying the port the \
+             create proposed (IP3a: the first free one at or above 8581, this node's \
+             instances sitting on 8080, 8081 and 8082 and the web service on 8590), \
+             and every byte before it is the seed's, the note included"
         );
         assert_eq!(
             section(&text_of(ASSIGNMENTS_FILE), "newone"),
@@ -14499,7 +15111,12 @@ pub(crate) fn manager_instance_crud_e2e() {
         let new = rows.iter().find(|r| r.id == "newone").expect("listed");
         assert_eq!(new.engine, ENGINE);
         assert_eq!(new.server_profile.as_deref(), Some("free"));
-        assert_eq!(new.port, 8123, "the port of the profile it names");
+        assert_eq!(
+            new.port, 8581,
+            "the port listed is the record's own, the one the create proposed (the \
+             first free one at or above 8581: no section of this seed's record holds \
+             a `Port`), not the 8123 of the profile it names"
+        );
         assert_eq!(
             rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
             vec!["default", "lan-2", "lan-3", "newone"],
@@ -15096,8 +15713,9 @@ pub(crate) fn manager_instance_crud_e2e() {
         assert_eq!(m.create_instance(&member, ENGINE, "spared", "free"), Ok(()));
         assert_eq!(
             text_of(INSTANCES_FILE),
-            "[spared]\nServerProfile = free\n",
-            "a record written from nothing holds the one section"
+            "[spared]\nServerProfile = free\nPort = 8581\n",
+            "a record written from nothing holds the one section, its proposed \
+             port included (IP3a)"
         );
     }
 }
@@ -24475,5 +25093,892 @@ pub(crate) fn manager_ip2_empty_render_e2e() {
         ids.iter().all(|id| id == "*"),
         "IP2 review D5: the empty render is the pool's global section and no model \
          profile section: {ids:?}"
+    );
+}
+
+/// E2E phase: IP3a, the instance profile verbs at the manager
+/// (`ARCHITECTURE.md` "Instance profiles", slice IP3, part a): the pool reads,
+/// `CreateInstanceProfile` / `DeleteInstanceProfile`, the entry add and remove,
+/// `SetInstanceProfile` (the record's `InstanceProfile`, the pool's text as
+/// revision), `SetInstanceAddress` (the record's `Hostname` and `Port`, the
+/// record's text as revision) and `CreateInstance` proposing the first free
+/// port at or above 8581. Every write is refused before it touches a file, the
+/// pool's and the record's bytes are pinned around each answer, and a taken
+/// address is `AddressInUse`, naming who holds it (another instance, the web
+/// service).
+#[cfg(test)]
+pub(crate) fn manager_ip3a_instance_profiles_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    let _seed = ip2_seed(dir.path(), &sys);
+    let m = ip2_manager();
+    let alice = Caller(":1.42".into());
+
+    let read = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let pool = || read(INSTANCE_PROFILES_FILE);
+    let record = || read(INSTANCES_FILE);
+    let render = |id: &str| read(&format!("models@{id}.ini"));
+    let keys = |text: &str, section: &str| pai_core::ini::section_keys(text, section);
+    let key_of = |text: &str, section: &str, key: &str| -> Option<String> {
+        keys(text, section)
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    };
+    let sections = |text: &str| -> Vec<String> {
+        pai_core::ini::parse_sections(text)
+            .into_iter()
+            .map(|s| s.id)
+            .collect()
+    };
+    let refused = |key: &'static str, values: &[&str]| -> ManagerError {
+        ManagerError::Invalid(pai_core::checks::Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        })
+    };
+    let no_profile = |name: &str| ManagerError::NoInstanceProfile(name.to_string());
+
+    m.start_up();
+    assert!(
+        m.render_failures().is_empty(),
+        "IP3a: the migrated install renders, before any verb runs"
+    );
+
+    // ── The list: each profile with its server profile and its entries ───
+    let rows = || -> Vec<(String, String, Vec<String>)> {
+        m.instance_profiles(&alice)
+            .expect("IP3a: the pool list answers")
+            .into_iter()
+            .map(|p| (p.id, p.server_profile, p.entries))
+            .collect()
+    };
+    let mut got = rows();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            (
+                "default".to_string(),
+                "default".to_string(),
+                vec!["alpha".to_string(), "beta".to_string()]
+            ),
+            (
+                "lab".to_string(),
+                "lab".to_string(),
+                vec!["alpha".to_string()]
+            ),
+            (
+                "unassigned".to_string(),
+                "default".to_string(),
+                vec!["gamma".to_string()]
+            ),
+        ],
+        "IP3a: the list answers each profile with the server profile its section \
+         names and the model profiles its entry sections give it"
+    );
+
+    // ── One profile, with the pool's text as its revision ────────────────
+    let one = m
+        .instance_profile(&alice, "default")
+        .expect("IP3a: the read");
+    assert_eq!(one.id, "default", "IP3a: the row carries its id");
+    assert_eq!(
+        (one.server_profile.as_str(), one.entries.as_slice()),
+        ("default", &["alpha".to_string(), "beta".to_string()][..]),
+        "IP3a: the read answers the profile's server profile and its entries"
+    );
+    assert_eq!(
+        one.revision,
+        pool(),
+        "IP3a: the revision is the text of `instance-profiles.ini` the read returned"
+    );
+    assert_eq!(
+        m.instance_profile(&alice, "nope"),
+        Err(no_profile("nope")),
+        "IP3a: a profile the pool has no section for is refused, naming it"
+    );
+
+    // ── Create: refusals first, the pool untouched ───────────────────────
+    let pool_before = pool();
+    let record_before = record();
+    for bad in ["", "Bad Id", "a_b", "../x", &"a".repeat(33)] {
+        assert_eq!(
+            m.create_instance_profile(&alice, bad, "lab"),
+            Err(refused("instance-profile-bad-id", &[bad])),
+            "IP3a: the id `{bad}` is no instance profile id"
+        );
+    }
+    assert_eq!(
+        m.create_instance_profile(&alice, "default", "lab"),
+        Err(ManagerError::InstanceProfileExists("default".into())),
+        "IP3a: a create writes over nothing: the name is taken"
+    );
+    assert_eq!(
+        m.create_instance_profile(&alice, "edge", "nope"),
+        Err(ManagerError::NoServerProfile("nope".into())),
+        "IP3a: a profile of no server profile the node has is refused, naming it"
+    );
+    assert_eq!(pool(), pool_before, "IP3a: every refusal wrote the pool");
+    assert_eq!(
+        record(),
+        record_before,
+        "IP3a: every refusal wrote the record"
+    );
+
+    // The accepted create: the section, appended, every byte before it the file's.
+    assert_eq!(
+        m.create_instance_profile(&alice, "edge", "lab"),
+        Ok(()),
+        "IP3a: the create of `edge` lands"
+    );
+    assert_eq!(
+        pool(),
+        pai_core::instance_profiles::add_profile(&pool_before, "edge", "lab"),
+        "IP3a: the new section is appended in the pool's shape, every byte before it \
+         the file's own"
+    );
+    assert_eq!(record(), record_before, "IP3a: the create writes no record");
+    assert!(
+        m.render_failures().is_empty(),
+        "IP3a: a profile no instance runs changes no render"
+    );
+    assert!(
+        rows()
+            .iter()
+            .any(|r| r.0 == "edge" && r.1 == "lab" && r.2.is_empty()),
+        "IP3a: the list answers the new profile with no entry: {:?}",
+        rows()
+    );
+
+    // ── The entry add ────────────────────────────────────────────────────
+    assert_eq!(
+        m.add_instance_profile_model(&alice, "nope", "alpha"),
+        Err(no_profile("nope")),
+        "IP3a: an entry of no profile is refused, naming the profile"
+    );
+    assert_eq!(
+        m.add_instance_profile_model(&alice, "default", "nope"),
+        Err(refused("no-model-profile-named", &["nope"])),
+        "IP3a: an entry of no model profile is refused, naming the model"
+    );
+    let pool_before = pool();
+    assert_eq!(
+        m.add_instance_profile_model(&alice, "default", "gamma"),
+        Ok(()),
+        "IP3a: the entry add lands"
+    );
+    assert_eq!(
+        pool(),
+        pai_core::instance_profiles::add_entry(&pool_before, "default", "gamma"),
+        "IP3a: the empty entry section is appended, every byte before it the file's own"
+    );
+    assert!(
+        sections(&render("default")).contains(&"gamma".to_string()),
+        "IP3a: the entry add re-renders the instance with the model: {:?}",
+        sections(&render("default"))
+    );
+    assert!(
+        m.render_failures().is_empty(),
+        "IP3a: the render of the entry add lands"
+    );
+    let pool_before = pool();
+    assert_eq!(
+        m.add_instance_profile_model(&alice, "default", "alpha"),
+        Ok(()),
+        "IP3a: a model the profile already lists is no refusal"
+    );
+    assert_eq!(
+        pool(),
+        pool_before,
+        "IP3a: adding a model the profile already lists writes no byte (its entry's \
+         keys are its state)"
+    );
+
+    // ── The entry remove ─────────────────────────────────────────────────
+    assert_eq!(
+        m.remove_instance_profile_model(&alice, "nope", "alpha"),
+        Err(no_profile("nope")),
+        "IP3a: an entry removal of no profile is refused, naming the profile"
+    );
+    let pool_before = pool();
+    assert!(
+        sections(&pool_before).contains(&"default/beta".to_string()),
+        "the entry `[default/beta]` is there to remove"
+    );
+    assert_eq!(
+        m.remove_instance_profile_model(&alice, "default", "beta"),
+        Ok(()),
+        "IP3a: the entry removal lands"
+    );
+    assert_eq!(
+        pool(),
+        pai_core::ini::text::delete_section(&pool_before, "default/beta")
+            .expect("the section the pool held"),
+        "IP3a: the entry section is cut out, every other byte the file's own"
+    );
+    assert!(
+        sections(&pool()).contains(&"default/alpha".to_string()),
+        "IP3a: the removal leaves the profile's other entries: {:?}",
+        sections(&pool())
+    );
+    assert!(
+        !sections(&render("default")).contains(&"beta".to_string()),
+        "IP3a: the entry removal re-renders the instance without the model: {:?}",
+        sections(&render("default"))
+    );
+    let pool_before = pool();
+    assert_eq!(
+        m.remove_instance_profile_model(&alice, "unassigned", "beta"),
+        Ok(()),
+        "IP3a: removing an entry the profile does not list is no refusal"
+    );
+    assert_eq!(
+        pool(),
+        pool_before,
+        "IP3a: removing an entry that is not there writes no byte"
+    );
+
+    // ── SetInstanceProfile: the record's pointer, the pool's text as revision
+    let rec = record();
+    let rev = pool();
+    assert_eq!(
+        m.set_instance_profile(&alice, "ghost", "default", &rev),
+        Err(ManagerError::NoInstance),
+        "IP3a: an instance the record has no section for is refused"
+    );
+    assert_eq!(
+        m.set_instance_profile(&alice, "lab", "nope", &rev),
+        Err(no_profile("nope")),
+        "IP3a: a profile the pool has no section for is refused, naming it"
+    );
+    assert_eq!(
+        m.set_instance_profile(&alice, "lab", "default", "STALE TEXT"),
+        Err(ManagerError::Changed),
+        "IP3a: a revision the pool no longer holds is the compare-and-swap refusal"
+    );
+    assert_eq!(record(), rec, "IP3a: every refusal wrote no record");
+    assert_eq!(pool(), rev, "IP3a: the switch never writes the pool");
+    assert_eq!(
+        m.set_instance_profile(&alice, "lab", "default", &rev),
+        Ok(()),
+        "IP3a: the switch of `lab` to `default` lands"
+    );
+    let rec = record();
+    assert_eq!(
+        key_of(&rec, "lab", "InstanceProfile").as_deref(),
+        Some("default"),
+        "IP3a: the record's section names the new instance profile"
+    );
+    assert_eq!(
+        key_of(&rec, "lab", "Port").as_deref(),
+        Some("8681"),
+        "IP3a: the switch leaves the section's address alone"
+    );
+    assert_eq!(
+        key_of(&rec, "default", "InstanceProfile").as_deref(),
+        Some("default"),
+        "IP3a: the switch leaves every other section alone"
+    );
+    assert_eq!(
+        key_of(&rec, "default", "Label").as_deref(),
+        Some("First"),
+        "IP3a: the switch keeps the record's other keys"
+    );
+    // The profile `default` runs the entries `alpha` and `gamma` at this point
+    // (`gamma` added above, `beta` removed above), and `lab` ran `alpha` alone.
+    let lab = sections(&render("lab"));
+    assert!(
+        lab.contains(&"alpha".to_string()) && lab.contains(&"gamma".to_string()),
+        "IP3a: the switch re-renders the instance as the profile it now runs: {lab:?}"
+    );
+    assert!(
+        m.render_failures().is_empty(),
+        "IP3a: the render of the switch lands"
+    );
+
+    // ── SetInstanceAddress: the record's address, the record's text as revision
+    let rec = record();
+    assert_eq!(
+        m.set_instance_address(&alice, "ghost", "127.0.0.1", "8595", &rec),
+        Err(ManagerError::NoInstance),
+        "IP3a: an instance the record has no section for is refused"
+    );
+    assert_eq!(
+        m.set_instance_address(&alice, "default", "127.0.0.1", "8595", "STALE TEXT"),
+        Err(ManagerError::Changed),
+        "IP3a: a revision the record no longer holds is the compare-and-swap refusal"
+    );
+    for port in ["0", "70000", "not-a-port"] {
+        let answer = m.set_instance_address(&alice, "default", "127.0.0.1", port, &rec);
+        match &answer {
+            Err(ManagerError::Invalid(r))
+                if r.key == "not-whole-number-in-range"
+                    && r.values.first().map(String::as_str) == Some("Port")
+                    && r.values.get(1).map(String::as_str) == Some(port) => {}
+            other => panic!(
+                "IP3a: the port `{port}` is refused as {other:?}, not as a \
+                             port out of range"
+            ),
+        }
+    }
+    assert_eq!(
+        m.set_instance_address(&alice, "default", "127.0.0.1", "8681", &rec),
+        Err(ManagerError::AddressInUse("lab".into())),
+        "IP3a: an address another instance holds is refused, naming it (`lab` binds \
+         0.0.0.0:8681)"
+    );
+    assert_eq!(
+        m.set_instance_address(&alice, "default", "127.0.0.1", "8590", &rec),
+        Err(ManagerError::AddressInUse("private-ai-bff".into())),
+        "IP3a: the web service's address is refused too, named as its own"
+    );
+    assert_eq!(record(), rec, "IP3a: every address refusal wrote no record");
+    assert_eq!(
+        m.set_instance_address(&alice, "default", "127.0.0.1", "8595", &rec),
+        Ok(()),
+        "IP3a: a free address lands"
+    );
+    let rec2 = record();
+    assert_eq!(
+        (
+            key_of(&rec2, "default", "Hostname").as_deref(),
+            key_of(&rec2, "default", "Port").as_deref()
+        ),
+        (Some("127.0.0.1"), Some("8595")),
+        "IP3a: the record carries the address the verb was given"
+    );
+    assert_eq!(
+        key_of(&rec2, "default", "Label").as_deref(),
+        Some("First"),
+        "IP3a: the address write keeps the section's other keys"
+    );
+    assert_eq!(
+        key_of(&rec2, "lab", "Port").as_deref(),
+        Some("8681"),
+        "IP3a: the address write leaves every other section alone"
+    );
+    assert!(
+        m.render_failures().is_empty(),
+        "IP3a: the render of the address write lands"
+    );
+
+    // The empty host removes the key.
+    let rec = record();
+    assert_eq!(
+        m.set_instance_address(&alice, "lab", "", "8692", &rec),
+        Ok(()),
+        "IP3a: the empty host is accepted"
+    );
+    let rec2 = record();
+    assert!(
+        !keys(&rec2, "lab").iter().any(|(k, _)| k == "Hostname"),
+        "IP3a: the empty host removes `Hostname` from the section: {:?}",
+        keys(&rec2, "lab")
+    );
+    assert_eq!(
+        key_of(&rec2, "lab", "Port").as_deref(),
+        Some("8692"),
+        "IP3a: the clear of the host still sets the port"
+    );
+
+    // ── Delete: the profile in use first ─────────────────────────────────
+    assert_eq!(
+        m.delete_instance_profile(&alice, "nope"),
+        Err(no_profile("nope")),
+        "IP3a: a profile the pool has no section for is refused, naming it"
+    );
+    assert_eq!(
+        m.delete_instance_profile(&alice, "default"),
+        Err(ManagerError::InstanceProfileInUse(
+            "default".into(),
+            "default".into()
+        )),
+        "IP3a: the profile an instance runs is refused, naming the instance"
+    );
+    let pool_before = pool();
+    let rec_before = record();
+    assert_eq!(
+        m.delete_instance_profile(&alice, "unassigned"),
+        Ok(()),
+        "IP3a: a profile no instance runs is removed"
+    );
+    let after = pai_core::ini::text::delete_section(&pool_before, "unassigned/gamma")
+        .expect("the entry the pool held");
+    assert_eq!(
+        pool(),
+        pai_core::ini::text::delete_section(&after, "unassigned").expect("the profile"),
+        "IP3a: the profile and its entry sections are cut out, every other byte the \
+         file's own"
+    );
+    assert!(
+        sections(&pool()).contains(&"default/alpha".to_string()),
+        "IP3a: the delete leaves every other profile and entry: {:?}",
+        sections(&pool())
+    );
+    assert_eq!(record(), rec_before, "IP3a: the delete writes no record");
+    assert!(
+        rows().iter().all(|r| r.0 != "unassigned"),
+        "IP3a: the list no longer answers the removed profile: {:?}",
+        rows()
+    );
+
+    // ── CreateInstance: the port the manager proposes ────────────────────
+    // `default` moved to 8595 and `lab` to 8692 with their own
+    // `SetInstanceAddress` above, so no section of the record holds 8581: the
+    // first free port at or above 8581 is 8581, and the next create takes the
+    // next free one.
+    assert_eq!(
+        m.create_instance(&alice, ENGINE, "newone", "lab"),
+        Ok(()),
+        "IP3a: the create lands"
+    );
+    let rec = record();
+    assert_eq!(
+        key_of(&rec, "newone", "Port").as_deref(),
+        Some("8581"),
+        "IP3a: 8581 is free at this point of the phase, `default` sitting on 8595"
+    );
+    assert_eq!(
+        key_of(&rec, "newone", "Hostname").as_deref(),
+        None,
+        "IP3a: the create names no host: the profile's and the launch's default bind \
+         stand"
+    );
+    assert_eq!(
+        m.create_instance(&alice, ENGINE, "newtwo", "lab"),
+        Ok(()),
+        "IP3a: the second create lands"
+    );
+    assert_eq!(
+        key_of(&record(), "newtwo", "Port").as_deref(),
+        Some("8582"),
+        "IP3a: the next free port after 8581, which the first create took"
+    );
+}
+
+/// A tree of the IP3a review-fix phases: the redirect set, the engine's config
+/// directory made, and the guard the caller keeps so the files stand.
+#[cfg(test)]
+fn ip3fix_tree() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    std::fs::create_dir_all(crate::paths::engine_config_dir()).expect("engine config dir");
+    dir
+}
+
+/// The manager of the IP3a review-fix phases: the fakes, the bff's account as
+/// the only caller that vouches for a user, and the accounts of
+/// [`fakes::FakePasswords`] (alice in `pai`, bob outside it).
+#[cfg(test)]
+fn ip3fix_manager(
+    bff: &Caller,
+) -> Manager<fakes::FakeService, fakes::FakeAuthority, fakes::FakeResolver> {
+    Manager::new(
+        fakes::FakeService::new(),
+        fakes::FakeAuthority::new(true).bff(bff),
+        fakes::FakeResolver::lan(),
+    )
+    .with_group(fakes::FakeGroup::new())
+    .with_passwords(fakes::FakePasswords::new())
+}
+
+/// The caller of the IP3a review-fix phases: the bff carrying a member of `pai`.
+#[cfg(test)]
+fn ip3fix_member(bff: &Caller, name: &str) -> Requester {
+    Requester {
+        caller: bff.clone(),
+        principal: Some(Principal(name.to_string())),
+    }
+}
+
+/// The keyed refusal of the IP3a review-fix phases.
+#[cfg(test)]
+fn ip3fix_refusal(key: &'static str, values: &[&str]) -> ManagerError {
+    ManagerError::Invalid(pai_core::checks::Refusal {
+        key,
+        values: values.iter().map(|v| v.to_string()).collect(),
+    })
+}
+
+/// E2E phase: IP3a review D1, the empty host of `SetInstanceAddress`. The host
+/// the verb is given is the address to overlay on the instance's own; an empty
+/// one removes the record's `Hostname`, so the instance keeps the bind of its
+/// server profile. The clash is judged on THAT binding, the profile's host under
+/// the new port, never on the host an empty config implies.
+#[cfg(test)]
+pub(crate) fn manager_ip3a_fix_empty_host_address_e2e() {
+    let _tree = ip3fix_tree();
+    let sys = crate::paths::engine_config_dir();
+    let bff = Caller(":1.9".into());
+    let m = ip3fix_manager(&bff);
+    let alice = ip3fix_member(&bff, "alice");
+
+    std::fs::write(
+        sys.join("server@wide.ini"),
+        "[Server]\nHostname = 0.0.0.0\nPort = 8601\n",
+    )
+    .expect("server@wide.ini");
+    std::fs::write(
+        sys.join("server@lan.ini"),
+        "[Server]\nHostname = 10.0.0.5\nPort = 8681\n",
+    )
+    .expect("server@lan.ini");
+    let seed = "[wide-one]\nServerProfile = wide\nPort = 9001\n\n[lan-one]\nServerProfile = lan\n";
+    std::fs::write(sys.join(INSTANCES_FILE), seed).expect(INSTANCES_FILE);
+
+    // `lan-one` names no address, so it binds its profile's 10.0.0.5:8681.
+    // `wide-one`'s profile binds 0.0.0.0, every address of the node: the empty
+    // host leaves that bind standing, so the port it is given lands on 10.0.0.5
+    // too, the address `lan-one` holds.
+    let got = m.set_instance_address(&alice, "wide-one", "", "8681", seed);
+    assert_eq!(
+        got,
+        Err(ManagerError::AddressInUse("lan-one".to_string())),
+        "IP3a review D1: the empty host keeps `wide-one` on its profile's 0.0.0.0, so \
+         8681 is `lan-one`'s address: the refusal names it"
+    );
+    assert_eq!(
+        std::fs::read(sys.join(INSTANCES_FILE)).expect("record"),
+        seed.as_bytes(),
+        "IP3a review D1: the refusal wrote the record"
+    );
+}
+
+/// E2E phase: IP3a review D2a, the port `CreateInstance` proposes skips the
+/// address of every instance of the record, the ones naming no `Port` included:
+/// they sit on their server profile's port, the address their launch binds.
+#[cfg(test)]
+pub(crate) fn manager_ip3a_fix_port_of_recordless_e2e() {
+    let _tree = ip3fix_tree();
+    let sys = crate::paths::engine_config_dir();
+    let bff = Caller(":1.9".into());
+    let m = ip3fix_manager(&bff);
+    let alice = ip3fix_member(&bff, "alice");
+
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8581\n",
+    )
+    .expect("server@default.ini");
+    std::fs::write(
+        sys.join("server@lab.ini"),
+        "[Server]\nHostname = 0.0.0.0\nPort = 8681\n",
+    )
+    .expect("server@lab.ini");
+    std::fs::write(
+        sys.join("server@spare.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8699\n",
+    )
+    .expect("server@spare.ini");
+    let seed = "[default]\nServerProfile = default\n\n[lab]\nServerProfile = lab\n";
+    std::fs::write(sys.join(INSTANCES_FILE), seed).expect(INSTANCES_FILE);
+
+    assert_eq!(
+        m.create_instance(&alice, ENGINE, "fresh", "spare"),
+        Ok(()),
+        "IP3a review D2a: the create of `fresh` lands: its profile binds 127.0.0.1:8699, \
+         which nothing holds"
+    );
+    let record = std::fs::read_to_string(sys.join(INSTANCES_FILE)).expect(INSTANCES_FILE);
+    assert_eq!(
+        record_key(&record, "fresh", "Port").as_deref(),
+        Some("8582"),
+        "IP3a review D2a: `default` and `lab` name no `Port` and sit on their profiles' \
+         8581 and 8681, and with no `bff.ini` the web service holds 127.0.0.1:8590: the \
+         first port of the range the node holds nothing of is 8582"
+    );
+}
+
+/// E2E phase: IP3a review D2b, the port `CreateInstance` proposes skips the web
+/// service's own port, the one `bff.ini` names.
+#[cfg(test)]
+pub(crate) fn manager_ip3a_fix_port_of_bff_e2e() {
+    let _tree = ip3fix_tree();
+    let sys = crate::paths::engine_config_dir();
+    let bff = Caller(":1.9".into());
+    let m = ip3fix_manager(&bff);
+    let alice = ip3fix_member(&bff, "alice");
+
+    std::fs::write(
+        sys.join("server@a.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8681\n",
+    )
+    .expect("server@a.ini");
+    std::fs::write(
+        sys.join("server@b.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8699\n",
+    )
+    .expect("server@b.ini");
+    let seed = "[one]\nServerProfile = a\nPort = 8581\n";
+    std::fs::write(sys.join(INSTANCES_FILE), seed).expect(INSTANCES_FILE);
+    let framework = crate::paths::system_config_dir();
+    std::fs::create_dir_all(&framework).expect("framework config dir");
+    std::fs::write(
+        framework.join("bff.ini"),
+        "[Bff]\nListen = 127.0.0.1:8582\n",
+    )
+    .expect("bff.ini");
+
+    assert_eq!(
+        m.create_instance(&alice, ENGINE, "two", "b"),
+        Ok(()),
+        "IP3a review D2b: the create of `two` lands: its profile binds 127.0.0.1:8699, \
+         which nothing holds"
+    );
+    let record = std::fs::read_to_string(sys.join(INSTANCES_FILE)).expect(INSTANCES_FILE);
+    assert_eq!(
+        record_key(&record, "two", "Port").as_deref(),
+        Some("8583"),
+        "IP3a review D2b: the record holds 8581 and `bff.ini` puts the web service on \
+         8582: the create proposes the next port, 8583"
+    );
+}
+
+/// E2E phase: IP3a review D3, `CreateInstance` refused when the node holds every
+/// port of the range: keyed `no-free-port`, naming the range's two ends, and the
+/// walk ENDS, it does not run past the last port for ever.
+#[cfg(test)]
+pub(crate) fn manager_ip3a_fix_no_free_port_e2e() {
+    let _tree = ip3fix_tree();
+    let sys = crate::paths::engine_config_dir();
+    let bff = Caller(":1.9".into());
+    // The node's whole range is 57 000 ports, too many to seed: the seam narrows
+    // it to the two ports held here, and the constants pin the range the create
+    // of a real node walks.
+    let m = ip3fix_manager(&bff).with_port_search(8581, 8582);
+    let alice = ip3fix_member(&bff, "alice");
+
+    std::fs::write(
+        sys.join("server@p.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8581\n",
+    )
+    .expect("server@p.ini");
+    std::fs::write(
+        sys.join("server@q.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8699\n",
+    )
+    .expect("server@q.ini");
+    let seed = "[one]\nServerProfile = p\nPort = 8581\n\n[two]\nServerProfile = q\nPort = 8582\n";
+    std::fs::write(sys.join(INSTANCES_FILE), seed).expect(INSTANCES_FILE);
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .expect("listing")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    let before = listing();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(m.create_instance(&alice, ENGINE, "three", "q"));
+    });
+    let got = match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(answer) => answer,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!(
+            "IP3a review D3: the create of a node holding every port of 8581..=8582 was \
+             still walking after 10 s: it must stop at the end of the range and refuse"
+        ),
+        Err(e) => panic!("IP3a review D3: the thread carrying the create died: {e}"),
+    };
+    assert_eq!(
+        got.expect_err("IP3a review D3: a create with no port left is refused"),
+        ip3fix_refusal("no-free-port", &["8581", "8582"]),
+        "IP3a review D3: the create of a node holding every port of its range is refused \
+         with `no-free-port`, naming the range it walked"
+    );
+    assert_eq!(
+        std::fs::read(sys.join(INSTANCES_FILE)).expect("record"),
+        seed.as_bytes(),
+        "IP3a review D3: the refusal wrote the record"
+    );
+    assert_eq!(
+        listing(),
+        before,
+        "IP3a review D3: the refusal created a file: every check answers before a byte \
+         is written, the port included"
+    );
+    assert_eq!(
+        (FIRST_PROPOSED_PORT, LAST_PROPOSED_PORT),
+        (8581, 65535),
+        "IP3a review D3: the range a real node's create walks is 8581 to 65535, the two \
+         ends the refusal names"
+    );
+}
+
+/// E2E phase: IP3a review D4, a host carrying a control character is refused
+/// before any write: it is written as the value of the record's `Hostname` key,
+/// so a newline forges a line of the file.
+#[cfg(test)]
+pub(crate) fn manager_ip3a_fix_host_control_char_e2e() {
+    let _tree = ip3fix_tree();
+    let sys = crate::paths::engine_config_dir();
+    let bff = Caller(":1.9".into());
+    let m = ip3fix_manager(&bff);
+    let alice = ip3fix_member(&bff, "alice");
+
+    std::fs::write(
+        sys.join("server@wide.ini"),
+        "[Server]\nHostname = 0.0.0.0\nPort = 8601\n",
+    )
+    .expect("server@wide.ini");
+    let seed = "[wide-one]\nServerProfile = wide\nPort = 9001\n";
+    std::fs::write(sys.join(INSTANCES_FILE), seed).expect(INSTANCES_FILE);
+
+    let got = m.set_instance_address(
+        &alice,
+        "wide-one",
+        "127.0.0.1\nServerProfile = x",
+        "8699",
+        seed,
+    );
+    assert!(
+        matches!(got, Err(ManagerError::UnresolvableHost(_))),
+        "IP3a review D4: a host carrying a newline is no host of this node, and the verb \
+         answers before the record is touched: {got:?}"
+    );
+    assert_eq!(
+        std::fs::read(sys.join(INSTANCES_FILE)).expect("record"),
+        seed.as_bytes(),
+        "IP3a review D4: the refusal wrote the record"
+    );
+}
+
+/// E2E phase: IP3a review D5, the six IP3a write verbs are refused at the
+/// manager for a principal outside `pai`, and nothing of the tree moves. The
+/// same six calls carried by a member land, so each refusal is the gate's and not
+/// a later check's.
+#[cfg(test)]
+pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
+    let _tree = ip3fix_tree();
+    let sys = crate::paths::engine_config_dir();
+    let bff = Caller(":1.9".into());
+    let m = ip3fix_manager(&bff);
+    let alice = ip3fix_member(&bff, "alice");
+    let bob = ip3fix_member(&bff, "bob");
+
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8581\n",
+    )
+    .expect("server@default.ini");
+    std::fs::write(
+        sys.join("server@lab.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8681\n",
+    )
+    .expect("server@lab.ini");
+    std::fs::write(
+        sys.join(INSTANCES_FILE),
+        "[default]\nServerProfile = default\nPort = 8581\n",
+    )
+    .expect(INSTANCES_FILE);
+    std::fs::write(sys.join("models.ini"), "[alpha]\nmodel = alpha.gguf\n").expect("models.ini");
+    assert_eq!(
+        m.create_instance_profile(&alice, "spare", "lab"),
+        Ok(()),
+        "IP3a review D5: the seed, a spare instance profile of the pool"
+    );
+    let pool = std::fs::read_to_string(sys.join(INSTANCE_PROFILES_FILE)).expect("pool");
+    let record = std::fs::read_to_string(sys.join(INSTANCES_FILE)).expect(INSTANCES_FILE);
+    let pool_bytes = std::fs::read(sys.join(INSTANCE_PROFILES_FILE)).expect("pool bytes");
+    let record_bytes = std::fs::read(sys.join(INSTANCES_FILE)).expect("record bytes");
+
+    // Every call answers on its own merits for a member (the round below), so a
+    // refusal here is the principal gate and nothing else.
+    let answers: Vec<(&str, Result<(), ManagerError>)> = vec![
+        (
+            "create_instance_profile",
+            m.create_instance_profile(&bob, "brand", "lab"),
+        ),
+        (
+            "delete_instance_profile",
+            m.delete_instance_profile(&bob, "spare"),
+        ),
+        (
+            "add_instance_profile_model",
+            m.add_instance_profile_model(&bob, "spare", "alpha"),
+        ),
+        (
+            "remove_instance_profile_model",
+            m.remove_instance_profile_model(&bob, "spare", "alpha"),
+        ),
+        (
+            "set_instance_profile",
+            m.set_instance_profile(&bob, "default", "spare", &pool),
+        ),
+        (
+            "set_instance_address",
+            m.set_instance_address(&bob, "default", "127.0.0.1", "8699", &record),
+        ),
+    ];
+    for (verb, answer) in answers {
+        assert_eq!(
+            answer,
+            Err(ManagerError::NotAuthorized),
+            "IP3a review D5: `{verb}` carried by `bob`, who is no member of `pai`, is \
+             refused at the manager"
+        );
+    }
+    assert_eq!(
+        std::fs::read(sys.join(INSTANCE_PROFILES_FILE)).expect("pool"),
+        pool_bytes,
+        "IP3a review D5: the six refusals wrote the pool"
+    );
+    assert_eq!(
+        std::fs::read(sys.join(INSTANCES_FILE)).expect("record"),
+        record_bytes,
+        "IP3a review D5: the six refusals wrote the record"
+    );
+
+    // The teeth: the same six verbs, carried by a member, all land.
+    let member: Vec<(&str, Result<(), ManagerError>)> = vec![
+        (
+            "add_instance_profile_model",
+            m.add_instance_profile_model(&alice, "spare", "alpha"),
+        ),
+        (
+            "remove_instance_profile_model",
+            m.remove_instance_profile_model(&alice, "spare", "alpha"),
+        ),
+        (
+            "create_instance_profile",
+            m.create_instance_profile(&alice, "brand", "lab"),
+        ),
+        (
+            "delete_instance_profile",
+            m.delete_instance_profile(&alice, "brand"),
+        ),
+    ];
+    for (verb, answer) in member {
+        assert_eq!(
+            answer,
+            Ok(()),
+            "IP3a review D5: `{verb}` carried by `alice`, a member of `pai`, lands"
+        );
+    }
+    assert_eq!(
+        m.set_instance_profile(
+            &alice,
+            "default",
+            "spare",
+            &std::fs::read_to_string(sys.join(INSTANCE_PROFILES_FILE)).expect("pool")
+        ),
+        Ok(()),
+        "IP3a review D5: the switch carried by a member lands"
+    );
+    assert_eq!(
+        m.set_instance_address(
+            &alice,
+            "default",
+            "127.0.0.1",
+            "8699",
+            &std::fs::read_to_string(sys.join(INSTANCES_FILE)).expect("record")
+        ),
+        Ok(()),
+        "IP3a review D5: the address carried by a member lands"
     );
 }

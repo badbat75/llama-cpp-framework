@@ -40,9 +40,9 @@
 //! ```
 
 use super::{
-    ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply, ModelProfileSource,
-    NodeDevices, NodeInfoReply, Reason, ServerProfileInfo, TensorRow,
+    ClientError, DeviceInfo, InstanceInfo, InstanceProfileInfo, InstanceState, ManagerClient,
+    ManagerFile, ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply,
+    ModelProfileSource, NodeDevices, NodeInfoReply, Reason, ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu, Status};
@@ -82,6 +82,10 @@ type InstanceRow = (
 /// instance runs names no instance: the empty string, which the client reads
 /// as none.
 type ServerProfileRow = (String, String, u16, Vec<String>, String);
+
+/// One row of `InstanceProfiles`, as the bus answers it: `(s id,
+/// s server_profile, as entries)`, the whole list one `a(ssas)`.
+type InstanceProfileRow = (String, String, Vec<String>);
 
 /// One row of `Devices`, as the bus answers it: `(s id, s name, s backend,
 /// t total_mib, t free_mib)`, the list beside the moment of the probe and the
@@ -360,6 +364,108 @@ impl ManagerClient for DbusClient {
         match self.acting() {
             Some(principal) => self.call("DeleteServerProfileAs", &(principal, engine, profile)),
             None => self.call("DeleteServerProfile", &(engine, profile)),
+        }
+        .map(|_| ())
+    }
+    // The instance profile verbs, mirroring the server profile pair's shape,
+    // the `As` form carrying the principal first. The two reads are guarded
+    // too: the pool is a `configure` read, so a caller vouching for a signed-in
+    // user asks for that user.
+    fn instance_profiles(&self) -> Result<Vec<InstanceProfileInfo>, ClientError> {
+        let reply = match self.acting() {
+            Some(principal) => self.call("InstanceProfilesAs", &(principal,))?,
+            None => self.call("InstanceProfiles", &())?,
+        };
+        let rows: Vec<InstanceProfileRow> = body(reply)?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, server_profile, entries)| InstanceProfileInfo {
+                id,
+                server_profile,
+                entries,
+                // The pool has one text: the list answers no revision.
+                revision: String::new(),
+            })
+            .collect())
+    }
+    fn instance_profile(&self, profile: &str) -> Result<InstanceProfileInfo, ClientError> {
+        let reply = match self.acting() {
+            Some(principal) => self.call("GetInstanceProfileAs", &(principal, profile))?,
+            None => self.call("GetInstanceProfile", &(profile,))?,
+        };
+        let (server_profile, entries, revision): (String, Vec<String>, String) = body(reply)?;
+        Ok(InstanceProfileInfo {
+            id: profile.to_string(),
+            server_profile,
+            entries,
+            revision,
+        })
+    }
+    fn create_instance_profile(
+        &self,
+        profile: &str,
+        server_profile: &str,
+    ) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call(
+                "CreateInstanceProfileAs",
+                &(principal, profile, server_profile),
+            ),
+            None => self.call("CreateInstanceProfile", &(profile, server_profile)),
+        }
+        .map(|_| ())
+    }
+    fn delete_instance_profile(&self, profile: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("DeleteInstanceProfileAs", &(principal, profile)),
+            None => self.call("DeleteInstanceProfile", &(profile,)),
+        }
+        .map(|_| ())
+    }
+    fn add_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("AddInstanceProfileModelAs", &(principal, profile, model)),
+            None => self.call("AddInstanceProfileModel", &(profile, model)),
+        }
+        .map(|_| ())
+    }
+    fn remove_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => {
+                self.call("RemoveInstanceProfileModelAs", &(principal, profile, model))
+            }
+            None => self.call("RemoveInstanceProfileModel", &(profile, model)),
+        }
+        .map(|_| ())
+    }
+    fn set_instance_profile(
+        &self,
+        instance: &str,
+        profile: &str,
+        revision: &str,
+    ) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call(
+                "SetInstanceProfileAs",
+                &(principal, instance, profile, revision),
+            ),
+            None => self.call("SetInstanceProfile", &(instance, profile, revision)),
+        }
+        .map(|_| ())
+    }
+    fn set_instance_address(
+        &self,
+        instance: &str,
+        host: &str,
+        port: &str,
+        revision: &str,
+    ) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call(
+                "SetInstanceAddressAs",
+                &(principal, instance, host, port, revision),
+            ),
+            None => self.call("SetInstanceAddress", &(instance, host, port, revision)),
         }
         .map(|_| ())
     }

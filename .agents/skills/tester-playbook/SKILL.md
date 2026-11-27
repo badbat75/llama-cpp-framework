@@ -202,9 +202,22 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   and by showing no symbol of the slice sits on the verb's path.
 - Prove each phase alone when a refusal aborts at its own phase, and report the later ones as blocked,
   not passed. For a manager phase (all in `service.rs`, one `data_root_e2e`): a temporary
-  `tests/ip2_probe.rs`-style module with one `#[test]` per phase, run
+  `tests/ip3a_probe.rs`-style module with one `#[test]` per phase, run
   `--lib -- --test-threads=1 <probe-filter>`, shows every phase's day-one panic at once (each phase
   redirects the data root to its own tempdir, so solos are safe); delete the module before reporting.
+- Pin "a search stops at the end of its range and refuses" (IP3a D3: the port walk of
+  `create_instance`) by seeding the WHOLE range? No: 57 000 instances make `write_served` render one
+  file each. Add the narrowest builder seam beside `with_walk_max_entries` (`with_port_search(first,
+  last)` + a `port_search` field + `proposed_port(record, first, last) -> Result<_, ManagerError>`),
+  stubbed to today's behaviour (walk with `saturating_add`, `let _ = last;`, no refusal) so the ONLY
+  red is the missing refusal, seed only the narrowed range, and pin the real ends in their own assert
+  (`(FIRST_PROPOSED_PORT, LAST_PROPOSED_PORT) == (8581, 65535)`). Keep the `mpsc::recv_timeout` guard
+  as a guard: the stub's walk answers in ms, the red is the missing `no-free-port`.
+- A review criterion can sit on machinery that ALREADY answers right (IP3a D4: a host with a newline
+  dies in the resolver's parse, `binding` → `UnresolvableHost`, before a write; D5: every IP3a verb
+  calls `authorize_as`, whose `gate_principal` runs before the action). Write those as pins with a
+  teeth round (the same verbs LAND for a member, so the refusal is the gate and not a later check) and
+  report them green on arrival, not as reds.
 - Prove each later red of a test that masks its own reds by cutting the earlier block out of the real
   source (a python line-range delete that asserts its two anchor lines first), running
   `--lib data_root_e2e` (~7 s incremental), and restoring with `cp` + `cmp -s`.
@@ -983,6 +996,11 @@ frozen list.
   `0.0.0.0:8681` (the refusal names that instance), and with no `bff.ini` in the tree the web service's
   address is the DEFAULT `127.0.0.1:8590` (`AddressInUse("private-ai-bff")`).
 - An uncalled e2e phase is invisible: its solo run looks green.
+- A created instance's listed `port` is the RECORD's `Port` (`launch::with_record_address` overrides the
+  server profile), and `create_instance` proposes it as the first free one at or above 8581
+  (`proposed_port` walks the record's own `Port` keys): a listing pin after a create reads 8581 / 8582,
+  never the port of the profile the create named, and an earlier `SetInstanceAddress` in the same phase
+  moves what the NEXT create proposes, so a comment naming "the node holds 8581" goes stale.
 - `pai_core::bff_cfg::versions_dir()` answers `None` under a test redirect (it resolves only when the
   config dir is exactly `/etc/llama.cpp`), so the engine's installed backends (`versions::installed`,
   the `llama.cpp` and `llama.cpp-<backend>` package files) cannot be pinned through a real path in an

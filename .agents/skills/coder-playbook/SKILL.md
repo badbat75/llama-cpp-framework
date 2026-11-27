@@ -41,7 +41,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   production. Name the witness pair, the two calls whose texts differ in one letter's case, one expected
   accepted and one refused: no rule separates them. To show the rest of the suite IS satisfiable, patch
   the fixtures in the copy (the colliding text, a `want` count the block's own refusals outgrow, a wire
-  signature a slice grew) and rerun to green; every patch is one defect to report, with its line.
+  signature a slice grew) and rerun to green; every patch is one defect to report, with its line. A
+  phase's COMMENT about its fixture ("the node holds 8581 and 8692") is not the fixture, read the seed's
+  bytes, and add up every phase that pins the same rule before reporting: five pins agreed with the rule
+  and two did not, and the two sat in the one phase whose comment was stale.
 - Flakes: reproduce solo, state it, move on. The manager's D-Bus and gpu-probe tests under load, the
   e2e's colliding-writes gate phase (`the first write returns`, a 5 s `GATE_WAIT`) when a cargo build
   runs beside the suite (the suite alone: 142 s, a solo e2e beside a build: 669 s), xtask's
@@ -217,6 +220,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   &ConfigFile::Models, ..)`: mode 0644, temp file renamed over. A render written after a record change
   turns its failure into the call's answer. `assign::render` takes both pool files, so a profile in
   `models.ini.disabled` is in effect. An instance IS a section of `instances.ini`.
+- `paths::instance_ids()` filters ids through `valid_instance_id` (lowercase, digits, `-`): the address
+  and the port walks take it (`check_binding`, `proposed_port`, neither taking a record text), because
+  a section whose name is no id is NEVER run (`launch::instance_command`'s `InvalidId`), so it holds no
+  address. A manager fixture id with a `_` is invisible to those walks: the fixtures keep valid ids
+  (`wide-one`).
 - A per-instance render rule goes in `manager/service.rs`'s `render_of` (the one place that knows the
   instance: `instance_devices` reads its server profile's `Devices`, `paths::instance_server_profile`
   the profile file). A Linux-only rule needs a `#[cfg(not(target_os = "linux"))]` twin of the same name
@@ -243,6 +251,20 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (the wire phase lists `(args, kind, needle)` rows). Change the rule and those rows are the last reds of
   `data_root_e2e`, one row at a time, and a row that pins the case the new rule accepts is a witness pair
   with the phase that pins the new rule: report the pair, change no test.
+- A verb added to the transports rides BOTH clients' acting frame, the READS included:
+  `crates/core/src/client/pipe.rs` builds it with `self.guarded(method, &[])` (the `As` method name plus
+  the `principal` field) and `crates/core/src/client/dbus.rs` with `match self.acting()`. A read written
+  as a plain call answers an acting client's read on the CALLER's rights, and the bff's own connection is
+  authorized, so a non-admin `As` read returns `Ok` and only the `asked_admin` count shows the call asked
+  at all.
+- The address rule of IP3 (port option P1, `ARCHITECTURE.md`): `Hostname`/`Port` live in the instance's
+  record section, `AddressInUse` is judged on the records alone, and "any number of instances on one node
+  may share an instance profile or a server profile". So `CreateInstance`'s `ServerProfileInUse` fires only
+  for a record section that runs the profile AT the profile's address (a `ServerProfile` key and no
+  `Hostname`/`Port` of its own, the pre-IP3 shape, which is what the IP2 refusal tables seed), and the
+  create's `check_binding` walk skips every section that owns an address; the create writes
+  `Port = proposed_port` (the lowest port from 8581 no record section holds) and no `Hostname`, so the
+  profile's bind stands.
 - Linux bundle loop (the GPU runtimes): every directory of a dist that is mirrored under
   `RT_DIR` needs its own `RUNPATH` entry, and a runtime the dist reaches through a symlink
   of its own (`lib/llvm/lib/libomp.so` naming the file in `x86_64-unknown-linux-gnu/`) stages

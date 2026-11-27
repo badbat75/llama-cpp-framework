@@ -59,6 +59,10 @@ pub const KEYS: &[&str] = &[
     "instance-no-model-profiles",
     "instance-bad-label",
     "instance-label-taken",
+    "instance-profile-bad-id",
+    "instance-profile-exists",
+    "instance-profile-in-use",
+    "no-free-port",
 ];
 
 /// The separator of `Refusal::encode`'s fields: U+001F, the unit separator.
@@ -156,6 +160,10 @@ impl Refusal {
             "instance-no-model-profiles" => strings::fill("instance-no-model-profiles", &[&v(0)]),
             "instance-bad-label" => strings::fill("instance-bad-label", &[&v(0)]),
             "instance-label-taken" => strings::fill("instance-label-taken", &[&v(0), &v(1)]),
+            "instance-profile-bad-id" => strings::fill("instance-profile-bad-id", &[&v(0)]),
+            "instance-profile-exists" => strings::fill("instance-profile-exists", &[&v(0)]),
+            "instance-profile-in-use" => strings::fill("instance-profile-in-use", &[&v(0), &v(1)]),
+            "no-free-port" => strings::fill("no-free-port", &[&v(0), &v(1)]),
             other => other.to_string(),
         }
     }

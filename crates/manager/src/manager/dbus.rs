@@ -54,12 +54,21 @@ pub enum Error {
     BadFileName(String),
     AddressInUse(String),
     NoServerProfile(String),
+    /// The pool has no instance profile of this name; its message is the
+    /// name.
+    NoInstanceProfile(String),
     /// The message is the profile and the instance, split at the separator
     /// `Refusal::encode` uses.
     ServerProfileInUse(String),
     /// A create found an entry already at the profile's name; its message is
     /// the profile.
     ServerProfileExists(String),
+    /// A create found an entry already at the instance profile's name; its
+    /// message is the profile.
+    InstanceProfileExists(String),
+    /// The message is the instance profile and the instance that runs it,
+    /// split at the separator `Refusal::encode` uses.
+    InstanceProfileInUse(String),
     UnresolvableHost(String),
     Service(String),
     Io(String),
@@ -81,8 +90,11 @@ impl From<ManagerError> for Error {
             ManagerError::BadFileName => Error::BadFileName(message),
             ManagerError::AddressInUse(_) => Error::AddressInUse(message),
             ManagerError::NoServerProfile(_) => Error::NoServerProfile(message),
+            ManagerError::NoInstanceProfile(_) => Error::NoInstanceProfile(message),
             ManagerError::ServerProfileInUse(_, _) => Error::ServerProfileInUse(message),
             ManagerError::ServerProfileExists(_) => Error::ServerProfileExists(message),
+            ManagerError::InstanceProfileExists(_) => Error::InstanceProfileExists(message),
+            ManagerError::InstanceProfileInUse(_, _) => Error::InstanceProfileInUse(message),
             ManagerError::UnresolvableHost(_) => Error::UnresolvableHost(message),
             ManagerError::Service(_) => Error::Service(message),
             ManagerError::Io(_) => Error::Io(message),
@@ -807,6 +819,253 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.delete_server_profile(&who, &engine, &profile))
+            .await?)
+    }
+
+    // ── The instance profile verbs (`ARCHITECTURE.md` "Instance profiles").
+
+    /// `InstanceProfiles`: the node's instance profiles, `a(ssas)`: each one
+    /// the id, the server profile its section names and the model profiles
+    /// its entries give it.
+    async fn instance_profiles(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+    ) -> Result<Vec<(String, String, Vec<String>)>, Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| {
+                m.instance_profiles(&who).map(|rows| {
+                    rows.into_iter()
+                        .map(|p| (p.id, p.server_profile, p.entries))
+                        .collect()
+                })
+            })
+            .await?)
+    }
+
+    /// `InstanceProfiles` for `principal`, the principal first (`s`).
+    async fn instance_profiles_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+    ) -> Result<Vec<(String, String, Vec<String>)>, Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| {
+                m.instance_profiles(&who).map(|rows| {
+                    rows.into_iter()
+                        .map(|p| (p.id, p.server_profile, p.entries))
+                        .collect()
+                })
+            })
+            .await?)
+    }
+
+    /// `GetInstanceProfile`: one instance profile, `(s profile)`, answering
+    /// `(s server_profile, as entries, s revision)`, the revision the text of
+    /// `instance-profiles.ini` the read returned.
+    async fn get_instance_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+    ) -> Result<(String, Vec<String>, String), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| {
+                m.instance_profile(&who, &profile)
+                    .map(|p| (p.server_profile, p.entries, p.revision))
+            })
+            .await?)
+    }
+
+    /// `GetInstanceProfile` for `principal`, the principal first (`ss`).
+    async fn get_instance_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+    ) -> Result<(String, Vec<String>, String), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| {
+                m.instance_profile(&who, &profile)
+                    .map(|p| (p.server_profile, p.entries, p.revision))
+            })
+            .await?)
+    }
+
+    /// `CreateInstanceProfile`: writes a new instance profile, `(ss)`: its id
+    /// and the server profile it runs.
+    async fn create_instance_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+        server_profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.create_instance_profile(&who, &profile, &server_profile))
+            .await?)
+    }
+
+    /// `CreateInstanceProfile` for `principal`, the principal first (`sss`).
+    async fn create_instance_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+        server_profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.create_instance_profile(&who, &profile, &server_profile))
+            .await?)
+    }
+
+    /// `DeleteInstanceProfile`: removes an instance profile no instance runs,
+    /// `(s)`, its id.
+    async fn delete_instance_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.delete_instance_profile(&who, &profile))
+            .await?)
+    }
+
+    /// `DeleteInstanceProfile` for `principal`, the principal first (`ss`).
+    async fn delete_instance_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.delete_instance_profile(&who, &profile))
+            .await?)
+    }
+
+    /// `AddInstanceProfileModel`: gives an instance profile a model profile,
+    /// `(ss)`: the profile and the model.
+    async fn add_instance_profile_model(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+        model: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.add_instance_profile_model(&who, &profile, &model))
+            .await?)
+    }
+
+    /// `AddInstanceProfileModel` for `principal`, the principal first (`sss`).
+    async fn add_instance_profile_model_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+        model: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.add_instance_profile_model(&who, &profile, &model))
+            .await?)
+    }
+
+    /// `RemoveInstanceProfileModel`: takes a model profile away from an
+    /// instance profile, `(ss)`: the profile and the model.
+    async fn remove_instance_profile_model(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+        model: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.remove_instance_profile_model(&who, &profile, &model))
+            .await?)
+    }
+
+    /// `RemoveInstanceProfileModel` for `principal`, the principal first
+    /// (`sss`).
+    async fn remove_instance_profile_model_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+        model: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.remove_instance_profile_model(&who, &profile, &model))
+            .await?)
+    }
+
+    /// `SetInstanceProfile`: points an instance at an instance profile,
+    /// `(sss)`: the instance, the profile and the revision, the text of
+    /// `instance-profiles.ini` the caller read.
+    async fn set_instance_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        instance: String,
+        profile: String,
+        revision: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.set_instance_profile(&who, &instance, &profile, &revision))
+            .await?)
+    }
+
+    /// `SetInstanceProfile` for `principal`, the principal first (`ssss`).
+    async fn set_instance_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        instance: String,
+        profile: String,
+        revision: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.set_instance_profile(&who, &instance, &profile, &revision))
+            .await?)
+    }
+
+    /// `SetInstanceAddress`: the address an instance listens on, `(ssss)`: the
+    /// instance, the host, the port as a text, and the revision, the text of
+    /// `instances.ini` the caller read.
+    async fn set_instance_address(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        instance: String,
+        host: String,
+        port: String,
+        revision: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.set_instance_address(&who, &instance, &host, &port, &revision))
+            .await?)
+    }
+
+    /// `SetInstanceAddress` for `principal`, the principal first (`sssss`).
+    async fn set_instance_address_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        instance: String,
+        host: String,
+        port: String,
+        revision: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.set_instance_address(&who, &instance, &host, &port, &revision))
             .await?)
     }
 
@@ -3961,8 +4220,11 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
         assert_eq!(
             record(),
             "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\
-             [db-1]\nServerProfile = free\n",
-            "the record gained the section naming the profile"
+             [db-1]\nServerProfile = free\nPort = 8581\n",
+            "the record gained the section naming the profile and carrying the \
+             port the create proposed (IP3a: the first free one at or above 8581, \
+             this node's instances sitting on 8080 and 8081 and the web service on \
+             8590)"
         );
         assert!(
             sys.join("models@db-1.ini").is_file(),
@@ -4033,8 +4295,9 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
         assert_eq!(
             record(),
             "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\
-             [db-1]\nServerProfile = free\n",
-            "every refused create left the record as it was"
+             [db-1]\nServerProfile = free\nPort = 8581\n",
+            "every refused create left the record as it was, the proposed port \
+             included"
         );
         assert!(
             !sys.join("models@db-2.ini").exists() && !sys.join("models@db-3.ini").exists(),
@@ -4173,6 +4436,671 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
             !sys.join("models@db-as.ini").exists() && record().contains("[lan-2]"),
             "and nothing was written for them"
         );
+    }
+}
+
+/// The instance profile verbs over D-Bus (IP3a, `ARCHITECTURE.md` "Instance
+/// profiles", slice IP3 part a): the wire shapes, the answers and the bytes they
+/// leave. `InstanceProfiles` is `()` answering `a(ssas)`: the id, the server
+/// profile and the entries, in the file's order, and no revision (the pool is
+/// one text, so only one read carries it). `GetInstanceProfile` is `(s)`
+/// answering `(sass)`: the server profile, the entries and the revision, the
+/// text of `instance-profiles.ini` the read returned. `CreateInstanceProfile` is
+/// `(ss)` (the id and the server profile it runs), `AddInstanceProfileModel` and
+/// `RemoveInstanceProfileModel` are `(ss)`, `DeleteInstanceProfile` is `(s)`,
+/// `SetInstanceProfile` is `(sss)` (the instance, the profile, the revision) and
+/// `SetInstanceAddress` is `(ssss)` (the instance, the host, the port as text,
+/// the revision): every write's reply is the unit. Their `As` forms carry the
+/// principal first and are answered only to the bff's account. The refusals on
+/// the wire: `InstanceProfileExists` with the name, `InstanceProfileInUse` with
+/// the profile and the instance split by the separator, `NoInstanceProfile` with
+/// the name, `NoServerProfile`, `NoInstance`, `Changed`, `AddressInUse` with who
+/// holds the address, and `Invalid` with the encoded key
+/// (`instance-profile-bad-id`, `no-model-profile-named`,
+/// `not-whole-number-in-range`). A body that is not the signature is zbus's own
+/// error and writes nothing, and a caller with no sender is refused.
+#[cfg(test)]
+pub(crate) fn manager_dbus_ip3a_instance_profiles_e2e() {
+    use super::service::fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+    use super::service::real_model_files;
+    use pai_core::checks::Refusal;
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    use zbus::blocking::connection::Builder;
+    use zbus::blocking::Connection;
+
+    type Core = Manager<FakeService, FakeAuthority, FakeResolver>;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+    let pool_seed = "[default]\nServerProfile = default\n\n[default/alpha]\ndevice = cuda0\n\n[lab]\nServerProfile = lab\n\n[lab/alpha]\n\n[unassigned]\nServerProfile = default\n";
+    let record_seed = "[default]\nInstanceProfile = default\nHostname = 127.0.0.1\nPort = 8581\n\n[lab]\nInstanceProfile = lab\nHostname = 0.0.0.0\nPort = 8681\n";
+    std::fs::write(sys.join("instance-profiles.ini"), pool_seed).expect("pool");
+    std::fs::write(sys.join("instances.ini"), record_seed).expect("record");
+    std::fs::write(
+        sys.join("server@default.ini"),
+        "[Server]\nPort = 8581\nHostname = 127.0.0.1\nModelsMax = 3\n",
+    )
+    .expect("server@default.ini");
+    std::fs::write(
+        sys.join("server@lab.ini"),
+        "[Server]\nPort = 8681\nHostname = 0.0.0.0\n",
+    )
+    .expect("server@lab.ini");
+    std::fs::write(
+        sys.join("models.ini"),
+        real_model_files(
+            dir.path(),
+            "[alpha]\nmodel = /models/alpha.gguf\n\n[beta]\nmodel = /models/beta.gguf\n\n[gamma]\nmodel = /models/gamma.gguf\n",
+        )
+    )
+    .expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), "").expect("models.ini.disabled");
+    for id in ["default", "lab"] {
+        std::fs::write(sys.join(format!("models@{id}.ini")), "").expect("render");
+    }
+
+    // Serve `core` peer to peer on a socket pair, the client stamping `sender`.
+    let connect = |core: &Arc<Core>, sender: Option<&str>| -> (Connection, Connection) {
+        let (s0, s1) = UnixStream::pair().expect("socket pair");
+        let iface = ManagerInterface::new(core.clone());
+        let server = std::thread::spawn(move || {
+            Builder::async_io_unix_stream(s0)
+                .server(zbus::Guid::generate())
+                .expect("server guid")
+                .p2p()
+                .serve_at(OBJECT_PATH, iface)
+                .expect("serve_at")
+                .build()
+                .expect("server connection")
+        });
+        let client = Builder::async_io_unix_stream(s1)
+            .p2p()
+            .method_timeout(Duration::from_secs(10))
+            .build()
+            .expect("client connection");
+        if let Some(name) = sender {
+            client.inner().set_unique_name(name).expect("unique name");
+        }
+        (server.join().expect("server thread"), client)
+    };
+    let core = || -> Arc<Core> {
+        Arc::new(
+            Manager::new(
+                FakeService::new(),
+                FakeAuthority::new(true),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new()),
+        )
+    };
+    // The bff's own account, vouching for a member of `pai`.
+    let core_bff = || -> Arc<Core> {
+        Arc::new(
+            Manager::new(
+                FakeService::new(),
+                FakeAuthority::new(true).bff(&Caller(":1.9".into())),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new())
+            .with_passwords(FakePasswords::new())
+            .with_log(FakeActionLog::new()),
+        )
+    };
+    fn call<B>(conn: &Connection, method: &str, body: &B) -> Result<zbus::Message, (String, String)>
+    where
+        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    {
+        conn.call_method(None::<&str>, OBJECT_PATH, Some(INTERFACE), method, body)
+            .map_err(|e| match e {
+                zbus::Error::MethodError(name, detail, _) => {
+                    (name.to_string(), detail.unwrap_or_default())
+                }
+                zbus::Error::FDO(e) => {
+                    use zbus::DBusError;
+                    (
+                        e.name().to_string(),
+                        e.description().unwrap_or_default().to_string(),
+                    )
+                }
+                other => panic!("{method}: not a method error reply: {other:?}"),
+            })
+    }
+    fn body<T: for<'de> zbus::zvariant::DynamicDeserialize<'de>>(m: &zbus::Message) -> T {
+        m.body().deserialize().expect("reply body")
+    }
+    let err_name = |kind: &str| format!("org.privateai.Manager1.Error.{kind}");
+    let refusal = |key: &'static str, values: &[&str]| Refusal {
+        key,
+        values: values.iter().map(|v| v.to_string()).collect(),
+    };
+    let pool = || std::fs::read_to_string(sys.join("instance-profiles.ini")).expect("pool");
+    let record = || std::fs::read_to_string(sys.join("instances.ini")).expect("record");
+    let key_of = |text: &str, section: &str, key: &str| -> Option<String> {
+        pai_core::ini::section_keys(text, section)
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    };
+    let sections = |text: &str| -> Vec<String> {
+        pai_core::ini::parse_sections(text)
+            .into_iter()
+            .map(|s| s.id)
+            .collect()
+    };
+    type Rows = Vec<(String, String, Vec<String>)>;
+    let rows = |c: &Connection| -> Rows {
+        body::<Rows>(&call(c, "InstanceProfiles", &()).expect("InstanceProfiles"))
+    };
+
+    // ── A caller with no sender: every verb is a configure write ───────────
+    {
+        let c = core();
+        let (_server, client) = connect(&c, None);
+        for e in [
+            call(&client, "InstanceProfiles", &()).expect_err("InstanceProfiles"),
+            call(&client, "GetInstanceProfile", &("default",)).expect_err("GetInstanceProfile"),
+            call(&client, "CreateInstanceProfile", &("edge", "lab"))
+                .expect_err("CreateInstanceProfile"),
+            call(&client, "DeleteInstanceProfile", &("edge",)).expect_err("DeleteInstanceProfile"),
+            call(&client, "AddInstanceProfileModel", &("default", "beta"))
+                .expect_err("AddInstanceProfileModel"),
+            call(&client, "RemoveInstanceProfileModel", &("default", "beta"))
+                .expect_err("RemoveInstanceProfileModel"),
+            call(&client, "SetInstanceProfile", &("lab", "default", "REV"))
+                .expect_err("SetInstanceProfile"),
+            call(
+                &client,
+                "SetInstanceAddress",
+                &("lab", "127.0.0.1", "8595", "REV"),
+            )
+            .expect_err("SetInstanceAddress"),
+        ] {
+            assert_eq!(e.0, err_name("NotAuthorized"), "no sender: {e:?}");
+        }
+        assert_eq!(
+            (pool(), record()),
+            (pool_seed.to_string(), record_seed.to_string()),
+            "a caller with no sender wrote nothing"
+        );
+    }
+
+    // ── An authorized caller: the shapes, the answers, the bytes ───────────
+    {
+        let c = core();
+        let (_server, client) = connect(&c, Some(":1.42"));
+
+        let r = call(&client, "InstanceProfiles", &()).expect("InstanceProfiles");
+        assert_eq!(
+            r.body().signature().to_string(),
+            "a(ssas)",
+            "an array of the id, the server profile and the entries: no revision, \
+             the pool is one text"
+        );
+        assert_eq!(
+            body::<Rows>(&r),
+            vec![
+                (
+                    "default".to_string(),
+                    "default".to_string(),
+                    vec!["alpha".to_string()]
+                ),
+                (
+                    "lab".to_string(),
+                    "lab".to_string(),
+                    vec!["alpha".to_string()]
+                ),
+                ("unassigned".to_string(), "default".to_string(), Vec::new()),
+            ],
+            "in the file's order, each entry section a model of its profile"
+        );
+
+        let r = call(&client, "GetInstanceProfile", &("default",)).expect("GetInstanceProfile");
+        assert_eq!(
+            r.body().signature().to_string(),
+            "(sass)",
+            "the server profile, the entries and the revision"
+        );
+        assert_eq!(
+            body::<(String, Vec<String>, String)>(&r),
+            (
+                "default".to_string(),
+                vec!["alpha".to_string()],
+                pool_seed.to_string()
+            ),
+            "the revision is the text of `instance-profiles.ini` the read returned"
+        );
+        let e = call(&client, "GetInstanceProfile", &("nope",))
+            .expect_err("GetInstanceProfile of no profile");
+        assert_eq!(e.0, err_name("NoInstanceProfile"), "{e:?}");
+        assert_eq!(e.1, "nope", "the refusal names the profile");
+
+        // The create: the refusals first, the pool untouched.
+        let e = call(&client, "CreateInstanceProfile", &("Bad Id", "lab"))
+            .expect_err("an id the rule refuses");
+        assert_eq!(e.0, err_name("Invalid"), "{e:?}");
+        assert_eq!(
+            Refusal::decode(&e.1),
+            Some(refusal("instance-profile-bad-id", &["Bad Id"])),
+            "the keyed refusal: {:?}",
+            e.1
+        );
+        let e = call(&client, "CreateInstanceProfile", &("default", "lab"))
+            .expect_err("a name the pool has");
+        assert_eq!(e.0, err_name("InstanceProfileExists"), "{e:?}");
+        assert_eq!(e.1, "default", "the refusal names the profile");
+        let e = call(&client, "CreateInstanceProfile", &("edge", "nope"))
+            .expect_err("no server profile of that name");
+        assert_eq!(e.0, err_name("NoServerProfile"), "{e:?}");
+        assert_eq!(
+            pool(),
+            pool_seed.to_string(),
+            "every refused create wrote the pool"
+        );
+
+        let r = call(&client, "CreateInstanceProfile", &("edge", "lab"))
+            .expect("CreateInstanceProfile of a new name");
+        assert_eq!(
+            r.body().signature().to_string(),
+            String::new(),
+            "the reply is the unit: ()"
+        );
+        assert_eq!(
+            pool(),
+            pai_core::instance_profiles::add_profile(pool_seed, "edge", "lab"),
+            "the section is appended, every byte before it the file's own"
+        );
+        assert_eq!(record(), record_seed, "the create writes no record");
+
+        // The entry add and remove.
+        let e = call(&client, "AddInstanceProfileModel", &("nope", "alpha"))
+            .expect_err("an entry of no profile");
+        assert_eq!(e.0, err_name("NoInstanceProfile"), "{e:?}");
+        let e = call(&client, "AddInstanceProfileModel", &("default", "nope"))
+            .expect_err("an entry of no model profile");
+        assert_eq!(e.0, err_name("Invalid"), "{e:?}");
+        assert_eq!(
+            Refusal::decode(&e.1),
+            Some(refusal("no-model-profile-named", &["nope"])),
+            "the keyed refusal: {:?}",
+            e.1
+        );
+        let before = pool();
+        call(&client, "AddInstanceProfileModel", &("default", "beta"))
+            .expect("AddInstanceProfileModel of beta");
+        assert_eq!(
+            pool(),
+            pai_core::instance_profiles::add_entry(&before, "default", "beta"),
+            "the empty entry section is appended"
+        );
+        let render = std::fs::read_to_string(sys.join("models@default.ini")).expect("render");
+        assert!(
+            sections(&render).contains(&"beta".to_string()),
+            "the entry add re-renders the instance with the model: {:?}",
+            sections(&render)
+        );
+        let before = pool();
+        call(&client, "RemoveInstanceProfileModel", &("default", "alpha"))
+            .expect("RemoveInstanceProfileModel of alpha");
+        assert_eq!(
+            pool(),
+            pai_core::ini::text::delete_section(&before, "default/alpha")
+                .expect("the entry the pool held"),
+            "the entry section is cut out, every other byte kept"
+        );
+        assert!(
+            pool().contains("[default/beta]"),
+            "the removal leaves the profile's other entries: {}",
+            pool()
+        );
+
+        // `SetInstanceProfile`: the record's pointer, the pool's text as revision.
+        let rev = pool();
+        let e = call(
+            &client,
+            "SetInstanceProfile",
+            &("ghost", "default", rev.as_str()),
+        )
+        .expect_err("an instance the record has no section for");
+        assert_eq!(e.0, err_name("NoInstance"), "{e:?}");
+        let e = call(
+            &client,
+            "SetInstanceProfile",
+            &("lab", "nope", rev.as_str()),
+        )
+        .expect_err("a profile the pool has no section for");
+        assert_eq!(e.0, err_name("NoInstanceProfile"), "{e:?}");
+        let e = call(
+            &client,
+            "SetInstanceProfile",
+            &("lab", "default", "STALE TEXT"),
+        )
+        .expect_err("a revision the pool no longer holds");
+        assert_eq!(e.0, err_name("Changed"), "{e:?}");
+        assert_eq!(
+            record(),
+            record_seed,
+            "every refused switch wrote no record"
+        );
+        call(
+            &client,
+            "SetInstanceProfile",
+            &("lab", "default", rev.as_str()),
+        )
+        .expect("SetInstanceProfile of lab");
+        let rec = record();
+        assert_eq!(
+            (
+                key_of(&rec, "lab", "InstanceProfile").as_deref(),
+                key_of(&rec, "lab", "Port").as_deref(),
+                key_of(&rec, "default", "InstanceProfile").as_deref(),
+            ),
+            (Some("default"), Some("8681"), Some("default")),
+            "the section names the new profile, its address and every other \
+             section kept"
+        );
+        assert_eq!(pool(), rev, "the switch never writes the pool");
+
+        // `SetInstanceAddress`: the record's address, the record's text as revision.
+        let e = call(
+            &client,
+            "SetInstanceAddress",
+            &("ghost", "127.0.0.1", "8595", rec.as_str()),
+        )
+        .expect_err("an instance the record has no section for");
+        assert_eq!(e.0, err_name("NoInstance"), "{e:?}");
+        let e = call(
+            &client,
+            "SetInstanceAddress",
+            &("default", "127.0.0.1", "8595", "STALE TEXT"),
+        )
+        .expect_err("a revision the record no longer holds");
+        assert_eq!(e.0, err_name("Changed"), "{e:?}");
+        for e in [
+            call(&client, "SetInstanceAddress", &("default",)).expect_err("three strings"),
+            call(
+                &client,
+                "SetInstanceAddress",
+                &("default", "127.0.0.1", 8595u16, rec.as_str()),
+            )
+            .expect_err("a uint16 where the port text belongs"),
+            call(
+                &client,
+                "SetInstanceAddress",
+                &("default", "127.0.0.1", "8595", 8595u32),
+            )
+            .expect_err("a number where the revision belongs"),
+        ] {
+            assert!(
+                !e.0.starts_with("org.privateai.Manager1."),
+                "the port travels as text: a shape mismatch is zbus's own error, \
+                 not one of the manager's: {e:?}"
+            );
+        }
+        assert_eq!(
+            record(),
+            rec,
+            "a body the method does not take writes nothing"
+        );
+        let e = call(
+            &client,
+            "SetInstanceAddress",
+            &("default", "127.0.0.1", "not-a-port", rec.as_str()),
+        )
+        .expect_err("a port that is no number");
+        assert_eq!(e.0, err_name("Invalid"), "{e:?}");
+        let r = Refusal::decode(&e.1).expect("the keyed refusal");
+        assert_eq!(r.key, "not-whole-number-in-range", "{r:?}");
+        assert_eq!(
+            (
+                r.values.first().map(String::as_str),
+                r.values.get(1).map(String::as_str)
+            ),
+            (Some("Port"), Some("not-a-port")),
+            "the refusal names the key and the value: {r:?}"
+        );
+        let e = call(
+            &client,
+            "SetInstanceAddress",
+            &("default", "127.0.0.1", "8681", rec.as_str()),
+        )
+        .expect_err("the address another instance holds (`lab` binds 0.0.0.0:8681)");
+        assert_eq!(e.0, err_name("AddressInUse"), "{e:?}");
+        assert_eq!(e.1, "lab", "the refusal names who holds it");
+        let e = call(
+            &client,
+            "SetInstanceAddress",
+            &("default", "127.0.0.1", "8590", rec.as_str()),
+        )
+        .expect_err("the web service's address");
+        assert_eq!(e.0, err_name("AddressInUse"), "{e:?}");
+        assert_eq!(e.1, "private-ai-bff", "named as its own");
+        assert_eq!(record(), rec, "every refused address wrote no record");
+        call(
+            &client,
+            "SetInstanceAddress",
+            &("default", "127.0.0.1", "8595", rec.as_str()),
+        )
+        .expect("SetInstanceAddress of a free port");
+        let rec = record();
+        assert_eq!(
+            (
+                key_of(&rec, "default", "Hostname").as_deref(),
+                key_of(&rec, "default", "Port").as_deref(),
+                key_of(&rec, "lab", "Port").as_deref(),
+            ),
+            (Some("127.0.0.1"), Some("8595"), Some("8681")),
+            "the section carries the address, every other section kept"
+        );
+
+        // The delete: the profile an instance runs first.
+        let e = call(&client, "DeleteInstanceProfile", &("nope",))
+            .expect_err("a profile the pool has no section for");
+        assert_eq!(e.0, err_name("NoInstanceProfile"), "{e:?}");
+        assert_eq!(e.1, "nope", "the refusal names the profile");
+        let e = call(&client, "DeleteInstanceProfile", &("default",))
+            .expect_err("the profile an instance runs");
+        assert_eq!(e.0, err_name("InstanceProfileInUse"), "{e:?}");
+        let parts = e.1.split('\u{1f}').collect::<Vec<_>>();
+        assert_eq!(
+            (parts.first().copied(), parts.get(1).copied()),
+            (Some("default"), Some("default")),
+            "the profile and the instance that runs it, split by the separator: {e:?}"
+        );
+        let e = call(&client, "DeleteInstanceProfile", &("lab",))
+            .expect_err("the profile `lab` runs: `default`, the one above");
+        assert_eq!(e.0, err_name("InstanceProfileInUse"), "{e:?}");
+        assert_eq!(
+            e.1.split('\u{1f}').collect::<Vec<_>>(),
+            ["default", "lab"],
+            "the refusal names the instance the record points at `default`"
+        );
+        let before = pool();
+        let rec_before = record();
+        call(&client, "DeleteInstanceProfile", &("unassigned",))
+            .expect("DeleteInstanceProfile of a profile nobody runs");
+        assert_eq!(
+            pool(),
+            pai_core::ini::text::delete_section(&before, "unassigned")
+                .expect("the profile the pool held"),
+            "the section is cut out, every other byte kept"
+        );
+        assert_eq!(record(), rec_before, "the delete writes no record");
+        assert!(
+            rows(&client).iter().all(|r| r.0 != "unassigned"),
+            "the list no longer answers the removed profile: {:?}",
+            rows(&client)
+        );
+
+        // `CreateInstance` proposes the port: `default` sits on 8595 (moved
+        // above) and `lab` on 8681, so the first free port at or above 8581 is
+        // 8581, and the next create takes the next free one.
+        call(&client, "CreateInstance", &("llama.cpp", "db-new", "lab"))
+            .expect("CreateInstance of a new id");
+        assert_eq!(
+            key_of(&record(), "db-new", "Port").as_deref(),
+            Some("8581"),
+            "the record's section carries the proposed port"
+        );
+        assert_eq!(
+            key_of(&record(), "db-new", "Hostname").as_deref(),
+            None,
+            "the create names no host: the profile's bind stands"
+        );
+        call(&client, "CreateInstance", &("llama.cpp", "db-new2", "lab"))
+            .expect("the second create");
+        assert_eq!(
+            key_of(&record(), "db-new2", "Port").as_deref(),
+            Some("8582"),
+            "the second create is given the next free port, not 8581 again"
+        );
+    }
+
+    // ── The `As` forms, answered to the bff's account ──────────────────────
+    {
+        let c = core_bff();
+        let (_server, client) = connect(&c, Some(":1.9"));
+
+        call(
+            &client,
+            "CreateInstanceProfileAs",
+            &("alice", "edge-as", "lab"),
+        )
+        .expect("CreateInstanceProfileAs for a member of pai");
+        assert!(
+            pool().contains("[edge-as]"),
+            "the member's create wrote: {}",
+            pool()
+        );
+        let r = call(&client, "GetInstanceProfileAs", &("alice", "edge-as"))
+            .expect("GetInstanceProfileAs");
+        assert_eq!(
+            r.body().signature().to_string(),
+            "(sass)",
+            "the `As` read answers the same shape"
+        );
+        call(
+            &client,
+            "AddInstanceProfileModelAs",
+            &("alice", "edge-as", "gamma"),
+        )
+        .expect("AddInstanceProfileModelAs");
+        assert!(
+            pool().contains("[edge-as/gamma]"),
+            "the member's entry add wrote: {}",
+            pool()
+        );
+
+        // The instance switched onto the member's profile: deleting it is now
+        // the in-use refusal, and the address verb answers through `As`.
+        let rev = pool();
+        call(
+            &client,
+            "SetInstanceProfileAs",
+            &("alice", "lab", "edge-as", rev.as_str()),
+        )
+        .expect("SetInstanceProfileAs");
+        assert_eq!(
+            key_of(&record(), "lab", "InstanceProfile").as_deref(),
+            Some("edge-as"),
+            "the member's switch wrote the record"
+        );
+        let e = call(&client, "DeleteInstanceProfileAs", &("alice", "edge-as"))
+            .expect_err("the profile the instance now runs");
+        assert_eq!(e.0, err_name("InstanceProfileInUse"), "{e:?}");
+        assert_eq!(
+            e.1.split('\u{1f}').collect::<Vec<_>>(),
+            ["edge-as", "lab"],
+            "the refusal names the instance that runs it"
+        );
+        call(
+            &client,
+            "SetInstanceAddressAs",
+            &("alice", "lab", "127.0.0.1", "8699", record().as_str()),
+        )
+        .expect("SetInstanceAddressAs");
+        assert_eq!(
+            (
+                key_of(&record(), "lab", "Hostname").as_deref(),
+                key_of(&record(), "lab", "Port").as_deref()
+            ),
+            (Some("127.0.0.1"), Some("8699")),
+            "the member's address write wrote the record"
+        );
+        assert_eq!(
+            key_of(&record(), "db-new", "Port").as_deref(),
+            Some("8581"),
+            "and leaves every other section alone"
+        );
+        for e in [
+            call(
+                &client,
+                "RemoveInstanceProfileModelAs",
+                &("bob", "edge-as", "gamma"),
+            )
+            .expect_err("RemoveInstanceProfileModelAs for a principal outside pai"),
+            call(&client, "DeleteInstanceProfileAs", &("bob", "edge-as"))
+                .expect_err("DeleteInstanceProfileAs for a principal outside pai"),
+        ] {
+            assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        }
+        assert!(
+            pool().contains("[edge-as/gamma]"),
+            "nothing was written for a principal outside pai: {}",
+            pool()
+        );
+    }
+
+    // ── A caller that is not the bff: the `As` forms are refused ───────────
+    {
+        let c = core();
+        let (_server, client) = connect(&c, Some(":1.42"));
+        let before = pool();
+        for e in [
+            call(
+                &client,
+                "CreateInstanceProfileAs",
+                &("alice", "edge-x", "lab"),
+            )
+            .expect_err("CreateInstanceProfileAs not from the bff"),
+            call(&client, "DeleteInstanceProfileAs", &("alice", "edge-as"))
+                .expect_err("DeleteInstanceProfileAs not from the bff"),
+            call(
+                &client,
+                "AddInstanceProfileModelAs",
+                &("alice", "default", "beta"),
+            )
+            .expect_err("AddInstanceProfileModelAs not from the bff"),
+            call(
+                &client,
+                "RemoveInstanceProfileModelAs",
+                &("alice", "default", "beta"),
+            )
+            .expect_err("RemoveInstanceProfileModelAs not from the bff"),
+            call(
+                &client,
+                "SetInstanceProfileAs",
+                &("alice", "lab", "default", "x"),
+            )
+            .expect_err("SetInstanceProfileAs not from the bff"),
+            call(
+                &client,
+                "SetInstanceAddressAs",
+                &("alice", "lab", "127.0.0.1", "8699", "x"),
+            )
+            .expect_err("SetInstanceAddressAs not from the bff"),
+            call(&client, "InstanceProfilesAs", &("alice",))
+                .expect_err("InstanceProfilesAs not from the bff"),
+            call(&client, "GetInstanceProfileAs", &("alice", "default"))
+                .expect_err("GetInstanceProfileAs not from the bff"),
+        ] {
+            assert_eq!(e.0, err_name("NotAuthorized"), "{e:?}");
+        }
+        assert_eq!(pool(), before, "a caller that is not the bff wrote nothing");
     }
 }
 
@@ -4675,6 +5603,14 @@ mod tests {
             (ManagerError::BadFileName, "BadFileName"),
             (ManagerError::AddressInUse("default".into()), "AddressInUse"),
             (
+                ManagerError::NoServerProfile("nope café".into()),
+                "NoServerProfile",
+            ),
+            (
+                ManagerError::NoInstanceProfile("nope café".into()),
+                "NoInstanceProfile",
+            ),
+            (
                 ManagerError::UnresolvableHost("gpu-box.lan".into()),
                 "UnresolvableHost",
             ),
@@ -4696,6 +5632,15 @@ mod tests {
             (
                 ManagerError::ServerProfileExists("big café".into()),
                 "ServerProfileExists",
+            ),
+            // The instance profile pair.
+            (
+                ManagerError::InstanceProfileExists("big café".into()),
+                "InstanceProfileExists",
+            ),
+            (
+                ManagerError::InstanceProfileInUse("big café".into(), "lab-2".into()),
+                "InstanceProfileInUse",
             ),
         ];
         for (error, kind) in cases {

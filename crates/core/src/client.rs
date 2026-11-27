@@ -67,6 +67,8 @@ pub enum ClientError {
     /// No server profile of that name: no such file, or a name that builds
     /// none.
     NoServerProfile(String),
+    /// No instance profile of that name in the pool.
+    NoInstanceProfile(String),
     /// The server profile is used by this other instance. The wire message is
     /// the profile and the instance, in that order, split on `SEP`, as a
     /// refusal's values are.
@@ -74,6 +76,12 @@ pub enum ClientError {
     /// A server profile with that name is already there: a create overwrites
     /// nothing.
     ServerProfileExists(String),
+    /// An instance profile with that name is already there: a
+    /// create overwrites nothing.
+    InstanceProfileExists(String),
+    /// The instance profile is the one this instance runs. The
+    /// wire message is the profile and the instance, split on `SEP`.
+    InstanceProfileInUse(String, String),
     /// The host that does not resolve.
     UnresolvableHost(String),
     /// The service manager's own message.
@@ -119,7 +127,18 @@ impl ClientError {
             // it: both name the profile, the second names the holder too,
             // after the separator `checks::SEP` (the manager's `encode`).
             "NoServerProfile" => ClientError::NoServerProfile(message.to_string()),
+            "NoInstanceProfile" => ClientError::NoInstanceProfile(message.to_string()),
             "ServerProfileExists" => ClientError::ServerProfileExists(message.to_string()),
+            // The instance profile pair, the in-use one split at
+            // the separator as the server profile's is.
+            "InstanceProfileExists" => ClientError::InstanceProfileExists(message.to_string()),
+            "InstanceProfileInUse" => {
+                message
+                    .split_once('\u{1f}')
+                    .map_or_else(other, |(profile, instance)| {
+                        ClientError::InstanceProfileInUse(profile.to_string(), instance.to_string())
+                    })
+            }
             "ServerProfileInUse" => {
                 const SEP: char = '\u{1f}';
                 message
@@ -143,11 +162,18 @@ impl ClientError {
             // The arms are forced by the exhaustive match, the smallest the
             // tests below pin.
             ClientError::NoServerProfile(_) => strings::t("client-no-server-profile"),
+            ClientError::NoInstanceProfile(_) => strings::t("client-no-instance-profile"),
             ClientError::ServerProfileInUse(profile, instance) => {
                 strings::fill("client-server-profile-in-use", &[profile, instance])
             }
             ClientError::ServerProfileExists(profile) => {
                 strings::fill("client-server-profile-exists", &[profile])
+            }
+            ClientError::InstanceProfileExists(profile) => {
+                strings::fill("client-instance-profile-exists", &[profile])
+            }
+            ClientError::InstanceProfileInUse(profile, instance) => {
+                strings::fill("client-instance-profile-in-use", &[profile, instance])
             }
             ClientError::UnresolvableHost(host) => {
                 strings::fill("client-unresolvable-host", &[host])
@@ -250,6 +276,22 @@ pub struct ServerProfileInfo {
     pub port: u16,
     pub tags: Vec<String>,
     pub instance: Option<String>,
+}
+
+/// One instance profile, as `instance_profiles()` and
+/// `instance_profile()` answer it (`ARCHITECTURE.md` "Instance profiles",
+/// slice IP3): the section's id, the server profile its section names, and
+/// the model profiles its entry sections give it. `revision` is the text of
+/// `instance-profiles.ini` the read returned, the revision
+/// `set_instance_profile` and `set_instance_address` send back: the pool has
+/// one text, so `instance_profiles` leaves it empty and only
+/// `instance_profile` answers it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceProfileInfo {
+    pub id: String,
+    pub server_profile: String,
+    pub entries: Vec<String>,
+    pub revision: String,
 }
 
 /// What a new model profile is built from (`CreateModelProfile`,
@@ -491,7 +533,9 @@ pub trait ManagerClient {
         ))
     }
     /// Creates the instance `id` of the engine `engine`, pointing it at the
-    /// server profile `server_profile`. Guarded as a write of a served file is.
+    /// server profile `server_profile`. The manager proposes the
+    /// instance's port, the first free one at or above 8581, and writes it
+    /// into the record's section. Guarded as a write of a served file is.
     fn create_instance(
         &self,
         engine: &str,
@@ -544,6 +588,93 @@ pub trait ManagerClient {
         let _ = (engine, profile);
         Err(ClientError::Other(
             "this transport of the manager has no DeleteServerProfile".into(),
+        ))
+    }
+    // The instance profile verbs (ARCHITECTURE.md "Instance
+    // profiles", slice IP3). The default bodies say the transport speaks none
+    // of them, as every verb of an older manager does.
+    /// The node's instance profiles, each with its server profile, its entry
+    /// models and the file's text as revision.
+    fn instance_profiles(&self) -> Result<Vec<InstanceProfileInfo>, ClientError> {
+        Err(ClientError::Other(
+            "this transport of the manager has no InstanceProfiles".into(),
+        ))
+    }
+    /// One instance profile, by id.
+    fn instance_profile(&self, profile: &str) -> Result<InstanceProfileInfo, ClientError> {
+        let _ = profile;
+        Err(ClientError::Other(
+            "this transport of the manager has no GetInstanceProfile".into(),
+        ))
+    }
+    /// Writes a new instance profile running the server profile
+    /// `server_profile`. Guarded as a write of a served file is.
+    fn create_instance_profile(
+        &self,
+        profile: &str,
+        server_profile: &str,
+    ) -> Result<(), ClientError> {
+        let _ = (profile, server_profile);
+        Err(ClientError::Other(
+            "this transport of the manager has no CreateInstanceProfile".into(),
+        ))
+    }
+    /// Removes an instance profile no instance runs. Guarded as a write of a
+    /// served file is.
+    fn delete_instance_profile(&self, profile: &str) -> Result<(), ClientError> {
+        let _ = profile;
+        Err(ClientError::Other(
+            "this transport of the manager has no DeleteInstanceProfile".into(),
+        ))
+    }
+    /// Gives the instance profile `profile` the model profile `model`, an
+    /// empty entry. Guarded as a write of a served file is.
+    fn add_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+        let _ = (profile, model);
+        Err(ClientError::Other(
+            "this transport of the manager has no AddInstanceProfileModel".into(),
+        ))
+    }
+    /// Takes the model profile `model` away from the instance profile
+    /// `profile`. Guarded as a write of a served file is.
+    fn remove_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+        let _ = (profile, model);
+        Err(ClientError::Other(
+            "this transport of the manager has no RemoveInstanceProfileModel".into(),
+        ))
+    }
+    /// Points the instance `instance` at the instance profile `profile`,
+    /// only while `instance-profiles.ini` still holds `revision`, the text
+    /// the caller read: other bytes are `ClientError::Changed`, and the
+    /// switch writes nothing. Guarded as a write of a served file is.
+    fn set_instance_profile(
+        &self,
+        instance: &str,
+        profile: &str,
+        revision: &str,
+    ) -> Result<(), ClientError> {
+        let _ = (instance, profile, revision);
+        Err(ClientError::Other(
+            "this transport of the manager has no SetInstanceProfile".into(),
+        ))
+    }
+    /// Sets the address of the instance `instance` to `host` and `port`
+    /// (strings, as every address text on the wire; the empty host removes
+    /// the key), only while `instances.ini` still holds `revision`, the text
+    /// the caller read: other bytes are `ClientError::Changed`, and the
+    /// address writes nothing. An address another instance of the node, or
+    /// the web service, holds is `ClientError::AddressInUse`. Guarded as a
+    /// write of a served file is.
+    fn set_instance_address(
+        &self,
+        instance: &str,
+        host: &str,
+        port: &str,
+        revision: &str,
+    ) -> Result<(), ClientError> {
+        let _ = (instance, host, port, revision);
+        Err(ClientError::Other(
+            "this transport of the manager has no SetInstanceAddress".into(),
         ))
     }
     /// The node's server profiles, each with the instance that points at it.

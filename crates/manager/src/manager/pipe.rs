@@ -69,6 +69,27 @@ enum Request {
     CreateServerProfile(String, String, u16, Option<Principal>),
     /// `engine`, `profile`: removes a server profile no instance points at.
     DeleteServerProfile(String, String, Option<Principal>),
+    // ── The instance profile verbs (`ARCHITECTURE.md` "Instance profiles").
+    /// No arguments: the node's instance profiles.
+    InstanceProfiles(Option<Principal>),
+    /// `profile`: one instance profile, with the pool's text as revision.
+    GetInstanceProfile(String, Option<Principal>),
+    /// `profile`, `server_profile`: writes a new instance profile.
+    CreateInstanceProfile(String, String, Option<Principal>),
+    /// `profile`: removes an instance profile no instance runs.
+    DeleteInstanceProfile(String, Option<Principal>),
+    /// `profile`, `model`: gives an instance profile a model profile.
+    AddInstanceProfileModel(String, String, Option<Principal>),
+    /// `profile`, `model`: takes a model profile away from an instance profile.
+    RemoveInstanceProfileModel(String, String, Option<Principal>),
+    /// `instance`, `profile`, `revision`: points an instance at an instance
+    /// profile, the revision the text of `instance-profiles.ini` the caller
+    /// read.
+    SetInstanceProfile(String, String, String, Option<Principal>),
+    /// `instance`, `host`, `port`, `revision`: the address an instance
+    /// listens on, the port a text, the revision the text of `instances.ini`
+    /// the caller read.
+    SetInstanceAddress(String, String, String, String, Option<Principal>),
     /// `profile`, `from`, `values`: writes a new model profile, `from` a
     /// profile to copy (`""` for none) and `values` the keys of the file pick.
     CreateModelProfile(String, String, Vec<(String, String)>, Option<Principal>),
@@ -233,6 +254,69 @@ impl Request {
             "DeleteServerProfileAs" => Request::DeleteServerProfile(
                 arg("engine")?,
                 arg("profile")?,
+                principal().map(Some)?,
+            ),
+            // The instance profile verbs (`ARCHITECTURE.md` "Instance
+            // profiles"). The reads take no argument beside `profile`; the
+            // writes carry `revision`, the file's text the caller read.
+            "InstanceProfiles" => Request::InstanceProfiles(None),
+            "InstanceProfilesAs" => Request::InstanceProfiles(principal().map(Some)?),
+            "GetInstanceProfile" => Request::GetInstanceProfile(arg("profile")?, None),
+            "GetInstanceProfileAs" => {
+                Request::GetInstanceProfile(arg("profile")?, principal().map(Some)?)
+            }
+            "CreateInstanceProfile" => {
+                Request::CreateInstanceProfile(arg("profile")?, arg("server_profile")?, None)
+            }
+            "CreateInstanceProfileAs" => Request::CreateInstanceProfile(
+                arg("profile")?,
+                arg("server_profile")?,
+                principal().map(Some)?,
+            ),
+            "DeleteInstanceProfile" => Request::DeleteInstanceProfile(arg("profile")?, None),
+            "DeleteInstanceProfileAs" => {
+                Request::DeleteInstanceProfile(arg("profile")?, principal().map(Some)?)
+            }
+            "AddInstanceProfileModel" => {
+                Request::AddInstanceProfileModel(arg("profile")?, arg("model")?, None)
+            }
+            "AddInstanceProfileModelAs" => Request::AddInstanceProfileModel(
+                arg("profile")?,
+                arg("model")?,
+                principal().map(Some)?,
+            ),
+            "RemoveInstanceProfileModel" => {
+                Request::RemoveInstanceProfileModel(arg("profile")?, arg("model")?, None)
+            }
+            "RemoveInstanceProfileModelAs" => Request::RemoveInstanceProfileModel(
+                arg("profile")?,
+                arg("model")?,
+                principal().map(Some)?,
+            ),
+            "SetInstanceProfile" => Request::SetInstanceProfile(
+                arg("instance")?,
+                arg("profile")?,
+                arg("revision")?,
+                None,
+            ),
+            "SetInstanceProfileAs" => Request::SetInstanceProfile(
+                arg("instance")?,
+                arg("profile")?,
+                arg("revision")?,
+                principal().map(Some)?,
+            ),
+            "SetInstanceAddress" => Request::SetInstanceAddress(
+                arg("instance")?,
+                arg("host")?,
+                arg("port")?,
+                arg("revision")?,
+                None,
+            ),
+            "SetInstanceAddressAs" => Request::SetInstanceAddress(
+                arg("instance")?,
+                arg("host")?,
+                arg("port")?,
+                arg("revision")?,
                 principal().map(Some)?,
             ),
             // The create of a model profile: the id, the profile to copy (no
@@ -427,6 +511,59 @@ where
         Request::RemoveInstance(instance, principal) => requester(caller, principal)
             .and_then(|who| manager.remove_instance(&who, &instance))
             .map(|()| Value::Null),
+        // ── The instance profile verbs (`ARCHITECTURE.md` "Instance
+        // profiles"). The answers are the shape the bff reads: one object per
+        // profile, the pool's text as `revision` on `GetInstanceProfile`
+        // alone (the pool has one text).
+        Request::InstanceProfiles(principal) => requester(caller, principal)
+            .and_then(|who| manager.instance_profiles(&who))
+            .map(|rows| {
+                json!(rows
+                    .iter()
+                    .map(|p| json!({
+                        "id": p.id,
+                        "server_profile": p.server_profile,
+                        "entries": p.entries,
+                    }))
+                    .collect::<Vec<_>>())
+            }),
+        Request::GetInstanceProfile(profile, principal) => requester(caller, principal)
+            .and_then(|who| manager.instance_profile(&who, &profile))
+            .map(|p| {
+                json!({
+                    "server_profile": p.server_profile,
+                    "entries": p.entries,
+                    "revision": p.revision,
+                })
+            }),
+        Request::CreateInstanceProfile(profile, server_profile, principal) => {
+            requester(caller, principal)
+                .and_then(|who| manager.create_instance_profile(&who, &profile, &server_profile))
+                .map(|()| Value::Null)
+        }
+        Request::DeleteInstanceProfile(profile, principal) => requester(caller, principal)
+            .and_then(|who| manager.delete_instance_profile(&who, &profile))
+            .map(|()| Value::Null),
+        Request::AddInstanceProfileModel(profile, model, principal) => requester(caller, principal)
+            .and_then(|who| manager.add_instance_profile_model(&who, &profile, &model))
+            .map(|()| Value::Null),
+        Request::RemoveInstanceProfileModel(profile, model, principal) => {
+            requester(caller, principal)
+                .and_then(|who| manager.remove_instance_profile_model(&who, &profile, &model))
+                .map(|()| Value::Null)
+        }
+        Request::SetInstanceProfile(instance, profile, revision, principal) => {
+            requester(caller, principal)
+                .and_then(|who| manager.set_instance_profile(&who, &instance, &profile, &revision))
+                .map(|()| Value::Null)
+        }
+        Request::SetInstanceAddress(instance, host, port, revision, principal) => {
+            requester(caller, principal)
+                .and_then(|who| {
+                    manager.set_instance_address(&who, &instance, &host, &port, &revision)
+                })
+                .map(|()| Value::Null)
+        }
         // One object per server profile, the instance that runs it the empty
         // string when no instance does: the same answer the bus gives.
         Request::ServerProfiles => Ok(json!(manager
@@ -1934,8 +2071,21 @@ mod tests {
                 "ServerProfileInUse",
             ),
             (
+                ManagerError::NoInstanceProfile("nope café".into()),
+                "NoInstanceProfile",
+            ),
+            (
                 ManagerError::ServerProfileExists("big café".into()),
                 "ServerProfileExists",
+            ),
+            // The instance profile pair.
+            (
+                ManagerError::InstanceProfileExists("big café".into()),
+                "InstanceProfileExists",
+            ),
+            (
+                ManagerError::InstanceProfileInUse("big café".into(), "lab-2".into()),
+                "InstanceProfileInUse",
             ),
         ]
     }
@@ -1955,10 +2105,17 @@ mod tests {
                 ManagerError::BadFileName => ClientError::BadFileName,
                 ManagerError::AddressInUse(id) => ClientError::AddressInUse(id.clone()),
                 ManagerError::NoServerProfile(n) => ClientError::NoServerProfile(n.clone()),
+                ManagerError::NoInstanceProfile(n) => ClientError::NoInstanceProfile(n.clone()),
                 ManagerError::ServerProfileInUse(n, id) => {
                     ClientError::ServerProfileInUse(n.clone(), id.clone())
                 }
                 ManagerError::ServerProfileExists(n) => ClientError::ServerProfileExists(n.clone()),
+                ManagerError::InstanceProfileExists(n) => {
+                    ClientError::InstanceProfileExists(n.clone())
+                }
+                ManagerError::InstanceProfileInUse(n, id) => {
+                    ClientError::InstanceProfileInUse(n.clone(), id.clone())
+                }
                 ManagerError::UnresolvableHost(h) => ClientError::UnresolvableHost(h.clone()),
                 ManagerError::Service(s) => ClientError::Service(s.0.clone()),
                 ManagerError::Io(k) => ClientError::Io(k.to_string()),

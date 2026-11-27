@@ -94,9 +94,9 @@
 //! ```
 
 use super::{
-    ClientError, DeviceInfo, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply, ModelProfileSource,
-    NodeDevices, NodeInfoReply, Reason, ServerProfileInfo, TensorRow,
+    ClientError, DeviceInfo, InstanceInfo, InstanceProfileInfo, InstanceState, ManagerClient,
+    ManagerFile, ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply,
+    ModelProfileSource, NodeDevices, NodeInfoReply, Reason, ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu};
@@ -256,6 +256,41 @@ impl<S: Read + Write> PipeClient<S> {
     }
 }
 
+/// One instance profile row of the frame reply, as the stream answers it: `server_profile`, `entries`, and the pool's text as
+/// `revision`, which only `GetInstanceProfile` carries (the pool has one
+/// text, not one per row). A row of the wrong shape is no answer.
+fn profile_row(v: &Value) -> Result<InstanceProfileInfo, ClientError> {
+    let entries = v
+        .get("entries")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ClientError::Other(v.to_string()))?
+        .iter()
+        .map(|e| {
+            e.as_str()
+                .map(str::to_string)
+                .ok_or_else(|| ClientError::Other(v.to_string()))
+        })
+        .collect::<Result<Vec<String>, ClientError>>()?;
+    Ok(InstanceProfileInfo {
+        id: v
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        server_profile: v
+            .get("server_profile")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ClientError::Other(v.to_string()))?
+            .to_string(),
+        entries,
+        revision: v
+            .get("revision")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
 impl<S: Read + Write> ManagerClient for PipeClient<S> {
     fn list_instances(&self) -> Result<Vec<String>, ClientError> {
         let v = self.call(json!({"method": "ListInstances"}))?;
@@ -404,7 +439,8 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
 
     /// `CreateInstance`: the three names the manager's rule asks for, the
     /// instance's id sent as the frame's `instance`, the name every verb
-    /// keyed on an instance uses.
+    /// keyed on an instance uses. The frame names no port: the manager
+    /// proposes the new instance's own.
     fn create_instance(
         &self,
         engine: &str,
@@ -417,6 +453,84 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                 ("engine", json!(engine)),
                 ("instance", json!(id)),
                 ("server_profile", json!(server_profile)),
+            ],
+        ))
+    }
+
+    // The instance profile verbs, the frame fields named as the server profile
+    // pair names them. The two reads are guarded too: an acting client asks the
+    // pool for the signed-in user, and the pool is a `configure` read.
+    fn instance_profiles(&self) -> Result<Vec<InstanceProfileInfo>, ClientError> {
+        let v = self.call(self.guarded("InstanceProfiles", &[]))?;
+        let rows = v
+            .as_array()
+            .ok_or_else(|| ClientError::Other(v.to_string()))?;
+        rows.iter().map(profile_row).collect()
+    }
+    fn instance_profile(&self, profile: &str) -> Result<InstanceProfileInfo, ClientError> {
+        let v = self.call(self.guarded("GetInstanceProfile", &[("profile", json!(profile))]))?;
+        profile_row(&v).map(|mut row| {
+            row.id = profile.to_string();
+            row
+        })
+    }
+    fn create_instance_profile(
+        &self,
+        profile: &str,
+        server_profile: &str,
+    ) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "CreateInstanceProfile",
+            &[
+                ("profile", json!(profile)),
+                ("server_profile", json!(server_profile)),
+            ],
+        ))
+    }
+    fn delete_instance_profile(&self, profile: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded("DeleteInstanceProfile", &[("profile", json!(profile))]))
+    }
+    fn add_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "AddInstanceProfileModel",
+            &[("profile", json!(profile)), ("model", json!(model))],
+        ))
+    }
+    fn remove_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "RemoveInstanceProfileModel",
+            &[("profile", json!(profile)), ("model", json!(model))],
+        ))
+    }
+    fn set_instance_profile(
+        &self,
+        instance: &str,
+        profile: &str,
+        revision: &str,
+    ) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "SetInstanceProfile",
+            &[
+                ("instance", json!(instance)),
+                ("profile", json!(profile)),
+                ("revision", json!(revision)),
+            ],
+        ))
+    }
+    fn set_instance_address(
+        &self,
+        instance: &str,
+        host: &str,
+        port: &str,
+        revision: &str,
+    ) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "SetInstanceAddress",
+            &[
+                ("instance", json!(instance)),
+                ("host", json!(host)),
+                ("port", json!(port)),
+                ("revision", json!(revision)),
             ],
         ))
     }

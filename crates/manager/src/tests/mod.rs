@@ -164,6 +164,28 @@ fn data_root_e2e() {
     // ── Manager core: IP2 review D5, the render of an instance given nothing ─
     crate::manager::service::manager_ip2_empty_render_e2e();
 
+    // ── Manager core: IP3a, the instance profile verbs ────────────────────
+    // (ARCHITECTURE.md "Instance profiles", slice IP3 part a.)
+    crate::manager::service::manager_ip3a_instance_profiles_e2e();
+
+    // ── Manager core: IP3a review D1, the empty host judged on the profile ─
+    crate::manager::service::manager_ip3a_fix_empty_host_address_e2e();
+
+    // ── Manager core: IP3a review D2a, the port of a recordless instance ───
+    crate::manager::service::manager_ip3a_fix_port_of_recordless_e2e();
+
+    // ── Manager core: IP3a review D2b, the web service's port ─────────────
+    crate::manager::service::manager_ip3a_fix_port_of_bff_e2e();
+
+    // ── Manager core: IP3a review D3, the port range walked out ───────────
+    crate::manager::service::manager_ip3a_fix_no_free_port_e2e();
+
+    // ── Manager core: IP3a review D4, a host carrying a control char ──────
+    crate::manager::service::manager_ip3a_fix_host_control_char_e2e();
+
+    // ── Manager core: IP3a review D5, the principal gate of the write verbs ─
+    crate::manager::service::manager_ip3a_fix_principal_gate_e2e();
+
     // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
     // Served peer to peer on a socket pair, no bus.
     #[cfg(target_os = "linux")]
@@ -189,6 +211,10 @@ fn data_root_e2e() {
     #[cfg(target_os = "linux")]
     crate::manager::dbus::manager_dbus_instance_crud_e2e();
 
+    // ── Manager over D-Bus: the instance profile verbs (IP3a) ───────────
+    #[cfg(target_os = "linux")]
+    crate::manager::dbus::manager_dbus_ip3a_instance_profiles_e2e();
+
     // ── pai-core's client of the manager over D-Bus ─────────────────────
     // pai_core::client::dbus against the interface, peer to peer, no bus.
     #[cfg(target_os = "linux")]
@@ -201,6 +227,14 @@ fn data_root_e2e() {
     // ── pai-core's client: a member's model profile create and delete ────
     #[cfg(target_os = "linux")]
     dbus_client::manager_dbus_client_model_profiles_as_e2e();
+
+    // ── pai-core's client: the instance profile verbs (IP3a) ────────────
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_instance_profiles_e2e();
+
+    // ── pai-core's client: a member's instance profile verbs (IP3a) ─────
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_instance_profiles_as_e2e();
 
     // ── pai-core's client: the node's models folder over the bus (M3 G1) ──
     #[cfg(target_os = "linux")]
@@ -215,6 +249,10 @@ fn data_root_e2e() {
     // ── pai-core's client over a stream: a model profile's life ─────────
     #[cfg(unix)]
     pipe_client::manager_pipe_client_model_profiles_e2e();
+
+    // ── pai-core's client over a stream: the instance profiles (IP3a) ───
+    #[cfg(unix)]
+    pipe_client::manager_pipe_client_instance_profiles_e2e();
 
     // ── pai-core's client: the node's models folder over a stream (M3 G1) ─
     #[cfg(unix)]

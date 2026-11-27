@@ -3098,6 +3098,576 @@ pub(crate) fn manager_dbus_client_model_profiles_as_e2e() {
     );
 }
 
+/// The instance profile verbs over D-Bus, with pai-core's client (IP3a,
+/// `ARCHITECTURE.md` "Instance profiles", slice IP3 part a): the frame each
+/// verb sends and the answer it reads on this transport (the list's rows, the
+/// single read's `(sass)`), every error name decoded into its `ClientError`
+/// (`NoInstanceProfile`, `InstanceProfileExists`, `InstanceProfileInUse` with
+/// the profile and the instance, `NoServerProfile`, `NoInstance`, `Changed`,
+/// `AddressInUse` with who holds the address, `Invalid` with the key and the
+/// values), and the bytes the accepted verbs leave. Every verb asks polkit
+/// `configure` of the sender, once per call; a sender-less call is refused and
+/// writes nothing.
+pub(crate) fn manager_dbus_client_instance_profiles_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    let pool_seed = "[default]\nServerProfile = default\n\n[default/alpha]\ndevice = cuda0\n\n[lab]\nServerProfile = lab\n\n[lab/alpha]\n\n[unassigned]\nServerProfile = default\n";
+    let record_seed = "[default]\nInstanceProfile = default\nHostname = 127.0.0.1\nPort = 8581\n\n[lab]\nInstanceProfile = lab\nHostname = 0.0.0.0\nPort = 8681\n";
+    std::fs::write(sys.join("instance-profiles.ini"), pool_seed).expect("pool");
+    std::fs::write(sys.join("instances.ini"), record_seed).expect("record");
+    for (name, port) in [("default", 8581), ("lab", 8681), ("edge", 8700)] {
+        std::fs::write(
+            sys.join(format!("server@{name}.ini")),
+            format!("[Server]\nHostname = 127.0.0.1\nPort = {port}\n"),
+        )
+        .expect("server profile");
+    }
+    std::fs::write(
+        sys.join("models.ini"),
+        real_model_files(
+            dir.path(),
+            "[alpha]\nmodel = /models/alpha.gguf\n\n[beta]\nmodel = /models/beta.gguf\n\n[gamma]\nmodel = /models/gamma.gguf\n",
+        )
+    )
+    .expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), "").expect("models.ini.disabled");
+    for id in ["default", "lab"] {
+        std::fs::write(sys.join(format!("models@{id}.ini")), "").expect("render");
+    }
+
+    let pool = || std::fs::read_to_string(sys.join("instance-profiles.ini")).expect("pool");
+    let record = || std::fs::read_to_string(sys.join("instances.ini")).expect("record");
+    let key_of = |text: &str, section: &str, key: &str| -> Option<String> {
+        pai_core::ini::section_keys(text, section)
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    };
+    let sections = |text: &str| -> Vec<String> {
+        pai_core::ini::parse_sections(text)
+            .into_iter()
+            .map(|s| s.id)
+            .collect()
+    };
+    let refused = |key: &'static str, values: &[&str]| -> Result<(), ClientError> {
+        Err(ClientError::Invalid(Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }))
+    };
+
+    let c = core(true, &[]);
+    let (_server, client) = connect(&c, Some(":1.42"));
+    let alice = Caller(":1.42".into());
+
+    // ── The reads: the list, and one profile with the pool's text ─────────
+    assert_eq!(
+        client
+            .instance_profiles()
+            .expect("instance_profiles")
+            .into_iter()
+            .map(|p| (p.id, p.server_profile, p.entries, p.revision))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "default".to_string(),
+                "default".to_string(),
+                vec!["alpha".to_string()],
+                String::new()
+            ),
+            (
+                "lab".to_string(),
+                "lab".to_string(),
+                vec!["alpha".to_string()],
+                String::new()
+            ),
+            (
+                "unassigned".to_string(),
+                "default".to_string(),
+                Vec::new(),
+                String::new()
+            ),
+        ],
+        "the list's rows cross as the id, the server profile and the entries, in \
+         the file's order, with no revision: the pool is one text"
+    );
+    let one = client
+        .instance_profile("default")
+        .expect("instance_profile");
+    assert_eq!(
+        (
+            one.id.as_str(),
+            one.server_profile.as_str(),
+            one.entries.as_slice()
+        ),
+        ("default", "default", &["alpha".to_string()][..]),
+        "the read answers the profile it was asked for"
+    );
+    assert_eq!(
+        one.revision, pool_seed,
+        "the revision crosses as the third member of the tuple: the text of \
+         `instance-profiles.ini` the read returned"
+    );
+    assert_eq!(
+        client.instance_profile("nope"),
+        Err(ClientError::NoInstanceProfile("nope".into())),
+        "the name's refusal crosses and is decoded with the profile"
+    );
+
+    // ── The create: the refusals first, the pool untouched ────────────────
+    assert_eq!(
+        client.create_instance_profile("Bad Id", "lab"),
+        refused("instance-profile-bad-id", &["Bad Id"]),
+        "an id the rule refuses, decoded as the keyed refusal"
+    );
+    assert_eq!(
+        client.create_instance_profile("default", "lab"),
+        Err(ClientError::InstanceProfileExists("default".into())),
+        "a name the pool has, decoded with the name"
+    );
+    assert_eq!(
+        client.create_instance_profile("edge", "nope"),
+        Err(ClientError::NoServerProfile("nope".into())),
+        "no server profile of that name"
+    );
+    assert_eq!(pool(), pool_seed, "every refused create wrote the pool");
+    assert_eq!(record(), record_seed, "and no record");
+    assert_eq!(
+        client.create_instance_profile("edge", "lab"),
+        Ok(()),
+        "the create of a new name lands"
+    );
+    assert_eq!(
+        pool(),
+        pai_core::instance_profiles::add_profile(pool_seed, "edge", "lab"),
+        "the section is appended, every byte before it the file's own"
+    );
+
+    // ── The entry add and remove ──────────────────────────────────────────
+    assert_eq!(
+        client.add_instance_profile_model("default", "nope"),
+        refused("no-model-profile-named", &["nope"]),
+        "an entry of no model profile, decoded as the keyed refusal"
+    );
+    let before = pool();
+    assert_eq!(
+        client.add_instance_profile_model("default", "beta"),
+        Ok(()),
+        "the entry add lands"
+    );
+    assert_eq!(
+        pool(),
+        pai_core::instance_profiles::add_entry(&before, "default", "beta"),
+        "the empty entry section is appended"
+    );
+    let render = std::fs::read_to_string(sys.join("models@default.ini")).expect("render");
+    assert!(
+        sections(&render).contains(&"beta".to_string()),
+        "the entry add re-renders the instance that runs the profile: {:?}",
+        sections(&render)
+    );
+    let before = pool();
+    assert_eq!(
+        client.remove_instance_profile_model("default", "alpha"),
+        Ok(()),
+        "the entry removal lands"
+    );
+    assert_eq!(
+        pool(),
+        pai_core::ini::text::delete_section(&before, "default/alpha")
+            .expect("the entry the pool held"),
+        "the entry section is cut out, every other byte kept"
+    );
+
+    // ── `SetInstanceProfile`: the record's pointer, the pool's text ───────
+    let rev = pool();
+    assert_eq!(
+        client.set_instance_profile("ghost", "default", &rev),
+        Err(ClientError::NoInstance),
+        "an instance the record has no section for"
+    );
+    assert_eq!(
+        client.set_instance_profile("lab", "nope", &rev),
+        Err(ClientError::NoInstanceProfile("nope".into())),
+        "a profile the pool has no section for"
+    );
+    assert_eq!(
+        client.set_instance_profile("lab", "default", "STALE TEXT"),
+        Err(ClientError::Changed),
+        "a revision the pool no longer holds"
+    );
+    assert_eq!(
+        record(),
+        record_seed,
+        "every refused switch wrote no record"
+    );
+    assert_eq!(
+        client.set_instance_profile("lab", "default", &rev),
+        Ok(()),
+        "the switch of `lab` to `default` lands"
+    );
+    let rec = record();
+    assert_eq!(
+        (
+            key_of(&rec, "lab", "InstanceProfile").as_deref(),
+            key_of(&rec, "lab", "Port").as_deref(),
+            key_of(&rec, "default", "InstanceProfile").as_deref(),
+        ),
+        (Some("default"), Some("8681"), Some("default")),
+        "the section names the new profile, keeps its address and leaves every \
+         other section alone"
+    );
+
+    // ── `SetInstanceAddress`: the record's address, the record's text ─────
+    assert_eq!(
+        client.set_instance_address("default", "127.0.0.1", "8681", &rec),
+        Err(ClientError::AddressInUse("lab".into())),
+        "the address another instance holds, naming it"
+    );
+    assert_eq!(
+        client.set_instance_address("default", "127.0.0.1", "8590", &rec),
+        Err(ClientError::AddressInUse("private-ai-bff".into())),
+        "the web service's address, named as its own"
+    );
+    // The port travels as text: the check answers its key, with the key's name
+    // and the value (the bounds are the check's, not pinned here).
+    match client.set_instance_address("default", "127.0.0.1", "not-a-port", &rec) {
+        Err(ClientError::Invalid(r)) => {
+            assert_eq!(r.key, "not-whole-number-in-range", "{r:?}");
+            assert_eq!(
+                (
+                    r.values.first().map(String::as_str),
+                    r.values.get(1).map(String::as_str)
+                ),
+                (Some("Port"), Some("not-a-port")),
+                "the refusal names the key and the value: {r:?}"
+            );
+        }
+        other => panic!("a port that is no number is refused as {other:?}"),
+    }
+    assert_eq!(record(), rec, "every refused address wrote no record");
+    assert_eq!(
+        client.set_instance_address("default", "127.0.0.1", "8595", &rec),
+        Ok(()),
+        "a free address lands"
+    );
+    let rec = record();
+    assert_eq!(
+        (
+            key_of(&rec, "default", "Hostname").as_deref(),
+            key_of(&rec, "default", "Port").as_deref(),
+            key_of(&rec, "lab", "Port").as_deref(),
+        ),
+        (Some("127.0.0.1"), Some("8595"), Some("8681")),
+        "the section carries the address, every other section kept"
+    );
+
+    // ── The delete: the profile an instance runs first ────────────────────
+    assert_eq!(
+        client.delete_instance_profile("default"),
+        Err(ClientError::InstanceProfileInUse(
+            "default".into(),
+            "default".into()
+        )),
+        "the profile an instance runs: the two names cross in one string and the \
+         client splits them back"
+    );
+    let before = pool();
+    let rec_before = record();
+    assert_eq!(
+        client.delete_instance_profile("unassigned"),
+        Ok(()),
+        "a profile nobody runs is removed"
+    );
+    assert_eq!(
+        pool(),
+        pai_core::ini::text::delete_section(&before, "unassigned")
+            .expect("the profile the pool held"),
+        "the section is cut out, every other byte kept"
+    );
+    assert_eq!(record(), rec_before, "the delete writes no record");
+    assert!(
+        client
+            .instance_profiles()
+            .expect("instance_profiles")
+            .iter()
+            .all(|p| p.id != "unassigned"),
+        "the list no longer answers the removed profile"
+    );
+
+    assert_eq!(
+        asked(&c),
+        vec![(alice.clone(), Action::Configure); 21],
+        "every verb asked configure of the sender, once per call, the reads too"
+    );
+    assert_eq!(
+        calls(&c),
+        vec![],
+        "no verb of an instance profile touches a unit"
+    );
+
+    // ── A caller with no sender ───────────────────────────────────────────
+    let (_server, anonymous) = connect(&c, None);
+    for (what, answer) in [
+        (
+            "instance_profiles",
+            anonymous.instance_profiles().map(|_| ()),
+        ),
+        (
+            "instance_profile",
+            anonymous.instance_profile("default").map(|_| ()),
+        ),
+        (
+            "create_instance_profile",
+            anonymous.create_instance_profile("bus-no", "lab"),
+        ),
+        (
+            "delete_instance_profile",
+            anonymous.delete_instance_profile("edge"),
+        ),
+        (
+            "add_instance_profile_model",
+            anonymous.add_instance_profile_model("default", "gamma"),
+        ),
+        (
+            "remove_instance_profile_model",
+            anonymous.remove_instance_profile_model("default", "beta"),
+        ),
+        (
+            "set_instance_profile",
+            anonymous.set_instance_profile("lab", "edge", pool_seed),
+        ),
+        (
+            "set_instance_address",
+            anonymous.set_instance_address("lab", "127.0.0.1", "8699", record_seed),
+        ),
+        (
+            "create_instance",
+            anonymous.create_instance("llama.cpp", "bus-no", "edge"),
+        ),
+    ] {
+        assert_eq!(answer, Err(ClientError::NotAuthorized), "{what}");
+    }
+    assert!(
+        !pool().contains("[bus-no]") && pool().contains("[edge]"),
+        "the refused calls wrote and removed nothing: {}",
+        pool()
+    );
+    assert!(
+        !record().contains("[bus-no]")
+            && key_of(&record(), "lab", "Port").as_deref() == Some("8681"),
+        "and wrote no record: {}",
+        record()
+    );
+}
+
+/// The `As` forms of the instance profile verbs, over D-Bus, for a client
+/// bound to a member (IP3a): the member's pool write lands, its switch of an
+/// instance lands, an outsider's are refused with nothing done, and the pair
+/// (the bff's account, a current member) decides the right: polkit is asked
+/// nothing. The two reads have no `As` form, as `ServerProfiles` has none: the
+/// bff reads the node as itself, so those two ask polkit.
+pub(crate) fn manager_dbus_client_instance_profiles_as_e2e() {
+    use crate::manager::service::fakes::FakePasswords;
+
+    const BFF: &str = ":1.9";
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    let pool_seed = "[lab]\nServerProfile = lab\n\n[unassigned]\nServerProfile = lab\n";
+    let record_seed = "[default]\nInstanceProfile = lab\nHostname = 127.0.0.1\nPort = 8581\n";
+    std::fs::write(sys.join("instance-profiles.ini"), pool_seed).expect("pool");
+    std::fs::write(sys.join("instances.ini"), record_seed).expect("record");
+    std::fs::write(
+        sys.join("server@lab.ini"),
+        "[Server]\nHostname = 127.0.0.1\nPort = 8581\n",
+    )
+    .expect("server profile");
+    std::fs::write(
+        sys.join("models.ini"),
+        real_model_files(dir.path(), "[gamma]\nmodel = /models/gamma.gguf\n"),
+    )
+    .expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), "").expect("models.ini.disabled");
+    std::fs::write(sys.join("models@default.ini"), "").expect("render");
+
+    let pool_file = sys.join("instance-profiles.ini");
+    let record_file = sys.join("instances.ini");
+    let pool = move || std::fs::read_to_string(&pool_file).expect("pool");
+    let record = move || std::fs::read_to_string(&record_file).expect("record");
+    let key_of = |text: &str, section: &str, key: &str| -> Option<String> {
+        pai_core::ini::section_keys(text, section)
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    };
+
+    let passwords = FakePasswords::new();
+    let admins = passwords.asked_admin.clone();
+    let (c, _checked) = auth_core(BFF, passwords);
+    let polkit = |c: &Arc<Core>| c.authority().asked.lock().unwrap().clone();
+    let bff_checks = |c: &Arc<Core>| c.authority().asked_bff.lock().unwrap().clone();
+    let asked_admin = |a: &Arc<std::sync::Mutex<Vec<String>>>| a.lock().unwrap().clone();
+
+    let (_server, client) = connect(&c, Some(BFF));
+    let member = Arc::new(client.acting_for("alice"));
+
+    assert_eq!(
+        on("create_instance_profile", &member, |c| c
+            .create_instance_profile("alice-ip", "lab")),
+        Ok(()),
+        "a member's create, vouched for by the bff: the right is the pair, not polkit"
+    );
+    assert!(
+        pool().contains("[alice-ip]\nServerProfile = lab\n"),
+        "the profile the member's create wrote: {}",
+        pool()
+    );
+    assert_eq!(
+        on("add_instance_profile_model", &member, |c| c
+            .add_instance_profile_model("alice-ip", "gamma")),
+        Ok(()),
+        "the member's entry add"
+    );
+    assert!(
+        pool().contains("[alice-ip/gamma]"),
+        "the entry the member added: {}",
+        pool()
+    );
+    let rev = pool();
+    assert_eq!(
+        on("set_instance_profile", &member, move |c| c
+            .set_instance_profile("default", "alice-ip", &rev)),
+        Ok(()),
+        "the member's switch of the instance onto its profile"
+    );
+    assert_eq!(
+        key_of(&record(), "default", "InstanceProfile").as_deref(),
+        Some("alice-ip"),
+        "the record points at the member's profile"
+    );
+    assert_eq!(
+        on("delete_instance_profile", &member, |c| c
+            .delete_instance_profile("alice-ip")),
+        Err(ClientError::InstanceProfileInUse(
+            "alice-ip".into(),
+            "default".into()
+        )),
+        "the member's delete of the profile the instance now runs is the rule's \
+         refusal, not a permission of its own"
+    );
+    let rec = record();
+    assert_eq!(
+        on("set_instance_address", &member, move |c| c
+            .set_instance_address("default", "127.0.0.1", "8595", &rec)),
+        Ok(()),
+        "the member's address write"
+    );
+    assert_eq!(
+        (
+            key_of(&record(), "default", "Hostname").as_deref(),
+            key_of(&record(), "default", "Port").as_deref()
+        ),
+        (Some("127.0.0.1"), Some("8595")),
+        "the record carries the address the member asked for"
+    );
+    assert_eq!(
+        on("remove_instance_profile_model", &member, |c| c
+            .remove_instance_profile_model("alice-ip", "gamma")),
+        Ok(()),
+        "the member's entry removal"
+    );
+    assert!(
+        !pool().contains("[alice-ip/gamma]"),
+        "the entry is gone: {}",
+        pool()
+    );
+
+    let outsider = Arc::new(client.acting_for("bob"));
+    assert_eq!(
+        on("create_instance_profile", &outsider, |c| c
+            .create_instance_profile("bob-ip", "lab")),
+        Err(ClientError::NotAuthorized),
+        "bob is no member of `pai`"
+    );
+    let rev = pool();
+    assert_eq!(
+        on("set_instance_profile", &outsider, move |c| c
+            .set_instance_profile("default", "lab", &rev)),
+        Err(ClientError::NotAuthorized),
+        "the same for a switch"
+    );
+    assert!(
+        !pool().contains("[bob-ip]")
+            && key_of(&record(), "default", "InstanceProfile").as_deref() == Some("alice-ip"),
+        "a refusal of the `As` form wrote and removed nothing: {}",
+        pool()
+    );
+
+    // The reads, answered to the bff's own account.
+    let one = client
+        .instance_profile("alice-ip")
+        .expect("instance_profile");
+    assert_eq!(
+        (
+            one.id.as_str(),
+            one.server_profile.as_str(),
+            one.entries.as_slice()
+        ),
+        ("alice-ip", "lab", &[] as &[String]),
+        "the bff's read answers the profile"
+    );
+    assert_eq!(one.revision, pool(), "with the pool's text as its revision");
+    assert_eq!(
+        client
+            .instance_profiles()
+            .expect("instance_profiles")
+            .into_iter()
+            .map(|p| p.id)
+            .collect::<Vec<_>>(),
+        vec![
+            "lab".to_string(),
+            "unassigned".to_string(),
+            "alice-ip".to_string()
+        ],
+        "the list answers the profiles the pool holds, in the file's order"
+    );
+
+    assert_eq!(
+        polkit(&c),
+        vec![(Caller(BFF.into()), Action::Configure); 2],
+        "only the two reads ask polkit, of the bff: an `As` call asks nothing"
+    );
+    assert_eq!(
+        bff_checks(&c),
+        vec![Caller(BFF.into()); 8],
+        "the caller checked once per `As` call"
+    );
+    assert_eq!(
+        asked_admin(&admins),
+        [
+            "alice".to_string(),
+            "alice".into(),
+            "alice".into(),
+            "alice".into(),
+            "alice".into(),
+            "alice".into(),
+            "bob".into(),
+            "bob".into(),
+        ],
+        "the membership of the vouched name, asked once per call, never cached"
+    );
+    assert_eq!(
+        calls(&c),
+        vec![],
+        "no verb of an instance profile touches a unit, for a member either"
+    );
+}
+
 /// M3 of "Choosing the model file on the web": `ModelFiles` / `ModelFilesAs`
 /// over the bus, with pai-core's client. The frame the picker reads crosses:
 /// the folder as an absolute path, every row with its path, size, shard count
