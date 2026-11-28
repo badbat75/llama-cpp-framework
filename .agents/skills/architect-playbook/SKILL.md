@@ -275,3 +275,6 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A manager verb can be built on the service and the bus while the `pai-core` client still answers
   `()` or lacks it (IP4: `Affected`, `SetInstanceProfileServer`): read the client trait and both
   transports before calling a route "only bff work".
+- A package that copies a missing default into `/etc/llama.cpp` races the manager's migration: a
+  new-shape file copied onto an unmigrated tree is read as already migrated. Ship such files as a
+  pair, copied only on a fresh install (IP8's pair rule).

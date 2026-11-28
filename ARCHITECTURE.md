@@ -4834,6 +4834,17 @@ stays a render rule for an entry that leaves it unset.
    - **IP4f** (manager, client, bff): the removals. Done when: the four routes answer 404, the two
      verbs are unknown methods on both transports, and no production code names `assignments.ini`
      except the migration and its refusal of a write.
+   - **Watch in IP4d to IP4f** (architect, 2026-11-28):
+     - IP4d: a body still carrying `serverProfile` is refused (400 `instances-malformed` or the
+       route's malformed key), never read as an instance profile; the address's `hostname: null`
+       clears the key, an absent one keeps it; the revisions are the pool text for the profile
+       switch and `instances.ini` for the address, read just before the call (IP4a's shape).
+     - IP4e: `usedBy` matches model ids **case-insensitively**, as the manager's
+       `model-profile-assigned` does, or a row shows a live minus the delete then refuses; the web
+       UI's readers of the two saves test `running.length`.
+     - IP4f: `create_instance` and `remove_instance` stop touching `assignments.ini`, but the
+       migration's read, its backup and the refusal of a `WriteFile` of it stay; xtask's shipped
+       `assignments.ini` is IP8's, not IP4f's.
 
 5. **IP5** (`fe`, briefs 22 and 02e): the plain Models list; the model profile page without the
    switch and without the moved keys' cards and fields. Done when: the brief's tests are green and
@@ -4842,18 +4853,148 @@ stays a render rule for an entry that leaves it unset.
    page, the per-model entry page with the placement and memory cards, the instance page's picker,
    address and restart offer. Done when: the briefs' tests are green and the UX check passes.
 7. **IP7** (`pai-cli`, `pai-app`; the GUI part dropped, user 2026-11-26: `pai-config` is removed in
-   2.99.1, "Removing pai-config"):
-   - `pai instance-profile ...` including `placement <p> <m> key=value`;
-   - `pai model-profile enable|disable` removed;
-   - the import appending to `models.ini`.
-   Done when: the CLI and app tests pin the commands and the import.
-8. **IP7b** (`pai-app` bench): a sweep of a moved key writes and restores the instance profile entry
-   through the manager and leaves `models.ini` untouched. Done when: the sweep tests pin it.
-   **Real-machine check**: one short sweep on the GPUs with the user's go-ahead.
-9. **IP8** (`xtask`, llama.cpp's packages and MSI): the new default files and no `assignments.ini`.
-   **Needs a llama.cpp package build and install**, then the user's restart.
-10. **IP9** (docs agent): `AGENTS.md`, `crates/bff/README.md`, the packaging guide, the restore
-    command, and the `optimize-preset` skill (it tunes an entry now).
+   2.99.1, "Removing pai-config"). Designed 2026-11-28 (architect; the coordinator taking the
+   recommended options overnight).
+
+   **What exists (checked 2026-11-28).** `pai` has `server show|set|boot`, `model-profile
+   list|show|delete|enable|disable|download`, `control`, `bench` and `config import`, all for the one
+   instance `default` (`server_control::INSTANCE`). The server file is found through `Instances()`'s
+   `server_profile` (`ManagerBackend::manager_name`, `crates/app/src/server_control.rs`), which
+   already resolves through the instance profile (`paths::instance_server_profile`).
+   - **The download bug** (`PLAN.md` step 10). `server_cfg::load` swallows every read error into the
+     defaults (`.ok().flatten()`, `crates/app/src/server_cfg.rs:15`), so `server_cfg::models_dir()`
+     answers the instance default `/var/lib/llama.cpp/models` whenever the manager's read fails.
+     Reading an instance file needs `control` (`Manager::read_file`), which polkit gives without a
+     password only in the active session. Most likely cause (unverified, not reproduced): `pai` run
+     from a shell outside the active session (SSH, a terminal multiplexer), its read refused,
+     `ModelsDir = /mnt/data/llama.cpp` never seen.
+   - **The download also writes moved keys.** `hf::model_profile_from_download` fills the fit's
+     placement into the model profile and `model_profiles::save` writes it into `models.ini`, which
+     the manager now refuses (`model-profile-placement-key`).
+   - **The sweep too.** `bench::sweep::set_key` saves a swept key into the model profile
+     (`sweep.rs:1119`, `:1199`); a moved key is refused the same way.
+
+   **Commands and their manager methods.** `pai` runs as the user and calls the plain methods
+   (never the `As` forms, which only the bff's account may call), guarded by polkit as today:
+   `configure` (a `pai` member, with their password, kept a while) for every write and for the
+   instance profile reads, which the manager guards as `configure` too.
+   - `pai instance-profile list` (`InstanceProfiles`); `show <p>` (`GetInstanceProfile`, printing
+     the `[<p>]` and `[<p>/*]` sections as INI); `create <p> --server <s>` (`CreateInstanceProfile`);
+     `delete <p>` (`DeleteInstanceProfile`); `server <p> <s>` (`SetInstanceProfileServer`);
+     `add <p> <m>` and `remove <p> <m>` (`Add|RemoveInstanceProfileModel`).
+   - `pai instance-profile placement <p> <m> key=value… [key=]`: reads the entry from
+     `GetInstanceProfile`'s pool text, applies the changes (`key=` removes a key) and sends the whole
+     entry with that text as the revision (`SetInstanceProfileModel`); a `stale-revision` is
+     reported, never retried silently.
+   - `pai instance list` (`Instances` with `InstanceStates`: id, label, instance profile, address,
+     not converged with its reason, pending restart); `pai instance profile <id> <p>`
+     (`SetInstanceProfile`); `pai instance address <id> [--host <h> | --clear-host] [--port <n>]`
+     (`SetInstanceAddress`). The revision each needs is the text `pai` has just read, as the bff does.
+   - Every write that re-renders prints its `running` instances (with the restart command) and its
+     `notConverged` rows with their reasons, in `cli.toml`'s strings.
+   - **Retired under the manager:** `model-profile enable|disable` (nothing to switch: the manager
+     refuses `models.ini.disabled`), `server set --host|--port` (the address is the instance's:
+     `pai instance address`), and the `server show` lines for them, which read the record instead.
+     macOS keeps the per-user files and every one of these as today; the new commands answer there
+     that they need the manager.
+   - `--instance` on `server` and `control` waits: it changes nothing 2.99.1 needs, and UL's
+     generated ids (2.99.2) change what an id looks like.
+
+   **Slices**, in order, each one tester and coder round:
+   - **IP7a** (`pai-app`, `pai-cli`): **the download bug.** Under the manager the server profile is
+     read through the instance's record and a failed read is an error, never the defaults:
+     `model-profile download` and `delete --delete-files` stop with the manager's refusal and write
+     nothing. Done when: with a fake manager whose instance's server profile sets `ModelsDir = /x`,
+     the download's target is `/x`; with that read refused, the command exits non-zero naming the
+     refusal and nothing is written under the instance default; an unset `ModelsDir` still answers
+     the instance default.
+   - **IP7c** (`pai-app`, `pai-cli`): **the download writes the stay keys only**, through
+     `CreateModelProfile`'s rules; `--instance-profile <p>` also adds the entry and saves the fit's
+     placement into it (`AddInstanceProfileModel`, `SetInstanceProfileModel`); without it the
+     placement line is printed as advice. Done when: no `models.ini` write carries a moved key; with
+     the option the entry holds the fit's keys; a refusal of the entry leaves the model profile
+     created and says so.
+   - **IP7d** (`pai-cli`): `pai instance-profile` with its seven verbs. Done when: each verb's
+     success, its refusal keys and its printed `running` and `notConverged` are pinned against a
+     fake manager.
+   - **IP7e** (`pai-cli`): `pai instance list|profile|address`; `server set --host|--port` and their
+     `server show` lines retired under the manager. Done when: pinned as IP7d; `server set --port`
+     under the manager is a usage error naming `pai instance address`.
+   - **IP7f** (`pai-app`, `pai-cli`): `model-profile enable|disable` and the list's switched-off
+     mark retired under the manager; `pai config import` appends a user's `presets.ini.disabled` to
+     `models.ini` (moved keys stripped into the `unassigned` entry, as the migration does) and never
+     writes `models.ini.disabled`. Done when: the import test shows the appended sections and no
+     write of the disabled file; macOS's tests of enable and disable still pass.
+8. **IP7b** (`pai-app` bench, after IP7c): a sweep of a moved key writes and restores the entry
+   `[<p>/<m>]` of the instance profile `default` runs (read from `Instances`), through
+   `SetInstanceProfileModel`; a stay key goes to the model profile as today. The pending file
+   `bench\sweep-pending-<stamp>.json` records which file and entry hold the original. Done when: the
+   sweep tests pin both paths and the restore after an interrupt; `models.ini` is untouched by a
+   moved key's sweep. **Real-machine check**: one short sweep on the GPUs with the user's go-ahead.
+9. **IP8** (`xtask`, llama.cpp's `.deb`, `.rpm` and MSI): the defaults of the new shape.
+   - **Ships** (`/usr/share/private-ai/llama.cpp/`, `crates/core/defaults/` and `windows/`):
+     `server@default.ini` without `Hostname` and `Port`; `models.ini` as today (no sections);
+     `instances.ini` as `[default] InstanceProfile = default`, `Hostname = localhost`,
+     `Port = 9931` (the address today's default server profile gives, so a fresh install answers
+     where it did); `instance-profiles.ini` as `[default] ServerProfile = default`, no entries.
+     **No `assignments.ini`.**
+   - **The pair rule (a data-loss trap found 2026-11-28).** The postinst (and the MSI) copies
+     `instances.ini` and `instance-profiles.ini` **only together, only when `instances.ini` is
+     missing** (a fresh install). Copying `instance-profiles.ini` alone onto a tree not yet migrated
+     would hand the migration a written `[default]` with no entries; `migrate_model` keeps a profile
+     already written (`profile_is_written`, `crates/core/src/migrate_model.rs:176`) while it strips
+     the moved keys from `models.ini`, so `default`'s placement keys would be lost.
+     `server@default.ini` and `models.ini` keep their copy-when-missing.
+   - Done when: the package tests list the four files and no `assignments.ini`; the postinst text
+     copies the pair under one `instances.ini` test; a fresh-install test tree starts with a render
+     equal to today's fresh install, at `localhost:9931`; the Windows CI install test checks the
+     same four files.
+   **The migrating deploy on this machine** (the coordinator runs it, user go-ahead 2026-11-28):
+   1. Before: note `sha256sum /etc/llama.cpp/models@*.ini`, the address and `--models-preset` in
+      `ps -o args= -C llama-server`, `ls /etc/llama.cpp`, and that Strata answers on `:8580`.
+   2. The framework deploy (standing go-ahead): `xtask build framework`, `xtask package framework`,
+      `xtask install` with the framework's four `.deb`s. The manager restarts and migrates at its
+      start; the instances keep running the old pair.
+   3. Check: `/etc/llama.cpp/<name>.2.99.0` for each of `instances.ini`, `assignments.ini`,
+      `models.ini`, `models.ini.disabled` that existed; `instance-profiles.ini` with one profile per
+      instance and `unassigned` when a model was in no render; no `assignments.ini` or
+      `models.ini.disabled`; every `models@<id>.ini` hash equal to step 1; a `launch@<id>.ini` per
+      instance; `pai instance list` showing each running instance pending restart (no `applied`
+      yet) and converged. A failure here: stop, restore (below), report.
+   4. IP8's llama.cpp packages: `xtask build llama`, `xtask package llama`, install them. Its prerm
+      stops the running instances and its postinst starts them again: **this is the one restart**,
+      and it also clears the pending restart. Nothing is copied (`instances.ini` exists).
+   5. Check: each instance `active`, `curl -fsS http://<host>:<port>/health` 200 on the address in
+      its `instances.ini` section (`default` on `:8581` here), the same `--models-preset` file and
+      address as step 1, `pai instance list` converged with no pending restart, still no
+      `assignments.ini`, Strata answering on `:8580`.
+   - **Restore** (IP9 documents it): stop the instances, copy each `<name>.2.99.0` back over
+     `<name>`, remove `instance-profiles.ini` and every `launch@<id>.ini`, install the previous
+     framework `.deb`s (the `.deb` allows a downgrade), start the instances.
+10. **IP9** (docs agent): `AGENTS.md` (the files under the manager, `pai` commands),
+    `crates/bff/README.md`, the packaging guide (the shipped pair and the pair rule), the deploy
+    steps and the restore command above, and the `optimize-preset` skill (it tunes an entry now).
+11. **CP** (user, 2026-11-27; brief 26 section 12): create a server or instance profile as a copy.
+    - **Options.** (a) The bff reads the source and creates the copy: two calls, not atomic, and a
+      server profile's `OpencodeApiKey` passes through the bff. (b) Manager verbs that copy under
+      the `writing` lock. **Recommended: (b)**: one action record, atomic, the secret never leaves
+      the manager.
+    - **Verbs**, each with its `As` form, `configure`, one action record:
+      `CopyServerProfile(engine, from, profile)` copies `server@<from>.ini` byte for byte;
+      `CopyInstanceProfile(from, profile)` copies `[<from>]` and every `[<from>/<m>]` in order.
+      Refusals: the target's id and existence as the creates answer them, and `NoServerProfile` or
+      `NoInstanceProfile` for the source. No instance uses the copy, so nothing renders and no fit
+      is judged.
+    - **Routes** (brief 26 CP.0, kept): `POST /api/profiles/server` `{engine, id, from}`;
+      `POST /api/profiles/instance` `{id, from}`; `from` with `server` is 422
+      `instance-profile-bad-source`; a missing source 422 `no-server-profile-named` or
+      `no-instance-profile-named`, field `from`. 201 as the creates.
+    - `pai`: `server-profile` has no create command today, so only `pai instance-profile create <p>
+      --from <q>` (IP7d's verb grows it).
+    - **Slices:** **CP1** (manager, client): both verbs on both transports; done when each copy's
+      bytes and refusals are pinned. **CP2** (bff, `pai`): the `from` bodies and `--from`; done when
+      the routes' 201 and refusals are pinned. **CP3** (fe, brief 26 section 12): done when the
+      brief's acceptance list is green and the UX check passes.
 
 ### Convergence: idempotent apply, drift and the last good render (user, 2026-11-27): accepted (user, 2026-11-27)
 
