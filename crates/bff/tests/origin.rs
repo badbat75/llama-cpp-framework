@@ -278,6 +278,8 @@ impl ManagerClient for FakeManager {
             converged: true,
             reason: None,
             pending_restart: false,
+            instance_profile: None,
+            hostname: None,
         }])
     }
     fn start(&self, id: &str) -> Result<(), ClientError> {

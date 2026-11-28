@@ -150,6 +150,8 @@ fn row(id: &str, profile: &str, port: u16) -> InstanceInfo {
         converged: true,
         reason: None,
         pending_restart: false,
+        instance_profile: None,
+        hostname: None,
     }
 }
 

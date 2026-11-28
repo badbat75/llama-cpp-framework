@@ -1039,7 +1039,7 @@ fn the_instance_create_and_remove_ask_configure_and_a_refused_caller_changes_not
         &c,
         alice(),
         requests(&[
-            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "../x", "server_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "../x", "instance_profile": "free"}),
             json!({"method": "RemoveInstance", "instance": "../x"}),
         ]),
     );
@@ -1064,7 +1064,7 @@ fn an_empty_caller_is_refused_the_instance_create_and_remove_unasked() {
         &c,
         Caller(String::new()),
         requests(&[
-            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "instance_profile": "free"}),
             json!({"method": "RemoveInstance", "instance": "default"}),
         ]),
     );
@@ -1090,11 +1090,11 @@ fn the_instance_verbs_answer_the_rules_refusals() {
         &c,
         alice(),
         requests(&[
-            json!({"method": "CreateInstance", "engine": "vllm", "instance": "newone", "server_profile": "free"}),
-            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "../x", "server_profile": "free"}),
-            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "A", "server_profile": "free"}),
-            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "", "server_profile": "free"}),
-            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "a_b", "server_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "vllm", "instance": "newone", "instance_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "../x", "instance_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "A", "instance_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "", "instance_profile": "free"}),
+            json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "a_b", "instance_profile": "free"}),
             json!({"method": "RemoveInstance", "instance": "../x"}),
         ]),
     );
@@ -1116,7 +1116,7 @@ fn the_instance_verbs_answer_the_rules_refusals() {
     assert_eq!(calls(&c), vec![]);
 }
 
-/// `engine`, `instance` and `server_profile` are all required and of their
+/// `engine`, `instance` and `instance_profile` are all required and of their
 /// own types, and `RemoveInstance` requires `instance`: a missing field, a
 /// string where a name belongs, a null, a principal that disagrees with the
 /// `As` spelling, a list verb with an `As` form, or a method spelled
@@ -1124,20 +1124,20 @@ fn the_instance_verbs_answer_the_rules_refusals() {
 #[test]
 fn a_malformed_instance_create_request_is_a_bad_request() {
     for body in [
-        json!({"method": "CreateInstance", "instance": "newone", "server_profile": "free"}),
-        json!({"method": "CreateInstance", "engine": "llama.cpp", "server_profile": "free"}),
+        json!({"method": "CreateInstance", "instance": "newone", "instance_profile": "free"}),
+        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance_profile": "free"}),
         json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone"}),
-        json!({"method": "CreateInstance", "engine": 5, "instance": "newone", "server_profile": "free"}),
-        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": 5, "server_profile": "free"}),
-        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": null, "server_profile": "free"}),
-        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": 5}),
-        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": null}),
-        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": ["free"]}),
+        json!({"method": "CreateInstance", "engine": 5, "instance": "newone", "instance_profile": "free"}),
+        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": 5, "instance_profile": "free"}),
+        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": null, "instance_profile": "free"}),
+        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "instance_profile": 5}),
+        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "instance_profile": null}),
+        json!({"method": "CreateInstance", "engine": "llama.cpp", "instance": "newone", "instance_profile": ["free"]}),
         json!({"method": "CreateInstanceAs", "principal": "alice", "engine": "llama.cpp", "instance": "newone"}),
-        json!({"method": "CreateInstanceAs", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
-        json!({"method": "CreateInstance", "principal": "alice", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
+        json!({"method": "CreateInstanceAs", "engine": "llama.cpp", "instance": "newone", "instance_profile": "free"}),
+        json!({"method": "CreateInstance", "principal": "alice", "engine": "llama.cpp", "instance": "newone", "instance_profile": "free"}),
         json!({"method": "createInstance", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
-        json!({"method": "CreateInstances", "engine": "llama.cpp", "instance": "newone", "server_profile": "free"}),
+        json!({"method": "CreateInstances", "engine": "llama.cpp", "instance": "newone", "instance_profile": "free"}),
         json!({"method": "RemoveInstance"}),
         json!({"method": "RemoveInstance", "instance": 5}),
         json!({"method": "RemoveInstance", "instance": null}),
@@ -1167,9 +1167,9 @@ fn the_instance_crud_as_forms_act_for_the_principal() {
         &c,
         bff(),
         requests(&[
-            json!({"method": "CreateInstanceAs", "principal": "alice", "engine": "llama.cpp", "instance": "../x", "server_profile": "free"}),
+            json!({"method": "CreateInstanceAs", "principal": "alice", "engine": "llama.cpp", "instance": "../x", "instance_profile": "free"}),
             json!({"method": "RemoveInstanceAs", "principal": "alice", "instance": "../x"}),
-            json!({"method": "CreateInstanceAs", "principal": "bob", "engine": "llama.cpp", "instance": "../x", "server_profile": "free"}),
+            json!({"method": "CreateInstanceAs", "principal": "bob", "engine": "llama.cpp", "instance": "../x", "instance_profile": "free"}),
             json!({"method": "RemoveInstanceAs", "principal": "bob", "instance": "../x"}),
         ]),
     );
@@ -1814,7 +1814,7 @@ fn a_field_the_manager_does_not_know_is_still_ignored() {
         replies,
         vec![
             json!({"ok": "active"}),
-            json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 3}}),
+            json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 4}}),
             error("InvalidId", "InvalidId"),
             error("BadFileName", "BadFileName"),
         ]
@@ -1877,7 +1877,7 @@ fn version_answers_the_framework_version_and_the_protocol() {
                 json!({"method": "Status", "id": "default"}),
             ]),
         );
-        let version = json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 3}});
+        let version = json!({"ok": {"version": env!("CARGO_PKG_VERSION"), "protocol": 4}});
         assert!(result.is_ok(), "{caller:?}: {result:?}");
         assert_eq!(
             replies,
@@ -1954,7 +1954,7 @@ fn an_acting_client_round_trips_over_a_socket_pair() {
         client.version(),
         Ok(Some(ManagerVersion {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol: 3,
+            protocol: 4,
         })),
         "the version this manager answers"
     );

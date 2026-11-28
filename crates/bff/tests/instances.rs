@@ -162,6 +162,8 @@ impl FakeManager {
             converged: true,
             reason: None,
             pending_restart: false,
+            instance_profile: None,
+            hostname: None,
         }
     }
 
@@ -202,10 +204,10 @@ impl ManagerClient for FakeManager {
         &self,
         engine: &str,
         id: &str,
-        server_profile: &str,
-    ) -> Result<(), ClientError> {
-        self.record(format!("create {engine} {id} {server_profile}"));
-        self.create.clone()
+        instance_profile: &str,
+    ) -> Result<u16, ClientError> {
+        self.record(format!("create {engine} {id} {instance_profile}"));
+        self.create.clone().map(|()| 8581)
     }
     fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
         self.record(format!("remove {id}"));

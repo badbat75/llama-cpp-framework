@@ -3541,11 +3541,11 @@ pub(crate) fn manager_set_model_profile_e2e() {
     let seeded =
         "# the manager's own record\n[default]\nb = off\nnote = keep me\n\n[lan-2]\n* = inherit\n";
 
-    // ── The protocol these verbs came with stays 3 ────────────────────────
+    // ── The protocol these verbs came with, and the number IP4b moved to ──
     assert_eq!(
         crate::manager::pipe::PROTOCOL,
-        3,
-        "the version `Version` reports: 3 came with the first assignment verb, and with `Instances` and `SetInstanceTags` (the protocol stays 3, so they are part of 3)"
+        4,
+        "the version `Version` reports: 3 came with the first assignment verb, and with `Instances` and `SetInstanceTags` (they are part of 3); 4 is IP4b's, the row fields and the create's port"
     );
 
     // ── Each value writes its key, and re-renders every instance ─────────
@@ -9962,6 +9962,15 @@ pub(crate) fn manager_instance_crud_e2e() {
         "gone2",
         "[Server]\nPort = 8124\nHostname = nowhere.invalid\n",
     );
+    // The instance profiles, one per server profile of this seed (IP4b: the
+    // create's third name is an instance profile, and its section names the
+    // server profile the new instance runs, one step behind).
+    const PROFILES: &str = "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = \
+                            lan-2\n\n[free]\nServerProfile = free\n\n[dupe]\nServerProfile = \
+                            dupe\n\n[bffdupe]\nServerProfile = bffdupe\n\n[gone2]\nServerProfile \
+                            = gone2\n\n[blockp]\nServerProfile = blockp\n\n[spared-p]\n\
+                            ServerProfile = spared-p\n";
+    std::fs::write(sys.join(INSTANCE_PROFILES_FILE), PROFILES).expect(INSTANCE_PROFILES_FILE);
     // The web service's own address, the one `check_binding` judges.
     let framework = crate::paths::system_config_dir();
     std::fs::create_dir_all(&framework).expect("framework config dir");
@@ -10108,13 +10117,17 @@ pub(crate) fn manager_instance_crud_e2e() {
         )
         .expect(ASSIGNMENTS_FILE);
         let before = listing();
-        assert_eq!(m.create_instance(&member, ENGINE, "newone", "free"), Ok(()));
+        assert_eq!(
+            m.create_instance(&member, ENGINE, "newone", "free"),
+            Ok(8581)
+        );
 
         let record = text_of(INSTANCES_FILE);
         assert_eq!(
             &record[SEEDED.len()..],
-            "[newone]\nServerProfile = free\nPort = 8581\n",
-            "the section is appended, naming the profile and carrying the port the \
+            "[newone]\nInstanceProfile = free\nPort = 8581\n",
+            "the section is appended, naming the instance profile the create was given \
+             and carrying the port the \
              create proposed (IP3a: the first free one at or above 8581, this node's \
              instances sitting on 8080, 8081 and 8082 and the web service on 8590), \
              and every byte before it is the seed's, the note included"
@@ -10286,15 +10299,15 @@ pub(crate) fn manager_instance_crud_e2e() {
                 "llama.cpp",
                 "spared",
                 "gone",
-                Err(ManagerError::NoServerProfile("gone".into())),
-                "no file of that profile",
+                Err(ManagerError::NoInstanceProfile("gone".into())),
+                "no pool section for that instance profile",
             ),
             (
                 "llama.cpp",
                 "spared",
                 "../x",
-                Err(ManagerError::NoServerProfile("../x".into())),
-                "a profile name the id rule refuses is no profile",
+                Err(ManagerError::NoInstanceProfile("../x".into())),
+                "a name the id rule refuses is no instance profile",
             ),
             (
                 "llama.cpp",
@@ -10330,7 +10343,7 @@ pub(crate) fn manager_instance_crud_e2e() {
         ];
         for (engine, id, name, want, why) in cases {
             assert_eq!(
-                m.create_instance(&member, engine, id, name),
+                m.create_instance(&member, engine, id, name).map(|_| ()),
                 want,
                 "create({engine}, {id}, {name}): {why}"
             );
@@ -10359,8 +10372,8 @@ pub(crate) fn manager_instance_crud_e2e() {
                 "\"Invalid\"",
                 "\"Invalid\"",
                 "\"Invalid\"",
-                "\"NoServerProfile\"",
-                "\"NoServerProfile\"",
+                "\"NoInstanceProfile\"",
+                "\"NoInstanceProfile\"",
                 "\"ServerProfileInUse\"",
                 "\"AddressInUse\"",
                 "\"AddressInUse\"",
@@ -10435,7 +10448,7 @@ pub(crate) fn manager_instance_crud_e2e() {
             (&outsider, "remove"),
         ] {
             let got = match verb {
-                "create" => m.create_instance(who, ENGINE, "spared", "free"),
+                "create" => m.create_instance(who, ENGINE, "spared", "free").map(|_| ()),
                 _ => m.remove_instance(who, "lan-2"),
             };
             assert_eq!(
@@ -10490,11 +10503,13 @@ pub(crate) fn manager_instance_crud_e2e() {
         assert_eq!(snapshot(), before, "a refused principal wrote nothing");
         assert_eq!(
             m.create_instance(&member, ENGINE, "spared", "spared-p"),
-            Ok(()),
-            "alice is a member the bff vouches for: no right of the caller's is asked"
+            Ok(8582),
+            "alice is a member the bff vouches for: no right of the caller's is asked, and \
+             the create answers the port it proposed (the record's own 8581 is taken by \
+             the instance the first phase created, so the walk goes to the next)"
         );
         assert!(
-            text_of(INSTANCES_FILE).contains("[spared]\nServerProfile = spared-p\n"),
+            text_of(INSTANCES_FILE).contains("[spared]\nInstanceProfile = spared-p\n"),
             "the member's create landed"
         );
         assert_eq!(
@@ -10772,12 +10787,15 @@ pub(crate) fn manager_instance_crud_e2e() {
             m.remove_instance(&member, "lan-2"),
             Err(ManagerError::NoInstance)
         );
-        assert_eq!(m.create_instance(&member, ENGINE, "spared", "free"), Ok(()));
+        assert_eq!(
+            m.create_instance(&member, ENGINE, "spared", "free"),
+            Ok(8581)
+        );
         assert_eq!(
             text_of(INSTANCES_FILE),
-            "[spared]\nServerProfile = free\nPort = 8581\n",
+            "[spared]\nInstanceProfile = free\nPort = 8581\n",
             "a record written from nothing holds the one section, its proposed \
-             port included (IP3a)"
+             port included (IP3a), naming the instance profile the create was given (IP4b)"
         );
     }
 }
@@ -20944,8 +20962,8 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     // next free one.
     assert_eq!(
         m.create_instance(&alice, ENGINE, "newone", "lab"),
-        Ok(()),
-        "IP3a: the create lands"
+        Ok(8581),
+        "IP3a: the create lands, answering the port it proposed"
     );
     let rec = record();
     assert_eq!(
@@ -20961,8 +20979,8 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     );
     assert_eq!(
         m.create_instance(&alice, ENGINE, "newtwo", "lab"),
-        Ok(()),
-        "IP3a: the second create lands"
+        Ok(8582),
+        "IP3a: the second create lands, answering the next port"
     );
     assert_eq!(
         key_of(&record(), "newtwo", "Port").as_deref(),
@@ -21085,12 +21103,18 @@ pub(crate) fn manager_ip3a_fix_port_of_recordless_e2e() {
         "[Server]\nHostname = 127.0.0.1\nPort = 8699\n",
     )
     .expect("server@spare.ini");
+    // The pool, so the create's third name is an instance profile (IP4b).
+    std::fs::write(
+        sys.join(INSTANCE_PROFILES_FILE),
+        "[spare]\nServerProfile = spare\n",
+    )
+    .expect(INSTANCE_PROFILES_FILE);
     let seed = "[default]\nServerProfile = default\n\n[lab]\nServerProfile = lab\n";
     std::fs::write(sys.join(INSTANCES_FILE), seed).expect(INSTANCES_FILE);
 
     assert_eq!(
         m.create_instance(&alice, ENGINE, "fresh", "spare"),
-        Ok(()),
+        Ok(8582),
         "IP3a review D2a: the create of `fresh` lands: its profile binds 127.0.0.1:8699, \
          which nothing holds"
     );
@@ -21124,6 +21148,9 @@ pub(crate) fn manager_ip3a_fix_port_of_bff_e2e() {
         "[Server]\nHostname = 127.0.0.1\nPort = 8699\n",
     )
     .expect("server@b.ini");
+    // The pool, so the create's third name is an instance profile (IP4b).
+    std::fs::write(sys.join(INSTANCE_PROFILES_FILE), "[b]\nServerProfile = b\n")
+        .expect(INSTANCE_PROFILES_FILE);
     let seed = "[one]\nServerProfile = a\nPort = 8581\n";
     std::fs::write(sys.join(INSTANCES_FILE), seed).expect(INSTANCES_FILE);
     let framework = crate::paths::system_config_dir();
@@ -21136,7 +21163,7 @@ pub(crate) fn manager_ip3a_fix_port_of_bff_e2e() {
 
     assert_eq!(
         m.create_instance(&alice, ENGINE, "two", "b"),
-        Ok(()),
+        Ok(8583),
         "IP3a review D2b: the create of `two` lands: its profile binds 127.0.0.1:8699, \
          which nothing holds"
     );
@@ -21173,6 +21200,13 @@ pub(crate) fn manager_ip3a_fix_no_free_port_e2e() {
         "[Server]\nHostname = 127.0.0.1\nPort = 8699\n",
     )
     .expect("server@q.ini");
+    // The pool, so the create's third name is an instance profile (IP4b): each
+    // entry names the server profile that binds the port this node holds.
+    std::fs::write(
+        sys.join(INSTANCE_PROFILES_FILE),
+        "[p]\nServerProfile = p\n\n[q]\nServerProfile = q\n",
+    )
+    .expect(INSTANCE_PROFILES_FILE);
     let seed = "[one]\nServerProfile = p\nPort = 8581\n\n[two]\nServerProfile = q\nPort = 8582\n";
     std::fs::write(sys.join(INSTANCES_FILE), seed).expect(INSTANCES_FILE);
     let listing = || -> Vec<String> {

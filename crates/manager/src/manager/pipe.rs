@@ -35,8 +35,11 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// one models folder as the model-file picker's list; 3 also carries
 /// `SetInstanceProfileModel` with its `As` form, the keys of one entry of an
 /// instance profile, and `SetInstanceProfileServer` with its `As` form, the
-/// switch of an instance profile to another server profile (IP4a).
-pub const PROTOCOL: u32 = 3;
+/// switch of an instance profile to another server profile (IP4a); 4 appends
+/// the instance profile and the host to the rows of `Instances` and
+/// `ListInstances`, and makes `CreateInstance` take the INSTANCE profile and
+/// answer the port it proposed for the new instance (IP4b).
+pub const PROTOCOL: u32 = 4;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
 /// `principal`.
@@ -112,7 +115,8 @@ enum Request {
     CreateModelProfile(String, String, Vec<(String, String)>, Option<Principal>),
     /// `profile`: removes a switched-off, unassigned model profile.
     DeleteModelProfile(String, Option<Principal>),
-    /// `engine`, `instance`, `server_profile`: creates an instance.
+    /// `engine`, `instance`, `instance_profile`: creates an instance, answering
+    /// the port the create proposed for it (IP4b).
     CreateInstance(String, String, String, Option<Principal>),
     /// `instance`: removes an instance.
     RemoveInstance(String, Option<Principal>),
@@ -398,19 +402,20 @@ impl Request {
             "DeleteModelProfileAs" => {
                 Request::DeleteModelProfile(arg("profile")?, principal().map(Some)?)
             }
-            // The create of an instance: the engine, the id and the server
-            // profile it runs. The id is the frame's `instance`, the name every
-            // verb keyed on an instance uses.
+            // The create of an instance: the engine, the id and the INSTANCE
+            // profile it runs (IP4b), the server profile one step behind it.
+            // The id is the frame's `instance`, the name every verb keyed on an
+            // instance uses.
             "CreateInstance" => Request::CreateInstance(
                 arg("engine")?,
                 arg("instance")?,
-                arg("server_profile")?,
+                arg("instance_profile")?,
                 None,
             ),
             "CreateInstanceAs" => Request::CreateInstance(
                 arg("engine")?,
                 arg("instance")?,
-                arg("server_profile")?,
+                arg("instance_profile")?,
                 principal().map(Some)?,
             ),
             // Its removal.
@@ -469,7 +474,9 @@ fn requester(caller: &Caller, principal: Option<Principal>) -> Result<Requester,
 /// rows, so a client of the older list of plain ids reads the id out of each
 /// row. The label is
 /// JSON `null` when the section has none: the pipe has a null, so the row says
-/// "no label" and not "an empty label".
+/// "no label" and not "an empty label". The instance profile the section runs
+/// and the `Hostname` its section sets are appended to the row (IP4b), each
+/// `null` when the section names none, the same spelling the label has.
 fn instance_row(i: &pai_core::client::InstanceInfo) -> Value {
     json!({
         "id": i.id,
@@ -485,6 +492,8 @@ fn instance_row(i: &pai_core::client::InstanceInfo) -> Value {
             "args": r.args,
         })),
         "pendingRestart": i.pending_restart,
+        "instance_profile": i.instance_profile,
+        "hostname": i.hostname,
     })
 }
 
@@ -629,12 +638,14 @@ where
         Request::DeleteModelProfile(profile, principal) => requester(caller, principal)
             .and_then(|who| manager.delete_model_profile(&who, &profile))
             .map(affected_answer),
-        // A new instance. The reply is empty as every write's: the caller sent
-        // the id, and the create answers before the record is written.
-        Request::CreateInstance(engine, instance, server_profile, principal) => {
+        // A new instance. The reply is the port the create proposed for it
+        // (IP4b), answered before the record is written.
+        Request::CreateInstance(engine, instance, instance_profile, principal) => {
             requester(caller, principal)
-                .and_then(|who| manager.create_instance(&who, &engine, &instance, &server_profile))
-                .map(|()| Value::Null)
+                .and_then(|who| {
+                    manager.create_instance(&who, &engine, &instance, &instance_profile)
+                })
+                .map(|port| json!(port))
         }
         // Its removal.
         Request::RemoveInstance(instance, principal) => requester(caller, principal)

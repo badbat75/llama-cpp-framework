@@ -312,9 +312,9 @@ impl ManagerClient for FakeManager {
         &self,
         _engine: &str,
         id: &str,
-        _server_profile: &str,
-    ) -> Result<(), ClientError> {
-        self.lost(&format!("create-instance {id}"))
+        _instance_profile: &str,
+    ) -> Result<u16, ClientError> {
+        self.lost(&format!("create-instance {id}")).map(|()| 8581)
     }
     fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
         self.lost(&format!("remove-instance {id}"))

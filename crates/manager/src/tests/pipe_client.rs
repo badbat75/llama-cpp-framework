@@ -108,6 +108,15 @@ pub(crate) fn manager_pipe_client_e2e() {
     std::fs::write(sys.join("server@broken.ini"), broken_ini).expect("write broken");
     std::fs::write(sys.join("models.ini"), &model_profiles).expect("write presets");
     std::fs::write(sys.join("instances.ini"), record).expect("write instances");
+    // The instance profiles (IP4b: `CreateInstance` names one). `pipe-i` and
+    // `pipe-n` are the names the create block gives, on server profiles of
+    // their own; `default` and `broken` are the profiles of the record's own
+    // instances, so the create's refusal of a profile in use has one.
+    std::fs::write(
+        sys.join("instance-profiles.ini"),
+        "[pipe-i]\nServerProfile = pipe-i\n\n[pipe-n]\nServerProfile = pipe-n\n\n[default]\nServerProfile = default\n\n[broken]\nServerProfile = broken\n",
+    )
+    .expect("write instance profiles");
     // A start loads the instance's render and refuses one with nothing to run.
     // The render is the manager's, from the pool and the assignment, so the
     // fixture assigns the profile and writes the render it renders.
@@ -1491,8 +1500,9 @@ pub(crate) fn manager_pipe_client_e2e() {
 
         assert_eq!(
             client.create_instance("llama.cpp", "pipe-i", "pipe-i"),
-            Ok(()),
-            "a new id of a profile nothing else names"
+            Ok(8581),
+            "a new id of an instance profile nothing else names, answering the port \
+             the create proposed"
         );
         assert_eq!(
             *calls(&c),
@@ -1502,8 +1512,8 @@ pub(crate) fn manager_pipe_client_e2e() {
         );
         assert_eq!(
             &text_of("instances.ini")[seed.len()..],
-            "[pipe-i]\nServerProfile = pipe-i\nPort = 8581\n",
-            "the section is appended, naming the profile and carrying the port the \
+            "[pipe-i]\nInstanceProfile = pipe-i\nPort = 8581\n",
+            "the section is appended, naming the instance profile and carrying the port the \
              create proposed (the first free one at or above 8581: no section of this \
              seed's record holds a `Port`), every byte before it the seed's"
         );
@@ -1555,7 +1565,7 @@ pub(crate) fn manager_pipe_client_e2e() {
             ),
             (
                 client.create_instance("llama.cpp", "pipe-z", "nosuch"),
-                Err(ClientError::NoServerProfile("nosuch".into())),
+                Err(ClientError::NoInstanceProfile("nosuch".into())),
             ),
             (
                 client.create_instance("llama.cpp", "pipe-z", "broken"),
@@ -1737,7 +1747,7 @@ pub(crate) fn manager_pipe_client_e2e() {
 
         assert_eq!(
             client.create_instance("llama.cpp", "pipe-n", "pipe-n"),
-            Ok(()),
+            Ok(8581),
             "{style}: a create over a record whose last line has no final newline"
         );
         let text = std::fs::read_to_string(sys.join("instances.ini")).expect("record");
@@ -1746,23 +1756,24 @@ pub(crate) fn manager_pipe_client_e2e() {
             "{style}: every byte of the record is left as it was: {text:?}"
         );
         let sections = pai_core::ini::parse_sections(&text);
-        let profile_of = |id: &str| {
+        let key_of = |id: &str, key: &str| -> Option<String> {
             sections
                 .iter()
                 .find(|section| section.id == id)
-                .and_then(|section| section.keys.get("ServerProfile"))
+                .and_then(|section| section.keys.get(key))
                 .map(|name| name.trim().to_string())
         };
         assert_eq!(
-            profile_of("tail"),
-            Some("tail".to_string()),
+            key_of("tail", "ServerProfile").as_deref(),
+            Some("tail"),
             "{style}: the section that ended the file keeps the profile it names, \
              the appended header lands on a line of its own: {text:?}"
         );
         assert_eq!(
-            profile_of("pipe-n"),
-            Some("pipe-n".to_string()),
-            "{style}: the record has a section of the new instance: {text:?}"
+            key_of("pipe-n", "InstanceProfile").as_deref(),
+            Some("pipe-n"),
+            "{style}: the record has a section of the new instance, naming the instance \
+             profile the create was given: {text:?}"
         );
         assert!(
             client
@@ -3281,8 +3292,8 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     // at or above 8581 is 8581, and the next create takes the next free one.
     assert_eq!(
         client.create_instance("llama.cpp", "pipe-new", "edge"),
-        Ok(()),
-        "the create lands"
+        Ok(8581),
+        "the create lands, answering the first free port"
     );
     assert_eq!(
         key_of(&record(), "pipe-new", "Port").as_deref(),
@@ -3296,8 +3307,8 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     );
     assert_eq!(
         client.create_instance("llama.cpp", "pipe-new2", "edge"),
-        Ok(()),
-        "the second create lands"
+        Ok(8582),
+        "the second create lands, given the next free port"
     );
     assert_eq!(
         key_of(&record(), "pipe-new2", "Port").as_deref(),
@@ -4143,4 +4154,270 @@ pub(crate) fn manager_pipe_client_ip4a_e2e() {
         );
         hang_up(server, client);
     }
+}
+
+// ── IP4b: the row's instance profile and host, the port a create answers ────
+// ── (ARCHITECTURE.md, the IP4 entry, "Slices", IP4b) ────────────────────────
+
+/// One raw frame asked of the server, on a connection of its own: the reply's
+/// `ok` value. The row's keys are the frame's own, so the two new fields are
+/// pinned where they cross the wire, not only where the client decodes them.
+fn ask_raw(core: &Arc<Core>, caller: &Caller, request: serde_json::Value) -> serde_json::Value {
+    use pai_core::client::pipe::{read_frame, write_frame};
+
+    let (s0, s1) = UnixStream::pair().expect("socket pair");
+    let core = core.clone();
+    let caller = caller.clone();
+    let server = std::thread::spawn(move || serve_stream(&core, caller, s0));
+    let mut stream = s1;
+    stream
+        .set_read_timeout(Some(DEADLINE))
+        .expect("read timeout");
+    write_frame(&mut stream, request.to_string().as_bytes()).expect("write frame");
+    let body = read_frame(&mut stream)
+        .expect("read frame")
+        .expect("the server answers");
+    let reply: serde_json::Value = serde_json::from_slice(&body).expect("the reply is JSON");
+    drop(stream);
+    server
+        .join()
+        .expect("the server thread")
+        .expect("a clean end");
+    reply
+        .get("ok")
+        .cloned()
+        .unwrap_or_else(|| panic!("an ok reply: {reply}"))
+}
+
+/// IP4b 3: `Version` answers, beside the framework version, the protocol number
+/// of the methods this manager speaks. Nothing is read, so a plain test.
+#[test]
+fn the_pipe_client_reads_the_managers_protocol() {
+    use pai_core::client::ManagerVersion;
+
+    let c = core(true, &[]);
+    let caller = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
+    let (server, client) = connect(&c, &caller);
+    assert_eq!(
+        client.version(),
+        Ok(Some(ManagerVersion {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            // IP4b 3: the row grew `instanceProfile` and `hostname` and
+            // `CreateInstance` answers the port, so the protocol is 4.
+            protocol: 4,
+        })),
+        "the protocol the pipe client reads"
+    );
+    hang_up(server, client);
+}
+
+/// E2E phase: IP4b, over the stream. The same pins as
+/// `manager_dbus_client_ip4b_e2e`, on the frame's own shape: the rows of
+/// `Instances` and `ListInstances` carry the instance profile the section runs
+/// and the host it sets, beside the states of the apply they already carried,
+/// and pai-core's stream client decodes all five. `CreateInstance` takes the
+/// instance profile and answers the port: 8581 on an empty record, 8582 with
+/// 8581 taken, and a name the pool has no section for is the keyed refusal.
+#[cfg(unix)]
+pub(crate) fn manager_pipe_client_ip4b_e2e() {
+    use crate::manager::service::fakes::{FakeGpus, FakeGroup};
+    use serde_json::{json, Value};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    crate::tests::dbus_client::seed_ip4b(dir.path(), &sys);
+    let c = Arc::new(
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_gpus(FakeGpus::new(&[("CUDA0", 400_000), ("CUDA1", 400_000)])),
+    );
+    c.start_up();
+    // `desk` launched on a pair nobody launched with: converged, and drifting.
+    let state = crate::paths::instance_state_dir().join("desk");
+    std::fs::create_dir_all(&state).expect("the state folder");
+    std::fs::write(state.join("applied"), "0".repeat(64)).expect("the applied record");
+    let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
+    let (server, client) = connect(&c, &alice);
+
+    // The row's key for the instance profile: the design names it
+    // `instanceProfile` and the row's older keys are snake_case
+    // (`server_profile`), so the pin accepts either spelling and pins the VALUE,
+    // which is the rule.
+    let profile_keys = ["instanceProfile", "instance_profile"];
+    let row_of = |rows: &[Value], id: &str| -> Value {
+        rows.iter()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+            .unwrap_or_else(|| panic!("IP4b: the rows carry {id}: {rows:?}"))
+            .clone()
+    };
+    // The key is there, and its value: `null` is no host (the pipe has a null,
+    // as the label's does), and the empty string says the same.
+    let field = |row: &Value, names: &[&str]| -> Option<String> {
+        let value = names
+            .iter()
+            .find_map(|name| row.get(*name))
+            .unwrap_or_else(|| panic!("IP4b: the row carries a key of {names:?}: {row}"));
+        match value {
+            Value::Null => None,
+            Value::String(text) => Some(text.clone()),
+            other => panic!("IP4b: the field is text or null: {other}"),
+        }
+    };
+
+    // ── IP4b 1: both frames' rows carry both fields, beside the states ─────
+    for method in ["Instances", "ListInstances"] {
+        let answer = ask_raw(&c, &alice, json!({"method": method}));
+        let rows = answer
+            .as_array()
+            .expect("IP4b: the answer is an array of rows");
+        let desk = row_of(rows, "desk");
+        let lab = row_of(rows, "lab");
+        assert_eq!(
+            (
+                field(&desk, &profile_keys).as_deref(),
+                field(&desk, &["hostname"]).as_deref()
+            ),
+            (Some("desk"), Some("127.0.0.1")),
+            "IP4b: {method} carries the instance profile `desk` runs and the host its \
+             section sets: {rows:?}"
+        );
+        assert_eq!(
+            field(&lab, &profile_keys).as_deref(),
+            Some("one"),
+            "IP4b: {method} carries the profile of the section that names no host: {rows:?}"
+        );
+        assert!(
+            matches!(field(&lab, &["hostname"]).as_deref(), None | Some("")),
+            "IP4b: {method} answers `lab` with no host, not with a host of the node's own: \
+             {lab}"
+        );
+        assert_eq!(
+            (
+                desk.get("converged").and_then(Value::as_bool),
+                desk.get("pendingRestart").and_then(Value::as_bool),
+                field(&desk, &["reason"]),
+            ),
+            (Some(true), Some(true), None),
+            "IP4b: the two new fields ride the row beside the states it already carried: \
+             {desk}"
+        );
+        assert_eq!(
+            (
+                lab.get("converged").and_then(Value::as_bool),
+                lab.get("pendingRestart").and_then(Value::as_bool),
+                lab.get("reason")
+                    .and_then(|r| r.get("key"))
+                    .and_then(Value::as_str),
+            ),
+            (
+                Some(false),
+                Some(false),
+                Some("model-profile-device-outside")
+            ),
+            "IP4b: the render the device check stopped rides its key on the same row: {lab}"
+        );
+        let args: Vec<&str> = lab
+            .get("reason")
+            .and_then(|r| r.get("args"))
+            .and_then(Value::as_array)
+            .map(|list| list.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        assert!(
+            args.contains(&"lab") && args.contains(&"CUDA1"),
+            "IP4b: the reason's args name the instance and the card it stopped on: {args:?}"
+        );
+    }
+
+    // ── IP4b 1: the client decodes both fields and the states, in one read ──
+    let rows = client.instances().expect("IP4b: instances");
+    let row = |id: &str| {
+        rows.iter()
+            .find(|i| i.id == id)
+            .unwrap_or_else(|| panic!("IP4b: the list carries {id}: {rows:?}"))
+            .clone()
+    };
+    let desk = row("desk");
+    assert_eq!(
+        (
+            desk.instance_profile.as_deref(),
+            desk.hostname.as_deref(),
+            desk.server_profile.as_deref(),
+            desk.port
+        ),
+        (Some("desk"), Some("127.0.0.1"), Some("desk"), 8581),
+        "IP4b: the client's row carries the instance profile it runs and the host its \
+         record names, beside the fields it carried"
+    );
+    assert_eq!(
+        (desk.converged, desk.pending_restart, desk.reason.is_none()),
+        (true, true, true),
+        "IP4b: the new fields ride the row beside the states, in the one read"
+    );
+    let lab = row("lab");
+    assert_eq!(
+        (lab.instance_profile.as_deref(), lab.hostname.as_deref()),
+        (Some("one"), None),
+        "IP4b: a record that sets no host is answered as no host"
+    );
+    assert_eq!(
+        (lab.converged, lab.pending_restart),
+        (false, false),
+        "IP4b: `lab` reads not converged, and not drifting: {lab:?}"
+    );
+    assert_eq!(
+        lab.reason.as_ref().map(|r| r.key.as_str()),
+        Some("model-profile-device-outside"),
+        "IP4b: and its row carries the keyed reason"
+    );
+
+    // ── IP4b 2: the create answers the port, from the instance profile ──────
+    std::fs::write(sys.join("instances.ini"), "").expect("the record emptied");
+    let record = || std::fs::read_to_string(sys.join("instances.ini")).expect("instances.ini");
+    let key_of = |text: &str, section: &str, key: &str| -> Option<String> {
+        pai_core::ini::section_keys(text, section)
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    };
+    assert_eq!(
+        client.create_instance("llama.cpp", "first", "free"),
+        Ok(8581),
+        "IP4b 2: a create on an empty record answers 8581"
+    );
+    assert_eq!(
+        (
+            key_of(&record(), "first", "InstanceProfile").as_deref(),
+            key_of(&record(), "first", "Port").as_deref(),
+            key_of(&record(), "first", "ServerProfile"),
+            key_of(&record(), "first", "Hostname"),
+        ),
+        (Some("free"), Some("8581"), None, None),
+        "IP4b 2: the section names the instance profile the create was given and carries \
+         the port it answered: no server profile, no host"
+    );
+    assert_eq!(
+        client.create_instance("llama.cpp", "second", "free"),
+        Ok(8582),
+        "IP4b 2: with 8581 taken, the create answers the next free one, and two instances \
+         of one instance profile is no refusal"
+    );
+    assert_eq!(
+        client.create_instance("llama.cpp", "third", "nope"),
+        Err(ClientError::NoInstanceProfile("nope".into())),
+        "IP4b 2: the third name is judged as an instance profile, and the refusal names it"
+    );
+    assert_eq!(
+        pai_core::ini::parse_sections(&record())
+            .into_iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>(),
+        vec!["first".to_string(), "second".to_string()],
+        "IP4b 2: the refused create wrote no section"
+    );
+    hang_up(server, client);
 }

@@ -227,6 +227,13 @@ pub struct ManagerVersion {
 /// (`None` for a converged instance), and `pending_restart` says the running
 /// instance runs a pair that is not the one on disk. A manager of a protocol
 /// that answers none of them reads converged with no drift.
+///
+/// The last two are appended to the row (IP4b): `instance_profile` is the
+/// `InstanceProfile` of the instance's section, the instance profile it runs,
+/// and `hostname` the `Hostname` its section sets. Each is `None` when the
+/// section names none: the bus answers the empty string, the pipe a null, and
+/// the record's blank is the same. `server_profile` sits one step behind
+/// `instance_profile`, the profile the pool's section for it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceInfo {
     pub id: String,
@@ -239,6 +246,8 @@ pub struct InstanceInfo {
     pub converged: bool,
     pub reason: Option<NotConverged>,
     pub pending_restart: bool,
+    pub instance_profile: Option<String>,
+    pub hostname: Option<String>,
 }
 
 /// One instance's not-converged reason: the keyed check that refused to write
@@ -581,16 +590,18 @@ pub trait ManagerClient {
         ))
     }
     /// Creates the instance `id` of the engine `engine`, pointing it at the
-    /// server profile `server_profile`. The manager proposes the
-    /// instance's port, the first free one at or above 8581, and writes it
-    /// into the record's section. Guarded as a write of a served file is.
+    /// instance profile `instance_profile`: a name the pool has no section for
+    /// is [`ClientError::NoInstanceProfile`]. The manager proposes the
+    /// instance's port, the first free one at or above 8581, writes it into the
+    /// record's section and answers it (IP4b). Guarded as a write of a served
+    /// file is.
     fn create_instance(
         &self,
         engine: &str,
         id: &str,
-        server_profile: &str,
-    ) -> Result<(), ClientError> {
-        let _ = (engine, id, server_profile);
+        instance_profile: &str,
+    ) -> Result<u16, ClientError> {
+        let _ = (engine, id, instance_profile);
         Err(ClientError::Other(
             "this transport of the manager has no CreateInstance".into(),
         ))
@@ -1023,7 +1034,7 @@ mod tests {
         }
     }
 
-    /// `create_instance(engine, id, server_profile)` and `remove_instance(id)`
+    /// `create_instance(engine, id, instance_profile)` and `remove_instance(id)`
     /// are on the trait, each answering the default body that names the verb a
     /// transport does not speak: a new fake client gains both without writing
     /// either, as slice 14's `create_server_profile` does. A transport that
@@ -1033,7 +1044,8 @@ mod tests {
         for (verb, answer) in [
             (
                 "CreateInstance",
-                Bare.create_instance("llama.cpp", "lan-2", "big"),
+                Bare.create_instance("llama.cpp", "lan-2", "big")
+                    .map(|_| ()),
             ),
             ("RemoveInstance", Bare.remove_instance("lan-2")),
         ] {

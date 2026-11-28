@@ -106,6 +106,10 @@ async fn create(
         if !mine.may_write() {
             return Ok(());
         }
+        // IP4b: the create takes the instance profile and answers the port the
+        // manager proposed. The route's body and its answer are IP4d's work:
+        // today it names a server profile and answers the id alone, so the port
+        // is dropped here.
         client.create_instance(&requested.engine, &requested.id, &requested.server_profile)?;
         mine.landed();
         Ok(())

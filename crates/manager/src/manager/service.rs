@@ -2697,24 +2697,31 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// so it is judged before any path is built), the record read with
     /// [`read_record`] (a record that cannot be read is [`ManagerError::Io`],
     /// never an empty one), a record section with the id (`instance-exists`),
-    /// the profile: a name the id rule refuses or one with no
-    /// `server@<name>.ini` is [`ManagerError::NoServerProfile`], a profile a
-    /// section of the record runs at the profile's own address is
+    /// the pool read with [`read_pool`] and the instance profile: a name the
+    /// pool has no section for is [`ManagerError::NoInstanceProfile`] (IP4b: the
+    /// third name is an INSTANCE profile), and the server profile that
+    /// profile's section names is judged as it was: a name the id rule refuses
+    /// or one with no `server@<name>.ini` is [`ManagerError::NoServerProfile`], a
+    /// profile a section of the record runs at the profile's own address is
     /// [`ManagerError::ServerProfileInUse`] naming that instance, and the
     /// profile's own address is judged against those instances and against the
     /// web service ([`Self::check_binding`]; the new instance is out of the walk
     /// because the record does not name it yet, and an instance with a
     /// `Hostname` or a `Port` in its section is out too, because it binds an
-    /// address of its own), and the port the node proposes
-    /// ([`proposed_port`]), a node holding every port of its range refused
-    /// `no-free-port`. Then, in this order: the
+    /// address of its own: that is why any number of instances may run one
+    /// instance profile, each on a port of its own), and the port the node
+    /// proposes ([`proposed_port`]), a node holding every port of its range
+    /// refused `no-free-port`. Then, in this order: the
     /// `assignments.ini` section of an id used before, so the new instance is
     /// assigned nothing; its render `models@<id>.ini`, of the pool as it is on
-    /// disk; and the record last, with the `Port` proposed and no `Hostname`,
-    /// so the profile's bind stands, and the render pass every write runs, which
+    /// disk; and the record last, naming the instance profile and
+    /// carrying the `Port` proposed and no `Hostname`, so the profile's bind
+    /// stands, and the render pass every write runs, which
     /// gives the new instance the `launch@<id>.ini` half of its pair beside the
     /// record's address (IP3c), a pair the pass cannot write being the create's
-    /// own failure. A
+    /// own failure. The port is answered
+    /// before any byte is written, and is the call's answer (IP4b), so the
+    /// caller knows the address the instance is at without reading the record. A
     /// create that wrote the render and failed on the record leaves a file no
     /// instance reads, never an instance with no render. Guarded as a write of
     /// a served file is: the principal gate and `configure`, the `writing`
@@ -2724,10 +2731,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         who: &W,
         engine: &str,
         id: &str,
-        server_profile: &str,
-    ) -> Result<(), ManagerError> {
+        instance_profile: &str,
+    ) -> Result<u16, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<u16, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
@@ -2744,14 +2751,28 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             {
                 return Err(one_value_refusal("instance-exists", id));
             }
-            let no_profile = || ManagerError::NoServerProfile(server_profile.to_string());
-            let path = crate::paths::instance_ini(server_profile).ok_or_else(no_profile)?;
+            // The third name is an INSTANCE profile (IP4b): the pool's section
+            // for it names the server profile the instance runs, one step
+            // behind. A name the pool has no section for, and a section naming
+            // no server profile, leave the create with nothing to run.
+            let pool = read_pool().map_err(io)?;
+            let found = pai_core::instance_profiles::parse(&pool)
+                .into_iter()
+                .find(|profile| profile.id == instance_profile)
+                .ok_or_else(|| ManagerError::NoInstanceProfile(instance_profile.to_string()))?;
+            let server_profile = found
+                .server_profile
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| ManagerError::NoServerProfile(instance_profile.to_string()))?;
+            let no_profile = || ManagerError::NoServerProfile(server_profile.clone());
+            let path = crate::paths::instance_ini(&server_profile).ok_or_else(no_profile)?;
             if std::fs::symlink_metadata(&path).is_err() {
                 return Err(no_profile());
             }
-            if let Some(holder) = record_profile_owner(&record, server_profile) {
+            if let Some(holder) = record_profile_owner(&record, &server_profile) {
                 return Err(ManagerError::ServerProfileInUse(
-                    server_profile.to_string(),
+                    server_profile.clone(),
                     holder,
                 ));
             }
@@ -2790,8 +2811,14 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // server profile it runs, which several instances share: the first
             // port from [`FIRST_PROPOSED_PORT`] up that no section of the record
             // holds. `SetInstanceAddress` is the verb that moves it later.
-            append_record(&dir.join(INSTANCES_FILE), &record, id, server_profile, port)
-                .map_err(io)?;
+            append_record(
+                &dir.join(INSTANCES_FILE),
+                &record,
+                id,
+                instance_profile,
+                port,
+            )
+            .map_err(io)?;
             // The pair the new instance converges to (IP3c): the record names it
             // now, so the pass every write runs gives it both files, the launch
             // carrying the record's address. Every other instance's pair stands
@@ -2801,7 +2828,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             if let Some(err) = self.write_failure(&pass) {
                 return Err(err);
             }
-            Ok(())
+            Ok(port)
         };
         let answer = run();
         self.record_action("create_instance", id, Some(&who), &answer);
@@ -2934,6 +2961,16 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                         args: refusal.values,
                     }),
                     pending_restart: self.pending_restart(&section.id),
+                    // The two fields appended to the row (IP4b): the instance
+                    // profile the section names, and the host its section sets.
+                    // A section with neither, as a migration of an older record
+                    // leaves them, answers none.
+                    instance_profile: instance_profile_of(&record, &section.id),
+                    hostname: section
+                        .keys
+                        .get("Hostname")
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty()),
                 }
             })
             .collect();
@@ -4191,18 +4228,20 @@ fn read_record(path: &std::path::Path) -> std::io::Result<String> {
 }
 
 /// Adds the section of the new instance to the record `path`, over the record
-/// text `existing` that is there: the header, its server profile and the
+/// text `existing` that is there: the header, its instance profile and the
 /// `Port` `port` it listens on, appended after every byte, so the notes of the
 /// other sections and the file's own spacing are untouched. A record whose
 /// last line has no ending gets a line ending of the file's own style first,
 /// so the section it ends with keeps the keys it names and the new header
 /// starts a line of its own. A record the install never copied is created by
-/// this.
+/// this. The section names no server profile and no `Hostname`: the instance
+/// profile is one step above the server profile (IP4b), and the address comes
+/// from the `Port` alone.
 fn append_record(
     path: &std::path::Path,
     existing: &str,
     id: &str,
-    server_profile: &str,
+    instance_profile: &str,
     port: u16,
 ) -> std::io::Result<()> {
     use std::io::Write;
@@ -4213,8 +4252,9 @@ fn append_record(
     if !existing.is_empty() && !existing.ends_with('\n') {
         record.write_all(pai_core::ini::detect_eol(existing).as_bytes())?;
     }
-    record
-        .write_all(format!("[{id}]\nServerProfile = {server_profile}\nPort = {port}\n").as_bytes())
+    record.write_all(
+        format!("[{id}]\n{INSTANCE_PROFILE_KEY} = {instance_profile}\nPort = {port}\n").as_bytes(),
+    )
 }
 
 /// The port [`create_instance`](Manager::create_instance) gives a new instance:

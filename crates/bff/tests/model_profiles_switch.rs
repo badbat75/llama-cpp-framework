@@ -681,6 +681,8 @@ impl ManagerClient for FakeManager {
                 converged: true,
                 reason: None,
                 pending_restart: false,
+                instance_profile: None,
+                hostname: None,
             })
             .collect())
     }

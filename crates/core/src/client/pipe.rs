@@ -88,6 +88,8 @@
 //!                                           SetBootEnabled, SetInstanceTags,
 //!                                           CreateServerProfile,
 //!                                           DeleteServerProfile
+//! {"ok":8581}                               CreateInstance (the port the
+//!                                           create proposed for the instance)
 //! {"ok":{"running":["default"],
 //!         "notConverged":[{"instance":"lab","key":"no-model-profile-named",
 //!                          "args":["qwen3"]}]}}
@@ -534,22 +536,27 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
 
     /// `CreateInstance`: the three names the manager's rule asks for, the
     /// instance's id sent as the frame's `instance`, the name every verb
-    /// keyed on an instance uses. The frame names no port: the manager
-    /// proposes the new instance's own.
+    /// keyed on an instance uses, and the instance profile the new instance
+    /// runs (IP4b). The frame names no port: the manager proposes the new
+    /// instance's own and answers it.
     fn create_instance(
         &self,
         engine: &str,
         id: &str,
-        server_profile: &str,
-    ) -> Result<(), ClientError> {
-        self.call_unit(self.guarded(
+        instance_profile: &str,
+    ) -> Result<u16, ClientError> {
+        let reply = self.call(self.guarded(
             "CreateInstance",
             &[
                 ("engine", json!(engine)),
                 ("instance", json!(id)),
-                ("server_profile", json!(server_profile)),
+                ("instance_profile", json!(instance_profile)),
             ],
-        ))
+        ))?;
+        let port = reply
+            .as_u64()
+            .ok_or_else(|| ClientError::Other(reply.to_string()))?;
+        u16::try_from(port).map_err(|_| ClientError::Other(reply.to_string()))
     }
 
     // The instance profile verbs, the frame fields named as the server profile
@@ -782,6 +789,12 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                             .get("pendingRestart")
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
+                        // The two fields appended to the row (IP4b), read as
+                        // the label is: `null`, the empty string, and a row of
+                        // an older manager that answers neither, all read as
+                        // no instance profile and no host.
+                        instance_profile: text(row, "instance_profile").filter(|t| !t.is_empty()),
+                        hostname: text(row, "hostname").filter(|t| !t.is_empty()),
                     })
                 }
                 _ => return Err(ClientError::Other(v.to_string())),
@@ -1573,6 +1586,10 @@ mod tests {
                     converged: true,
                     reason: None,
                     pending_restart: false,
+                    // The row sent carries neither of the fields appended in
+                    // IP4b, and they read as none.
+                    instance_profile: None,
+                    hostname: None,
                 },
                 InstanceInfo {
                     id: "lan-2".into(),
@@ -1585,6 +1602,8 @@ mod tests {
                     converged: true,
                     reason: None,
                     pending_restart: false,
+                    instance_profile: None,
+                    hostname: None,
                 },
             ],
             "the row's fields, in the manager's order"

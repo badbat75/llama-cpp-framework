@@ -33,10 +33,13 @@
 //! NodeInfoAs(s principal)                (the same reply)
 //! ModelFiles() -> (s dir, a(sttbs) files, b truncated, (s key, as args))
 //! ModelFilesAs(s principal)              (the same reply)
-//! Instances() -> a(sssqasass)      (id, engine, server profile, port, profile
-//!                                   tags, instance tags, label: empty when unset)
+//! Instances() -> a(sssqasassss)   (id, engine, server profile, port, profile
+//!                                   tags, instance tags, label, instance
+//!                                   profile, hostname: each empty when unset)
 //! InstanceStates() -> a(sbssasb)  (id, converged, reason key, reason args,
 //!                                   restart pending: the states of the apply)
+//! CreateInstance(s engine, s id, s instance_profile) -> (q port)
+//! CreateInstanceAs(s principal, s engine, s id, s instance_profile) (same)
 //! ServerProfiles() -> a(ssqass)       (id, engine, port, tags, instance)
 //! Version() -> (s version, u protocol)
 //! ```
@@ -66,10 +69,11 @@ pub const INTERFACE: &str = "org.privateai.Manager1";
 const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
 
 /// One row of `Instances`, as the bus answers it: `(s id, s engine,
-/// s server_profile, q port, as profile_tags, as instance_tags, s label)`,
-/// the whole list one `a(sssqasass)`. A section naming no server profile is
-/// the empty string, which the client reads as none; so is a section with no
-/// label (the bus has no null).
+/// s server_profile, q port, as profile_tags, as instance_tags, s label,
+/// s instance_profile, s hostname)`, the whole list one `a(sssqasassss)`. A
+/// section naming no server profile is the empty string, which the client reads
+/// as none; so is a section with no label, no instance profile or no host (the
+/// bus has no null). The last two fields are appended to the row (IP4b).
 type InstanceRow = (
     String,
     String,
@@ -77,6 +81,8 @@ type InstanceRow = (
     u16,
     Vec<String>,
     Vec<String>,
+    String,
+    String,
     String,
 );
 
@@ -665,19 +671,23 @@ impl ManagerClient for DbusClient {
         }?;
         affected_of(reply)
     }
+    /// `CreateInstance`: the engine, the id, and the instance profile the new
+    /// instance runs, the third name the manager's rule judges (IP4b). The
+    /// reply is the port the manager proposed for the new instance.
     fn create_instance(
         &self,
         engine: &str,
         id: &str,
-        server_profile: &str,
-    ) -> Result<(), ClientError> {
-        match self.acting() {
-            Some(principal) => {
-                self.call("CreateInstanceAs", &(principal, engine, id, server_profile))
-            }
-            None => self.call("CreateInstance", &(engine, id, server_profile)),
-        }
-        .map(|_| ())
+        instance_profile: &str,
+    ) -> Result<u16, ClientError> {
+        let reply = match self.acting() {
+            Some(principal) => self.call(
+                "CreateInstanceAs",
+                &(principal, engine, id, instance_profile),
+            ),
+            None => self.call("CreateInstance", &(engine, id, instance_profile)),
+        }?;
+        body(reply)
     }
     fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
         match self.acting() {
@@ -696,7 +706,17 @@ impl ManagerClient for DbusClient {
             // over the pipe.
             .filter(|row| !row.2.is_empty())
             .map(
-                |(id, engine, server_profile, port, profile_tags, instance_tags, label)| {
+                |(
+                    id,
+                    engine,
+                    server_profile,
+                    port,
+                    profile_tags,
+                    instance_tags,
+                    label,
+                    instance_profile,
+                    hostname,
+                )| {
                     // The states of the apply ride the sibling method, keyed by
                     // the id (IP3c review 6). A row the states do not name
                     // reads converged, with no reason and no drift.
@@ -720,6 +740,11 @@ impl ManagerClient for DbusClient {
                             })
                         }),
                         pending_restart: state.is_some_and(|state| state.4),
+                        // The two appended fields (IP4b), each the empty string
+                        // when the section names none.
+                        instance_profile: (!instance_profile.is_empty())
+                            .then_some(instance_profile),
+                        hostname: (!hostname.is_empty()).then_some(hostname),
                     }
                 },
             )
@@ -906,18 +931,22 @@ mod tests {
 
     /// The row `Instances` answers, as the client reads it: one D-Bus struct
     /// `(s id, s engine, s server_profile, q port, as profile_tags,
-    /// as instance_tags, s label)`, the list `a(sssqasass)`. Slice 13 puts the
+    /// as instance_tags, s label, s instance_profile, s hostname)`, the list
+    /// `a(sssqasassss)`. Slice 13 puts the
     /// server profile after the engine: a client that reads five fields never
     /// learns the name, and the only name left to it is the id, which is not
     /// the file the instance reads. Slice IL1 puts the label last, as `s`: the
     /// bus has no null, so the empty string carries "this instance has no
-    /// label", the reading every other text of the row already has.
+    /// label", the reading every other text of the row already has. IP4b
+    /// appends the instance profile and the host the same way, each the empty
+    /// string when the section names none.
     #[test]
     fn the_instances_row_is_the_struct_with_the_server_profile() {
         assert_eq!(
             <InstanceRow as Type>::SIGNATURE.to_string(),
-            "(sssqasass)",
-            "the row is a struct of two strings, the profile, a uint16, two arrays of strings and the label"
+            "(sssqasassss)",
+            "the row is a struct of two strings, the profile, a uint16, two arrays of \
+             strings, the label, the instance profile and the host"
         );
     }
 

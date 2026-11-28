@@ -347,11 +347,13 @@ where
         self.core(|m| m.list_instances()).await
     }
 
-    /// `Instances`: one row per instance, `(sssqasass)`, the third field the
+    /// `Instances`: one row per instance, `(sssqasassss)`, the third field the
     /// name of the server profile its section names (the empty string when it
-    /// names none), the last two arrays the tags of that profile and the tags
-    /// of its own section, the last field the label of its section (the
-    /// empty string when it has none: the bus has no null). Answered to any
+    /// names none), the two arrays the tags of that profile and the tags
+    /// of its own section, then the label of its section, the instance profile
+    /// it runs and the `Hostname` its section sets, the last three appended to
+    /// the row (IP4b) and each the empty string when the section names none:
+    /// the bus has no null. Answered to any
     /// caller, as the list of ids is. The three states of the apply (IP3c) are
     /// not in this row: they are the sibling method [`Self::instance_states`],
     /// which the client merges back into these rows.
@@ -364,6 +366,8 @@ where
         u16,
         Vec<String>,
         Vec<String>,
+        String,
+        String,
         String,
     )> {
         self.core(|m| {
@@ -378,6 +382,11 @@ where
                         i.profile_tags,
                         i.instance_tags,
                         i.label.unwrap_or_default(),
+                        // The two fields appended to the row (IP4b): the
+                        // instance profile the section names and the host its
+                        // section sets, the bus's empty string being none.
+                        i.instance_profile.unwrap_or_default(),
+                        i.hostname.unwrap_or_default(),
                     )
                 })
                 .collect()
@@ -1235,36 +1244,37 @@ where
     }
 
     /// `CreateInstance`: writes the record section, the render and the
-    /// assignment of a new instance, `(sss)`: the engine, the id and the server
-    /// profile it runs. The reply is empty, as every write's: the caller sent
-    /// the id, and the create is answered before the record is written, so the
-    /// id it would name is the one it has.
+    /// assignment of a new instance, `(sss)`: the engine, the id and the
+    /// INSTANCE profile it runs (IP4b: the third name is judged against the
+    /// pool, and the server profile is one step behind it). The reply is the
+    /// port the create proposed for the new instance, the first free one at or
+    /// above 8581, answered before the record is written.
     async fn create_instance(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
         engine: String,
         id: String,
-        server_profile: String,
-    ) -> Result<(), Error> {
+        instance_profile: String,
+    ) -> Result<u16, Error> {
         let who = requester_of(&header)?;
         Ok(self
-            .core(move |m| m.create_instance(&who, &engine, &id, &server_profile))
+            .core(move |m| m.create_instance(&who, &engine, &id, &instance_profile))
             .await?)
     }
 
     /// `CreateInstance` for `principal`, the principal first as every `As`
-    /// method has it (`ssss`).
+    /// method has it (`ssss`), answering the port.
     async fn create_instance_as(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
         principal: String,
         engine: String,
         id: String,
-        server_profile: String,
-    ) -> Result<(), Error> {
+        instance_profile: String,
+    ) -> Result<u16, Error> {
         let who = requester_as(&header, principal)?;
         Ok(self
-            .core(move |m| m.create_instance(&who, &engine, &id, &server_profile))
+            .core(move |m| m.create_instance(&who, &engine, &id, &instance_profile))
             .await?)
     }
 

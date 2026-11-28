@@ -886,11 +886,12 @@ pub(crate) fn manager_dbus_e2e() {
             .expect("restore the fixture record");
     }
 
-    // ── Instances and the tags of an instance: `(a(sssqasass))` and `(sas)` ─
+    // ── Instances and the tags of an instance: `(a(sssqasassss))` and `(sas)` ─
     // `Instances` answers one row per instance: id, engine, the name of the
     // server profile its section names, port, the tags of that profile, the
-    // tags of its own section, and the label of slice IL1 (the bus has no
-    // null, so a section naming no label answers the empty string). The name is there because the file the instance
+    // tags of its own section, the label of slice IL1 and the instance profile
+    // and the host IP4b appended (the bus has no null, so a section naming
+    // none answers the empty string). The name is there because the file the instance
     // runs is not named after the instance, and a client that reads a server
     // file cannot invent it. It asks nobody anything, as the list of ids does.
     // `SetInstanceTags` answers the unit and writes one key of one section.
@@ -912,8 +913,9 @@ pub(crate) fn manager_dbus_e2e() {
         let r = call(&client, "Instances", &()).expect("Instances");
         assert_eq!(
             r.body().signature().to_string(),
-            "a(sssqasass)",
-            "an array of a struct of two strings, the server profile, a uint16, two arrays of strings and the label"
+            "a(sssqasassss)",
+            "an array of a struct of two strings, the server profile, a uint16, two \
+             arrays of strings, the label, the instance profile and the host"
         );
         assert_eq!(
             body::<
@@ -925,6 +927,8 @@ pub(crate) fn manager_dbus_e2e() {
                     Vec<String>,
                     Vec<String>,
                     String,
+                    String,
+                    String,
                 )>,
             >(&r),
             vec![(
@@ -935,9 +939,12 @@ pub(crate) fn manager_dbus_e2e() {
                 vec!["edge".to_string(), "v2".to_string()],
                 vec!["gpu".to_string(), "edge".to_string()],
                 String::new(),
+                String::new(),
+                String::new(),
             )],
             "the server profile the section names, the port of that profile, its tags, \
-             and the section's own trimmed, and no label: the bus has no null"
+             and the section's own trimmed, and no label, instance profile or host: the \
+             bus has no null"
         );
         assert_eq!(
             *c.authority().asked.lock().unwrap(),
@@ -1054,6 +1061,8 @@ pub(crate) fn manager_dbus_e2e() {
             Vec<String>,
             Vec<String>,
             String,
+            String,
+            String,
         )>;
         let row = |id: &str, profile: &str, port: u16, label: &str| {
             (
@@ -1064,14 +1073,16 @@ pub(crate) fn manager_dbus_e2e() {
                 Vec::<String>::new(),
                 Vec::<String>::new(),
                 label.to_string(),
+                String::new(),
+                String::new(),
             )
         };
 
         let r = call(&client, "Instances", &()).expect("Instances");
         assert_eq!(
             r.body().signature().to_string(),
-            "a(sssqasass)",
-            "the row grows by the label at its end"
+            "a(sssqasassss)",
+            "the row grows by the label, the instance profile and the host at its end"
         );
         assert_eq!(
             body::<Rows>(&r),
@@ -2757,6 +2768,15 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
         "[Server]\nPort = 8124\nHostname = nowhere.invalid\n",
     )
     .expect("profile");
+    // The instance profiles (IP4b: the create's third name is one of these, and
+    // its section names the server profile the new instance runs).
+    std::fs::write(
+        sys.join("instance-profiles.ini"),
+        "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\n\
+         [free]\nServerProfile = free\n\n[dupe]\nServerProfile = dupe\n\n\
+         [badhost]\nServerProfile = badhost\n",
+    )
+    .expect("instance-profiles.ini");
     std::fs::write(
         sys.join("models.ini"),
         "[*]\non = true\n\n[qwen]\nmodel = qwen.gguf\n",
@@ -2843,6 +2863,9 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
                 other => panic!("{method}: not a method error reply: {other:?}"),
             })
     }
+    fn body<T: for<'de> zbus::zvariant::DynamicDeserialize<'de>>(m: &zbus::Message) -> T {
+        m.body().deserialize().expect("reply body")
+    }
     let err_name = |kind: &str| format!("org.privateai.Manager1.Error.{kind}");
     let refusal = |key: &'static str, values: &[&str]| Refusal {
         key,
@@ -2885,15 +2908,21 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
             .expect("CreateInstance of a new id");
         assert_eq!(
             r.body().signature().to_string(),
-            String::new(),
-            "the reply is the unit: ()"
+            "q",
+            "the reply is the port the create proposed (IP4b): a uint16"
+        );
+        assert_eq!(
+            body::<u16>(&r),
+            8581,
+            "the first free port at or above 8581"
         );
         assert_eq!(
             record(),
             "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\
-             [db-1]\nServerProfile = free\nPort = 8581\n",
-            "the record gained the section naming the profile and carrying the \
-             port the create proposed (IP3a: the first free one at or above 8581, \
+             [db-1]\nInstanceProfile = free\nPort = 8581\n",
+            "the record gained the section naming the instance profile the create was \
+             given (IP4b) and carrying the port the create proposed (IP3a: the first \
+             free one at or above 8581, \
              this node's instances sitting on 8080 and 8081 and the web service on \
              8590)"
         );
@@ -2929,9 +2958,9 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
             ),
             (
                 ("llama.cpp", "db-3", "gone"),
-                "NoServerProfile",
+                "NoInstanceProfile",
                 None,
-                "no profile of that name",
+                "no instance profile of that name",
             ),
             (
                 ("llama.cpp", "db-3", "lan-2"),
@@ -2966,7 +2995,7 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
         assert_eq!(
             record(),
             "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n\
-             [db-1]\nServerProfile = free\nPort = 8581\n",
+             [db-1]\nInstanceProfile = free\nPort = 8581\n",
             "every refused create left the record as it was, the proposed port \
              included"
         );
@@ -5130,7 +5159,7 @@ fn version_answers_the_framework_version_and_the_protocol_over_dbus() {
         );
         assert_eq!(
             body::<(String, u32)>(&reply),
-            (env!("CARGO_PKG_VERSION").to_string(), 3),
+            (env!("CARGO_PKG_VERSION").to_string(), 4),
             "{sender:?}: the framework version and the protocol"
         );
         assert!(

@@ -354,6 +354,17 @@ fn data_root_e2e() {
     #[cfg(unix)]
     pipe_client::manager_pipe_client_ip4a_e2e();
 
+    // ── pai-core's D-Bus client: the row's instance profile and host, and ─
+    // the port a create answers (IP4b: the row's two fields appended, the
+    // states riding the same read, `CreateInstance` by instance profile).
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_ip4b_e2e();
+
+    // ── pai-core's client over a stream: the same pins, on the frame ──────
+    // (IP4b, the rows of `Instances` and `ListInstances`, and the create.)
+    #[cfg(unix)]
+    pipe_client::manager_pipe_client_ip4b_e2e();
+
     // ── Manager core: acting for a signed-in user (the bff names a member)
     crate::manager::service::manager_principal_e2e();
 

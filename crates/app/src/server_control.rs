@@ -853,6 +853,8 @@ pub mod fake {
                     converged: true,
                     reason: None,
                     pending_restart: false,
+                    instance_profile: None,
+                    hostname: None,
                 }],
                 fail_instances: None,
                 files: Files::default(),
@@ -889,6 +891,8 @@ pub mod fake {
                 converged: true,
                 reason: None,
                 pending_restart: false,
+                instance_profile: None,
+                hostname: None,
             }];
             self
         }
@@ -1039,6 +1043,8 @@ pub mod fake {
                 converged: true,
                 reason: None,
                 pending_restart: false,
+                instance_profile: None,
+                hostname: None,
             }])
         }
         fn status(&self, _id: &str) -> Result<InstanceState, ClientError> {

@@ -96,7 +96,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   bare `Ok(())` that restates the item's own doc comment: drop the prose, keep every check that runs.
   The test-side shape is a `for` over a list an assert above proved empty.
 - Before adding a public field, enumerate the crates that write a full struct literal of that type;
-  report those sites as the tester's, and prove production with clippy without `--all-targets`.
+  report those sites as the tester's, and prove production with clippy without `--all-targets`. To
+  script the sweep, anchor on the LAST field line of each literal and insert after it at THAT line's
+  own indentation: a line ending `-> StructName {` is the fn signature, not the literal (inserting
+  fields there is `expected identifier, found :`), and a shorthand field (`port,`) ends a run of
+  `name: value` lines, so a walk back over fields stops there.
 - Sort edits so a serialised file's order never depends on a map; reproduce an order-only red with both
   packages in one invocation.
 - `cargo fmt -p <crate>` rewrites the crate's tests and every file: when others have uncommitted lines,
@@ -354,6 +358,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   create's `check_binding` walk skips every section that owns an address; the create writes
   `Port = proposed_port` (the lowest port from 8581 no record section holds) and no `Hostname`, so the
   profile's bind stands.
+- A create fixture amended for a new argument (IP4b: the third name became an INSTANCE profile, judged
+  against `instance-profiles.ini`): every older phase needs a pool section for the name it passes, else it
+  answers `NoInstanceProfile` where the phase pinned a later check, and its port pin is the first free port
+  above 8581 given the record AT THAT PHASE, which a phase that created earlier in the same e2e has already
+  moved (one `data_root_e2e` phase pins 8582 for exactly that reason). Seed the pool per phase
+  (`sys.join(INSTANCE_PROFILES_FILE)`), never in a shared seeder a dozen pins read.
 - Linux bundle loop (the GPU runtimes): every directory of a dist that is mirrored under
   `RT_DIR` needs its own `RUNPATH` entry, and a runtime the dist reaches through a symlink
   of its own (`lib/llvm/lib/libomp.so` naming the file in `x86_64-unknown-linux-gnu/`) stages
@@ -886,6 +896,19 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   provable in a copy: `panic!("{}", <Row as zbus::zvariant::Type>::SIGNATURE)` in a scratch test (core's
   `client/dbus.rs` tests pin rows that way, and a reply's own signature prints as
   `(sa(sttbs)b(sas))`).
+- A manager protocol bump (IP4b: 3 to 4) has its number pinned in three files you must find by grep, not
+  by the compiler: `pipe_tests.rs` (the `Version` reply, three places), `dbus_tests.rs` (one),
+  `service_tests.rs` (`PROTOCOL`). A 9-field bus row deserialized into a `Vec<(…)>` in a test trips
+  clippy's `type_complexity` (`-D warnings` reddens the crate): give it a `type Wire = (…)`.
+- Amending a create call in an old fixture for a new REQUIRED argument (IP4b: the third name became an
+  instance profile judged against `instance-profiles.ini`): every phase needs a pool section for the name
+  it passes, seeded IN THAT PHASE (a shared seeder disturbs other pins), and its port pin is the first free
+  port from 8581 given the record AT THAT PHASE, which an earlier create of the same e2e has already moved.
+  A phase that recreates an id it removed keeps the port the removed one held.
+- A scripted field insertion into struct literals must anchor on the LAST field line and reuse ITS
+  indentation: `-> InstanceInfo {` ends an fn signature (inserting fields there is `expected identifier,
+  found :`), and a shorthand field (`port,`) ends a run of `name: value` lines, so a walk back over
+  `name:` fields stops there.
 
 ### The bff (Rust)
 
@@ -1147,7 +1170,13 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   and `instance-name-*` namespaces are open): a new look reuses an existing class, and a class the brief
   names is the tester's to add. A rule of a NARROWER selector (`.tile .run-actions`) is fine: the
   cascade tests match a selector compacted with its spaces dropped, so `topBy(tight('.run-actions'))`
-  still finds one rule.
+  still finds one rule. Before adding a class for a per-column rule, check the hooks that are already
+  in the list: `.table-scroll` and `.assets` reach a page's tables and definition lists, so a rule on
+  them restyles the pages the brief does not name.
+- `ListDeleteTip.test.tsx` 22 D4.21 asserts `IconName` is EXACTLY `usedIcons` minus `minus`, and draws
+  every icon of `SHAPES` (a missing shape is a red, and `Icon` throws for a name with no shape). So a
+  brief that re-adds an unused icon (brief 26, IP6b review R6: the models rows' − is the minus) is red
+  with no production fix: report it, do not delete the shape.
 - The Overview tile is pinned outside its own files: its LAST element child (the engine line in
   `HearthTiles` H6a.2, `dl.tile-facts` in `HearthTilesBoot` H6b.3, `NodeBoot` 13 N.1, `OverviewHost`
   13 N.12), "the head and nothing else" (H6a.2), "a tile carries no live region" (H6b.4, `SessionEnded`
@@ -1166,7 +1195,10 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   descendant, and the row stays the last element. A `flex-basis: 100%` child of the wrapping row takes
   a line of its own and no room while empty.
 - `npm --prefix fe run format:check` reds the files you just edited: `npx --prefix fe prettier --write
-  <files>` before reporting (`fe/ux/` is Prettier-ignored, being its own package).
+  <files>` before reporting (`fe/ux/` is Prettier-ignored, being its own package). npm hides the exit
+  code behind `tail`: `npm --prefix fe run format:check 2>&1 | tail; echo $?` prints the `tail` 0 while
+  prettier prints `[warn] src/X.tsx`, so check the file with
+  `./fe/node_modules/.bin/prettier --check <file>; echo $?`.
 - A full-suite red that is green solo three times is a load flake, not yours: state it and move on.
   `ServerSave` `1b.36b` (a nav link clicked after a route change) reds under `--maxWorkers=4`.
 - A test that aborts at its first bad assertion hides every pin that follows it. To prove the rest of the
@@ -1226,6 +1258,15 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   `getBoundingClientRect()` (x AND width) of every `th` and `td` of the table at
   320 px, and read the column boxes against the head boxes.
 
+- An auto-layout table inside `.table-scroll`: Chromium and WebKit clamp it to the box, Firefox's floor
+  is the MIN-CONTENT of every cell, so the probe reads "the table is 303 px, its scroll box 286 px"
+  (brief 26 IP6b review R7, 2026-11-28). The floor counts a `white-space: nowrap` Actions cell whose
+  whole width is the row button's 40 px box (64 px with the cell's `--space-3` padding), and the head
+  words at their full padding. The fix is the narrow padding of the Model profiles list
+  (`padding: var(--space-2)` in the `@media (max-width: 479.98px)` block, 24 px off the row).
+  `table-layout: fixed` is NOT the fix: Firefox gives each column the head's max-content (142 px each)
+  and squeezes the Actions column to 3 px. A `&#8203;` before a break opportunity is not a break point
+  (Chromium breaks at it, Firefox does not), so do not reach for it.
 - Playwright's `click` treats `aria-disabled="true"` as DISABLED (its actionability "enabled" reads the
   attribute, not just `disabled`): a check state whose `opens` chain clicks a verb to trigger a page
   check (`instance-profile-add` clicks `main form button.primary` expecting `field-error-choose`) times

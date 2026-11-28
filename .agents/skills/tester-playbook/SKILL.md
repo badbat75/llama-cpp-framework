@@ -33,7 +33,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   smallest stub of the new signature in production (`let _ = new_arg;`, the body unchanged, marked
   `// <SLICE> STUB`), so the pins red on today's behaviour for the right reason; amend every existing
   call site of the seam in the same pass, and run clippy (the stub's unused argument is a `-D warnings`
-  red). A retired source-text grep's note goes in `//` lines, not `///`: a doc block followed by a blank
+  red).
+- When the brief forbids touching production ("changing no production code"), the compile red IS the red
+  and the satisfiability proof moves to the scratch copy: a faithful stub there (the design's new fields,
+  return type and constant, applied by a python script that aborts when a snippet matches `!= 1` time)
+  plus a scratch-only `#[test]` calling just the slice's phases, which shows them green. Running
+  `data_root_e2e` in that copy, patching one production pin per round, prints the coder's inventory as
+  `panicked at <file>:<line>` (IP4b: the protocol 3 pins of `service_tests.rs`, `pipe_tests.rs`
+  1817/1880/1957 and `dbus_tests.rs`, the `(sssqasass)` row signatures, the created section's
+  `ServerProfile =` pins, `convergence.rs`'s recreation pin). Never report a scratch green as this
+  tree's. A retired source-text grep's note goes in `//` lines, not `///`: a doc block followed by a blank
   line and another doc block is clippy `empty_line_after_doc_comments`.
 - clippy's `needless_borrows_for_generic_args` reds, under `-D warnings`, a `std::fs::write(p, &format!(..))`
   and a `std::fs::remove_file(&dir.join(f))`: pass them by value.
@@ -456,6 +465,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Sweep `grep -n <signature>` and the tuple types crate-wide when a wire shape grows (a D-Bus row
   signature): every pin of it and every tuple literal that reads it reds, in phases of older slices.
   Update the stale signature in the prose of the test's own header comment.
+- The instance record's keys are the design's (`instances.ini`: `InstanceProfile`, `Hostname`, `Port`),
+  and `paths::instance_server_profile` already resolves `InstanceProfile` through `instance-profiles.ini`
+  with a legacy `ServerProfile` fallback. So a `create_instance` that names an INSTANCE PROFILE lands only
+  when the pool has that section: a fixture creating a name the pool lacks renders
+  `models@<id>.ini` with no `launch@<id>.ini`, and the "the tree holds the pair" pin reds for a reason
+  that is the fixture, not the rule. Seed the pool section in the fixture.
+- Pin a wire KEY the design names in camelCase (`instanceProfile`) while the row's older keys are
+  snake_case (`server_profile`) by ACCEPTING BOTH spellings and pinning the VALUE, and say so in the
+  pin's comment; pin a record key exactly (the design names `InstanceProfile`, no freedom).
 - Pin a rule about the KEYS of a request through the raw-wire tables (`manager/pipe.rs`,
   `manager/dbus.rs`): the client tables' variants carry fixed keys.
 - Pin a manager verb in one phase over all three transports (direct, pipe, D-Bus).
@@ -731,7 +749,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   say in a comment which slice retired the old one. When a review SUPERSEDES a pinned declaration (a
   browser-measured fix the next defect undoes), the pair is two reds: the absence pin (`no rule names X
   declares contain:` → `toEqual([])`) is red because the sheet still carries the old declaration, and the
-  replacement's positive pin is red because the sheet lacks the new one.
+  replacement's positive pin is red because the sheet lacks the new one. When the review REVERSES a pinned
+  ABSENCE in the round that builds it (22 D4.21 retired the `minus` icon, brief 26's IP6b review R6 brings
+  it back for a row that removes one entry), the retarget is a GREEN on the rerun, not a red: replace
+  `paths.length === 0` with the shape the package draws, as the file's own data constant (the pair the
+  file keeps for `TRASH` and `PLUS`), keep the test's other half (the icon that stays) untouched, and put
+  the review's label at the end of the title.
 - Retarget a "refusal marks the field" pin onto a field the page can mark: when the page's only LOAD-time
   error came from a retired key (the model page's `fit` row), make the error instead, typing an invalid
   value into a stay-key field and pressing Save (`top-k` = `abc` → `field-error-whole-number`), and give a
@@ -894,6 +917,11 @@ frozen list.
   and rewrite that suite's own pin of the retired rule as the absence pin, naming the slice that retired
   it. A class the brief describes and does not name goes into a new allowance regex beside `ofRename`
   (inert while no class exists), never into the frozen list.
+- The mirror, for a review round that ADDS a rule to a new table (26.7 with the IP6b review R7): its entry
+  in the R1.1 `sets()` census is the selector AS THE SHEET WRITES IT (the reader's `flat`), so a two-line
+  comma group is the one string `'.instance-profile-models th, .instance-profile-models td = normal'`, and
+  both sides are sorted, so its place in the list is free. The round reddens the census and `CLASSES` at
+  once: amend both, and name the review in the title and in the message of each.
 - When the retired look's class serves a page the slice does NOT touch, its sheet rule STAYS (the list's
   `.status-cell` and `.model-profiles-switch` until 24's InstanceModels17e, IP6): do not demand the rule's
   removal in the reflow list, scope the absence pin to the rendered page (no element of the class on the

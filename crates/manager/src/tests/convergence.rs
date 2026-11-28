@@ -1262,13 +1262,24 @@ pub(crate) fn ip3c_removal_takes_the_pair_e2e() {
     // (desk holds 8581, so the create proposes 8582), and the launch the
     // recreation renders carries the record's port. With no `applied` record of
     // the old install left, the recreation starts clean.
+    // The pool gains the instance profile the recreation runs (IP4b: the
+    // create's third name is an instance profile, and its section names the
+    // server profile `free`, the one binding an address nothing holds now).
+    std::fs::write(
+        sys.join(PROFILES),
+        format!(
+            "{}\n[free]\nServerProfile = free\n",
+            std::fs::read_to_string(sys.join(PROFILES)).expect(PROFILES)
+        ),
+    )
+    .expect(PROFILES);
     m.create_instance(&alice, "llama.cpp", "lab", "free")
         .expect("IP3c review 1: the recreation of the id on `free` lands");
     let record = std::fs::read_to_string(sys.join(INSTANCES_FILE)).unwrap();
     assert!(
-        record.contains("[lab]\nServerProfile = free\nPort = 8582"),
-        "IP3c review 1: the record names the recreated `lab` on the profile it was \
-         created with, on the first port of the range no instance holds: {record}"
+        record.contains("[lab]\nInstanceProfile = free\nPort = 8582"),
+        "IP3c review 1: the record names the recreated `lab` on the instance profile it \
+         was created with, on the first port of the range no instance holds: {record}"
     );
     let launch = std::fs::read_to_string(sys.join("launch@lab.ini"))
         .expect("IP3c review 1: the recreation rendered a launch pair file");

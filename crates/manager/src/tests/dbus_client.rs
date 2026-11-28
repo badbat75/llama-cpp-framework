@@ -1499,7 +1499,9 @@ fn the_dbus_client_reads_the_managers_version() {
         got,
         Ok(Some(ManagerVersion {
             version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol: 3,
+            // IP4b 3: the row grew `instanceProfile` and `hostname` and
+            // `CreateInstance` answers the port, so the protocol is 4.
+            protocol: 4,
         })),
         "the version this manager answers"
     );
@@ -3580,7 +3582,9 @@ pub(crate) fn manager_dbus_client_instance_profiles_e2e() {
         ),
         (
             "create_instance",
-            anonymous.create_instance("llama.cpp", "bus-no", "edge"),
+            anonymous
+                .create_instance("llama.cpp", "bus-no", "edge")
+                .map(|_| ()),
         ),
     ] {
         assert_eq!(answer, Err(ClientError::NotAuthorized), "{what}");
@@ -4759,4 +4763,276 @@ pub(crate) fn manager_dbus_client_ip4a_e2e() {
             "IP4a review: the plain calls ask polkit of the caller; the `As` calls ask it nothing"
         );
     }
+}
+
+// ── IP4b: the row's instance profile and host, the port a create answers ────
+// ── (ARCHITECTURE.md, the IP4 entry, "Slices", IP4b) ────────────────────────
+
+/// The IP4b install, shared by the two transports' phases: two instances, `desk`
+/// with a `Hostname` of its own in the record and `lab` with none, each running
+/// an instance profile of its own. `desk`'s entry renders on the roomy `CUDA0`;
+/// `lab`'s names `CUDA1` while its server profile names `CUDA0`, so its row
+/// answers not converged with the device check's key. `free` is the instance
+/// profile a create names: no entry, on `CUDA0`, and its server profile binds a
+/// port no section of the record holds. The cards are roomy: the story is the
+/// row, not memory.
+pub(crate) fn seed_ip4b(root: &std::path::Path, sys: &std::path::Path) {
+    use crate::manager::service::write_gguf_kv;
+
+    std::fs::create_dir_all(sys).expect("engine config dir");
+    let model = root.join("alpha.gguf");
+    write_gguf_kv(&model, "llama", &[("llama.context_length", 1024)], &[]);
+    let path = model.to_string_lossy().into_owned();
+    let write = |name: &str, text: &str| {
+        std::fs::write(sys.join(name), text).expect(name);
+    };
+    write("models.ini", &format!("[alpha]\nmodel = {path}\n"));
+    write(
+        "instances.ini",
+        "[desk]\nInstanceProfile = desk\nHostname = 127.0.0.1\nPort = 8581\n\n\
+         [lab]\nInstanceProfile = one\nPort = 8681\n",
+    );
+    write(
+        "instance-profiles.ini",
+        "[desk]\nServerProfile = desk\n\n[desk/alpha]\n\n[one]\nServerProfile = lab\n\n\
+         [one/alpha]\ndevice-draft = CUDA1\n\n[free]\nServerProfile = free\n",
+    );
+    write(
+        "server@desk.ini",
+        "[Server]\nHostname = 127.0.0.1\nPort = 8581\nDevices = CUDA0\n",
+    );
+    write(
+        "server@lab.ini",
+        "[Server]\nHostname = 127.0.0.1\nPort = 8681\nDevices = CUDA0\n",
+    );
+    write(
+        "server@free.ini",
+        "[Server]\nHostname = 127.0.0.1\nPort = 8781\nDevices = CUDA0\n",
+    );
+}
+
+/// E2E phase: IP4b, over D-Bus. The instance row carries the instance profile it
+/// runs and the host its record section sets, and `CreateInstance` takes the
+/// instance profile and answers the port it proposed. The row is pinned twice: at
+/// the wire (the bus's own tuple, the two fields appended, the bus's empty string
+/// being no host) and as pai-core's client decodes it, the states of the apply
+/// riding the same read beside them (`InstanceStates` stays the sibling method).
+/// The create is pinned on an emptied record: 8581 with nothing holding it, 8582
+/// with 8581 taken by the section the first create wrote, and the third name
+/// judged as an instance profile.
+#[cfg(target_os = "linux")]
+pub(crate) fn manager_dbus_client_ip4b_e2e() {
+    use crate::manager::dbus::INTERFACE;
+    use crate::manager::service::fakes::{FakeGpus, FakeGroup};
+    use pai_core::client::dbus::BUS_NAME;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    seed_ip4b(dir.path(), &sys);
+    let c = Arc::new(
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(true),
+            FakeResolver::lan(),
+        )
+        .with_group(FakeGroup::new())
+        .with_gpus(FakeGpus::new(&[("CUDA0", 400_000), ("CUDA1", 400_000)])),
+    );
+    c.start_up();
+    // `desk` launched on a pair nobody launched with: it converged, and drifts.
+    // `lab` never rendered: not converged, no drift.
+    let state = crate::paths::instance_state_dir().join("desk");
+    std::fs::create_dir_all(&state).expect("the state folder");
+    std::fs::write(state.join("applied"), "0".repeat(64)).expect("the applied record");
+    let (_server, bus) = connect(&c, Some(":1.42"));
+    let client = Arc::new(bus);
+
+    // ── IP4b 1: the row on the wire, the two fields appended ──────────────
+    let reply = client
+        .connection()
+        .call_method(
+            Some(BUS_NAME),
+            OBJECT_PATH,
+            Some(INTERFACE),
+            "Instances",
+            &(),
+        )
+        .expect("IP4b: the bus answers `Instances`");
+    assert_eq!(
+        reply.body().signature().to_string(),
+        "a(sssqasassss)",
+        "IP4b: the row is `(s id, s engine, s server profile, q port, as profile tags, \
+         as instance tags, s label, s instance profile, s hostname)`: the two fields are \
+         appended, and the bus's empty string is no host (the bus has no null)"
+    );
+    type Wire = (
+        String,
+        String,
+        String,
+        u16,
+        Vec<String>,
+        Vec<String>,
+        String,
+        String,
+        String,
+    );
+    let wire: Vec<Wire> = reply
+        .body()
+        .deserialize()
+        .expect("IP4b: the row is the 9-field tuple above");
+    let at = |id: &str| {
+        wire.iter()
+            .find(|row| row.0 == id)
+            .unwrap_or_else(|| panic!("IP4b: the rows carry {id}: {wire:?}"))
+    };
+    assert_eq!(
+        (at("desk").7.as_str(), at("desk").8.as_str()),
+        ("desk", "127.0.0.1"),
+        "IP4b: `desk`'s row names the instance profile its section runs and the host its \
+         section sets: {wire:?}"
+    );
+    assert_eq!(
+        (at("lab").7.as_str(), at("lab").8.as_str()),
+        ("one", ""),
+        "IP4b: `lab`'s row names its own profile, and no host is the bus's empty string: \
+         {wire:?}"
+    );
+
+    // ── IP4b 1: the states stay the sibling method's, beside the new row ───
+    let states: Vec<(String, bool, String, Vec<String>, bool)> = client
+        .connection()
+        .call_method(
+            Some(BUS_NAME),
+            OBJECT_PATH,
+            Some(INTERFACE),
+            "InstanceStates",
+            &(),
+        )
+        .expect("IP4b: the bus answers `InstanceStates`")
+        .body()
+        .deserialize()
+        .expect(
+            "IP4b: the states stay one `a(sbssasb)` of `(s id, b converged, s reason \
+                 key, as reason args, b pendingRestart)`",
+        );
+    let at_state = |id: &str| {
+        states
+            .iter()
+            .find(|(row, ..)| row == id)
+            .unwrap_or_else(|| panic!("IP4b: the state rows carry {id}: {states:?}"))
+    };
+    assert_eq!(
+        (at_state("desk").1, at_state("desk").4),
+        (true, true),
+        "IP4b: `desk` converged and drifts: {states:?}"
+    );
+    assert_eq!(
+        (at_state("lab").1, at_state("lab").2.as_str()),
+        (false, "model-profile-device-outside"),
+        "IP4b: `lab`'s render is stopped by the device check, and the row carries its key: \
+         {states:?}"
+    );
+
+    // ── IP4b 1: the client decodes both fields and the states, in one read ──
+    let rows = on("instances", &client, |c| c.instances()).expect("IP4b: served");
+    let row = |id: &str| {
+        rows.iter()
+            .find(|i| i.id == id)
+            .unwrap_or_else(|| panic!("IP4b: the list carries {id}: {rows:?}"))
+            .clone()
+    };
+    let desk = row("desk");
+    assert_eq!(
+        (
+            desk.instance_profile.as_deref(),
+            desk.hostname.as_deref(),
+            desk.server_profile.as_deref(),
+            desk.port
+        ),
+        (Some("desk"), Some("127.0.0.1"), Some("desk"), 8581),
+        "IP4b: the client's row carries the instance profile it runs and the host its \
+         record names, beside the fields it carried"
+    );
+    assert_eq!(
+        (desk.converged, desk.pending_restart, desk.reason.is_none()),
+        (true, true, true),
+        "IP4b: the new fields ride the row beside the states, in the one read"
+    );
+    let lab = row("lab");
+    assert_eq!(
+        (lab.instance_profile.as_deref(), lab.hostname.as_deref()),
+        (Some("one"), None),
+        "IP4b: a record that sets no host is answered as no host, and the profile is the \
+         section's own"
+    );
+    assert_eq!(
+        (lab.converged, lab.pending_restart),
+        (false, false),
+        "IP4b: `lab` reads not converged, and not drifting: {lab:?}"
+    );
+    assert_eq!(
+        lab.reason.as_ref().map(|r| r.key.as_str()),
+        Some("model-profile-device-outside"),
+        "IP4b: and its row carries the keyed reason"
+    );
+
+    // ── IP4b 2: the create answers the port, from the instance profile ──────
+    // The record is emptied: nothing holds a port, so the first create is
+    // proposed 8581. The pool keeps `free`, the profile the creates name.
+    std::fs::write(sys.join("instances.ini"), "").expect("the record emptied");
+    let record = || std::fs::read_to_string(sys.join("instances.ini")).expect("instances.ini");
+    let key_of = |text: &str, section: &str, key: &str| -> Option<String> {
+        pai_core::ini::section_keys(text, section)
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    };
+    assert_eq!(
+        on("create_instance", &client, |c| c.create_instance(
+            "llama.cpp",
+            "first",
+            "free"
+        )),
+        Ok(8581),
+        "IP4b 2: a create on an empty record answers 8581"
+    );
+    assert_eq!(
+        (
+            key_of(&record(), "first", "InstanceProfile").as_deref(),
+            key_of(&record(), "first", "Port").as_deref(),
+            key_of(&record(), "first", "ServerProfile"),
+            key_of(&record(), "first", "Hostname"),
+        ),
+        (Some("free"), Some("8581"), None, None),
+        "IP4b 2: the section names the instance profile the create was given and carries \
+         the port it answered: no server profile, no host"
+    );
+    assert_eq!(
+        on("create_instance", &client, |c| c.create_instance(
+            "llama.cpp",
+            "second",
+            "free"
+        )),
+        Ok(8582),
+        "IP4b 2: with 8581 taken, the create answers the next free one, and two instances \
+         of one instance profile is no refusal"
+    );
+    assert_eq!(
+        on("create_instance", &client, |c| c.create_instance(
+            "llama.cpp",
+            "third",
+            "nope"
+        )),
+        Err(ClientError::NoInstanceProfile("nope".into())),
+        "IP4b 2: the third name is judged as an instance profile, and the refusal names it"
+    );
+    assert_eq!(
+        pai_core::ini::parse_sections(&record())
+            .into_iter()
+            .map(|s| s.id)
+            .collect::<Vec<_>>(),
+        vec!["first".to_string(), "second".to_string()],
+        "IP4b 2: the refused create wrote no section"
+    );
 }
