@@ -38,9 +38,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - When the brief forbids touching production ("changing no production code"), the compile red IS the red
   and the satisfiability proof moves to the scratch copy: a faithful stub there (the design's new fields,
   return type and constant, applied by a python script that aborts when a snippet matches `!= 1` time)
-  plus a scratch-only `#[test]` calling just the slice's phases, which shows them green. Running
-  `data_root_e2e` in that copy, patching one production pin per round, prints the coder's inventory as
-  `panicked at <file>:<line>` (IP4b: the protocol 3 pins of `service_tests.rs`, `pipe_tests.rs`
+  plus a run of the slice's own tests there, which shows them green (a filter of the slice's name runs
+  just its phases: the phase tests carry it, `ip3b_entry_save_e2e`, and each is its own isolated
+  `#[test]`). Running the
+  crate's suite in that copy prints every phase's own `panicked at <file>:<line>` in ONE pass (TS2b,
+  TS2c: no per-round pin patching), which is the coder's inventory
+  (IP4b: the protocol 3 pins of `service_tests.rs`, `pipe_tests.rs`
   1817/1880/1957 and `dbus_tests.rs`, the `(sssqasass)` row signatures, the created section's
   `ServerProfile =` pins, `convergence.rs`'s recreation pin). Never report a scratch green as this
   tree's. A retired source-text grep's note goes in `//` lines, not `///`: a doc block followed by a blank
@@ -48,10 +51,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - clippy's `needless_borrows_for_generic_args` reds, under `-D warnings`, a `std::fs::write(p, &format!(..))`
   and a `std::fs::remove_file(&dir.join(f))`: pass them by value.
 - Stub a manager verb that does not exist yet with `ManagerError::Io(std::io::ErrorKind::Unsupported)`
-  (`ManagerError` has no `Other`); make the phase's refusal helper take `key: &'static str`, because
-  `checks::Refusal.key` is `&'static str` (a `&str` closure argument is a lifetime red, not a test red);
-  write `serde_json::from_str::<serde_json::Value>` inside a
+  (`ManagerError` has no `Other`); on the client side add the method to the `ManagerClient` trait with the
+  trait-default body (`ClientError::Other("this transport of the manager has no <Verb>")`), no wire stubs:
+  the day-one red of the dbus/pipe client phases IS that default message at their first verb, and the
+  core-direct phase's red is the `Io(Unsupported)` (IP4b, CP1 2026-11-28). Make the phase's refusal helper
+  take `key: &'static str`, because `checks::Refusal.key` is `&'static str` (a `&str` closure argument is a
+  lifetime red, not a test red); write `serde_json::from_str::<serde_json::Value>` inside a
   `json!` literal (the macro's `Into<Value>` leaves `T` ambiguous).
+- A phase of `manager/service_tests.rs` registers from `tests/mod.rs` as
+  `crate::manager::service::<name>`: `service.rs` mounts the file and re-exports it with
+  `pub(crate) use tests::*;`, so no path edit is needed for a new phase.
 - A verb whose ANSWER grows a value drops that value at the transport wrappers in the slice that changes
   the signature (`manager/dbus.rs`'s `Ok(self.core(move |m| m.verb(..)).await?)`, `manager/pipe.rs`'s
   `.and_then(..).map(|()| Value::Null)`): map it away there (`|_| ()`, `|_| Value::Null`) and keep the `?`,
@@ -164,18 +173,23 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 ### Enumerating EVERY red of a sequential e2e in one pass
 
+- This harness is for a SEQUENTIAL e2e, and the only one left is the configurator's: all of `ui_bindings.rs`'s
+  one `#[test]`, whose phases include `save_flow::run` (the Slint testing backend is a process-global,
+  single-threaded platform, so they share the window). The data-root crates need no harness: each phase is
+  its own isolated `#[test]` (TS2b, TS2c), so a suite run prints one `panicked at` per phase.
 - In a scratch copy (own `CARGO_TARGET_DIR`, never the repo's), rewrite every check into a NON-FATAL mark
   with a python script, run the one `#[test]` once, and `grep IP3C-RED`: a sequential test prints
-  one panic, this prints every site. (No crate's data-root e2e is sequential any more: TS2b and TS2c
-  made every phase its own isolated `#[test]`, so each phase's red is its own line of the suite run.) The marks: `assert!(c, msg)` →
+  one panic, this prints every site. The marks: `assert!(c, msg)` →
   `if !(c) { eprintln!("IP3C-RED file:line kind | {}", msg); }`, `assert_eq!(a, b, msg)` →
   `{ match (&(a), &(b)) { (ip3c_a, ip3c_b) => if ip3c_a != ip3c_b { eprintln!(…) } } }`, a bare `panic!`
   → mark + `panic!("IP3C-ABORT")` (its type divergence keeps the types). Convert the phases' files AND the
   `#[cfg(test)]` regions of the production files (the manager's 8 bus phases live inside `manager/dbus.rs`:
   converting only `tests/*.rs` loses a whole phase's marks to its first raw `assert`). Wrap each phase call
-  in `tests/mod.rs` in `catch_unwind(AssertUnwindSafe(…))` printing `PANIC-IN <phase>`, and print
+  of a sequential e2e in `catch_unwind(AssertUnwindSafe(…))` printing `PANIC-IN <phase>`, and print
   `IP3C-PHASE <label>` BEFORE each call: labels go in before the first run, else the marks after a phase
-  abort are unattributed and the run repeats.
+  abort are unattributed and the run repeats. Never wrap an `isolated` call: the catcher swallows the
+  child's panic (the helper's failure text is what reports it). For an isolated phase the marks land in
+  the CHILD's output, which the parent forwards: run with `-- --nocapture` and grep the forwarded log.
 - The converter must be string/comment-masked, and mask the turbofish `::<…>` lists too (fill them with
   neutral bytes): a `body::<Vec<(String, …)>>(&r)` turbofish's inner commas and `>` break the delimiter
   matcher and split the `assert_eq!` in the middle. Apply nested sites (an `assert_eq!` whose operand holds
@@ -231,16 +245,19 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   of the feature the stub left out (a form, a Used-by link), which is the coder's job, not a typo. Run the
   OLDER files the shared fake touches there too: that sweep finds the order lists and h1 lookups the brief
   did not list.
-- Isolate one phase or pin with: a temporary `#[test]` calling just that phase; `#[cfg(any())]` over the
-  blocked phases; a gate on an env var (`is_none()` wrapping the red pins' braces; an early `return`
+- Isolate one phase or pin with: running the phase's own `#[test]` (`--lib -- --exact tests::<name>`,
+  the shape of every data-root phase since TS2b; the configurator's sequential e2e needs a temporary
+  `#[test]` calling just that phase); `#[cfg(any())]` over the blocked phases; a gate on an env var
+  (`is_none()` wrapping the red pins' braces; an early `return`
   skips the whole phase); `// <SLICE>-PIN-<n> BEGIN/END` markers a script deletes. Restore byte for byte
   and prove it (`grep -c`, `cmp`, `git diff --stat`). Keep a delete-script's pin blocks self-contained
   (own snapshot reads, cleanup tolerant of files a deleted pin created).
 - Reproduce a reported test-side red SOLO in the tree as it stands first: most "red left in the tests"
   claims are stale test code, and fixing it is the tester's.
-- To show a LATER pin's teeth when the one sequential `data_root_e2e` prints ONE panic, gate the earlier
-  block out of the real source and rerun: a self-contained `{ … }` pin block (a tail of its phase fn) is
-  gated by prefixing each of its lines with `//` and restored from a copy with `cmp -s` proving it. The
+- To show a LATER pin's teeth when a phase prints ONE panic (a phase stops at its first panic, like any
+  test), gate the earlier block out of the real source and rerun: a self-contained `{ … }` pin block (a
+  tail of its phase fn) is gated by prefixing each of its lines with `//` and restored from a copy with
+  `cmp -s` proving it. The
   splice is `lines[:start] + [B] + lines[start:end] + [E] + lines[end:]`: a wrap built in the other order
   DUPLICATES the block, and the copy inside `if false` dies `E0425` on names declared in it. A wrap must
   include the block's own closing `    }`, leaving it live is `unexpected closing delimiter: }`.
@@ -300,9 +317,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Write a long cargo log to a file, grep `test result|Running|^error`, then `sed -n` each block.
 - Read a copy handed over as "green there" with `diff -rq crates <copy>`: it usually carries edits beyond
   the quoted diffs. Judge every hunk and name the incomplete list.
-- Run the manager's D-Bus unit tests and the GPU-probe flooding test alone
-  (`cargo test -p pai-manager --lib -- --test-threads=1 data_root_e2e`, or the full path with `--exact`),
-  then judge with solos plus the full-run map. Never edit the probe.
+- Run the manager's load-sensitive tests alone first: the D-Bus bus tests of `manager/dbus_tests.rs` and
+  the GPU-probe flooding test `an_exe_flooding_its_pipe_past_the_buffer_is_not_stopped_by_it`
+  (`cargo test -p pai-manager --lib -- --test-threads=1 <filter>`, or the full path with `--exact`),
+  then judge with solos plus the full-run map. A data-root phase needs no such filter to run alone, it IS
+  a test: `--lib -- --exact tests::manager_dbus_waits_e2e`. Never edit the probe.
 - State a pre-existing failure of states or tests the slice did not touch (UX check, flaky full-suite
   files) as pre-existing, with a proof the file is untouched (`git diff <path>`); do not chase them.
 - Measure the temp-dir leak of a suite, do not hunt it by eye: `T=$(mktemp -d -p /mnt/data/tmp-tests);
@@ -314,28 +333,31 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 ### The e2e phases (data root, the configurator)
 
 - Register a new phase in the same edit that writes it: `pai-core`, `pai-app`, `pai-cli` and
-  `pai-manager` each have one `#[test] fn data_root_e2e()` in `src/tests/mod.rs` calling the phases in
-  sequence, and the GUI's e2e is the one `#[test]` of `crates/config/src/tests/ui_bindings.rs`.
-- Judge a manager D-Bus e2e red by its DURATION: `data_root_e2e` runs ~30 s, and a red whose panic is the
+  `pai-manager` each have one `#[test]` per phase in `src/tests/mod.rs` (TS2b, TS2c), the body run
+  through `isolated("tests::<name>", <mod>::<phase>)` with the path naming the TEST, and the GUI's e2e is
+  the one `#[test]` of `crates/config/src/tests/ui_bindings.rs`, whose phases are called in sequence.
+- Judge a manager D-Bus red by its DURATION: a phase child runs about a second and the whole
+  `pai-manager --lib` suite 4 s (2026-11-28), and a red whose panic is the
   `call` helper's `not a method error reply: InputOutput(Custom { kind: TimedOut, .. })` in
-  `manager/dbus.rs` is zbus's 25 s call timeout crossed while the box is loaded (measured on this box:
-  the SAME test 23 s, 150 s, 170 s, 293 s, 432 s, green and red, at load 6-12). Show it is not the slice
-  by interleaving solo runs in the tree and in a HEAD worktree (own `CARGO_TARGET_DIR`, removed after)
+  `manager/dbus.rs` is zbus's 25 s call timeout crossed while the box is loaded (measured on this box, on
+  the one-test e2e that predates TS2b: the SAME test 23 s, 150 s, 170 s, 293 s, 432 s, green and red, at
+  load 6-12; a child that runs past `isolated`'s default 120 s bound is KILLED, so that load today reads
+  `killed at its bound` instead). Show it is not the slice by running that phase solo in the tree and in
+  a HEAD worktree (own `CARGO_TARGET_DIR`, removed after)
   and by showing no symbol of the slice sits on the verb's path.
 - A raw D-Bus call (a pin's `Connection::call_method`, not the client's `call` helper) to a method the
   interface does not serve fails at once with `I/O error: Broken pipe (os error 32)`, so the pin's own
   message is the red and the phase's `test result: finished in` is seconds, not the 25 s zbus timeout.
-- Prove each phase alone when a refusal aborts at its own phase, and report the later ones as blocked,
-  not passed. For a manager phase (all in `service.rs`, one `data_root_e2e`): a temporary
-  `tests/ip3a_probe.rs`-style module with one `#[test]` per phase, run
-  `--lib -- --test-threads=1 <probe-filter>`, shows every phase's day-one panic at once (each phase
-  redirects the data root to its own tempdir, so solos are safe); delete the module before reporting.
-  A probe in the slice's OWN test file, gated on an env var naming the phase, is the same proof with no
-  new module to register, and needs `--test-threads=1` (it redirects the root too).
+- Prove each phase alone when a refusal aborts at its own phase, and report the LATER PINS of that phase
+  as blocked, not passed: a phase stops at its first panic, while every other phase reports its own red in
+  the same suite run (TS2b: one `#[test]` per phase, each in a child of its own). One phase alone:
+  `--lib -- --exact tests::<name>`. A probe test of your own that redirects the root must go through
+  `isolated`, never a plain `#[test]`: the redirect is process-wide and a plain test would race the
+  parallel suite.
 - A slice that changes what an OLDER slice's phase pins (an idempotent add that becomes a refusal, a verb
-  grown from `Result<()>` to a list) reddens that older phase, which runs FIRST: the suite's `panicked at`
-  names `service.rs` and an older phase's message, not the new test file, so the new phases' own reds are
-  only visible in the solo probe. Sweep the older phases in the same pass: every
+  grown from `Result<()>` to a list) reddens that older phase TOO: its line in the run names `service.rs`
+  and an older phase's message, beside the new phases' own (`panicked at` lines are per phase, nothing
+  masks anything across phases). Sweep the older phases in the same pass: every
   `assert_eq!(verb(..), Ok(()))` of the changed verb, and each typed `Vec<(&str, Result<.., ManagerError>)>`
   of a gate phase (its annotation moves, and the verbs that keep `()` need a `.map(|()| Vec::new())`).
 - A slice that moves a verb's ANSWER to a list built from the service manager retargets the older
@@ -353,16 +375,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   listing it, joined by `, `), not the `assignments.ini` instances. Sweep
   `grep -n "model-profile-enabled\|assignments.ini\|models.ini.disabled" crates/manager/src/tests/*.rs`
   in the same pass: the client-transport phases seed the retired files and pin "the verb wrote it back".
-- Show the masked reds of several `pub(crate) fn` e2e phases in ONE run by a temporary `#[test]` over
-  each (`-- <full-path>` with `--exact`, or a bare word filter for the whole family): a sequential
-  `data_root_e2e` prints one panic, and the parallel full run stops each file's phases at their own
-  first. Strip the markers with a script that matches `#[test]` whose NEXT line starts the `pub(crate) fn`,
-  and prove with `grep -c` over the pair.
+- Show the reds of a family of e2e phases in ONE run with a bare word filter (`--lib -- ip3c`): each phase
+  is its own isolated `#[test]` (TS2b, TS2c), so every phase of the family prints its own first panic.
+  The phases carry the slice's name (`ip3c_fit_split_e2e`), which is what makes the filter work. No
+  temporary `#[test]` to add and strip: that recipe was for the sequential monolith.
 - A pin about a file the model-data migration RETIRES reads the `.2.99.0` backup: after `start_up()`,
   `models.ini.disabled` and `assignments.ini` are gone and their text stands in
   `<name>.2.99.0`, so a phase that seeds one and pins "the verb wrote it back not" asserts the live name
   `None` AND the backup equal to the seeded bytes. The phase's own verb is usually red ahead of that pair,
-  so prove the pair with a solo probe that seeds and calls `start_up()` alone.
+  so prove the pair with a probe of your own, through `isolated`, that seeds and calls `start_up()`
+  alone (a plain `#[test]` redirecting the root races the parallel suite).
 - Seed the manager's model pool with `std::fs::write`, never the client's `write_file`: a served write of
   `models.ini` is refused `model-profile-placement-key` when its text carries a placement key
   (`checks::PLACEMENT_KEYS`, run by `checks::model_profile_placement` only once `instances.ini` reads as
@@ -391,7 +413,7 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   report them green on arrival, not as reds.
 - Prove each later red of a test that masks its own reds by cutting the earlier block out of the real
   source (a python line-range delete that asserts its two anchor lines first), running
-  `--lib data_root_e2e` (~7 s incremental), and restoring with `cp` + `cmp -s`.
+  `--lib -- --exact tests::<phase>` (a phase alone, ~7 s incremental), and restoring with `cp` + `cmp -s`.
 - A gate script that walks up from a message marker to its `assert` must also stop at `assert_eq!` (a
   value pin), and its marker must be the assert's MESSAGE, not an expected literal a sibling pin shares:
   a marker with two hits aborts the gate, and gating every assert of a test to prove it green needs each
@@ -457,8 +479,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the form field's spelling (string tri-state vs bool) to the coder, pinning the checked state on the
   widget instead.
 - Pin the env of `launch::launch_command` (and `instance_command`, which calls it) inside the
-  `data_root_e2e` phase: `launch_command` calls `paths::data_root()`, and a unit test of it races the
-  phase's process-wide `PRIVATE_AI_DATA_ROOT` redirect.
+  `instance_launch_e2e` phase (`core/src/launch.rs`, run through `isolated` by `tests/mod.rs`):
+  `launch_command` calls `paths::data_root()`, and a unit test of it races the phase child's
+  process-wide `PRIVATE_AI_DATA_ROOT` redirect.
 - A new DEFAULT export in `launch::env_vars` reddens every strict-equality env test of the OTHER knobs,
   in `crates/core/src/launch.rs` and in `crates/app/src/runstate.rs`: filter the new pair out of those
   (a `env_vars_no_gtt`-style helper), pin the pair in its own test, and assert by key presence, because
@@ -1457,9 +1480,9 @@ frozen list.
   falls back to `crates/bff/fe-fixture`): set it only to escape a stale `fe/dist`. `PAI_BFF_FE_DIR` in the
   shell does nothing.
 - `--test '*'` names no target for `pai-manager`.
-- `cargo test -p pai-manager ip3c` runs nothing (every phase is a call inside the one `data_root_e2e`):
-  the filter is `data_root_e2e`, with `--test-threads=1`, and the phases red one at a time. To show each
-  phase's own red, swap the phase calls in `src/tests/mod.rs` temporarily, then put them back.
+- A bare word filter over the manager's phases (`cargo test -p pai-manager --lib -- ip3c`) runs every
+  phase of the family at once since TS2b (each is its own `#[test]`), so one run shows each phase's own
+  first panic; `--test-threads=1` is not needed and no phase call in `src/tests/mod.rs` needs swapping.
 - `cargo fmt -p <crate>` rewrites EVERY file of the crate, the other agents' uncommitted work included:
   format one file with `rustfmt --edition 2021 <file>` (the crates' edition), and check with `--check`.
 - The manager's D-Bus unit tests and the GPU-probe flooding test are load-sensitive (slow under a loaded
@@ -1516,6 +1539,11 @@ frozen list.
 
 ### The e2e phases
 
+- A "one red left in `<crate>_server_profile_e2e`" count is the FIRST panic only: the phases after it
+  never ran, so retargeting a pin reveals the next. Two read-list pins of one e2e (the record refused,
+  and a record row naming no profile) go stale together once a failed read is an error, never the
+  defaults: the save is never reached, so its `read_file models.ini` disappears from BOTH, and the
+  right pin is `reads(&log).is_empty()`.
 - A helper that trims a line's end (`str::trim_end`) erases a trailing non-breaking space: pin a
   Unicode-whitespace value with the raw line, never with the file's `keys_of`-style helper.
 - `pai_core::strings`' `READER` is a process-wide `OnceLock`: the FIRST test that calls `manager::run()`
@@ -1524,14 +1552,14 @@ frozen list.
 - `slot_save::slot_target` answers `None` for an argv with no `--slot-save-path` (snapshots off): a
   cross-check pin "the readiness and the save ask the same port" needs the flag IN the fixture, else the
   red is the fixture, not the rule.
-- One `data_root_e2e` masks its own later reds: `pai-manager`'s service phases AND its D-Bus/pipe client
-  phases are calls of ONE test, so a full run prints only the first panic. To show a LATER phase's
-  day-one state, comment out the earlier phase's one CALL LINE in `src/tests/mod.rs` (a `// GATE`
-  prefix), run, restore with `cp` + `cmp -s` and `grep -c "// GATE"` answering 0: one line per phase,
-  no block surgery. A script that gates every registration up to a marker must gate the `#[cfg(..)]`
+- The configurator's ONE sequential e2e (`crates/config/src/tests/ui_bindings.rs`) masks its own later
+  reds: its phases (`save_flow::run`, the `gui::*_e2e` calls) are calls of ONE test, so a run prints only
+  the first panic. To show a LATER phase's day-one state, comment out the earlier phase's one CALL LINE
+  (a `// GATE` prefix), run, restore with `cp` + `cmp -s` and `grep -c "// GATE"` answering 0: one line
+  per phase, no block surgery. A script that gates every call up to a marker must gate the `#[cfg(..)]`
   attribute ABOVE each call too (an orphan attribute is a compile red, not a red), and the run works from
-  one saved un-gated copy of `mod.rs` (`cp` it right after registering the phases, gate from the copy,
-  restore from it).
+  one saved un-gated copy of the file (`cp` it right after registering the phases, gate from the copy,
+  restore from it). The data-root crates need none of this: TS2b and TS2c made every phase its own test.
 - Pin a walk's bound of ENTRIES VISITED with a marker file under a subfolder: the bound is consumed
   inside the first folder's loop, so the marker's ABSENCE proves where the walk stopped, and a tree
   below the bound proves it did not stop early. `paths::instance_models_dir()` under a redirect is
@@ -1623,6 +1651,17 @@ frozen list.
 - A route the router does not carry answers 404 with an EMPTY body: an asserter that parses the body
   reports `not JSON (EOF while parsing a value at line 1 column 0): ""`. That IS the expected red of an
   unrouted slice, not a broken harness: say so in the report.
+- Spell a fixture `instance-profiles.ini` the way the file is: `[<p>]` for the profile and `[<p>/<m>]`
+  for each model it lists. A fixture written `[p.model]` with `model = X.gguf` lines parses as a profile
+  named `p.model` holding NO entry, so every listing rule reds for the fixture and not the rule. The
+  entry section's suffix IS the model profile id: `usedBy` and the manager's `model-profile-assigned`
+  match that id without case, never the `model =` value's file stem (the manager's rule is
+  `service.rs`'s `entry_profile_owners`, the reference for a fake that mirrors it).
+- The manager's record verbs find an instance's section with `section.id == instance` (exact), while the
+  bff's `instances.rs` `write_affected` gates the path's id on `list_instances` with
+  `eq_ignore_ascii_case` and hands over the path's bytes: a path id of another case passes the bff's gate
+  and reaches no section. Pin such a write by the id recorded at the fake, not by the status (the fake
+  answers the verb for any id, so the status stays 200).
 
 ### xtask
 

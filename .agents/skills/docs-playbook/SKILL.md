@@ -552,10 +552,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   and `MajorUpgrade` uninstalls first, so each upgrade would empty what the administrator filled. The
   `.wxs` test in `xtask/src/common/msi.rs` reads the group's name from the manager's `ADMIN_GROUP` const,
   so renaming the group fails a test: grep the const too.
-- The playbooks of the other roles lag a test-topology change by many lines: the coder's and the tester's
-  still teach one sequential `data_root_e2e` per crate, which TS2b and TS2c (2c064a52) removed from every
-  crate. They are theirs to change, report them; `ARCHITECTURE.md`'s TS2 record does the same, listing
-  TS2b and TS2c as open.
+- A role playbook line teaches a test shape, so a method change strands it: after TS2b and TS2c (2c064a52)
+  the coder's and the tester's still taught one sequential `data_root_e2e` per crate in about 20 lines
+  (a phase-timing recipe, `--test-threads=1` filters, a "~30 s" duration, probe-module recipes), and a
+  careful reader follows them. Sweep `data_root_e2e` and `test-threads` in `.agents/skills/*/SKILL.md`
+  after a topology change: the playbooks are the roles' own to change, so a docs run edits them only when
+  briefed, and reports them otherwise; `ARCHITECTURE.md`'s TS2 record lagged the same way.
 - `PLAN.md` can name a file that does not exist (it lists `crates/manager/README.md`): check with
   `git ls-files` before promising to edit a file, and report the line.
 - `grep` here is ugrep: a long `.{0,120}` context regex fails with "exceeds complexity limits". Use a

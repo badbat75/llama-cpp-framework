@@ -14,6 +14,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Before starting: `ls` the named test files, `git log --oneline -3`, `git status`. A slice with no test
   file has nothing to turn green, so report that and write no test. Verify your whole set with
   `git diff <paths>` right before the test run.
+- Resuming a slice a stalled coder left in the tree: run the tester's target BEFORE writing anything,
+  its tests may already be green, and the gap is usually a rule of the design's watch list no test
+  names. Enumerate that list against the target's test names, add the missing pin in the tester's file,
+  see it red, then gate it where the body is read (before the connect, so a "nothing was asked" pin
+  holds), not in the manager.
 - Snapshot outside the repo before a sweeping pass (`cp -a crates xtask <snap>`), then `ls` the snapshot.
   `git stash`, `git checkout` and `git restore` are off limits: a stash measures the tree without your
   slice.
@@ -52,8 +57,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   bytes, and add up every phase that pins the same rule before reporting: five pins agreed with the rule
   and two did not, and the two sat in the one phase whose comment was stale.
 - Flakes: reproduce solo, state it, move on. The manager's D-Bus and gpu-probe tests under load, the
-  e2e's colliding-writes gate phase (`the first write returns`, a 5 s `GATE_WAIT`) when a cargo build
-  runs beside the suite (the suite alone: 142 s, a solo e2e beside a build: 669 s), xtask's
+  colliding-writes gate of the `manager_dbus_waits_e2e` phase (`the first write returns`, a 5 s
+  `GATE_WAIT`) when a cargo build runs beside the suite (since TS2b each phase runs solo in a child of
+  its own: the manager's suite is ~4 s, its slowest phase 1.1 s idle and 4.0 s beside a compile,
+  2026-11-28), xtask's
   script-sandbox tests (one temp dir per process), the bff's `tests/session.rs` timing tests, `fe`'s
   `ServerSave.test.tsx` navigation test `1b.36b: the edits-dropped alert stays until the page is left`
   (one of 3100 under `--maxWorkers=4`, green solo and on the rerun), the `fe` full suite's one red
@@ -72,28 +79,24 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   phase test is `#[ignore]`d so it fails nothing in the suite alone, and `--exact` without
   `--include-ignored` runs 0 tests and exits 0, which the helper's "exactly 1 passed" rule reads as a
   failure.
-- To time the manager's phases one by one (a bound's measure, TS2a2): in a copy, wrap every
-  `crate::…::phase();` of `crates/manager/src/tests/mod.rs` in a `timed!` macro (`Instant` +
-  `eprintln!` of `stringify!($e)` and the millis; the regex needs the parens kept, `$e;` on a bare
-  path is no call), build once, then run the binary direct with
-  `--exact tests::data_root_e2e --nocapture --test-threads=1`. Since TS2b that file is one `#[test]`
-  per phase, so the same measure is the plain suite run with `-- --nocapture`. Load shapes: `nproc`
-  spinners; N runs at
-  once (the TS2b pool); a real compile beside them (`touch` a lib.rs of the copy, then
-  `cargo check -p <crate> --all-targets` in the copy's target dir). The manager's phases on this 24 vCPU
+- To time the manager's phases one by one (a bound's measure): run the suite with `-- --nocapture` and
+  read each phase child's own `finished in <x>s` line (the parent forwards the child's report), and time
+  one phase alone with `--lib -- --exact tests::<phase>`. Since TS2b each phase is its own `#[test]`, so
+  there is no sequence of phase calls to wrap in a `timed!` macro, and no `--test-threads=1` to pass.
+  Load shapes: `nproc` spinners; N runs at once (the TS2b pool); a real compile beside them (`touch` a
+  lib.rs of the copy, then `cargo check -p <crate> --all-targets` in the copy's target dir). The
+  manager's phases on this 24 vCPU
   box, 2026-11-28: slowest 1.1 s solo idle, 4.2 s with spinners + 3 runs, 4.0 s beside a compile, 1.6 s
   with 24 runs at once, and **10.5 s with 24 runs at once beside `nproc` spinners** (the TS2b pool, load
   avg 52): the pool + spinners shape is the one a bound of `isolated` must clear, so its default is 120 s.
-- Judge the manager at the DEFAULT thread count: its phases are isolated tests since TS2b (3 runs,
-  4.05 s each, all green). A crate whose `data_root_e2e` is still ONE `#[test]` (pai-core, pai-app,
-  pai-cli, until TS2c) is judged ONLY with `-- --test-threads=1`: its phases share the
-  process-wide `PRIVATE_AI_DATA_ROOT`, so the default parallel run of the same test stops at a
-  DIFFERENT pin (measured 2026-11-27: single-threaded it stops where the rule bites, the full crate
-  run stopped two phases later at a D-Bus signature pin). Its phases also call over a
-  peer-to-peer bus with 2 s and 10 s bounds: on a loaded machine the parallel run reddens it with a
-  timeout (`bob's write: no answer within 2s`, `SetInstanceProfile: ... TimedOut`) at an UNCHANGED
-  HEAD too (measured 2026-11-28), so a parallel red is no evidence at all; the solo test passes,
-  slowly.
+- Judge a crate at the DEFAULT thread count: every data-root phase of pai-core, pai-app, pai-cli and
+  pai-manager is an isolated test (TS2b, TS2c), alone in its own process, and each seeds its own tree in
+  its own body, so a full-suite run IS the solo run of every phase (measured 2026-11-28, built first, 3
+  runs each, all green: core 6.1 to 6.3 s, app 12.9 to 14.3 s, cli 1.16 to 1.27 s, manager 4.05 s).
+  One phase alone: `cargo test -p <crate> --lib -- --exact tests::<phase>`.
+  A manager D-Bus phase on a loaded machine can still time out on its 2 s and 10 s bus bounds
+  (`bob's write: no answer within 2s`, `SetInstanceProfile: ... TimedOut`): rerun it solo before
+  believing the red.
 - On Linux check `echo $CARGO_TARGET_DIR` first and never override a set value, not even in a one-off command line; keep the `CARGO_TARGET_DIR` your environment already has (the coordinator exports an ext4 path,
   `~/.cache/private-ai/cargo-target`: `/mnt/data` is ntfs3, whose bulk writes stall at 1 s and more); only when it
   is unset export `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` for every cargo command: the checked-in
@@ -228,6 +231,21 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 ### INI, config, the manager, packaging
 
+- `pai-app`'s `server_cfg::load()` is `Result<ServerConfig, String>`: the seam's read of the server
+  profile the instance's record names, its refusal ending the caller (IP7a). A CLI verb that writes
+  into ModelsDir reads the profile, then calls `server_cfg::models_dir()`: the CLI's text pin
+  (`the_cli_resolves_models_dir_for_the_backend_and_os`) demands the literal call twice and forbids a
+  `*_or_default()` name, and `models_dir()` answers a plain `String` (IP7a 1 and 3 compare it to
+  `"/x"`), so a checked read rides as a second seam read beside it, never as a folded variant. A panel
+  that only shows the folder keeps `unwrap_or_default()`. Making the read fallible touches every
+  reader (17 sites across `app`, `cli`, `config`): script it, and give a test's own read an
+  `.expect("read server.ini")`, never a swallow.
+- A swallowed read turned fallible supersedes an older phase's call-list pin: `cli_server_profile_e2e`
+  (`crates/cli/src/cli.rs` 2478 and 2515) expects `["read_file models.ini"]` after a refused record,
+  being the SAVE's own pool read, and a command that ends at the read leaves the list empty. Report it
+  as superseded, with its two lines, and change no assertion: the phase's live half (the refusal's
+  text, nothing written, the files as they were) still holds.
+
 - A new `[Server]` key carried by the web UI touches several places (the `ServerConfig` field,
   `from_keys`, the web key list, the const-generic array length, the strings, the bff's off-list test);
   a key moved onto `WEB_MODEL_PROFILE_KEYS` reddens the bff's exhaustive off-list test. A model profile
@@ -336,8 +354,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   region up to its FIRST `#[cfg(test)]` line, so code added after that (the e2e phases) is out of its
   scope, and the gate it reads is the `#[...]` block directly above the item (doc comments are dropped,
   so an attribute under a doc comment is seen, one under a `let` is not).
-- Manager verbs, refusals and records: e2e phases are `pub(crate) fn` called in sequence by ONE `#[test]`
-  (the GUI's `save_flow::run` likewise); create/remove verbs have no test of their own. A value check the
+- Manager verbs, refusals and records: e2e phases are `pub(crate) fn`, each run by its own isolated
+  `#[test]` of `src/tests/mod.rs` (TS2b); the configurator's are still called in sequence by ONE
+  `#[test]` (`ui_bindings.rs`, whose `save_flow::run` is one of them). Create/remove verbs have no test
+  of their own. A value check the
   manager answers needs an arm in the bff's 422 field map. A shard-count bound is name math
   (`gguf_shape::split_shard_suffix` gives `(base, index)`, NEVER the total: read it from
   `stem.rsplit_once("-of-")`). `manager/service.rs` has no module-scope `use std::path::Path`, so a free
@@ -345,9 +365,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   write by the render it produces (the startup count only when the render starts MORE than the one on
   disk; a profile switch changes no model profile). The model-file check is a DELTA. A probe cache keeps
   the parsed rows; a serial probe answers queued readers with the probe they waited for.
-- A manager rule is pinned a second time by the refusal tables of `manager/dbus.rs` and `manager/pipe.rs`
-  (the wire phase lists `(args, kind, needle)` rows). Change the rule and those rows are the last reds of
-  `data_root_e2e`, one row at a time, and a row that pins the case the new rule accepts is a witness pair
+- A manager rule is pinned a second time by the refusals of the transports' test regions: the
+  `manager_dbus_e2e` phase lists `(args, kind, needle)` rows (`manager/dbus_tests.rs`), and
+  `manager/pipe_tests.rs` pins its refusals as plain `#[test]`s (no `paths::`, no phase). Change the
+  rule and those rows are the last reds of their phase, one row at a time (a phase stops at its first
+  panic), and a row that pins the case the new rule accepts is a witness pair
   with the phase that pins the new rule: report the pair, change no test.
 - A verb that ANSWERS the running instances reads the unit seam (`service.status(id)` per record section,
   `running_using_profile`), so an older phase that pins `calls(&c) == vec![]` ("no verb of an instance
@@ -391,9 +413,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A create fixture amended for a new argument (IP4b: the third name became an INSTANCE profile, judged
   against `instance-profiles.ini`): every older phase needs a pool section for the name it passes, else it
   answers `NoInstanceProfile` where the phase pinned a later check, and its port pin is the first free port
-  above 8581 given the record AT THAT PHASE, which a phase that created earlier in the same e2e has already
-  moved (one `data_root_e2e` phase pins 8582 for exactly that reason). Seed the pool per phase
-  (`sys.join(INSTANCE_PROFILES_FILE)`), never in a shared seeder a dozen pins read.
+  above 8581 given the record THAT PHASE seeds (each phase seeds its own tree since TS2b:
+  `manager_ip3a_fix_port_of_recordless_e2e` pins 8582 because its own record holds 8581). Seed the pool
+  per phase (`sys.join(INSTANCE_PROFILES_FILE)`), never in a shared seeder a dozen pins read.
 - Linux bundle loop (the GPU runtimes): every directory of a dist that is mirrored under
   `RT_DIR` needs its own `RUNPATH` entry, and a runtime the dist reaches through a symlink
   of its own (`lib/llvm/lib/libomp.so` naming the file in `x86_64-unknown-linux-gnu/`) stages
@@ -840,6 +862,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   there). A failure quoting an identifier your own edit removed is the tree moving: re-read the whole
   file and apply what is left in one scripted pass. A tester's file can also go back to HEAD under you
   (`git status` shows it).
+- A targeted `git checkout`/`git restore` of tracked files, run by another role mid-slice, wipes the
+  uncommitted work of every other slice in those files, and a new untracked file with it; a shape
+  never committed and never stashed is gone for good (`git log -S"<new name>" --all`, `git fsck` +
+  `git show <dangling>:<path>` to look). Mirror your new files to `/tmp/opencode/` as you write them
+  and keep the edits as one scripted patch there, and check the base's API names
+  (`grep -c "export function <name>" <file>`) before you build on them.
 - A `cp ... && echo ok` piped through `tail` can hide a failure.
 - The sandbox clock jumps: content, not mtime, is the state (`md5sum`, `grep -n` the exact text).
 - A script that moves a block can drop the item header between it and its anchor.
@@ -895,10 +923,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `mod windows` is `#[cfg(windows)]`, so no file under `xtask/src/windows/` is compiled on Linux. A
   `pub fn` only Linux code calls is `dead_code` on windows-gnu. `cargo clippy -p xtask` prints two
   `xtask (manifest)` warnings that are not yours.
-- Every phase of a crate's ONE `data_root_e2e` (pai-core, pai-app, pai-cli: the manager's phases are
-  isolated tests since TS2b) sets the process-wide `PRIVATE_AI_DATA_ROOT`, so several probes in one
-  run MUST use `--test-threads=1`: in parallel they read each other's temp dirs, and a probe that fails
-  at an early assertion of a phase it never reached is that cross-talk, not a red.
+- Every data-root phase (all four crates since TS2b/TS2c) redirects `PRIVATE_AI_DATA_ROOT` in a CHILD
+  process of its own, so several probes of one crate's phases run side by side with no `--test-threads=1`.
+  A phase run alone IS the suite's shape; a red solo is real, and a suite red that passes solo is load.
+- A big phase can overflow the 2 MiB stack of the libtest thread that runs it in the ISOLATED child,
+  and pass in the old sequential test (TS2c, `pai-cli`'s two `model-profile` phases): the child dies
+  with `has overflowed its stack`, and the parent reports exit `None`, "no summary line at all". The
+  fix that worked: move the body out of `tests/mod.rs` into its own module file (`cli/src/tests/
+  model_profile.rs`), the `#[test]` in `mod.rs` only calling it. If a phase still overflows, the knob
+  is `RUST_MIN_STACK` in bytes, read when a thread spawns and inherited by the child (std::thread docs;
+  not exercised here).
 - A sandbox copy that shares `CARGO_TARGET_DIR` with the real tree hands ITS test binary to the real
   tree's `cargo test`: the run names probe tests that exist in no real file (and the fixture the sandbox
   patched). The check is that the run names only tests you can open; the fix is `touch` a source file of
