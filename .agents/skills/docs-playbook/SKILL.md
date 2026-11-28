@@ -117,6 +117,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `## The server profile pool` (the list, the create, the document and the save, the delete), and the
   manager's three verbs are their own bullets in `crates/config/README.md`'s "Through the manager",
   beside the `SetServerProfile` pair.
+- A planned bff route's contract lives in full in `ARCHITECTURE.md` (its slice entry, e.g. IP4's route
+  list, settled 2026-11-28 at 60188bde): `fe/briefs/api-contract.md` copies it, marked **proposed**, and
+  `fe/briefs/<N>-*.md` section 0 keeps the brief's own keys and points at the contract. Say which of the
+  three is the source, and mark the served shape of the same route beside it, since the fe runs ahead.
 - `AGENTS.md` is loaded into every session (keep it under ~40k characters): its Map bullets are pointers
   (what the area is, the guide, a safety rule the guide lacks), never a copy of the guide. A new fact
   goes in the guide; before cutting one from `AGENTS.md`, grep the guide for it and move it there if
@@ -689,3 +693,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `scrollHeight` and `clientHeight` under `emulateMedia({media: 'print'})` at 794x1123 px.
 - The print flag is `--no-pdf-header-footer`; `--print-to-pdf-no-header` leaves the date and URL in.
 - Never run `find /` (or any search from the root) to locate a source file: it scans every disk, hangs in D state on the busy data disk and stays behind the run. Cite the upstream repository's URL (for ROCm sources, github.com/ROCm/rocm-systems at the commit named) instead.
+- A slice id you did not read is a fact you made up: before citing `IP4g`, grep it in `ARCHITECTURE.md`
+  and `PLAN.md` (an invented one reads as the architect's decision and sends the coder off).
+- `npx prettier --check fe/briefs/<file>` warns by design: `fe/.prettierignore` lists `briefs/` and
+  `DESIGN.md`, and an explicit path skips the ignore, so the project's `npm --prefix fe run format:check`
+  is the one that decides, and the briefs' long table rows and hand-wrapped prose are not to be "fixed".

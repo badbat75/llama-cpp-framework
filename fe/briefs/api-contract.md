@@ -59,6 +59,11 @@ exist yet. Change this file first when a shape changes.
   (`server.rs` `WriteState`, `TimedOut`).
   The four association routes never answer 504: a manager that outlives the limit, before or after a
   write, is 503 `client-unavailable` (`crates/bff/src/instance_profiles.rs`).
+- **`running` is a list from IP4 (proposed)**: every write that re-renders answers
+  `{"running": [<instance id>…], "notConverged": [{"instance", "key", "args"}…]}`, the model and
+  server profile saves among them (they answer a `running: bool` today, and their web UI readers
+  change in the same slice), so a reader tests `running.length`: an empty array is truthy in
+  JavaScript. The detail is in "IP4: the instance profile routes", below.
 - **404** `client-no-instance` means the instance id does not exist.
 - The session is an HttpOnly cookie set by the bff; the fe never reads it.
 
@@ -69,7 +74,7 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/version` | signed in | exists; `name`, `os` AN4, served (e52480d) | `{"version", "name", "os"}` |
 | `GET /api/node` | signed in | 13; `os`, `vulkan`, `gpus`, `nodeInfo` AN4, served (e52480d) | `{"name", "api", "version", "engines", "os", "vulkan", "gpus"}` (+ `nodeInfo` on a manager failure) |
 | `GET /api/node/devices` | signed in | GD (bff slice G2, served 66b2bb3), `ramMib`/`cpuThreads` served (a1a3458) | `{"probedAt", "ramMib", "cpuThreads", "devices"}` |
-| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13; `removable` 16, served (e262708); `label` IL2, served (5ec6cf8) | `[{"id", "label", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` |
+| `GET /api/instances` | anyone | 1a, changed; T1 being built (bff slices 11, 12); `boot` 13; `removable` 16, served (e262708); `label` IL2, served (5ec6cf8); `instanceProfile`, `hostname`, `converged`, `reason`, `pendingRestart` IP4, **proposed** | `[{"id", "label", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` |
 | `GET /api/session` | anyone | 1a | 200 `{"user"}`, or 401 |
 | `POST /api/session` | administrator (`pai` group) | 1a | 200 `{"user"}` and the cookie |
 | `DELETE /api/session` | signed in | 1a, served | 204 |
@@ -81,19 +86,27 @@ exist yet. Change this file first when a shape changes.
 | `PUT /api/instances/{id}/tags` | administrator (`configure`) | T1, being built (bff slice 12) | 204 |
 | `PUT /api/instances/{id}/label` | administrator (`configure`) | IL2, served (5ec6cf8) | 204 |
 | `GET /api/engines` | anyone | model profiles slice, proposed | `[{"id", "name"}]` |
-| `GET /api/profiles/model` | administrator | 2a, 2b, served (257147e); `assignments` 15 | `[{"id", "engine", "engineAvailable", "enabled", "model", "assignments"}]` |
-| `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244); `restart` 15 | `{"enabled", "running", "restart"}` |
-| `GET /api/profiles/model/{id}` | administrator | 2d, served (36a892d) | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
-| `PUT /api/profiles/model/{id}` | administrator (`configure`) | 2h, served (3eb24b2); `restart` 15 | `{"revision", "running", "restart"}` |
+| `GET /api/profiles/model` | administrator | 2a, 2b, served (257147e); `assignments` 15; `usedBy` IP4, **proposed** | `[{"id", "engine", "engineAvailable", "enabled", "model", "assignments"}]` |
+| `PUT /api/profiles/model/{id}/enabled` | administrator (`configure`) | 2c, served (3a63244); `restart` 15; **removed by IP4 (404)** | `{"enabled", "running", "restart"}` |
+| `GET /api/profiles/model/{id}` | administrator | 2d, served (36a892d); `usedBy` IP4, **proposed** | `{"id", "engine", "engineAvailable", "enabled", "values", "projectUrl", "revision"}` |
+| `PUT /api/profiles/model/{id}` | administrator (`configure`) | 2h, served (3eb24b2); `restart` 15; IP4 answers `running` as a list, **proposed** | `{"revision", "running", "restart"}` |
 | `POST /api/profiles/model` | administrator (`configure`) | MP2, served (76163d1) | 201 `{"id"}` |
-| `DELETE /api/profiles/model/{id}` | administrator (`configure`) | MP2, served (76163d1) | 204 |
+| `DELETE /api/profiles/model/{id}` | administrator (`configure`) | MP2, served (76163d1); IP4 drops the 409 `model-profile-enabled`, **proposed** | 204 |
 | `GET /api/profiles/model/{id}/model-info` | administrator | L2, served (e1de6be); `tensors` J1 (6570557) | `{"model", "info", "reason"}`: [crates/bff/README.md](../../crates/bff/README.md#the-model-info) |
-| `PUT /api/instances/{id}/profiles/server` | administrator (`configure`) | 15, served (2d9a4c8) | `{"running"}` |
-| `GET /api/instances/{id}/profiles/model` | administrator | 15, served (2d9a4c8) | `{"all", "profiles": [rows]}` |
-| `PUT /api/instances/{id}/profiles/model/{profile}` | administrator (`configure`) | 15, served (2d9a4c8) | `{"effective", "running"}` |
-| `PUT /api/instances/{id}/profiles/model` | administrator (`configure`) | 15, served (2d9a4c8) | `{"running"}` |
-| `POST /api/instances` | administrator (`configure`) | 16, served (e262708) | 201 `{"id"}` |
+| `PUT /api/instances/{id}/profiles/server` | administrator (`configure`) | 15, served (2d9a4c8); **removed by IP4 (404)** | `{"running"}` |
+| `GET /api/instances/{id}/profiles/model` | administrator | 15, served (2d9a4c8); **removed by IP4 (404)** | `{"all", "profiles": [rows]}` |
+| `PUT /api/instances/{id}/profiles/model/{profile}` | administrator (`configure`) | 15, served (2d9a4c8); **removed by IP4 (404)** | `{"effective", "running"}` |
+| `PUT /api/instances/{id}/profiles/model` | administrator (`configure`) | 15, served (2d9a4c8); **removed by IP4 (404)** | `{"running"}` |
+| `POST /api/instances` | administrator (`configure`) | 16, served (e262708); IP4 takes `instanceProfile` and answers the port, **proposed** | 201 `{"id"}` |
 | `DELETE /api/instances/{id}` | administrator (`configure`) | 16, served (e262708) | 204 |
+| `GET` / `POST /api/profiles/instance` | signed in / administrator (`configure`) | IP4c, **proposed** | `{"rows": [rows]}` / 201 `{"id"}` |
+| `GET` / `DELETE /api/profiles/instance/{p}` | administrator / administrator (`configure`) | IP4c, **proposed** | `{id, server, models, usedBy, revision}` / 204 |
+| `PUT /api/profiles/instance/{p}/server` | administrator (`configure`) | IP4c, **proposed** | `{"running", "notConverged"}` |
+| `POST /api/profiles/instance/{p}/models` | administrator (`configure`) | IP4c, **proposed** | 201 `{"running", "notConverged"}` |
+| `GET` / `PUT /api/profiles/instance/{p}/models/{m}` | administrator / administrator (`configure`) | IP4c, **proposed** | `{profile, server, model, values, revision}` / `{"revision", "running", "notConverged"}` |
+| `DELETE /api/profiles/instance/{p}/models/{m}` | administrator (`configure`) | IP4c, **proposed** | `{"running", "notConverged"}` |
+| `PUT /api/instances/{id}/profile` | administrator (`configure`) | IP4d, **proposed** | `{"running", "notConverged"}` |
+| `PUT /api/instances/{id}/address` | administrator (`configure`) | IP4d, **proposed** | `{"running", "notConverged"}` |
 
 The four model profile routes were served at `/api/presets...` until 5d54590 (step 4b, below), with
 the keys `no-preset-named`, `preset-changed-elsewhere`, `presets-malformed`, `invalid-preset-id`,
@@ -487,13 +500,19 @@ user: `[{"id", "engine", "engineAvailable", "enabled", "model", "assignments"}]`
   the instances are read on the same connect as the two files (four calls); a machine with no
   `assignments.ini` is 200 with `[]` in every row, while a record read that fails and an instances
   list answered as a failure fail the whole list. `crates/bff/README.md` "The model profile routes".
+- **`usedBy` (IP4, proposed)** is the instance profiles that list this model, in pool order,
+  computed by the bff from the instance profile pool: the Models list's Used by cell and the delete's
+  409 `model-profile-assigned` read the same rule. No row carries it today, so the list says "No
+  instance profile" for every row.
 - Errors, each `{"key", "args": []}`: 401 `session-required`; 403 `session-not-administrator`
   (the session is ended, rules above; `client-not-authorized` is not sent); 503
   `client-unavailable` (no manager, or no answer within 5 s); 502 `client-other`.
 
 ### `PUT /api/profiles/model/{id}/enabled`
 
-Switches a model profile on or off ([02-models.md](02-models.md), slice 2c), as `presets::set_enabled`
+**IP4 removes this route (IP4f): the router's 404, no body, no manager call ("What IP4 changes on
+the routes that are served").** What follows is what it answers today. Switches a model profile on
+or off ([02-models.md](02-models.md), slice 2c), as `presets::set_enabled`
 does: the section moves, unchanged, between `models.ini` and `models.ini.disabled` (the
 destination written first; a missing disabled file created with the GUI's header). The id is
 matched case-insensitively. Body `{"enabled": <bool>}`. Served since 3a63244, time-outs as now
@@ -582,6 +601,8 @@ with the 5 s limit of a read.
   differs per file, another model profile's edit does not change it, and switching the model profile on or off,
   or editing a comment in it, does; the key is drawn at each bff start, so it does not survive a
   restart.
+- **`usedBy` (IP4, proposed)**: as in the list, the instance profiles that list this model, pool
+  order; the page's Used by row reads it and answers none today.
 - It grows without breaking: later slices read more keys from `values`, and add top-level fields
   (a comment such as `; placement =` as `placementNote`, server-computed data) or routes; no field
   is removed or retyped, and the fe ignores fields it does not know.
@@ -661,8 +682,11 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   not checked.
 - The write: the manager's compare-and-swap write as the signed-in user, given the text the bff
   read; it is asked only while the answer is still wanted.
-- **200 `{"revision", "running", "restart"}`**: `revision` of the section as now written, computed by the same
-  function as the `GET`'s over the text written, so the `GET` that follows returns it and the next
+- **200 `{"revision", "running", "restart"}`** (IP4 proposes the affected shape
+  `{"revision", "running": [<id>…], "notConverged": [{"instance", "key", "args"}…]}`, the same as
+  the instance profile writes, so a reader tests `running.length`): `revision` of the section as now written,
+  computed by the same function as the `GET`'s over the text written, so the `GET` that follows
+  returns it and the next
   save meets no 409. Since slice 15 (2d9a4c8) `restart` is the instances the page's "restart to apply"
   note is about, and `running` is that list not being empty: the instances the record of
   `assignments.ini` gives this model profile to, effective in the pool as the save leaves it (a
@@ -674,7 +698,10 @@ then 422 `comment-markers`), with no manager call; the read (403, 503, 502); 404
   to apply." for true, "Saved." for false. The bff restarts and reloads nothing. Deliberate
   difference: the configurator's model profile save says only "Saved model profile [id]"
   (`preset-saved` in `crates/core/strings/en_US.toml`).
-- **422 `{"key", "args", "field"}`** from the manager's checks, `field` the INI key to mark:
+- **422 `{"key", "args", "field"}`** from the manager's checks, `field` the INI key to mark. IP4
+  adds 422 `model-profile-placement-key` `[key]`, `field` the key, for a body key that belongs to a
+  model entry (the placement and memory keys brief 26 moves): such a key is written by
+  `PUT /api/profiles/instance/{p}/models/{m}`, not here. Then
   `args[0]` for `not-whole-number-in-range` (args key, value, min, max), `comment-markers` (key),
   `not-a-number` (key, value), `not-one-of` (key, value, the allowed list joined by `, `),
   `not-json-object` (key), `min-above-max` (min key, min, max key, max: the minimum's key is
@@ -719,7 +746,11 @@ routes" in `ARCHITECTURE.md`, the detail in
   (`field` `from`), `model-profile-no-model` or `model-profile-bad-source` (`field` `values`),
   `comment-markers` (`field` the key), 409 `model-profile-name-taken` `[id]`; delete: 404
   `no-model-profile-named` `[id]`, 409 `model-profile-enabled` `[id]`, 409 `model-profile-assigned`
-  `[id, instances]`; both: 401 `session-required` (the manager not asked), 403
+  `[id, instances]`. IP4 changes the delete: **409 `model-profile-enabled` is dropped** (a
+  switched-on profile is deleted, check, mapping and string with it) and 409 `model-profile-assigned`
+  answers `[profile, "<a>, <b>"]`, naming the **instance profiles** that list the model, not the
+  instances (`api-model-profile-assigned` speaks of instances today: the fe's text follows in the
+  same slice); both: 401 `session-required` (the manager not asked), 403
   `session-not-administrator` (the session ended), 503 `client-unavailable` (no manager, or the 15 s
   ran out before the call was handed over), 504 `client-timeout` (the call handed over, its outcome
   unknown: a retried create is then 409, a retried delete 404), 502 `client-other`.
@@ -752,6 +783,116 @@ tree, never read out of it): 10 minutes, 64 repositories, at most 2 calls runnin
 pick: not JSON, over the cap, no branch, no GGUF); 503 `hf-tool-missing` (no `curl` on this machine);
 504 `hf-unreachable` (HF never reached). Source: `crates/bff/src/hf.rs`,
 `crates/bff/tests/hf_files.rs`, `ARCHITECTURE.md` "Choosing the model file on the web".
+
+## IP4: the instance profile routes (proposed)
+
+The contract `ARCHITECTURE.md` settled on 2026-11-28 (its IP4 entry, 60188bde, written from brief 26
+section 0 and the IP3 methods as built; that entry is the source, this section copies it). **None of
+these routes is served**: `router_with_session` (`crates/bff/src/lib.rs`) has no one of them, so
+today each answers the router's own 404, with no body and no manager call. Brief 26's pages call
+them. The bff's slices are IP4c (the instance profile routes) and IP4d (the instance routes), on
+top of IP4a and IP4b, which give the manager and the client what these routes need (`PLAN.md` step
+10).
+
+### The rules every one of them keeps
+
+- **The session, as everywhere**: 401 `session-required`; 403 `session-not-administrator` (the
+  manager refused the session's user and the bff ended it); 503 `client-unavailable` before the
+  manager's call was handed over, 504 `client-timeout` after ("Writes and their time limit", above).
+- **The keys on the wire are brief 26's names**, the ones IP6a's tests already use; the bff maps the
+  manager's names, in one small table:
+
+  | The manager's key | On the wire |
+  | --- | --- |
+  | `instance-profile-bad-id` | 422 `invalid-instance-profile-id`, `field` `id` |
+  | `InstanceProfileExists` | 409 `instance-profile-name-taken`, `field` `id` |
+  | `NoInstanceProfile` | 404 `no-instance-profile-named` on a path, 422 with that key in a body |
+  | `NoServerProfile` | 422 `no-server-profile-named`, `field` `server` |
+  | `InstanceProfileInUse` | 409 `instance-profile-in-use` `[instance]` |
+
+  Every other keyed refusal keeps the manager's key and its args, 422 for a value rule and 409 for
+  a conflict, as `crates/bff/src/server_profiles.rs` does today.
+- **The affected answer** is `{"running": [<instance id>…], "notConverged": [{"instance", "key",
+  "args"}…]}`, read off the manager's `Affected`: `running` is the instances that use the profile
+  and are up, one Restart button each in the page's offer, and `notConverged` is the instances the
+  write leaves not yet fitted, each with the manager's key and args (`ARCHITECTURE.md`,
+  "Convergence"). It is the answer of the entry add, the remove, the entry save (with its
+  `revision`), the server switch, the instance's profile and its address. The profile create answers
+  `{"id"}` (no instance runs the new profile, so it renders nowhere) and its delete answers 204.
+- **Revisions.** Only the entry's save carries one on the wire: a SHA-256 hex of the profile's own
+  sections (`[<p>]` and its `[<p>/*]`), so an edit of another profile leaves it alone, and the save
+  answers the new hash, so a second save needs no re-read. Every other write here acts at once with
+  no revision: each is one set-like change refused on its own conflict, and a revision would only
+  turn a concurrent unrelated edit into a 409. The bff hands the manager the text it has just read
+  and the manager compares it under its own lock, so a change in that short window is a 409
+  `stale-revision`, read again. This withdraws the revision the earlier IP4 list asked on
+  `PUT /api/instances/{id}/profile` and `PUT /api/instances/{id}/address`.
+
+### The instance profile routes
+
+| Method and path | Body | Answer | Refusals beside the rules above |
+| --- | --- | --- | --- |
+| `GET /api/profiles/instance` | none | `{"rows": [{id, server, models: [<model id>…], usedBy: [<instance id>…]}]}`, pool order | none of its own: the list's 503 and 502 |
+| `POST /api/profiles/instance` | `{"id", "server"}` | 201 `{"id"}` | 422 `invalid-instance-profile-id` (`field` `id`), 409 `instance-profile-name-taken` (`field` `id`), 422 `no-server-profile-named` (`field` `server`) |
+| `GET /api/profiles/instance/{p}` | none | `{id, server, models: [{id, keys: <count of entry keys>}], usedBy, revision}` | 404 `no-instance-profile-named` |
+| `DELETE /api/profiles/instance/{p}` | none | 204 | 409 `instance-profile-in-use` `[instance]`, 404 |
+| `PUT /api/profiles/instance/{p}/server` | `{"server"}`, no revision | the affected answer | 404, 422 `no-server-profile-named` (`field` `server`) |
+| `POST /api/profiles/instance/{p}/models` | `{"model"}`, no revision | 201, the affected answer | 404, 422 `no-model-profile-named` (`field` `model`), 409 `instance-profile-model-listed` |
+| `GET /api/profiles/instance/{p}/models/{m}` | none | `{profile, server, model, values: {<key>: <value>…}, revision}`, the entry's keys in file order | 404 as the entry's save |
+| `PUT /api/profiles/instance/{p}/models/{m}` | `{"values", "revision"}` | 200 `{revision, running, notConverged}` | 404 `no-instance-profile-model`, 422 `model-profile-stay-key` `[key]`, the value rules 422 (`not-whole-number-in-range`, `tensor-split-format`, `override-no-device`, the enums), 409 `stale-revision`, 422 `model-profiles-malformed` when the body carries no revision (IP4c, the same rule as the model profile save's) |
+| `DELETE /api/profiles/instance/{p}/models/{m}` | none | the affected answer | 404 `no-instance-profile-model` |
+
+- `usedBy` is computed by the bff from the instance rows' `instanceProfile`, in pool order; the
+  list's `models` are the model profile ids, the page's rows count each entry's keys so the
+  Placement column can say "llama.cpp's defaults" for 0 (26.7). The counts and the hash come from
+  the pool text `GetInstanceProfile` answers, read with `pai-core`'s INI reader: no new verb.
+- The server switch refuses nothing for a device the new server profile has not got: the instances
+  that no longer fit are rows of `notConverged`.
+- The add and the save are two routes on purpose: a create and a replace are different acts with
+  different refusals, and a `PUT` that creates would need a revision the add does not (this is the
+  answer to brief 26's decision 6, which asked IP4 to settle it).
+- The create's body carries no `from`: brief 26 CP.0 (every profile kind created as a copy) asks
+  `from` on the create routes, and IP4 does not include it. The slice that lands CP adds it to this
+  route, to the server profile's create and to the manager.
+
+### The instance routes
+
+| Method and path | Body | Answer | Refusals beside the rules above |
+| --- | --- | --- | --- |
+| `GET /api/instances` | none | each row gains `instanceProfile`, `hostname` (`null` when the record sets none), `converged`, `reason` (`{"key", "args"}` or `null`) and `pendingRestart`; the last three from the manager's `InstanceStates()` | unchanged |
+| `PUT /api/instances/{id}/profile` | `{"instanceProfile"}`, no revision | the affected answer | 404 for the instance (today that is `client-no-instance`, IP4 names no key), 422 `no-instance-profile-named`, 409 `address-in-use` `[instance]` |
+| `PUT /api/instances/{id}/address` | `{"hostname", "port"}`; `hostname` `null` clears it, no revision | the affected answer | 422 `invalid-port`, 422 `invalid-hostname`, 409 `address-in-use` `[instance]` |
+| `POST /api/instances` | `{"engine", "id", "instanceProfile"}` | 201 `{"id", "port"}`, the port the manager picked from 8581 | 409 `instance-exists`, 422 `no-instance-profile-named`, 503 `no-free-port` |
+
+- The address's keys are the manager's names, the bff mapping any that differ.
+- The create supersedes the served one (e262708), whose body names a **server** profile and whose
+  201 answers `{"id"}` alone: the manager's `CreateInstance` takes the instance profile and answers
+  the port it picked, so the page shows it without a second read (26.15).
+
+### What IP4 changes on the routes that are served
+
+- `GET /api/profiles/model` rows and `GET /api/profiles/model/{id}` gain `usedBy`: the instance
+  profiles that list the model, in pool order, computed by the bff from the instance profile pool.
+- `DELETE /api/profiles/model/{id}`: 409 `model-profile-assigned` `[profile, "<a>, <b>"]` names the
+  **instance profiles** that list it, where today it names the instances the record gives it to; the
+  key stays the manager's (the `model-profile-in-use` name floated for this route is withdrawn).
+  **409 `model-profile-enabled` is dropped**, mapping, string and check with it: a switched-on
+  profile is deleted.
+- `PUT /api/profiles/model/{id}`: a body key that belongs to an entry now (a placement or memory
+  key, brief 26) is 422 `model-profile-placement-key` `[key]`, with `field` that key.
+- The model profile save and the server profile save answer `running` as the affected list, where
+  today they answer a bool: `{"revision", "running": [<id>…], "notConverged": [...]}` (IP4e, whose
+  Done-when is met when the web UI's restart offer passes with `running: []`).
+- **Removed, answering the router's 404 with no body (IP4f)**: `PUT /api/profiles/model/{id}/enabled`,
+  `PUT /api/instances/{id}/profiles/server`, `GET` and `PUT /api/instances/{id}/profiles/model`,
+  `PUT /api/instances/{id}/profiles/model/{profile}` (IP4f's four: the pair counts once). The
+  manager's `SetModelProfile(As)` and `SetServerProfile(As)` go with them on both transports, and
+  only `CreateInstance` and `RemoveInstance` write `assignments.ini`. `GET` and
+  `PUT /api/instances/{id}/server` stay: brief 26 section 7 owns their fate.
+- The verbs and rows these routes need (the `Affected` reply, `SetInstanceProfileServer(As)`
+  exported, `SetInstanceProfileModel` without its `instance` argument, the instance row's two new
+  fields and the protocol number up with no fallback for an older row, `CreateInstance` by instance
+  profile answering the port): "Transport changes the contract needs" in `ARCHITECTURE.md` IP4.
 
 ## Open on the bff side
 

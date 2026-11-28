@@ -21,10 +21,11 @@ Patterns reused unchanged (`fe/DESIGN.md` 5.2):
 
 ## 0. What the bff serves (IP4)
 
-The routes are named in `ARCHITECTURE.md` IP3, IP4 and the amendment. The shapes below are what this
-brief assumes; the tester stubs them, and the coordinator reconciles them with IP4's contract
-(`fe/briefs/api-contract.md`) before the coder starts. A route marked (proposal) has a name or
-method the architecture leaves open.
+The contract is settled: `fe/briefs/api-contract.md` "IP4: the instance profile routes (proposed)",
+copied from `ARCHITECTURE.md` IP4 (60188bde), which is the source. The table below is this brief's
+view of the same routes, in the brief's keys; where the two differ, `api-contract.md` is what the bff
+is built to. **None of these routes is served yet** (the bff's slices are IP4c and IP4d), so the
+tester stubs them all.
 
 | Route | Answer | Refusals the page shows |
 |---|---|---|
@@ -32,18 +33,43 @@ method the architecture leaves open.
 | `POST /api/profiles/instance` `{id, server}` | 201 `{id}` | 422 `invalid-instance-profile-id` (field `id`), 409 `instance-profile-name-taken` (field `id`), 422 `no-server-profile-named` (field `server`) |
 | `GET /api/profiles/instance/{p}` | `{id, server, models: [{id, keys: <count of entry keys>}], usedBy: […], revision}` | 404 `no-instance-profile-named` |
 | `DELETE /api/profiles/instance/{p}` | 204 | 409 `instance-profile-in-use` `[instance]` |
-| `PUT /api/profiles/instance/{p}/server` `{server, revision}` | `{revision, running: [<instance id>…]}` | 422 `no-server-profile-named`, 422 `model-profile-device-outside` `[model, key, device]`, 409 `stale-revision` |
-| `POST /api/profiles/instance/{p}/models` `{model, revision}` (proposal: IP4 names `PUT .../models/{m}` for both the add and the entry's save) | `{revision, running: […]}` | 422 `no-model-profile-named`, 409 `instance-profile-model-listed` |
-| `DELETE /api/profiles/instance/{p}/models/{m}` | `{revision, running: […]}` | 404 `no-instance-profile-model` |
+| `PUT /api/profiles/instance/{p}/server` `{server}` (no revision) | `{running: [<instance id>…], notConverged: [{instance, key, args}…]}` | 422 `no-server-profile-named` (field `server`), 404 `no-instance-profile-named`. The device rule answers nothing: an instance that no longer fits is a `notConverged` row |
+| `POST /api/profiles/instance/{p}/models` `{model}` (no revision) | 201, the affected answer as above | 422 `no-model-profile-named` (field `model`), 409 `instance-profile-model-listed`, 404 |
+| `DELETE /api/profiles/instance/{p}/models/{m}` | the affected answer | 404 `no-instance-profile-model` |
 | `GET /api/profiles/instance/{p}/models/{m}` | `{profile: p, server, model: m, values: {<placement key>: <value>…}, revision}` | 404 as above |
-| `PUT /api/profiles/instance/{p}/models/{m}` `{values, revision}` | `{revision, running: […]}` | the moved keys' refusals, as the model profile save answered them before (ranges, tensor rules, `model-profile-device-outside`, the memory check per affected render), 409 `stale-revision` |
-| `PUT /api/instances/{id}/profile` `{instanceProfile}` | `{running: bool}` | 422 `no-instance-profile-named` |
-| `PUT /api/instances/{id}/address` `{hostname, port}` | `{running: bool}` | 409 `address-in-use` `[instance]`, 422 `invalid-port`, 422 `invalid-hostname` |
-| `POST /api/instances` `{id, instanceProfile}` | 201 `{id, port}` (the proposed free port from 8581) | as today, `no-server-profile-named` becoming `no-instance-profile-named` |
+| `PUT /api/profiles/instance/{p}/models/{m}` `{values, revision}` | `{revision, running: […], notConverged: […]}` | 404 `no-instance-profile-model`, 422 `model-profile-stay-key` `[key]`, the moved keys' value refusals (ranges, tensor rules, the enums), 409 `stale-revision`. The device and memory rules answer nothing: those instances are `notConverged` rows |
+| `PUT /api/instances/{id}/profile` `{instanceProfile}` (no revision) | the affected answer | 422 `no-instance-profile-named`, 409 `address-in-use` `[instance]` |
+| `PUT /api/instances/{id}/address` `{hostname, port}` (no revision) | the affected answer | 409 `address-in-use` `[instance]`, 422 `invalid-port`, 422 `invalid-hostname` |
+| `POST /api/instances` `{engine, id, instanceProfile}` | 201 `{id, port}` (the proposed free port from 8581) | 409 `instance-exists`, 422 `no-instance-profile-named`, 503 `no-free-port` |
+
+`running` is the instances that use the profile and are up, `notConverged` the instances the write
+leaves not yet fitted: the page's restart offer lists one button per `running` id and says the
+`notConverged` ones by their key (`ARCHITECTURE.md`, "Convergence"). Every one of them is an array:
+a reader tests `running.length`. The instance profile page's `revision` is a hash of that profile's
+own sections, and only the entry's save carries one.
 
 The entry page also reads `GET /api/profiles/model/{m}` (the files that enable fields: `model-draft`,
 `mmproj`), `GET /api/profiles/model/{m}/model-info`, `GET /api/node/devices` and
 `GET /api/profiles/server/{s}` (its `Devices`), as the model profile page read them before.
+
+## IP6a review: fixes for the next slice (designer, 2026-11-28)
+
+Measured on the IP6a build (`build/ux-review/ip6a/shots.js`, `nav.js`), Chromium 1280 and 320 px.
+
+- **R1** (26.1) The nav column is 248 px wide at 960 px and up (`index.css` `.layout`, was 224):
+  "Instance profiles" no longer fits beside its icon at 224 (the entry is 64 px high, its siblings
+  34); at 248 every Profiles entry is one 34 px line. `fe/DESIGN.md` 4 says 248 when it lands.
+- **R2** (26.2) Below 480 px the name cell's muted second line holds the server profile and the
+  model count (the server link, ` · `, then the count text of 26.2; no new key), and the Model profiles column hides as the Server profile column does. The link in it takes
+  `--muted`, so a row does not show two identical purple links.
+- **R3** (26.2) No cell of this table breaks inside a word at 320 px: the columns left (name, Used
+  by, trash) give the name about 110 px; the head reads "Instance profile", "Used by" on whole words.
+- **R5** (26.2, re-review) At 320 px the table is exactly as wide as its scroll box in every engine
+  (measured after round 1: box 286, table 287 in Chromium, 288.45 in Firefox and WebKit). The heads
+  wrap between whole words (`white-space: normal`, `overflow-wrap: normal`) and are not held to one
+  line: the one-line "Instance profile" head is what pushes the table past the box.
+- **R4** (26.4) `api-invalid-instance-profile-id` takes the text above (sentence case, a full stop,
+  no backticks).
 
 ## 1. The nav and the map
 
@@ -73,8 +99,8 @@ are as for the other two. `fe/DESIGN.md` 2.1 gains the row.
 | Actions | (visually hidden header as on the other lists) | the row's trash can |
 
 - Loading, failed and empty: `instance-profiles-loading`, `instance-profiles-failed`, and
-  `instance-profiles-empty` ("There are no instance profiles yet."), with the same skeleton,
-  message and retry as the server list.
+  `instance-profiles-empty` ("There are no instance profiles yet."), with the same skeleton and
+  message as the server list (which has no retry button).
 - Below 480 px the table needs no inner scroll: the Server profile column becomes a muted second
   line under the name, as D4.35 does for Engine.
 
@@ -100,7 +126,9 @@ are as for the other two. `fe/DESIGN.md` 2.1 gains the row.
 - Create, Cancel, the status and the alert follow the server profiles' create form (17b, 17b2).
 - Page checks, in order:
   - empty Name → `field-error-required`;
-  - Name invalid → `api-invalid-instance-profile-id`;
+  - Name invalid → `api-invalid-instance-profile-id` ("{0} cannot be an instance profile name: use
+    letters, digits, '.', '_' and '-', starting with a letter or a digit.", the shape of
+    `api-invalid-model-profile-id`);
   - Name taken (letter case aside) → `api-instance-profile-name-taken`;
   - no server profile chosen → `field-error-choose`.
 - A 201 goes to `#/profiles/instance/<id>`, with its `h1` focused.
@@ -386,9 +414,9 @@ Their tests move with their cards. Each brief gets a line at its top pointing he
    place for the list.
 5. **The add uses a select of the not-yet-listed profiles.** With none left, it points to the Model
    profiles page.
-6. **The add route is a proposal.** The page needs `POST .../models` for the add and `PUT
-   .../models/{m}` for the entry's values. IP4's list names `PUT` for both, so the coordinator
-   settles it with the architect.
+6. **The add route, settled by IP4 (60188bde).** The page has `POST .../models` for the add (a body
+   of `{model}`, its 201 answers the affected pair) and `PUT .../models/{m}` for the entry's values
+   (with its `revision`): the add and the save stay two routes, as this brief asked.
 
 ## 12. CP: every profile kind can be created as a copy (user, 2026-11-27)
 
