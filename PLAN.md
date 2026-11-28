@@ -1377,8 +1377,10 @@ business: agents get `CARGO_TARGET_DIR` from the gitignored `.claude/settings.lo
   `build/linux/config-build.toml` and `BuildDir` in `build\windows\config-build.psd1` (the one
   file that stays in the repo's `build/<os>`; blank: unset; relative: from the repo root);
   `util::build_root()` answers it, else `build/<os>`, so the llama.cpp clone, its CMake tree, the
-  sccache dir, the cargo target dir and the package staging all move with it; an exported
-  `CARGO_TARGET_DIR` still wins for the cargo target alone; `dist/` stays in the repo. Done when unit
+  sccache dir, the cargo target dir and the package staging all move with it; the cargo target is always
+  `<root>/cargo-target`, an exported `CARGO_TARGET_DIR` ignored as today (the coder found that letting it win
+  sends `xtask build`'s binaries where `xtask package` does not look, and the coordinator's own env
+  carries the agents' debug target); `dist/` stays in the repo. Done when unit
   tests pin the configured and default roots and a package test takes the binaries from a configured
   root. On this machine the coordinator then configures `~/.cache/private-ai/build-linux` and moves
   the existing clone, CMake tree and release build there rather than rebuilding them.
