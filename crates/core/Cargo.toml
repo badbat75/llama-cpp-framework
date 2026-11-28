@@ -13,12 +13,15 @@ doctest = false
 
 # `test-support`: the helpers the other crates' tests use (`paths::os_path`) and
 # the strings table a test reads (the GUI's file over `cli.toml`). Their
-# dev-dependencies turn it on; no shipped build has it.
+# dev-dependencies turn it on; no shipped build has it. It carries `tempfile`:
+# a crate that turns the feature on does not see the dev-dependency, and
+# `isolated` makes its child's data root with it.
 [features]
-test-support = []
+test-support = ["dep:tempfile"]
 
 [dependencies]
 if-addrs = "0.15"
+tempfile = { version = "3", optional = true }
 # The language files (strings.rs).
 toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
 # The manager's protocol over a byte stream (client/pipe.rs): one JSON message per frame.

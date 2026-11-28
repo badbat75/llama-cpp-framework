@@ -21,6 +21,10 @@ pub mod http;
 // `[<p>/<m>]` entries (ARCHITECTURE.md, "Instance profiles").
 pub mod ini;
 pub mod instance_profiles;
+// The isolated data-root test helper, for a test that needs the process-wide
+// redirect to itself (ARCHITECTURE.md, "Isolated data-root tests").
+#[cfg(any(test, feature = "test-support"))]
+pub mod isolated;
 pub mod launch;
 pub mod migrate;
 // The model data model's migration: today's pool, assignment and record texts
