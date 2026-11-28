@@ -4,6 +4,7 @@
 pub mod bff;
 mod control;
 pub mod hf;
+mod instance_pool;
 mod instance_profiles;
 mod instances;
 pub mod listen;
@@ -299,7 +300,9 @@ pub fn router_with_session_and_roots(
 /// longer limit: the server file's save, the model profile save and the model profile switch
 /// run under `write_timeout`, as do the model profile create and removal, the
 /// server profile pool's create and removal, the instance create and removal,
-/// the three association writes (`instance_profiles.rs`), the control verbs,
+/// the instance profile pool's create, removal, server switch, entry add, save
+/// and removal (`instance_pool::routes`), the three association writes
+/// (`instance_profiles.rs`), the control verbs,
 /// the boot write and the tags write (`control::routes` takes both limits);
 /// every read keeps `timeout`, the boot read among them. A
 /// manager busy writing is not cut off at the limit that is right for a read.
@@ -490,6 +493,12 @@ fn router_with_policy(
             sessions.clone(),
         ))
         .merge(instance_profiles::routes(
+            connect.clone(),
+            timeout,
+            write_timeout,
+            sessions.clone(),
+        ))
+        .merge(instance_pool::routes(
             connect.clone(),
             timeout,
             write_timeout,

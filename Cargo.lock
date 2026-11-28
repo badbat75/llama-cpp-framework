@@ -3541,6 +3541,7 @@ dependencies = [
  "nix",
  "pai-core",
  "serde_json",
+ "sha2",
  "siphasher",
  "tempfile",
  "tokio",

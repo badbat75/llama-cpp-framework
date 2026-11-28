@@ -37,6 +37,10 @@ getrandom = { version = "0.3.4", features = ["std"] }
 # The server file's revision (server.rs): SipHash-2-4, keyed by the secret
 # drawn above; the version already in the lock.
 siphasher = "1.0.4"
+# The instance profile's revision (instance_pool.rs): SHA-256 in lowercase hex
+# of the profile's own sections, the hash the entry save compares and answers;
+# the version already in the lock (pai-manager's apply digest).
+sha2 = "0.10"
 
 # This machine's own names (listen.rs): `gethostname(2)`, there being no file
 # that is the host name; the version already in the lock (pai-manager's
