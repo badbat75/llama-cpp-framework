@@ -95,6 +95,8 @@ The user runs the full suite, once, on the main branch after the merge and befor
 
 **Test first, always.** Write a failing test, run it and see it fail, then write the code. A change without a test that failed first is not done. Tests never touch real systems or real data: the configurator's tests redirect the whole data tree with `PRIVATE_AI_DATA_ROOT`.
 
+**Ask the coordinator before touching the shared tree's state.** Several agents work in the same checkout at once, so `git checkout`, `git restore`, `git stash`, `git reset` or any other command that rewrites tracked files you did not edit can wipe another agent's uncommitted work. Before running one, stop and ask the coordinator in your report, naming the files and why (user, 2026-11-28). Undo your own edit by editing it back. To compare with HEAD, use a `git worktree add` of your own, never the shared tree.
+
 **Keep it simple.** Minimum that solves the problem, no speculative options or abstractions.
 
 **Facts need a source.** Check commands, APIs and limits against official documentation or a real run. In the docs, keep what was measured, read in a source and assumed apart. Mark guesses as guesses. A measured value names its campaign in bench.db.
