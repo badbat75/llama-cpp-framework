@@ -136,6 +136,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Seed an instance profile through its verbs (`create_instance_profile`, `add_instance_profile_model`,
   `set_instance_profile_model`), never `write_file_if` of `instance-profiles.ini`: the served write has no
   arm for a file the manager writes itself, so a hand-written second profile never arrives.
+- A revision-checked manager write takes the text of the file IT rewrites: `set_instance_profile`'s revision
+  is `instance-profiles.ini` (the profile's own pool), not `instances.ini` (the record) — handing it the
+  record answers `Changed` before touching anything (IP4a probe 2026-11-28). `set_instance_address` is the
+  one that takes the record.
+- A served manager verb's ONLY authorization is its `self.authorize_as(&who, Action::…)?` line: with no
+  principal it delegates to `authorize` (polkit), so a mutant that drops that line unhooks the PLAIN
+  caller's refusal too, and the plain pins red beside the `As` ones (IP4a review, 2026-11-28). The
+  transport arm adds nothing (`requester_as` only builds the `Requester`).
 - Prove a test exists with `-- --list | grep -c "^<name>:"`, never by running it.
 - Judge red from the OUTPUT (`FAILED`, `panicked at`), never the exit code.
 
@@ -214,6 +222,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (own snapshot reads, cleanup tolerant of files a deleted pin created).
 - Reproduce a reported test-side red SOLO in the tree as it stands first: most "red left in the tests"
   claims are stale test code, and fixing it is the tester's.
+- To show a LATER pin's teeth when the one sequential `data_root_e2e` prints ONE panic, gate the earlier
+  block out of the real source and rerun: a self-contained `{ … }` pin block (a tail of its phase fn) is
+  gated by prefixing each of its lines with `//` and restored from a copy with `cmp -s` proving it. The
+  splice is `lines[:start] + [B] + lines[start:end] + [E] + lines[end:]`: a wrap built in the other order
+  DUPLICATES the block, and the copy inside `if false` dies `E0425` on names declared in it. A wrap must
+  include the block's own closing `    }`, leaving it live is `unexpected closing delimiter: }`.
+- Quicker and exact for fmt on a dirty tree: format a COPY (`rustfmt --edition 2021 <copy>`) and splice its
+  tail region into the live file. `rustfmt --edition 2021 --stdout <file>` runs as a CHECK (exit 1, prints a
+  diff, nothing on stdout), so it cannot hand back formatted text.
 - Never run `cargo fmt -p <crate>` (without `--check`) when the tree carries other roles' uncommitted
   lines. List the hunks with `--check | grep '^Diff in'`, hand-apply your own, and prove with `--check`
   answering 0 and a `git status --porcelain` before/after diff. Where only Rust lines are yours,
@@ -699,7 +716,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `1a strings` pins exactly what the brief dictates; read the wording-free keys from `strings/en_US.json`
   itself (an `en_US.json` import plus a `words(key, …)` that substitutes `{0}`), and keep a `KEYS` list of
   every key the suite reads in a final test that names the ones the file lacks. Then a missing key reddens
-  one named test, and any words the coder chose are green.
+  one named test, and any words the coder chose are green. The shared `App.test.tsx` `1a strings` census
+  reads that mirror, so it reddens with THE SLICE'S keys, listing them all in one assertion message: report
+  it as the slice's list, not a foreign red.
 - Register a new route of the fake BEFORE an existing block that matches with `path.endsWith(...)`: the
   older block answers the new path first, and its call counter counts it too (the server-profile PUT
   counter ending `/server` took `PUT /api/instances/{id}/profiles/server`), so the red is a missing answer
@@ -745,6 +764,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - Never query before the async read settles: add an async finder, settle signed-out states by the sign-in
   `h1`, and settle on the page's `h1` before asserting loading text.
+- The `sent*` helpers of a page suite (this file's `sentSwitch/sentAdd/sentRemove`, filtering `bff.calls`
+  by method and path) pin "exactly one was sent" with `toHaveLength(1)`: that pin holds ONCE per test,
+  since the NEXT action appends a call, so verify a later step by reading `bff.calls` (or `.at(-1)`) fresh.
+  The same for a fixture's read-answer closure (`readsInOrder`): it counts the reads and repeats its LAST
+  row, so a test that expects the page to re-read twice gets the same document both times.
 - A file's `loaded()` helper that waits for the page's `table` cannot open the EMPTY state (no table ever
   lands, so its `waitFor` times out as "expected null not to be null"): open the page and settle on the
   state's own text, `await findByText(en('<x>-empty'))`. The same for a page's own loading line: while the
@@ -1207,6 +1231,12 @@ frozen list.
   whole to a line of its own, the sheet's icon rule), and call the group's pills one line each when their
   `getBoundingClientRect().height` values agree. Probes run in the MAIN pass only (the text pass reads
   `scrollWidth` alone), so a probe never reddens at 200 % text.
+- A text rule over a SECTION (no cell breaks mid-word, R7 of brief 26) reads the section, not one cell:
+  find the `h2` whose text is `S['<section-key>']` and take its `closest('section')`, then walk EVERY text
+  node in it. Allow a break after ` `, `-`, `.` and `_`, so an id that breaks at its own punctuation is
+  green, and the rule passes on a folded layout where the section is the page, which is where it bites.
+  Name each finding with the nearest `th, td, li, p`'s words (`word(cell).slice(0, 24)`) plus the rule
+  tag, else the report is unreadable.
 - Probe one state in seconds instead of the 5 minute full run: a temp `.cjs` INSIDE `fe/ux/` (`playwright`
   resolves only from there, a `/tmp/opencode/x.cjs` dies `Cannot find module 'playwright'`), spawning
   `python3 -I fe/ux/stub.py <abs fe/dist> 0` and taking its port from a stdout `data` listener (a
@@ -1226,9 +1256,14 @@ frozen list.
   points, so the cell is at its narrowest where the id has to break.
 - `npx --prefix fe prettier --write fe/ux/check.js` is right (`fe/.prettierrc.json` is found from the
   file's own path, `fe/.prettierignore` keeps `ux/` out of `format:check`). Prove it moves no foreign line
-  by formatting a copy of `git show HEAD:fe/ux/check.js` placed INSIDE `fe/ux/` and diffing it (0 lines).
-  Formatting that copy outside `fe/` (in `/tmp`) applies Prettier's defaults, double quotes and semicolons,
-  1014 changed lines, which reads as you having reformatted the whole harness.
+  by formatting a copy of `git show HEAD:fe/ux/check.js` placed INSIDE `fe/ux/` and diffing it: expect a
+  FEW hunks, not none, because `HEAD` is not prettier-clean (`format:check` never reads `ux/`), and a long
+  `push(` of a template with interpolations is one of them, split into 3 lines. Revert every hunk outside
+  your own lines. Keep a probe's finding template SHORT (the interpolated text in a variable, the sentence
+  split across `+`-joined templates under 80 columns): prettier cannot break a long template, so `--write`
+  rewrites your line, and joining two templates concatenates their text (that is how a doubled `"` landed
+  in one finding). Formatting a copy outside `fe/` (in `/tmp`) applies Prettier's defaults, double quotes
+  and semicolons, 1014 changed lines, which reads as you having reformatted the whole harness.
 
 ### Behaviour that cannot run here
 

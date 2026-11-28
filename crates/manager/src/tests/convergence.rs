@@ -169,12 +169,12 @@ fn save_profiles(
     pairs: &[(String, String)],
 ) -> Result<Affected, ManagerError> {
     let mut last: Option<Result<Affected, ManagerError>> = None;
-    for (profile, instance) in [("desk-gpu", "desk"), ("lab-gpu", "lab")] {
+    for profile in ["desk-gpu", "lab-gpu"] {
         let revision = m
             .instance_profile(who, profile)
             .expect("IP3c: the fixture's record names an instance profile")
             .revision;
-        last = Some(m.set_instance_profile_model(who, profile, model, instance, pairs, &revision));
+        last = Some(m.set_instance_profile_model(who, profile, model, pairs, &revision));
         if last.as_ref().is_some_and(|a| a.is_err()) {
             break;
         }
@@ -782,7 +782,7 @@ pub(crate) fn ip3c_saves_answer_convergence_e2e() {
         "the entry save",
         &["desk"],
         json!({"method": "SetInstanceProfileModel", "profile": "desk-gpu", "model": "alpha",
-               "instance": "desk", "values": {"ctx-size": "32768"}, "revision": profiles()}),
+               "values": [{"key": "ctx-size", "value": "32768"}], "revision": profiles()}),
     );
     assert!(
         pai_core::ini::text::section_text(&profiles(), "desk-gpu/alpha")
@@ -914,7 +914,6 @@ pub(crate) fn ip3c_saves_answer_convergence_e2e() {
             &(
                 "desk-gpu".to_string(),
                 "alpha".to_string(),
-                "desk".to_string(),
                 vec![("ctx-size".to_string(), "65536".to_string())],
                 revision(),
             ),
@@ -973,7 +972,6 @@ pub(crate) fn ip3c_saves_answer_convergence_e2e() {
         &alice,
         "fast",
         "alpha",
-        "desk",
         &vals(&[("ctx-size", "65536")]),
         &profiles(),
     )
@@ -1331,7 +1329,7 @@ pub(crate) fn ip3c_two_profiles_one_entry_two_card_sets_e2e() {
     // The entry save of ONE profile: the entry of `desk-gpu` moves only `desk`'s
     // render and the entry of `lab-gpu` only `lab`'s, so each save answers the
     // instance that runs the profile it wrote.
-    let save_one = |profile: &str, instance: &str, device: &str| {
+    let save_one = |profile: &str, device: &str| {
         let revision = m
             .instance_profile(&alice, profile)
             .expect("IP3c review 3: the read")
@@ -1340,7 +1338,6 @@ pub(crate) fn ip3c_two_profiles_one_entry_two_card_sets_e2e() {
             &alice,
             profile,
             "alpha",
-            instance,
             &vals(&[("ctx-size", "1024"), ("device-draft", device)]),
             &revision,
         )
@@ -1356,7 +1353,7 @@ pub(crate) fn ip3c_two_profiles_one_entry_two_card_sets_e2e() {
     // ── 3a. The entry names `desk`'s card, on both profiles: `desk` lands,
     // ── `lab` keeps ────────────────────────────────────────────────────────
     let lab = pair_bytes(&sys, "lab");
-    let desk_answer = save_one("desk-gpu", "desk", "CUDA0");
+    let desk_answer = save_one("desk-gpu", "CUDA0");
     assert_eq!(
         desk_answer.running,
         vec!["desk".to_string()],
@@ -1368,7 +1365,7 @@ pub(crate) fn ip3c_two_profiles_one_entry_two_card_sets_e2e() {
         "IP3c review 3: the save of the fitting profile's entry leaves nobody not \
          converged: {desk_answer:?}"
     );
-    let lab_answer = save_one("lab-gpu", "lab", "CUDA0");
+    let lab_answer = save_one("lab-gpu", "CUDA0");
     assert_eq!(
         rows(&lab_answer),
         vec![(
@@ -1403,7 +1400,7 @@ pub(crate) fn ip3c_two_profiles_one_entry_two_card_sets_e2e() {
     // ── 3b. The same save names `lab`'s card, on both profiles: the roles
     // ── swap ──────────────────────────────────────────────────────────────
     let desk = pair_bytes(&sys, "desk");
-    let desk_answer = save_one("desk-gpu", "desk", "CUDA1");
+    let desk_answer = save_one("desk-gpu", "CUDA1");
     assert_eq!(
         desk_answer.running,
         vec!["desk".to_string()],
@@ -1428,7 +1425,7 @@ pub(crate) fn ip3c_two_profiles_one_entry_two_card_sets_e2e() {
          on `desk`'s profile stops `desk`, and `lab`'s entry from 3a still stands on \
          `desk`'s card, so the pass reports both: {desk_answer:?}"
     );
-    let lab_answer = save_one("lab-gpu", "lab", "CUDA1");
+    let lab_answer = save_one("lab-gpu", "CUDA1");
     assert!(
         lab_answer.running.is_empty(),
         "IP3c review 3: the save walks the profile `lab` runs, `lab` recorded no \
@@ -1891,7 +1888,7 @@ pub(crate) fn ip3c_startup_is_a_fit_check_e2e() {
         &m,
         &alice,
         json!({"method": "SetInstanceProfileModel", "profile": "desk-gpu", "model": "beta",
-               "instance": "desk", "values": {"load-on-startup": "true"},
+               "values": [{"key": "load-on-startup", "value": "true"}],
                "revision": m
                    .instance_profile(&alice, "desk-gpu")
                    .expect("IP3c review 7: the read")

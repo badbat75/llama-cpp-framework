@@ -53,7 +53,9 @@ use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::checks::Refusal;
-use pai_core::client::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{
+    Affected, ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
+};
 use pai_core::ini;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -412,10 +414,10 @@ impl ManagerClient for FakeManager {
         name: &str,
         contents: &str,
         _expected: &str,
-    ) -> Result<(), ClientError> {
+    ) -> Result<Affected, ClientError> {
         self.record(format!("write-if {name}"));
         self.files().insert(name.to_string(), contents.to_string());
-        Ok(())
+        Ok(Affected::default())
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         self.record(format!("boot {id}"));

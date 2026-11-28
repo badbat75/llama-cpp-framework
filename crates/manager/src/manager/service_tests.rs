@@ -18034,7 +18034,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
     };
     let section =
         |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
-    let refused = |key: &'static str, values: &[&str]| -> Result<(), ManagerError> {
+    let refused = |key: &'static str, values: &[&str]| -> Result<Affected, ManagerError> {
         Err(ManagerError::Invalid(pai_core::checks::Refusal {
             key,
             values: values.iter().map(|v| v.to_string()).collect(),
@@ -18275,7 +18275,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         // section ignoring the letter case, so one copy left would be the same
         // profile.
         assert_eq!(
-            m.delete_model_profile(&desktop, "repeated"),
+            m.delete_model_profile(&desktop, "repeated").map(|_| ()),
             Ok(()),
             "a profile no entry lists, in the one pool"
         );
@@ -18350,7 +18350,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
 
         // The id in the other case, and a file whose last line has no ending.
         assert_eq!(
-            m.delete_model_profile(&desktop, "STAR-SERVED"),
+            m.delete_model_profile(&desktop, "STAR-SERVED").map(|_| ()),
             Ok(()),
             "the id given in the other letter case is the same profile"
         );
@@ -18365,7 +18365,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         std::fs::write(sys.join("models.ini"), "[Last]\nmodel = /m/last.gguf")
             .expect("an unterminated pool");
         assert_eq!(
-            m.delete_model_profile(&desktop, "last"),
+            m.delete_model_profile(&desktop, "last").map(|_| ()),
             Ok(()),
             "the only profile of the pool"
         );
@@ -18379,7 +18379,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         let crlf_seed = "[Keep]\r\nmodel = /m/keep.gguf\r\n\r\n[Crlf]\r\nmodel = /m/crlf.gguf\r\n";
         std::fs::write(sys.join("models.ini"), crlf_seed).expect("a CRLF pool");
         assert_eq!(
-            m.delete_model_profile(&desktop, "crlf"),
+            m.delete_model_profile(&desktop, "crlf").map(|_| ()),
             Ok(()),
             "a delete from a pool a hand edit wrote with CRLF"
         );
@@ -18451,7 +18451,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
         );
 
         assert_eq!(
-            m.delete_model_profile(&desktop, "on-one"),
+            m.delete_model_profile(&desktop, "on-one").map(|_| ()),
             Ok(()),
             "a model no entry lists any more"
         );
@@ -18528,7 +18528,7 @@ pub(crate) fn manager_model_profile_delete_e2e() {
             principal: Some(Principal("alice".into())),
         };
         assert_eq!(
-            m.delete_model_profile(&member, "star-served"),
+            m.delete_model_profile(&member, "star-served").map(|_| ()),
             Ok(()),
             "the bff's account, for a member of `pai`"
         );

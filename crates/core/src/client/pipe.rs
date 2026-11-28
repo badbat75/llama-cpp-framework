@@ -95,8 +95,11 @@
 //!                                           WriteFileIf, SetModelProfile,
 //!                                           SetServerProfile,
 //!                                           SetInstanceProfile,
-//!                                           SetInstanceAddress): running, the
-//!                                           instances the save moved to a
+//!                                           SetInstanceAddress, the model
+//!                                           profile delete, the entry add,
+//!                                           remove and save, and the server
+//!                                           profile switch, IP4a): running,
+//!                                           the instances the save moved to a
 //!                                           restart; notConverged, the
 //!                                           instances that kept their last
 //!                                           good pair, each with the check
@@ -107,10 +110,10 @@
 //! ```
 
 use super::{
-    ClientError, DeviceInfo, InstanceInfo, InstanceProfileInfo, InstanceState, ManagerClient,
-    ManagerFile, ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply,
-    ModelProfileSource, NodeDevices, NodeInfoReply, NotConverged, Reason, ServerProfileInfo,
-    TensorRow,
+    Affected, ClientError, DeviceInfo, InstanceInfo, InstanceProfileInfo, InstanceState,
+    ManagerClient, ManagerFile, ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply,
+    ModelInfoReply, ModelProfileSource, NodeDevices, NodeInfoReply, NotConverged, NotConvergedRow,
+    Reason, ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu};
@@ -270,6 +273,53 @@ impl<S: Read + Write> PipeClient<S> {
     }
 }
 
+/// The answer of a save that re-renders, as the frame carries it (IP3c,
+/// `ARCHITECTURE.md` "Convergence", read back by IP4a): `running`, the ids of
+/// the running instances the write left drifting, and `notConverged`, one
+/// `{instance, key, args}` row per instance that kept its last good pair. The
+/// two fields are the shape every such save answers, so a reply that carries
+/// neither list is no answer: the rows are never read out of an answer that has
+/// none. A row's own fields are read by name, as the row of `Instances` reads
+/// its `reason`.
+fn affected_of(v: &Value) -> Result<Affected, ClientError> {
+    let list = |name: &str| -> Result<&Vec<Value>, ClientError> {
+        v.get(name)
+            .and_then(Value::as_array)
+            .ok_or_else(|| ClientError::Other(format!("the answer carries no {name}: {v}")))
+    };
+    let bad = || ClientError::Other(v.to_string());
+    let running = list("running")?
+        .iter()
+        .map(|id| id.as_str().map(str::to_string).ok_or_else(bad))
+        .collect::<Result<Vec<String>, ClientError>>()?;
+    let mut not_converged = Vec::new();
+    for row in list("notConverged")? {
+        let text = |key: &str| -> String {
+            row.get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        not_converged.push(NotConvergedRow {
+            instance: text("instance"),
+            key: text("key"),
+            args: row
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|args| {
+                    args.iter()
+                        .filter_map(|a| a.as_str().map(str::to_string))
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default(),
+        });
+    }
+    Ok(Affected {
+        running,
+        not_converged,
+    })
+}
+
 /// One instance profile row of the frame reply, as the stream answers it: `server_profile`, `entries`, and the pool's text as
 /// `revision`, which only `GetInstanceProfile` carries (the pool has one
 /// text, not one per row). A row of the wrong shape is no answer.
@@ -370,20 +420,24 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             ],
         ))
     }
-    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+    fn write_file_if(
+        &self,
+        name: &str,
+        contents: &str,
+        expected: &str,
+    ) -> Result<Affected, ClientError> {
         // The compare and swap is a save that re-renders, so it answers the apply
         // (IP3c): the running instances the write moved to a restart, beside the
-        // instances that kept their last good pair. The verb reads the reply's
-        // error alone, like the unit verbs beside it.
-        self.call(self.guarded(
+        // instances that kept their last good pair.
+        let reply = self.call(self.guarded(
             "WriteFileIf",
             &[
                 ("name", json!(name)),
                 ("contents", json!(contents)),
                 ("expected", json!(expected)),
             ],
-        ))
-        .map(|_| ())
+        ))?;
+        affected_of(&reply)
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         match self.call(json!({"method": "BootEnabled", "id": id}))? {
@@ -471,8 +525,11 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         ))
     }
 
-    fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
-        self.call_unit(self.guarded("DeleteModelProfile", &[("profile", json!(profile))]))
+    fn delete_model_profile(&self, profile: &str) -> Result<Affected, ClientError> {
+        // The delete re-renders, so it answers the apply (IP4a).
+        let reply =
+            self.call(self.guarded("DeleteModelProfile", &[("profile", json!(profile))]))?;
+        affected_of(&reply)
     }
 
     /// `CreateInstance`: the three names the manager's rule asks for, the
@@ -528,40 +585,90 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
     fn delete_instance_profile(&self, profile: &str) -> Result<(), ClientError> {
         self.call_unit(self.guarded("DeleteInstanceProfile", &[("profile", json!(profile))]))
     }
-    fn add_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+    fn add_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+    ) -> Result<Affected, ClientError> {
         // The apply's answer (IP3c): the running instances the write moved to a
-        // restart, and the instances that kept their last good pair. The verb
-        // reads the reply's error alone, like the unit verbs beside it.
-        self.call(self.guarded(
+        // restart, and the instances that kept their last good pair.
+        let reply = self.call(self.guarded(
             "AddInstanceProfileModel",
             &[("profile", json!(profile)), ("model", json!(model))],
-        ))
-        .map(|_| ())
+        ))?;
+        affected_of(&reply)
     }
-    fn remove_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
-        self.call(self.guarded(
+    fn remove_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+    ) -> Result<Affected, ClientError> {
+        let reply = self.call(self.guarded(
             "RemoveInstanceProfileModel",
             &[("profile", json!(profile)), ("model", json!(model))],
-        ))
-        .map(|_| ())
+        ))?;
+        affected_of(&reply)
+    }
+    /// `set_instance_profile_model` (IP4a): the entry whole as
+    /// `[{key, value}, …]`, beside the revision it swaps against. The list keeps
+    /// the order the page sent its keys in, which a JSON object of them would
+    /// not: the entry holds its keys as the page sent them.
+    fn set_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+        values: &[(String, String)],
+        revision: &str,
+    ) -> Result<Affected, ClientError> {
+        let entry: Vec<Value> = values
+            .iter()
+            .map(|(key, value)| json!({"key": key, "value": value}))
+            .collect();
+        let reply = self.call(self.guarded(
+            "SetInstanceProfileModel",
+            &[
+                ("profile", json!(profile)),
+                ("model", json!(model)),
+                ("values", json!(entry)),
+                ("revision", json!(revision)),
+            ],
+        ))?;
+        affected_of(&reply)
+    }
+    /// `set_instance_profile_server` (IP4a): the switch of an instance profile to
+    /// another server profile, whose rows include the instances whose card the
+    /// switch took away.
+    fn set_instance_profile_server(
+        &self,
+        profile: &str,
+        server_profile: &str,
+    ) -> Result<Affected, ClientError> {
+        let reply = self.call(self.guarded(
+            "SetInstanceProfileServer",
+            &[
+                ("profile", json!(profile)),
+                ("server_profile", json!(server_profile)),
+            ],
+        ))?;
+        affected_of(&reply)
     }
     fn set_instance_profile(
         &self,
         instance: &str,
         profile: &str,
         revision: &str,
-    ) -> Result<(), ClientError> {
+    ) -> Result<Affected, ClientError> {
         // The record's two writes are saves that re-render, so they answer the
-        // apply too (IP3c), read the same way.
-        self.call(self.guarded(
+        // apply too (IP3c).
+        let reply = self.call(self.guarded(
             "SetInstanceProfile",
             &[
                 ("instance", json!(instance)),
                 ("profile", json!(profile)),
                 ("revision", json!(revision)),
             ],
-        ))
-        .map(|_| ())
+        ))?;
+        affected_of(&reply)
     }
     fn set_instance_address(
         &self,
@@ -569,8 +676,8 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         host: &str,
         port: &str,
         revision: &str,
-    ) -> Result<(), ClientError> {
-        self.call(self.guarded(
+    ) -> Result<Affected, ClientError> {
+        let reply = self.call(self.guarded(
             "SetInstanceAddress",
             &[
                 ("instance", json!(instance)),
@@ -578,8 +685,8 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                 ("port", json!(port)),
                 ("revision", json!(revision)),
             ],
-        ))
-        .map(|_| ())
+        ))?;
+        affected_of(&reply)
     }
 
     fn remove_instance(&self, id: &str) -> Result<(), ClientError> {

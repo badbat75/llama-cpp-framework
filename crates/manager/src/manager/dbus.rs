@@ -1088,52 +1088,81 @@ where
     }
 
     /// `SetInstanceProfileModel`: the keys of one entry of an instance profile,
-    /// `(sss a(ss) s)`: the profile, the model, the instance whose page the
-    /// entry is written from, the entry's keys as they were sent, and the
-    /// revision, the text of `instance-profiles.ini` the caller read. The entry
-    /// lands in the render of every instance running the profile; the instance
-    /// the page names is checked to be one the record has a section for, the
-    /// same answer the record's own verbs give for a name it does not list
-    /// ([`ManagerError::NoInstance`]). The reply is the apply's rows
-    /// ([`affected_answer`], IP3c): the running instances the save moved to a
-    /// restart, and the instances that kept their last good pair.
+    /// `(ssa(ss)s)`: the profile, the model, the entry's keys as they were
+    /// sent, and the revision, the text of `instance-profiles.ini` the caller
+    /// read. The entry belongs to the profile (IP4): it lands in the render of
+    /// every instance running the profile, so the save names no instance. The
+    /// reply is the apply's rows ([`affected_answer`], IP3c): the running
+    /// instances the save moved to a restart, and the instances that kept their
+    /// last good pair.
     async fn set_instance_profile_model(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
         profile: String,
         model: String,
-        instance: String,
         values: Vec<(String, String)>,
         revision: String,
     ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
         Ok(affected_answer(
             self.core(move |m| {
-                m.set_instance_profile_model(&who, &profile, &model, &instance, &values, &revision)
+                m.set_instance_profile_model(&who, &profile, &model, &values, &revision)
             })
             .await?,
         ))
     }
 
     /// `SetInstanceProfileModel` for `principal`, the principal first
-    /// (`ssssa(ss)s`).
-    #[allow(clippy::too_many_arguments)]
+    /// (`sssa(ss)s`).
     async fn set_instance_profile_model_as(
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
         principal: String,
         profile: String,
         model: String,
-        instance: String,
         values: Vec<(String, String)>,
         revision: String,
     ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
         Ok(affected_answer(
             self.core(move |m| {
-                m.set_instance_profile_model(&who, &profile, &model, &instance, &values, &revision)
+                m.set_instance_profile_model(&who, &profile, &model, &values, &revision)
             })
             .await?,
+        ))
+    }
+
+    /// `SetInstanceProfileServer`: points an instance profile at another server
+    /// profile, `(ss)`: the profile and the server profile. The switch moves the
+    /// ground of every entry of the profile, so it answers the apply's rows
+    /// ([`affected_answer`], IP4a), the instances whose card the switch took
+    /// away among them.
+    async fn set_instance_profile_server(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+        server_profile: String,
+    ) -> Result<AffectedAnswer, Error> {
+        let who = requester_of(&header)?;
+        Ok(affected_answer(
+            self.core(move |m| m.set_instance_profile_server(&who, &profile, &server_profile))
+                .await?,
+        ))
+    }
+
+    /// `SetInstanceProfileServer` for `principal`, the principal first
+    /// (`sss`).
+    async fn set_instance_profile_server_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+        server_profile: String,
+    ) -> Result<AffectedAnswer, Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(affected_answer(
+            self.core(move |m| m.set_instance_profile_server(&who, &profile, &server_profile))
+                .await?,
         ))
     }
 
@@ -1299,11 +1328,12 @@ where
         &self,
         #[zbus(header)] header: zbus::message::Header<'_>,
         profile: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
-        Ok(self
-            .core(move |m| m.delete_model_profile(&who, &profile))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.delete_model_profile(&who, &profile))
+                .await?,
+        ))
     }
 
     /// `DeleteModelProfile` for `principal`, the principal first (`ss`).
@@ -1312,11 +1342,12 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         principal: String,
         profile: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
-        Ok(self
-            .core(move |m| m.delete_model_profile(&who, &profile))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.delete_model_profile(&who, &profile))
+                .await?,
+        ))
     }
 
     /// `ReadFile` for `principal`. The reply has the plain method's shape;

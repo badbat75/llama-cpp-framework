@@ -115,7 +115,7 @@ use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::checks::Refusal;
-use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{Affected, ClientError, InstanceState, ManagerClient, ManagerFile};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -442,7 +442,12 @@ impl ManagerClient for FakeManager {
         }
         self.file.clone()
     }
-    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+    fn write_file_if(
+        &self,
+        name: &str,
+        contents: &str,
+        expected: &str,
+    ) -> Result<Affected, ClientError> {
         let principal = self.as_user.clone().unwrap_or_default();
         self.record(format!("write-if {principal} {name}"));
         self.live
@@ -484,7 +489,7 @@ impl ManagerClient for FakeManager {
             return Err(ClientError::Changed);
         }
         files.insert(name.to_string(), contents.to_string());
-        Ok(())
+        Ok(Affected::default())
     }
     fn list_instances(&self) -> Result<Vec<String>, ClientError> {
         self.record("list".into());

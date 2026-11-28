@@ -99,7 +99,9 @@ use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::checks::Refusal;
-use pai_core::client::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{
+    Affected, ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -562,7 +564,12 @@ impl ManagerClient for FakeManager {
     /// the file still holds the text the caller read. A file that is not
     /// there is `Changed` (that is why a missing disabled file is created
     /// with `write_file`, not with this).
-    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+    fn write_file_if(
+        &self,
+        name: &str,
+        contents: &str,
+        expected: &str,
+    ) -> Result<Affected, ClientError> {
         let principal = self.as_user.clone().unwrap_or_default();
         self.record(format!("write-if {principal} {name}"));
         let position = self.live.write_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -591,7 +598,7 @@ impl ManagerClient for FakeManager {
         match files.get(name) {
             Some(current) if current == expected => {
                 files.insert(name.to_string(), contents.to_string());
-                Ok(())
+                Ok(Affected::default())
             }
             // The file moved, or is not there: the manager wrote nothing.
             _ => Err(ClientError::Changed),

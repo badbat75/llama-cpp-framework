@@ -1694,9 +1694,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         &self,
         who: &W,
         profile: &str,
-    ) -> Result<(), ManagerError> {
+    ) -> Result<Affected, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<Affected, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
@@ -1742,9 +1742,11 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 MODEL_FILES_JUDGE,
                 PLACEMENT_SKIP,
             )
-            // The delete answers nothing: the profile it named is gone, so no
-            // page is left to offer a restart (IP3c).
-            .map(|_| ())
+            // The delete is a save that re-renders, so it answers the apply like
+            // every one of them (IP4a): the running instances the write left
+            // drifting, beside the rows of every instance whose pair the write
+            // did not leave ([`Self::affected_of`]).
+            .and_then(|pass| Ok(self.affected_of(&pass, self.drift_running()?)))
         };
         let answer = run();
         self.record_action("delete_model_profile", profile, Some(&who), &answer);
@@ -2384,26 +2386,19 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// `pai`, one record of the action log per call.
     /// Answers [`Affected`], as every save that re-renders does: the running
     /// instances the write left drifting, beside the rows of every instance whose
-    /// pair the write did not leave ([`Self::affected_of`], IP3c). The instance
-    /// the page names is checked to be one the record lists, the same answer
-    /// every verb that reads the record gives for a name it does not carry
-    /// ([`ManagerError::NoInstance`]): the page's revision is the pool's text, so
-    /// the instance is the one fact of the page the write cannot read back from
-    /// the pool. Checked before the gate, as the transports checked it before.
+    /// pair the write did not leave ([`Self::affected_of`], IP3c). The save names
+    /// no instance (IP4): the entry belongs to the profile, the page's revision
+    /// is the pool's text, and every instance running the profile renders again.
     pub fn set_instance_profile_model<W: AsRequester>(
         &self,
         who: &W,
         profile: &str,
         model: &str,
-        instance: &str,
         values: &[(String, String)],
         revision: &str,
     ) -> Result<Affected, ManagerError> {
         let who = who.as_requester();
         let run = || -> Result<Affected, ManagerError> {
-            if !crate::paths::instance_ids().iter().any(|id| id == instance) {
-                return Err(ManagerError::NoInstance);
-            }
             self.authorize_as(&who, Action::Configure)?;
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
@@ -2445,8 +2440,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     }
 
     /// Points the instance profile `profile` at the server profile
-    /// `server_profile`, and answers the running instances the switch left
-    /// running a pair that is not the pair on disk: the switch moves the ground
+    /// `server_profile`, and answers [`Affected`] as every save that re-renders
+    /// does (IP4a): the running instances the switch left running a pair that is
+    /// not the pair on disk, beside the rows of the instances whose render the
+    /// switch stopped ([`Self::affected_of`], IP3c). The switch moves the ground
     /// of every entry of the profile at once, so every instance running it
     /// renders again, and the fit of each render is that instance's own
     /// (`ARCHITECTURE.md` "Convergence": a switch that takes a card an entry
@@ -2461,9 +2458,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         who: &W,
         profile: &str,
         server_profile: &str,
-    ) -> Result<Vec<String>, ManagerError> {
+    ) -> Result<Affected, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<Vec<String>, ManagerError> {
+        let run = || -> Result<Affected, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
@@ -2480,7 +2477,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 &text,
                 &pai_core::ini::text::set_key(&text, profile, "ServerProfile", server_profile),
             )
-            .and_then(|_| self.drift_running_using_profile(profile))
+            .and_then(|pass| {
+                Ok(self.affected_of(&pass, self.drift_running_using_profile(profile)?))
+            })
         };
         let answer = run();
         self.record_action("set_instance_profile_server", profile, Some(&who), &answer);

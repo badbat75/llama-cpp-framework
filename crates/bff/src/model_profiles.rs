@@ -548,7 +548,9 @@ fn switch(
     match destination_text {
         // The destination exists: the compare and swap, so a write that lands
         // between the read and this call is refused, and nothing moves.
-        Some(expected) => client.write_file_if(destination, &landed, expected)?,
+        Some(expected) => {
+            client.write_file_if(destination, &landed, expected)?;
+        }
         // It is not there, and the compare and swap refuses a missing file: the
         // plain write creates it. A new disabled file carries the
         // configurator's header; a new `models.ini` needs none.

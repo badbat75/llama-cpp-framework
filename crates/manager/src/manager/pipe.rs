@@ -34,7 +34,8 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// node's own info; 3 also carries `ModelFiles` with its `As` form, the node's
 /// one models folder as the model-file picker's list; 3 also carries
 /// `SetInstanceProfileModel` with its `As` form, the keys of one entry of an
-/// instance profile, written from the page of one instance.
+/// instance profile, and `SetInstanceProfileServer` with its `As` form, the
+/// switch of an instance profile to another server profile (IP4a).
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -84,17 +85,20 @@ enum Request {
     AddInstanceProfileModel(String, String, Option<Principal>),
     /// `profile`, `model`: takes a model profile away from an instance profile.
     RemoveInstanceProfileModel(String, String, Option<Principal>),
-    /// `profile`, `model`, `instance`, `values`, `revision`: the keys of one
-    /// entry of an instance profile, written from the page of `instance`, and
-    /// `values` the entry holds afterwards.
+    /// `profile`, `model`, `values`, `revision`: the keys of one entry of an
+    /// instance profile, and `values` the entry holds afterwards, in the order
+    /// they were sent. The entry belongs to the profile: the save names no
+    /// instance (IP4).
     SetInstanceProfileModel(
-        String,
         String,
         String,
         Vec<(String, String)>,
         String,
         Option<Principal>,
     ),
+    /// `profile`, `server_profile`: points an instance profile at another server
+    /// profile (IP4a).
+    SetInstanceProfileServer(String, String, Option<Principal>),
     /// `instance`, `profile`, `revision`: points an instance at an instance
     /// profile, the revision the text of `instance-profiles.ini` the caller
     /// read.
@@ -172,6 +176,24 @@ impl Request {
                 .as_object()?
                 .iter()
                 .map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+                .collect::<Option<Vec<(String, String)>>>()
+        };
+        // The keys of one entry of an instance profile: `values` as an array of
+        // `{key, value}` objects, in the order the caller sent them. The entry
+        // holds exactly the keys sent, in that order (IP3b), so the frame carries
+        // a list, not an object of them: a JSON object has no order to keep. A
+        // `values` that is no array, an entry with no `key` or no `value` or a
+        // `value` that is no string, is no request.
+        let entry = || {
+            v.get("values")?
+                .as_array()?
+                .iter()
+                .map(|pair| {
+                    Some((
+                        pair.get("key")?.as_str()?.to_string(),
+                        pair.get("value")?.as_str()?.to_string(),
+                    ))
+                })
                 .collect::<Option<Vec<(String, String)>>>()
         };
         Some(match method {
@@ -306,22 +328,30 @@ impl Request {
                 arg("model")?,
                 principal().map(Some)?,
             ),
-            // The entry save: the keys the page sent, as an object of strings
-            // (`values` is required), and the instance whose page writes them.
+            // The entry save: the keys the page sent, as an ordered list of
+            // `{key, value}` objects (`values` is required). The entry belongs to
+            // the profile, so the save names no instance (IP4).
             "SetInstanceProfileModel" => Request::SetInstanceProfileModel(
                 arg("profile")?,
                 arg("model")?,
-                arg("instance")?,
-                values()?,
+                entry()?,
                 arg("revision")?,
                 None,
             ),
             "SetInstanceProfileModelAs" => Request::SetInstanceProfileModel(
                 arg("profile")?,
                 arg("model")?,
-                arg("instance")?,
-                values()?,
+                entry()?,
                 arg("revision")?,
+                principal().map(Some)?,
+            ),
+            // The switch of an instance profile to another server profile.
+            "SetInstanceProfileServer" => {
+                Request::SetInstanceProfileServer(arg("profile")?, arg("server_profile")?, None)
+            }
+            "SetInstanceProfileServerAs" => Request::SetInstanceProfileServer(
+                arg("profile")?,
+                arg("server_profile")?,
                 principal().map(Some)?,
             ),
             "SetInstanceProfile" => Request::SetInstanceProfile(
@@ -594,10 +624,11 @@ where
                 .and_then(|who| manager.create_model_profile(&who, &profile, &from, &values))
                 .map(|()| Value::Null)
         }
-        // Its removal.
+        // Its removal. The delete re-renders, so it answers the apply's rows
+        // like every save that re-renders (IP4a).
         Request::DeleteModelProfile(profile, principal) => requester(caller, principal)
             .and_then(|who| manager.delete_model_profile(&who, &profile))
-            .map(|()| Value::Null),
+            .map(affected_answer),
         // A new instance. The reply is empty as every write's: the caller sent
         // the id, and the create answers before the record is written.
         Request::CreateInstance(engine, instance, server_profile, principal) => {
@@ -653,16 +684,25 @@ where
                 .and_then(|who| manager.remove_instance_profile_model(&who, &profile, &model))
                 .and_then(|_| pool_answer(manager))
         }
-        // The keys of one entry, from the page of one instance: the entry rides
-        // the render of every instance running the profile, so the answer is the
-        // whole apply, the running instances the write left drifting beside the
-        // rows of the node (`Manager::set_instance_profile_model`).
-        Request::SetInstanceProfileModel(profile, model, instance, values, revision, principal) => {
+        // The keys of one entry: the entry rides the render of every instance
+        // running the profile, so the answer is the whole apply, the running
+        // instances the write left drifting beside the rows of the node
+        // (`Manager::set_instance_profile_model`). The save names no instance
+        // (IP4).
+        Request::SetInstanceProfileModel(profile, model, values, revision, principal) => {
             requester(caller, principal)
                 .and_then(|who| {
-                    manager.set_instance_profile_model(
-                        &who, &profile, &model, &instance, &values, &revision,
-                    )
+                    manager.set_instance_profile_model(&who, &profile, &model, &values, &revision)
+                })
+                .map(affected_answer)
+        }
+        // The switch of an instance profile to another server profile: it moves
+        // the ground of every entry of the profile, so it answers the apply too,
+        // the instances whose card the switch took away among them (IP4a).
+        Request::SetInstanceProfileServer(profile, server_profile, principal) => {
+            requester(caller, principal)
+                .and_then(|who| {
+                    manager.set_instance_profile_server(&who, &profile, &server_profile)
                 })
                 .map(affected_answer)
         }

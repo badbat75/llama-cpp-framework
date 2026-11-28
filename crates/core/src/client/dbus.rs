@@ -42,10 +42,10 @@
 //! ```
 
 use super::{
-    ClientError, DeviceInfo, InstanceInfo, InstanceProfileInfo, InstanceState, ManagerClient,
-    ManagerFile, ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply,
-    ModelProfileSource, NodeDevices, NodeInfoReply, NotConverged, Reason, ServerProfileInfo,
-    TensorRow,
+    Affected, ClientError, DeviceInfo, InstanceInfo, InstanceProfileInfo, InstanceState,
+    ManagerClient, ManagerFile, ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply,
+    ModelInfoReply, ModelProfileSource, NodeDevices, NodeInfoReply, NotConverged, NotConvergedRow,
+    Reason, ServerProfileInfo, TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu, Status};
@@ -289,6 +289,95 @@ where
         .map_err(|e| ClientError::Other(e.to_string()))
 }
 
+/// The answer of a save that re-renders, as the bus carries it (IP3c,
+/// `ARCHITECTURE.md` "Convergence"): the `a{sv}` of [`affected_of`].
+type AffectedFields = std::collections::HashMap<String, zbus::zvariant::OwnedValue>;
+
+/// The value a variant carries. The bus wraps every value of an `a{sv}` and
+/// every element of an `av` in a variant, so the rows and their fields arrive
+/// as `Value::Value`, and the field is read through the wrapper.
+fn plain<'a>(value: &'a zbus::zvariant::Value<'a>) -> &'a zbus::zvariant::Value<'a> {
+    match value {
+        zbus::zvariant::Value::Value(inner) => plain(inner),
+        other => other,
+    }
+}
+
+/// A field's text, the empty string for a field that is no text: the row's own
+/// fields are read by name, as every other row of the bus reads them.
+fn field_text(value: &zbus::zvariant::Value<'_>) -> String {
+    match plain(value) {
+        zbus::zvariant::Value::Str(text) => text.as_str().to_string(),
+        _ => String::new(),
+    }
+}
+
+/// A field's list of texts, empty for a field that is no list.
+fn field_texts(value: &zbus::zvariant::Value<'_>) -> Vec<String> {
+    match plain(value) {
+        zbus::zvariant::Value::Array(list) => list.inner().iter().map(field_text).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// One row of a save's `notConverged` (an `a{sv}` naming the instance, the key
+/// of the check that stopped its pair and that check's args).
+fn not_converged_row(value: &zbus::zvariant::Value<'_>) -> NotConvergedRow {
+    let mut row = NotConvergedRow::default();
+    if let zbus::zvariant::Value::Dict(fields) = plain(value) {
+        for (key, field) in fields.iter() {
+            match field_text(key).as_str() {
+                "instance" => row.instance = field_text(field),
+                "key" => row.key = field_text(field),
+                "args" => row.args = field_texts(field),
+                _ => {}
+            }
+        }
+    }
+    row
+}
+
+/// The reply of a save that re-renders, read back into [`Affected`] (IP4a):
+/// `running`, the ids of the running instances the write left drifting, and
+/// `notConverged`, one row per instance that kept its last good pair. The two
+/// fields are the shape every such save answers (the manager answers both,
+/// empty when it moved nothing), so a reply that carries neither list is no
+/// answer: the rows are never read out of an answer that has none.
+fn affected_of(reply: Message) -> Result<Affected, ClientError> {
+    use zbus::zvariant::{OwnedValue, Value};
+    let mut fields: AffectedFields = body(reply)?;
+    let mut list = |name: &str| -> Result<Vec<OwnedValue>, ClientError> {
+        match fields.remove(name) {
+            Some(value) => match plain(&value) {
+                Value::Array(list) => list
+                    .inner()
+                    .to_vec()
+                    .into_iter()
+                    .map(OwnedValue::try_from)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| ClientError::Other(format!("{name}: {e}"))),
+                other => Err(ClientError::Other(format!("{name} is no list: {other}"))),
+            },
+            None => Err(ClientError::Other(format!("the answer carries no {name}"))),
+        }
+    };
+    let running = list("running")?
+        .into_iter()
+        .map(|id| {
+            String::try_from(id)
+                .map_err(|e| ClientError::Other(format!("a running id is no text: {e}")))
+        })
+        .collect::<Result<Vec<_>, ClientError>>()?;
+    let mut not_converged = Vec::new();
+    for row in list("notConverged")? {
+        not_converged.push(not_converged_row(&row));
+    }
+    Ok(Affected {
+        running,
+        not_converged,
+    })
+}
+
 impl ManagerClient for DbusClient {
     fn list_instances(&self) -> Result<Vec<String>, ClientError> {
         body(self.call("ListInstances", &())?)
@@ -337,12 +426,17 @@ impl ManagerClient for DbusClient {
         }
         .map(|_| ())
     }
-    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
-        match self.acting() {
+    fn write_file_if(
+        &self,
+        name: &str,
+        contents: &str,
+        expected: &str,
+    ) -> Result<Affected, ClientError> {
+        let reply = match self.acting() {
             Some(principal) => self.call("WriteFileIfAs", &(principal, name, contents, expected)),
             None => self.call("WriteFileIf", &(name, contents, expected)),
-        }
-        .map(|_| ())
+        }?;
+        affected_of(reply)
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         body(self.call("BootEnabled", &(id,))?)
@@ -454,36 +548,85 @@ impl ManagerClient for DbusClient {
         }
         .map(|_| ())
     }
-    fn add_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
-        match self.acting() {
+    fn add_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+    ) -> Result<Affected, ClientError> {
+        let reply = match self.acting() {
             Some(principal) => self.call("AddInstanceProfileModelAs", &(principal, profile, model)),
             None => self.call("AddInstanceProfileModel", &(profile, model)),
-        }
-        .map(|_| ())
+        }?;
+        affected_of(reply)
     }
-    fn remove_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
-        match self.acting() {
+    fn remove_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+    ) -> Result<Affected, ClientError> {
+        let reply = match self.acting() {
             Some(principal) => {
                 self.call("RemoveInstanceProfileModelAs", &(principal, profile, model))
             }
             None => self.call("RemoveInstanceProfileModel", &(profile, model)),
-        }
-        .map(|_| ())
+        }?;
+        affected_of(reply)
+    }
+    /// `SetInstanceProfileModelAs` / `SetInstanceProfileModel`: the entry whole,
+    /// as `Vec<(String, String)>`, beside the revision it swaps against. The
+    /// entry belongs to the profile, so the save names no instance: every
+    /// instance running the profile renders again, and the save answers the rows
+    /// that write left ([`affected_of`]).
+    fn set_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+        values: &[(String, String)],
+        revision: &str,
+    ) -> Result<Affected, ClientError> {
+        let reply = match self.acting() {
+            Some(principal) => self.call(
+                "SetInstanceProfileModelAs",
+                &(principal, profile, model, values, revision),
+            ),
+            None => self.call(
+                "SetInstanceProfileModel",
+                &(profile, model, values, revision),
+            ),
+        }?;
+        affected_of(reply)
+    }
+    /// `SetInstanceProfileServerAs` / `SetInstanceProfileServer`: the switch of
+    /// an instance profile to another server profile, answering the rows that
+    /// write left, the instances whose card the switch took away among them.
+    fn set_instance_profile_server(
+        &self,
+        profile: &str,
+        server_profile: &str,
+    ) -> Result<Affected, ClientError> {
+        let reply = match self.acting() {
+            Some(principal) => self.call(
+                "SetInstanceProfileServerAs",
+                &(principal, profile, server_profile),
+            ),
+            None => self.call("SetInstanceProfileServer", &(profile, server_profile)),
+        }?;
+        affected_of(reply)
     }
     fn set_instance_profile(
         &self,
         instance: &str,
         profile: &str,
         revision: &str,
-    ) -> Result<(), ClientError> {
-        match self.acting() {
+    ) -> Result<Affected, ClientError> {
+        let reply = match self.acting() {
             Some(principal) => self.call(
                 "SetInstanceProfileAs",
                 &(principal, instance, profile, revision),
             ),
             None => self.call("SetInstanceProfile", &(instance, profile, revision)),
-        }
-        .map(|_| ())
+        }?;
+        affected_of(reply)
     }
     fn set_instance_address(
         &self,
@@ -491,15 +634,15 @@ impl ManagerClient for DbusClient {
         host: &str,
         port: &str,
         revision: &str,
-    ) -> Result<(), ClientError> {
-        match self.acting() {
+    ) -> Result<Affected, ClientError> {
+        let reply = match self.acting() {
             Some(principal) => self.call(
                 "SetInstanceAddressAs",
                 &(principal, instance, host, port, revision),
             ),
             None => self.call("SetInstanceAddress", &(instance, host, port, revision)),
-        }
-        .map(|_| ())
+        }?;
+        affected_of(reply)
     }
     fn create_model_profile(
         &self,
@@ -515,12 +658,12 @@ impl ManagerClient for DbusClient {
         }
         .map(|_| ())
     }
-    fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
-        match self.acting() {
+    fn delete_model_profile(&self, profile: &str) -> Result<Affected, ClientError> {
+        let reply = match self.acting() {
             Some(principal) => self.call("DeleteModelProfileAs", &(principal, profile)),
             None => self.call("DeleteModelProfile", &(profile,)),
-        }
-        .map(|_| ())
+        }?;
+        affected_of(reply)
     }
     fn create_instance(
         &self,

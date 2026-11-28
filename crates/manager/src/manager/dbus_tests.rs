@@ -3778,9 +3778,10 @@ pub(crate) fn manager_dbus_ip3a_instance_profiles_e2e() {
 /// Creating and deleting a model profile over D-Bus (slice MP1, its rules of
 /// IP3b): `CreateModelProfile(s profile, s from, a(ss) values)` and its `As`
 /// form with the principal first, `(sssa(ss))`; `DeleteModelProfile(s profile)`
-/// and `DeleteModelProfileAs(ss)`. Every reply is the unit. The create writes
-/// the pool and joins no entry, so it moves no render; a model an entry lists
-/// is not free. A rule's refusal crosses as the keyed `Invalid` (decoded to
+/// and `DeleteModelProfileAs(ss)`, whose reply is the apply's rows (IP4a). The
+/// create's reply is the unit: it writes the pool and joins no entry, so it
+/// moves no render; a model an entry lists is not free. A rule's refusal
+/// crosses as the keyed `Invalid` (decoded to
 /// `model-profile-name-taken`, `invalid-model-profile-id`,
 /// `model-profile-bad-source`, `model-profile-bad-text`,
 /// `model-profile-assigned`, `no-model-profile-named`), the guard's refusal as

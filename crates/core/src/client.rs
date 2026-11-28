@@ -250,6 +250,27 @@ pub struct NotConverged {
     pub args: Vec<String>,
 }
 
+/// One instance a save's render pass refused, as the save's own answer reports
+/// it (IP4a): the instance, and the keyed check that stopped its pair, with the
+/// arguments that check carried. The wire row is `{instance, key, args}`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NotConvergedRow {
+    pub instance: String,
+    pub key: String,
+    pub args: Vec<String>,
+}
+
+/// What every save that re-renders answers (`ARCHITECTURE.md` "Convergence",
+/// IP4a): `running`, the running instances the write left drifting from the pair
+/// they launched with, in id order, beside `not_converged`, one row per instance
+/// whose pair the write did not leave, with the key of the check that stopped it.
+/// [`ManagerClient`]'s re-rendering writes answer it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Affected {
+    pub running: Vec<String>,
+    pub not_converged: Vec<NotConvergedRow>,
+}
+
 /// One compute device of the node, as the engine's own probe reported it: the
 /// id `device` takes (`ROCm0`), the product name, the backend (the id without
 /// its trailing digits, case kept), and the device memory in MiB at the moment
@@ -496,10 +517,17 @@ pub trait ManagerClient {
     /// `write_file` is. No `keep_api_key`: the caller that holds the file's
     /// own text has no key to preserve.
     ///
+    /// A write of a served file re-renders, so it answers [`Affected`] (IP4a).
+    ///
     /// The default body is for a transport that speaks no compare and swap:
     /// the call is one it cannot make, said as [`ClientError::Other`]. A
     /// transport that speaks the method overrides it.
-    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+    fn write_file_if(
+        &self,
+        name: &str,
+        contents: &str,
+        expected: &str,
+    ) -> Result<Affected, ClientError> {
         let _ = (name, contents, expected);
         Err(ClientError::Other(
             "this transport of the manager speaks no compare and swap".into(),
@@ -648,31 +676,90 @@ pub trait ManagerClient {
         ))
     }
     /// Gives the instance profile `profile` the model profile `model`, an
-    /// empty entry. Guarded as a write of a served file is.
-    fn add_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+    /// empty entry. Guarded as a write of a served file is. Answers
+    /// [`Affected`]: the add re-renders every instance running the profile.
+    fn add_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+    ) -> Result<Affected, ClientError> {
         let _ = (profile, model);
         Err(ClientError::Other(
             "this transport of the manager has no AddInstanceProfileModel".into(),
         ))
     }
     /// Takes the model profile `model` away from the instance profile
-    /// `profile`. Guarded as a write of a served file is.
-    fn remove_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
+    /// `profile`. Guarded as a write of a served file is. Answers
+    /// [`Affected`].
+    fn remove_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+    ) -> Result<Affected, ClientError> {
         let _ = (profile, model);
         Err(ClientError::Other(
             "this transport of the manager has no RemoveInstanceProfileModel".into(),
         ))
     }
+    /// Saves the entry `[<profile>/<model>]` with `values`, the entry whole as
+    /// the page sent it, only while `instance-profiles.ini` still holds
+    /// `revision`, the text the caller read: other bytes are
+    /// [`ClientError::Changed`], and the save writes nothing. The entry belongs
+    /// to the profile, so no instance is named (IP4a): the save re-renders every
+    /// instance running the profile, and answers [`Affected`]. An entry of a
+    /// profile that does not list the model is the keyed refusal
+    /// `no-instance-profile-model`, and a value the entry checks refuse is
+    /// [`ClientError::Invalid`]. Guarded as a write of a served file is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn set_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+        values: &[(String, String)],
+        revision: &str,
+    ) -> Result<Affected, ClientError> {
+        let _ = (profile, model, values, revision);
+        Err(ClientError::Other(
+            "this transport of the manager has no SetInstanceProfileModel".into(),
+        ))
+    }
+    /// Points the instance profile `profile` at the server profile
+    /// `server_profile`: the switch moves the ground of every entry of the
+    /// profile, so every instance running it renders again. No revision: it is
+    /// one set-like change. A profile the pool has no section for is
+    /// [`ClientError::NoInstanceProfile`], a server profile the node has no file
+    /// for is [`ClientError::NoServerProfile`]. A card the switch takes away is
+    /// no refusal: the instances whose render stops on the card keep their last
+    /// good pair and arrive in [`Affected`]'s `not_converged`. Guarded as a
+    /// write of a served file is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn set_instance_profile_server(
+        &self,
+        profile: &str,
+        server_profile: &str,
+    ) -> Result<Affected, ClientError> {
+        let _ = (profile, server_profile);
+        Err(ClientError::Other(
+            "this transport of the manager has no SetInstanceProfileServer".into(),
+        ))
+    }
     /// Points the instance `instance` at the instance profile `profile`,
     /// only while `instance-profiles.ini` still holds `revision`, the text
     /// the caller read: other bytes are `ClientError::Changed`, and the
-    /// switch writes nothing. Guarded as a write of a served file is.
+    /// switch writes nothing. Guarded as a write of a served file is. Answers
+    /// [`Affected`].
     fn set_instance_profile(
         &self,
         instance: &str,
         profile: &str,
         revision: &str,
-    ) -> Result<(), ClientError> {
+    ) -> Result<Affected, ClientError> {
         let _ = (instance, profile, revision);
         Err(ClientError::Other(
             "this transport of the manager has no SetInstanceProfile".into(),
@@ -684,14 +771,15 @@ pub trait ManagerClient {
     /// the caller read: other bytes are `ClientError::Changed`, and the
     /// address writes nothing. An address another instance of the node, or
     /// the web service, holds is `ClientError::AddressInUse`. Guarded as a
-    /// write of a served file is.
+    /// write of a served file is. The address is a card fact, so the write
+    /// re-renders and answers [`Affected`].
     fn set_instance_address(
         &self,
         instance: &str,
         host: &str,
         port: &str,
         revision: &str,
-    ) -> Result<(), ClientError> {
+    ) -> Result<Affected, ClientError> {
         let _ = (instance, host, port, revision);
         Err(ClientError::Other(
             "this transport of the manager has no SetInstanceAddress".into(),
@@ -731,12 +819,12 @@ pub trait ManagerClient {
     /// is `model-profile-enabled`, one a key names is `model-profile-assigned`
     /// naming the instances, and a name neither file holds is
     /// `no-model-profile-named` (all `ClientError::Invalid`). Guarded as a write
-    /// of a served file is.
+    /// of a served file is. A delete re-renders, so it answers [`Affected`].
     ///
     /// The default body is for a transport that speaks to a manager of an
     /// older protocol: the call is one it cannot make, said as
     /// [`ClientError::Other`]. A transport that speaks the method overrides it.
-    fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
+    fn delete_model_profile(&self, profile: &str) -> Result<Affected, ClientError> {
         let _ = profile;
         Err(ClientError::Other(
             "this transport of the manager has no DeleteModelProfile".into(),

@@ -892,6 +892,14 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 - The test builders pass a 200 ms read limit, so a route bound by a longer limit needs the test's own
   pause.
 - A `Box<dyn ManagerClient + Send + Sync>` does not coerce to `&dyn ManagerClient`: pass `&*boxed`.
+- A `ManagerClient` method whose RETURN TYPE changes reddens every fake of the trait, one per bff test
+  file (8 today: `write_file_if` in `instance_profiles` / `model_profile_*` / `server*`,
+  `delete_model_profile` in `model_profile_create` / `write_timeouts`): adapt the signature and the
+  fixture-returning tail (`.map(|_| Affected::default())`), never an assertion.
+- The stream frame reads a verb's `values` as an ORDERED array of `{"key","value"}` when the entry keeps
+  its keys in sent order (a JSON object has none). The frames of the pinned IP3c phases
+  (`convergence.rs` 7e and review 7) are DATA in the tester's file: a parse-shape change must rewrite
+  those literals in the same slice, or the verb stops parsing and the phase dies far from the cause.
 - Setting `PRIVATE_AI_FE_DIST` reruns the bff's build script and recompiles every target of the crate.
 - `server::FIELDS` is the whitelist for `server-malformed` AND for the 422's `field`: a new server key
   needs its `Field` entry, and `server::tests::the_values_keys_are_the_web_s_field_names` pins the
@@ -996,7 +1004,10 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   re-check D1b).
 - The `EN` table of `fe/src/test/bff.ts` is a second pin of `en_US.json` (`App.test.tsx` `1a strings`);
   "every value is used" scans for `t(` + a string literal, so a key that reaches `t` otherwise reds it.
-  A strings key id makes a good `aria-labelledby` target. A key the tester put in `en_US.json` but NOT
+  A refusal table that carries the strings key as a VALUE (`'no-server-profile-named': ['api-no-…', …]`
+  and one `t(named[0], …)`) reds exactly the keys no other file names: the table's values are
+  word-builder closures, `(args) => t('api-no-…', ...args)` (the `RowDelete.tsx` REFUSALS shape), which
+  keeps the literal. A strings key id makes a good `aria-labelledby` target. A key the tester put in `en_US.json` but NOT
   in `EN` makes every render test naming it throw `no English for <key> in the test`: the fix is the
   mirror entry with the file's exact text (assertion-neutral, the tester's file), no production shape.
 - Queries run before an async read settles: a test that reads a control a device read fills, or
@@ -1215,6 +1226,23 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   `getBoundingClientRect()` (x AND width) of every `th` and `td` of the table at
   320 px, and read the column boxes against the head boxes.
 
+- Playwright's `click` treats `aria-disabled="true"` as DISABLED (its actionability "enabled" reads the
+  attribute, not just `disabled`): a check state whose `opens` chain clicks a verb to trigger a page
+  check (`instance-profile-add` clicks `main form button.primary` expecting `field-error-choose`) times
+  out on a verb switched off with no choice, and the finding reads `"…" visible, "…" never used`, which
+  names no cause. A verb whose page check is the rule stays enabled (gate the `aria-disabled` on the
+  in-flight flag alone), and the brief's own check text is what the click must bring.
+- To find what a chain really hits, run the chain by hand against a stub:
+  `NODE_PATH=$PWD/fe/ux/node_modules node /tmp/…/probe.js`, the script spawning
+  `python3 -I fe/ux/stub.py fe/dist 0`, reading its port from stdout, `fetch(base + '/__set?session=admin')`,
+  then the same `locator.click()`s, printing `main form`'s `textContent` after each. It shows in one
+  minute what a 12 minute check run only hints at.
+- A green run is the only verdict: the same tree red a minute earlier can pass. The webkit theme probe
+  (`bodyBackground`, read once per browser on `#/`) answers `rgba(0, 0, 0, 0)` when the sheet has not
+  applied, and every stored-choice state then reports `body background: rgb(247, 241, 232) (expected
+  rgba(0, 0, 0, 0))` (6 lines, `overview` / `server-profile` / `model-profile` x 2 widths); the text pass
+  likewise reports `not rendered: <marker>` for a state of a page nobody touched. Rerun the whole check
+  before reporting those.
 - A backgrounded `cmd 2>&1 | tail -N` can finish with a 0-byte capture file (the pipe dies with the
   shell): redirect the run to a log file and read that.
 
@@ -1226,6 +1254,12 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   core test pins (`<InstanceRow as Type>::SIGNATURE == "(sssqasass)"`) grows only with the tester: a
   field the stream already answers stays off the bus row, whose client fills the struct's new field with
   the neutral value.
+- Decoding an `a{sv}` / `av` field: EVERY value zbus hands back from a variant position arrives wrapped,
+  as `Value::Value(boxed)`, so a `match` on `Value::Str` / `Array` / `Dict` NEVER matches and the read
+  silently answers the empty string / empty list (the e2e's rows come back blank). Unwrap the wrapper
+  (recursively) before matching. `OwnedValue::inner()` is crate-private: read through the `Deref`
+  (`&*owned`, target `Value<'static>`), and write it as `plain(&owned)` not `plain(&*owned)`
+  (`clippy::explicit_auto_deref` is `-D warnings`).
 - Reading a zbus p2p reply in a test: the served connection is the value the server thread RETURNS, so
   `let _ = served.join()` drops it and every client call dies with `Broken pipe` (bind it, `_server`).
   And a reply body of signature `a{sv}` never deserializes as `OwnedValue` (whose signature is `v`), and

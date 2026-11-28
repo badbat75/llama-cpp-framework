@@ -61,7 +61,8 @@ use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::client::{
-    ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ModelProfileSource,
+    Affected, ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
+    ModelProfileSource,
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -336,8 +337,9 @@ impl ManagerClient for FakeManager {
     ) -> Result<(), ClientError> {
         self.lost(&format!("create-model {profile}"))
     }
-    fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
+    fn delete_model_profile(&self, profile: &str) -> Result<Affected, ClientError> {
         self.lost(&format!("delete-model {profile}"))
+            .map(|_| Affected::default())
     }
     fn set_instance_tags(&self, instance: &str, _tags: &[String]) -> Result<(), ClientError> {
         self.lost(&format!("set_instance_tags {instance}"))

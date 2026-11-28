@@ -53,7 +53,8 @@ use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::client::{
-    ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ServerProfileInfo,
+    Affected, ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
+    ServerProfileInfo,
 };
 use pai_core::{checks, paths, server_cfg};
 use serde_json::{json, Value};
@@ -336,13 +337,18 @@ impl ManagerClient for FakeManager {
         self.push(name, contents);
         self.fixture.write.clone()
     }
-    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+    fn write_file_if(
+        &self,
+        name: &str,
+        contents: &str,
+        expected: &str,
+    ) -> Result<Affected, ClientError> {
         self.record(format!("write-if {name}"));
         if self.fixture.files.get(name).map(String::as_str) != Some(expected) {
             return Err(ClientError::Changed);
         }
         self.push(name, contents);
-        self.fixture.write.clone()
+        self.fixture.write.clone().map(|_| Affected::default())
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         self.record(format!("boot {id}"));

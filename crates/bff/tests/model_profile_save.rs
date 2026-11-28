@@ -94,7 +94,7 @@ use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::checks::Refusal;
 use pai_core::client::{
-    ClientError, InstanceState, ManagerClient, ManagerFile, ModelFileRow, ModelFilesReply,
+    Affected, ClientError, InstanceState, ManagerClient, ManagerFile, ModelFileRow, ModelFilesReply,
 };
 use pai_core::hf::{Fetch, HfError, Token};
 use serde_json::{json, Value};
@@ -676,7 +676,12 @@ impl ManagerClient for FakeManager {
     /// The compare and swap, as the real manager's is: it lands only while the
     /// file still holds the text the caller read, and the manager re-runs its
     /// checks of the edited section at this call.
-    fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
+    fn write_file_if(
+        &self,
+        name: &str,
+        contents: &str,
+        expected: &str,
+    ) -> Result<Affected, ClientError> {
         let principal = self.as_user.clone().unwrap_or_default();
         self.record(format!("write-if {principal} {name}"));
         let position = self.live.write_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -705,7 +710,7 @@ impl ManagerClient for FakeManager {
         match files.get(name) {
             Some(current) if current == expected => {
                 files.insert(name.to_string(), contents.to_string());
-                Ok(())
+                Ok(Affected::default())
             }
             // The file moved, or is not there: the manager wrote nothing.
             _ => Err(ClientError::Changed),

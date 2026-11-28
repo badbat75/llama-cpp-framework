@@ -59,7 +59,8 @@ use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::checks;
 use pai_core::client::{
-    ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile, ModelProfileSource,
+    Affected, ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
+    ModelProfileSource,
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -170,8 +171,8 @@ impl ManagerClient for FakeManager {
         _name: &str,
         _contents: &str,
         _expected: &str,
-    ) -> Result<(), ClientError> {
-        Ok(())
+    ) -> Result<Affected, ClientError> {
+        Ok(Affected::default())
     }
     fn boot_enabled(&self, _id: &str) -> Result<bool, ClientError> {
         Ok(false)
@@ -199,10 +200,10 @@ impl ManagerClient for FakeManager {
         ));
         self.fixture.create.clone()
     }
-    fn delete_model_profile(&self, profile: &str) -> Result<(), ClientError> {
+    fn delete_model_profile(&self, profile: &str) -> Result<Affected, ClientError> {
         std::thread::sleep(self.fixture.delay);
         self.record(format!("delete-model {profile}"));
-        self.fixture.delete.clone()
+        self.fixture.delete.clone().map(|_| Affected::default())
     }
 }
 

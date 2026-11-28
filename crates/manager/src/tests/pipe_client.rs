@@ -605,7 +605,7 @@ pub(crate) fn manager_pipe_client_e2e() {
         let base = std::fs::read_to_string(sys.join("models.ini")).expect("read presets");
         let more = format!("{base}[Qwen3.8-14B]\nmodel = /models/Qwen3.8-14B-Q4_K_M.gguf\n");
         assert_eq!(
-            client.write_file_if("models.ini", &more, &base),
+            client.write_file_if("models.ini", &more, &base).map(|_| ()),
             Ok(()),
             "a caller holding the file's content writes"
         );
@@ -2548,11 +2548,11 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
             .collect()
     };
     let renders_before = renders();
-    let refused = |key: &'static str, values: &[&str]| -> Result<(), ClientError> {
-        Err(ClientError::Invalid(Refusal {
+    let refused = |key: &'static str, values: &[&str]| -> ClientError {
+        ClientError::Invalid(Refusal {
             key,
             values: values.iter().map(|v| v.to_string()).collect(),
-        }))
+        })
     };
 
     let c = core(true, &[]);
@@ -2681,19 +2681,19 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
         (
             "OFF-ONE",
             ModelProfileSource::Model("/m/x.gguf".into()),
-            refused("model-profile-name-taken", &["OFF-ONE"]),
+            Err(refused("model-profile-name-taken", &["OFF-ONE"])),
             "a name the pool holds in the other case",
         ),
         (
             "a b",
             ModelProfileSource::Model("/m/x.gguf".into()),
-            refused("invalid-model-profile-id", &["a b"]),
+            Err(refused("invalid-model-profile-id", &["a b"])),
             "an id with a space",
         ),
         (
             "pipe-nosuch",
             ModelProfileSource::From("no-such-profile".into()),
-            refused("no-model-profile-named", &["no-such-profile"]),
+            Err(refused("no-model-profile-named", &["no-such-profile"])),
             "a source the pool does not hold",
         ),
     ] {
@@ -2711,7 +2711,7 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
 
     // ── The delete: the section alone, out of the pool ─────────────────────
     assert_eq!(
-        client.delete_model_profile("free-me"),
+        client.delete_model_profile("free-me").map(|_| ()),
         Ok(()),
         "a model no entry lists"
     );
@@ -2724,33 +2724,33 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
     for (id, want, why) in [
         (
             "On-One",
-            refused("model-profile-assigned", &["On-One", "gpu"]),
+            Err(refused("model-profile-assigned", &["On-One", "gpu"])),
             "the entry `[gpu/On-One]` lists it",
         ),
         (
             "twin",
-            refused("model-profile-assigned", &["twin", "gpu"]),
+            Err(refused("model-profile-assigned", &["twin", "gpu"])),
             "the entry `[gpu/twin]`, naming the profile once though two instances run it",
         ),
         (
             "TWO-PLACES",
-            refused("model-profile-assigned", &["TWO-PLACES", "gpu"]),
+            Err(refused("model-profile-assigned", &["TWO-PLACES", "gpu"])),
             "the entry `[gpu/two-places]`, in the other letter case: the retired record's \
              keys are no rule",
         ),
         (
             "Retired",
-            refused("no-model-profile-named", &["Retired"]),
+            Err(refused("no-model-profile-named", &["Retired"])),
             "a section of the retired switched-off file is no proof it exists",
         ),
         (
             "gone",
-            refused("no-model-profile-named", &["gone"]),
+            Err(refused("no-model-profile-named", &["gone"])),
             "a model the pool does not hold",
         ),
         (
             "*",
-            refused("no-model-profile-named", &["*"]),
+            Err(refused("no-model-profile-named", &["*"])),
             "no id: the pool's refusal, not the id rule",
         ),
     ] {
@@ -2837,7 +2837,10 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
          instance profile that lists it"
     );
     assert_eq!(
-        client.acting_for("alice").delete_model_profile("as-mp"),
+        client
+            .acting_for("alice")
+            .delete_model_profile("as-mp")
+            .map(|_| ()),
         Ok(()),
         "and the member's delete of its own profile"
     );
@@ -2932,11 +2935,11 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
             .map(|s| s.id)
             .collect()
     };
-    let refused = |key: &'static str, values: &[&str]| -> Result<(), ClientError> {
-        Err(ClientError::Invalid(Refusal {
+    let refused = |key: &'static str, values: &[&str]| -> ClientError {
+        ClientError::Invalid(Refusal {
             key,
             values: values.iter().map(|v| v.to_string()).collect(),
-        }))
+        })
     };
     let bad_port = |port: &str| {
         ClientError::Invalid(Refusal {
@@ -3005,7 +3008,7 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     // ── The create: the refusals first, the pool untouched ────────────────
     assert_eq!(
         client.create_instance_profile("Bad Id", "lab"),
-        refused("instance-profile-bad-id", &["Bad Id"]),
+        Err(refused("instance-profile-bad-id", &["Bad Id"])),
         "an id the rule refuses"
     );
     assert_eq!(
@@ -3039,12 +3042,14 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     );
     assert_eq!(
         client.add_instance_profile_model("default", "nope"),
-        refused("no-model-profile-named", &["nope"]),
+        Err(refused("no-model-profile-named", &["nope"])),
         "an entry of no model profile"
     );
     let before = pool();
     assert_eq!(
-        client.add_instance_profile_model("default", "beta"),
+        client
+            .add_instance_profile_model("default", "beta")
+            .map(|_| ()),
         Ok(()),
         "the entry add lands"
     );
@@ -3061,7 +3066,9 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     );
     let before = pool();
     assert_eq!(
-        client.remove_instance_profile_model("default", "alpha"),
+        client
+            .remove_instance_profile_model("default", "alpha")
+            .map(|_| ()),
         Ok(()),
         "the entry removal lands"
     );
@@ -3079,7 +3086,7 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     let kept = pool();
     assert_eq!(
         client.remove_instance_profile_model("default", "gone"),
-        refused("no-instance-profile-model", &["default", "gone"]),
+        Err(refused("no-instance-profile-model", &["default", "gone"])),
         "removing an entry the profile does not list is its own conflict, naming the \
          profile and the model"
     );
@@ -3108,7 +3115,9 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
         "every refused switch wrote no record"
     );
     assert_eq!(
-        client.set_instance_profile("lab", "default", &rev),
+        client
+            .set_instance_profile("lab", "default", &rev)
+            .map(|_| ()),
         Ok(()),
         "the switch of `lab` to `default` lands"
     );
@@ -3183,7 +3192,9 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     );
     assert_eq!(record(), rec, "every refused address wrote no record");
     assert_eq!(
-        client.set_instance_address("default", "127.0.0.1", "8595", &rec),
+        client
+            .set_instance_address("default", "127.0.0.1", "8595", &rec)
+            .map(|_| ()),
         Ok(()),
         "a free address lands"
     );
@@ -3199,7 +3210,9 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     );
     // The empty host removes the key, the port still lands.
     assert_eq!(
-        client.set_instance_address("lab", "", "8692", &rec),
+        client
+            .set_instance_address("lab", "", "8692", &rec)
+            .map(|_| ()),
         Ok(()),
         "the empty host is accepted"
     );
@@ -3377,14 +3390,16 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     assert_eq!(
         client
             .acting_for("alice")
-            .add_instance_profile_model("as-ip", "gamma"),
+            .add_instance_profile_model("as-ip", "gamma")
+            .map(|_| ()),
         Ok(()),
         "the member's entry add"
     );
     assert_eq!(
         client
             .acting_for("alice")
-            .set_instance_profile("lab", "as-ip", pool().as_str()),
+            .set_instance_profile("lab", "as-ip", pool().as_str())
+            .map(|_| ()),
         Ok(()),
         "the member's switch of `lab` onto the member's profile"
     );
@@ -3400,17 +3415,16 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     assert_eq!(
         client
             .acting_for("alice")
-            .remove_instance_profile_model("as-ip", "gamma"),
+            .remove_instance_profile_model("as-ip", "gamma")
+            .map(|_| ()),
         Ok(()),
         "the member's entry removal"
     );
     assert_eq!(
-        client.acting_for("alice").set_instance_address(
-            "lab",
-            "127.0.0.1",
-            "8699",
-            record().as_str()
-        ),
+        client
+            .acting_for("alice")
+            .set_instance_address("lab", "127.0.0.1", "8699", record().as_str())
+            .map(|_| ()),
         Ok(()),
         "the member's address write"
     );
@@ -3646,4 +3660,487 @@ pub(crate) fn manager_pipe_client_model_files_e2e() {
          having read: the picker shows an empty list with a text"
     );
     hang_up(server, client);
+}
+
+/// E2E phase: IP4a, over the stream. The same install and the same pins as
+/// `manager_dbus_client_ip4a_e2e`: every write that re-renders answers `running`
+/// and `notConverged` (IP3c put the JSON object on the frame's `ok`), and here
+/// pai-core's stream client turns it back into `pai_core::client::Affected`,
+/// pinned against the rows the manager itself reports at the moment of the answer.
+/// The two methods IP4a adds, the entry save and the server profile switch, are
+/// asked of the frame: the entry save, whose arm the stream has never had, with
+/// the entry's own refusals, and the switch, whose card taken away is no refusal
+/// but a not-converged row of the instance that kept its last good pair.
+#[cfg(unix)]
+pub(crate) fn manager_pipe_client_ip4a_e2e() {
+    use crate::manager::service::fakes::{FakeGpus, FakeGroup, FakePasswords};
+    use crate::manager::service::ManagerError;
+    use pai_core::client::{Affected, NotConvergedRow};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    // The install of the D-Bus phase: `desk` runs `desk-gpu` on `CUDA0`, `lab`
+    // runs `lab-gpu` on `CUDA1`, both entries grown to 131 072 tokens, `free` on
+    // the roomy card and `tight` on the card a switch takes away.
+    let path = crate::tests::dbus_client::seed_ip4a(dir.path(), &sys);
+    let (big, small) = crate::tests::dbus_client::cards_ip4a(&path);
+    let service = FakeService {
+        running: vec!["desk".to_string()],
+        state: UnitState::Inactive,
+        ..FakeService::new()
+    };
+    let c = Arc::new(
+        Manager::new(service, FakeAuthority::new(true), FakeResolver::lan())
+            .with_group(FakeGroup::new())
+            .with_gpus(FakeGpus::new(&[("CUDA0", big), ("CUDA1", small)])),
+    );
+    c.start_up();
+    assert_eq!(
+        c.render_failures()
+            .iter()
+            .map(|(id, err)| {
+                (
+                    id.clone(),
+                    match err {
+                        ManagerError::Invalid(r) => r.key.to_string(),
+                        other => format!("{other:?}"),
+                    },
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![("lab".to_string(), "model-profile-over-memory".to_string())],
+        "IP4a: the seeded install renders `desk` and leaves `lab` over its memory"
+    );
+    crate::manager::service::write_applied("desk").expect("the applied record");
+    let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
+    let (server, client) = connect(&c, &alice);
+
+    let pool = || std::fs::read_to_string(sys.join("models.ini")).expect("models.ini");
+    let profiles = || {
+        std::fs::read_to_string(sys.join("instance-profiles.ini")).expect("instance-profiles.ini")
+    };
+    let record = || std::fs::read_to_string(sys.join("instances.ini")).expect("instances.ini");
+    let entry = |section: &str| -> Vec<(String, String)> {
+        pai_core::ini::section_keys(&profiles(), section)
+    };
+    let key_of = |text: &str, section: &str, key: &str| -> Option<String> {
+        pai_core::ini::section_keys(text, section)
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    };
+    let refused = |key: &'static str, values: &[&str]| -> Result<Affected, ClientError> {
+        Err(ClientError::Invalid(Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }))
+    };
+    let vals = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    };
+    // The rows the design says a write answers, read from the manager at the
+    // moment of the answer: `running` is the running instances the write touched
+    // (`scope`, its render set) that drift from the pair they launched with, in id
+    // order; the not-converged rows are every instance that kept its last good
+    // pair, with the key of the check that stopped it and that check's args.
+    let running_ids = ["desk"];
+    let rows = |m: &Arc<Core>, scope: &[&str]| -> Affected {
+        Affected {
+            running: m
+                .instances()
+                .iter()
+                .filter(|i| {
+                    i.pending_restart
+                        && scope.contains(&i.id.as_str())
+                        && running_ids.contains(&i.id.as_str())
+                })
+                .map(|i| i.id.clone())
+                .collect(),
+            not_converged: m
+                .render_failures()
+                .iter()
+                .map(|(id, err)| match err {
+                    ManagerError::Invalid(r) => NotConvergedRow {
+                        instance: id.clone(),
+                        key: r.key.to_string(),
+                        args: r.values.clone(),
+                    },
+                    other => panic!("IP4a: the install's refusals are keyed: {other:?}"),
+                })
+                .collect(),
+        }
+    };
+    let row_of = |got: &Affected, id: &str| -> NotConvergedRow {
+        got.not_converged
+            .iter()
+            .find(|r| r.instance == id)
+            .unwrap_or_else(|| panic!("IP4a: the answer carries no row for {id}: {got:?}"))
+            .clone()
+    };
+    let pin = |what: &str, got: &Affected, m: &Arc<Core>, scope: &[&str]| {
+        assert_eq!(
+            got,
+            &rows(m, scope),
+            "IP4a {what}: the client decodes the rows the manager reports at the moment \
+             of the answer"
+        );
+    };
+
+    // ── The pool's compare and swap: the rows of a write that re-renders both ─
+    let warm = pool().replace("temp = 0.7", "temp = 0.9");
+    assert_ne!(warm, pool(), "IP4a: the pool write is a real change");
+    let moved = client
+        .write_file_if("models.ini", &warm, &pool())
+        .expect("IP4a: the compare and swap lands and answers its rows");
+    pin("the pool save", &moved, &c, &["desk", "lab"]);
+    assert_eq!(
+        moved.running,
+        vec!["desk".to_string()],
+        "IP4a: the save moved the pair of the running `desk` off the pair it launched \
+         with: {moved:?}"
+    );
+    assert_eq!(
+        row_of(&moved, "lab").key,
+        "model-profile-over-memory",
+        "IP4a: `lab` kept its last good pair, and the client's row carries the key that \
+         stopped it: {moved:?}"
+    );
+    let lab = row_of(&moved, "lab");
+    assert_eq!(
+        (lab.args.first(), lab.args.get(1)),
+        (Some(&"alpha".to_string()), Some(&"lab".to_string())),
+        "IP4a: the row carries the check's own args, naming the model and the instance profile \
+         that do not fit: {moved:?}"
+    );
+
+    // ── The entry add and remove: the same rows, the render set of one profile ─
+    let added = client
+        .add_instance_profile_model("desk-gpu", "beta")
+        .expect("IP4a: the entry add lands and answers its rows");
+    pin("the entry add", &added, &c, &["desk"]);
+    assert!(
+        profiles().contains("[desk-gpu/beta]"),
+        "IP4a: the add wrote the entry of the profile `desk` runs: {}",
+        profiles()
+    );
+    let removed = client
+        .remove_instance_profile_model("desk-gpu", "beta")
+        .expect("IP4a: the entry removal lands and answers its rows");
+    pin("the entry remove", &removed, &c, &["desk"]);
+    assert!(
+        !profiles().contains("[desk-gpu/beta]"),
+        "IP4a: the removal cut the entry: {}",
+        profiles()
+    );
+
+    // ── The record's two writes answer the rows too ───────────────────────
+    // The switch's revision is the pool's text (the profile's own), the address's
+    // is the record's: each is the file the write compares against.
+    let switched = client
+        .set_instance_profile("desk", "lab-gpu", &profiles())
+        .expect("IP4a: the switch lands and answers its rows");
+    pin("the record's switch", &switched, &c, &["desk"]);
+    assert_eq!(
+        key_of(&record(), "desk", "InstanceProfile").as_deref(),
+        Some("lab-gpu"),
+        "IP4a: the record points `desk` at the profile the client asked for"
+    );
+    let back_on = client
+        .set_instance_profile("desk", "desk-gpu", &profiles())
+        .expect("IP4a: the switch back lands and answers its rows");
+    pin("the record's switch back", &back_on, &c, &["desk"]);
+    let rec = record();
+    let addressed = client
+        .set_instance_address("desk", "127.0.0.1", "8595", &rec)
+        .expect("IP4a: the address lands and answers its rows");
+    pin("the address", &addressed, &c, &["desk"]);
+
+    // ── The server profile switch: a method IP4a adds ─────────────────────
+    assert_eq!(
+        client.set_instance_profile_server("ghost", "free"),
+        Err(ClientError::NoInstanceProfile("ghost".into())),
+        "IP4a: a profile the pool has no section for, decoded by the client"
+    );
+    assert_eq!(
+        client.set_instance_profile_server("lab-gpu", "ghost"),
+        Err(ClientError::NoServerProfile("ghost".into())),
+        "IP4a: a server profile the node has no file for, decoded by the client"
+    );
+    let onto = client
+        .set_instance_profile_server("lab-gpu", "free")
+        .expect("IP4a: the switch lands and answers its rows");
+    pin("the switch onto the roomy card", &onto, &c, &["lab"]);
+    assert!(
+        onto.not_converged.is_empty(),
+        "IP4a: the switch moves the ground of every entry of the profile, and `free`'s \
+         card finds the grown entry, so `lab` converges: {onto:?}"
+    );
+    assert_eq!(
+        key_of(&profiles(), "lab-gpu", "ServerProfile").as_deref(),
+        Some("free"),
+        "IP4a: the switch wrote the `ServerProfile` of the instance profile"
+    );
+    let tight = client
+        .set_instance_profile_server("desk-gpu", "tight")
+        .expect("IP4a: a switch that takes a card away is no refusal");
+    pin("the switch onto the tight card", &tight, &c, &["desk"]);
+    assert_eq!(
+        row_of(&tight, "desk").key,
+        "model-profile-over-memory",
+        "IP4a: the instance the switch left over the card is reported with the key that \
+         stopped its render: {tight:?}"
+    );
+    let back = client
+        .set_instance_profile_server("desk-gpu", "desk")
+        .expect("IP4a: the switch back lands");
+    pin("the switch back", &back, &c, &["desk"]);
+    assert!(
+        back.not_converged.is_empty(),
+        "IP4a: the switch back onto `desk`'s card converges `desk` again: {back:?}"
+    );
+
+    // ── The entry save: a method IP4a adds, with the entry's own refusals ──
+    let rev = client
+        .instance_profile("desk-gpu")
+        .expect("IP4a: the profile read")
+        .revision;
+    assert_eq!(
+        rev,
+        profiles(),
+        "IP4a: the revision the read answers is the text of `instance-profiles.ini`"
+    );
+    let kept = profiles();
+    assert_eq!(
+        client.set_instance_profile_model("ghost", "alpha", &[], &rev),
+        Err(ClientError::NoInstanceProfile("ghost".into())),
+        "IP4a: an entry of a profile the pool has no section for, decoded by the client"
+    );
+    assert_eq!(
+        client.set_instance_profile_model("desk-gpu", "zeta", &[], &rev),
+        refused("no-instance-profile-model", &["desk-gpu", "zeta"]),
+        "IP4a: the profile lists no such model, and the refusal names the profile and \
+         the model"
+    );
+    assert_eq!(
+        client.set_instance_profile_model("desk-gpu", "alpha", &[], "STALE TEXT"),
+        Err(ClientError::Changed),
+        "IP4a: a revision the pool no longer holds writes nothing"
+    );
+    match client.set_instance_profile_model(
+        "desk-gpu",
+        "alpha",
+        &vals(&[("ctx-size", "abc")]),
+        &rev,
+    ) {
+        Err(ClientError::Invalid(r)) => {
+            assert_eq!(
+                r.key, "not-whole-number-in-range",
+                "IP4a: a value the entry's checks refuse is the keyed refusal, and it is \
+                 not a row: {r:?}"
+            );
+            assert_eq!(
+                r.values.first().map(String::as_str),
+                Some("ctx-size"),
+                "IP4a: the refusal names the key it stopped on: {r:?}"
+            );
+        }
+        other => {
+            panic!("IP4a: the entry save of a nonsense value answers a keyed refusal: {other:?}")
+        }
+    }
+    assert_eq!(profiles(), kept, "IP4a: every refused save wrote no byte");
+    let landed = client
+        .set_instance_profile_model("desk-gpu", "alpha", &vals(&[("ctx-size", "1024")]), &rev)
+        .expect("IP4a: the entry save lands over the frame");
+    pin("the entry save", &landed, &c, &["desk"]);
+    assert_eq!(
+        landed.running,
+        vec!["desk".to_string()],
+        "IP4a: the entry the save shrank moved the pair of the running `desk`: {landed:?}"
+    );
+    assert!(
+        entry("desk-gpu/alpha")
+            .iter()
+            .any(|(k, v)| k == "ctx-size" && v == "1024"),
+        "IP4a: the save wrote the entry of [desk-gpu/alpha]: {}",
+        profiles()
+    );
+    assert!(
+        entry("lab-gpu/alpha")
+            .iter()
+            .any(|(k, v)| k == "ctx-size" && v == "131072"),
+        "IP4a: the save of one profile left the other profile's entry alone: {}",
+        profiles()
+    );
+    let render = std::fs::read_to_string(sys.join("models@desk.ini")).expect("the render");
+    assert!(
+        render.contains("ctx-size = 1024"),
+        "IP4a: the entry the client saved rides the render of every instance running the \
+         profile: {render}"
+    );
+    hang_up(server, client);
+
+    // ── The authorization of the two methods IP4a adds ──────────────────
+    // The two verbs are guarded as every write of a served file is, so over the
+    // frame the principal gate and the `configure` right reach them too: a
+    // `pai` member's call, vouched for by the bff's connection, lands; a name
+    // outside `pai` is refused with no byte written; the plain name of the two
+    // verbs, asked by a caller the authority refuses (outside `pai`), is refused.
+    // A manager of its own over the same install.
+    {
+        let passwords = FakePasswords::new();
+        let asked_admin = passwords.asked_admin.clone();
+        let as_core = Arc::new(
+            Manager::new(
+                FakeService::new().running(&["desk"]),
+                FakeAuthority::new(true).bff(&Caller(BFF_SID.into())),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new())
+            .with_passwords(passwords)
+            .with_gpus(FakeGpus::new(&[("CUDA0", big), ("CUDA1", small)])),
+        );
+        let (server, client) = connect(&as_core, &Caller(BFF_SID.into()));
+
+        // The switch: the member's lands, the outsider's writes nothing.
+        client
+            .acting_for("alice")
+            .set_instance_profile_server("desk-gpu", "free")
+            .map(|_| ())
+            .expect("IP4a review: the member's switch lands over the frame, the bff vouching");
+        assert_eq!(
+            key_of(&profiles(), "desk-gpu", "ServerProfile").as_deref(),
+            Some("free"),
+            "IP4a review: the member's `As` switch wrote the profile's `ServerProfile`"
+        );
+        let kept = profiles();
+        assert_eq!(
+            client
+                .acting_for("bob")
+                .set_instance_profile_server("desk-gpu", "desk")
+                .map(|_| ()),
+            Err(ClientError::NotAuthorized),
+            "IP4a review: the `As` switch of a name outside `pai` is refused"
+        );
+        assert_eq!(
+            profiles(),
+            kept,
+            "IP4a review: the refused `As` switch wrote no byte: {kept}"
+        );
+
+        // The entry save: the member's lands, the outsider's writes nothing.
+        let rev = client
+            .acting_for("alice")
+            .instance_profile("desk-gpu")
+            .expect("IP4a review: the member reads the profile, the bff vouching")
+            .revision;
+        assert_eq!(
+            rev,
+            profiles(),
+            "IP4a review: the read's revision is the text of `instance-profiles.ini`"
+        );
+        client
+            .acting_for("alice")
+            .set_instance_profile_model("desk-gpu", "alpha", &vals(&[("ctx-size", "4096")]), &rev)
+            .map(|_| ())
+            .expect("IP4a review: the member's entry save lands over the frame, the bff vouching");
+        assert!(
+            entry("desk-gpu/alpha")
+                .iter()
+                .any(|(k, v)| k == "ctx-size" && v == "4096"),
+            "IP4a review: the member's `As` save wrote the entry: {}",
+            profiles()
+        );
+        let kept = profiles();
+        assert_eq!(
+            client
+                .acting_for("bob")
+                .set_instance_profile_model(
+                    "desk-gpu",
+                    "alpha",
+                    &vals(&[("ctx-size", "512")]),
+                    &rev
+                )
+                .map(|_| ()),
+            Err(ClientError::NotAuthorized),
+            "IP4a review: the `As` entry save of a name outside `pai` is refused"
+        );
+        assert_eq!(
+            profiles(),
+            kept,
+            "IP4a review: the refused `As` calls wrote no byte: {kept}"
+        );
+        assert_eq!(
+            *asked_admin.lock().unwrap(),
+            vec![
+                "alice".to_string(),
+                "bob".into(),
+                "alice".into(),
+                "alice".into(),
+                "bob".into(),
+            ],
+            "IP4a review: the membership of the vouched name, asked once per `As` call, the \
+             switch pair then the read and the entry-save pair"
+        );
+        assert_eq!(
+            asked(&as_core),
+            vec![],
+            "IP4a review: the `As` calls ask polkit nothing: the right is the pair (the bff's \
+             connection, a current member)"
+        );
+        hang_up(server, client);
+    }
+
+    // The plain names of the two verbs, asked by a caller outside `pai` (the
+    // authority refuses it `configure`): refused, polkit asked of the caller,
+    // no byte written.
+    {
+        let plain_core = Arc::new(
+            Manager::new(
+                FakeService::new(),
+                FakeAuthority::new(false),
+                FakeResolver::lan(),
+            )
+            .with_group(FakeGroup::new()),
+        );
+        let (server, client) = connect(&plain_core, &alice);
+        let kept = profiles();
+        assert_eq!(
+            client
+                .set_instance_profile_server("desk-gpu", "tight")
+                .map(|_| ()),
+            Err(ClientError::NotAuthorized),
+            "IP4a review: the plain switch of a caller outside `pai` is refused"
+        );
+        assert_eq!(
+            client
+                .set_instance_profile_model(
+                    "desk-gpu",
+                    "alpha",
+                    &vals(&[("ctx-size", "512")]),
+                    &profiles()
+                )
+                .map(|_| ()),
+            Err(ClientError::NotAuthorized),
+            "IP4a review: the plain entry save of a caller outside `pai` is refused"
+        );
+        assert_eq!(
+            profiles(),
+            kept,
+            "IP4a review: the plain refusals wrote no byte: {kept}"
+        );
+        assert_eq!(
+            asked(&plain_core),
+            [
+                (alice.clone(), Action::Configure),
+                (alice.clone(), Action::Configure),
+            ],
+            "IP4a review: each plain call asks polkit of the caller"
+        );
+        hang_up(server, client);
+    }
 }

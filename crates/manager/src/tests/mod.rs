@@ -342,6 +342,18 @@ fn data_root_e2e() {
     #[cfg(unix)]
     pipe_client::manager_pipe_client_model_files_e2e();
 
+    // ── pai-core's D-Bus client: the apply's rows, and the two new methods ─
+    // (ARCHITECTURE.md "Instance profiles", slice IP4 part a: the client decodes
+    // `running` and `notConverged` of every write that re-renders, and the entry
+    // save and the server profile switch of a profile are client methods.)
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_ip4a_e2e();
+
+    // ── pai-core's client over a stream: the apply's rows, the new methods ─
+    // (IP4a, the same pins as the D-Bus phase above, over the frame.)
+    #[cfg(unix)]
+    pipe_client::manager_pipe_client_ip4a_e2e();
+
     // ── Manager core: acting for a signed-in user (the bff names a member)
     crate::manager::service::manager_principal_e2e();
 

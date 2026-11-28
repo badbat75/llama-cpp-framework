@@ -339,7 +339,7 @@ pub(crate) fn ip3b_entry_save_e2e() {
     // ── 2a. The save, and the running instances it answers ───────────────
     let sent = vals(&[("ctx-size", "2048"), ("n-cpu-moe", "4")]);
     let answer = m
-        .set_instance_profile_model(&alice, "gpu", "alpha", "desk", &sent, &revision())
+        .set_instance_profile_model(&alice, "gpu", "alpha", &sent, &revision())
         .map(|a| a.running);
     assert_eq!(
         answer,
@@ -377,7 +377,6 @@ pub(crate) fn ip3b_entry_save_e2e() {
             &alice,
             "gpu",
             "beta",
-            "desk",
             &vals(&[("ctx-size", "1")]),
             &revision(),
         )
@@ -398,7 +397,6 @@ pub(crate) fn ip3b_entry_save_e2e() {
             &alice,
             "nope",
             "alpha",
-            "desk",
             &vals(&[("ctx-size", "1")]),
             &revision()
         )
@@ -443,7 +441,7 @@ pub(crate) fn ip3b_entry_save_refusals_e2e() {
             .revision
     };
     let save = |pairs: &[(&str, &str)], revision: &str| {
-        m.set_instance_profile_model(&alice, "gpu", "alpha", "desk", &vals(pairs), revision)
+        m.set_instance_profile_model(&alice, "gpu", "alpha", &vals(pairs), revision)
             .map(|a| a.running)
     };
 
@@ -778,7 +776,6 @@ pub(crate) fn ip3b_server_switch_e2e() {
             &alice,
             "gpu",
             "alpha",
-            "desk",
             &vals(&[("ctx-size", "1024"), ("device-draft", "CUDA1")]),
             &revision(),
         )
@@ -814,7 +811,8 @@ pub(crate) fn ip3b_server_switch_e2e() {
         );
     }
     assert_eq!(
-        m.set_instance_profile_server(&alice, "gpu", "wide"),
+        m.set_instance_profile_server(&alice, "gpu", "wide")
+            .map(|a| a.running),
         Ok(both.clone()),
         "IP3b 5b: the switch answers the running instances that use the profile"
     );
@@ -828,7 +826,6 @@ pub(crate) fn ip3b_server_switch_e2e() {
             &alice,
             "gpu",
             "alpha",
-            "desk",
             &vals(&[("ctx-size", "1024"), ("device-draft", "CUDA1")]),
             &revision()
         )
@@ -859,7 +856,9 @@ pub(crate) fn ip3b_server_switch_e2e() {
     for id in ["desk", "lab"] {
         mark_applied(id);
     }
-    let answer = m.set_instance_profile_server(&alice, "gpu", "desk");
+    let answer = m
+        .set_instance_profile_server(&alice, "gpu", "desk")
+        .map(|a| a.running);
     assert_eq!(
         answer,
         Ok(Vec::<String>::new()),
@@ -911,7 +910,6 @@ pub(crate) fn ip3b_server_switch_e2e() {
             &alice,
             "gpu",
             "alpha",
-            "desk",
             &vals(&[("ctx-size", "1024")]),
             &revision()
         )
@@ -926,7 +924,8 @@ pub(crate) fn ip3b_server_switch_e2e() {
         mark_applied(id);
     }
     assert_eq!(
-        m.set_instance_profile_server(&alice, "gpu", "desk"),
+        m.set_instance_profile_server(&alice, "gpu", "desk")
+            .map(|a| a.running),
         Ok(Vec::<String>::new()),
         "IP3c 5d: the profile already runs `desk`: a switch that moves no pair \
          answers nobody"
@@ -1016,7 +1015,6 @@ pub(crate) fn ip3b_entry_memory_e2e() {
             &alice,
             "gpu",
             "alpha",
-            "desk",
             &vals(&[("ctx-size", "131072")]),
             &revision(),
         )
@@ -1058,7 +1056,6 @@ pub(crate) fn ip3b_entry_memory_e2e() {
             &alice,
             "gpu",
             "alpha",
-            "desk",
             &vals(&[("ctx-size", "2048")]),
             &revision()
         )
@@ -1107,7 +1104,6 @@ pub(crate) fn ip3b_entry_memory_shrink_e2e() {
                 &alice,
                 "gpu",
                 "alpha",
-                "desk",
                 &vals(&[("ctx-size", "262144")]),
                 &roomy
                     .instance_profile(&alice, "gpu")
@@ -1140,7 +1136,6 @@ pub(crate) fn ip3b_entry_memory_shrink_e2e() {
             &alice,
             "gpu",
             "alpha",
-            "desk",
             &vals(&[("ctx-size", "1024")]),
             &tight
                 .instance_profile(&alice, "gpu")
@@ -1212,7 +1207,7 @@ pub(crate) fn ip3b_pool_is_one_file_e2e() {
 
     // ── 7b. A profile no instance profile lists dies from the one pool ───
     assert_eq!(
-        m.delete_model_profile(&alice, "beta"),
+        m.delete_model_profile(&alice, "beta").map(|_| ()),
         Ok(()),
         "IP3b 7b: a profile no entry lists is deleted from `models.ini`"
     );
