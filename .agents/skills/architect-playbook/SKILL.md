@@ -272,3 +272,6 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `serde_json::Map` iterates in key order unless `preserve_order` is on, and that feature differs per
   build in this workspace (on through `pai-app`, off for `pai-bff` alone): never let file bytes depend
   on the order of a JSON object's keys, sort first.
+- A manager verb can be built on the service and the bus while the `pai-core` client still answers
+  `()` or lacks it (IP4: `Affected`, `SetInstanceProfileServer`): read the client trait and both
+  transports before calling a route "only bff work".

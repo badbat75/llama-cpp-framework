@@ -4709,50 +4709,132 @@ stays a render rule for an entry that leaves it unset.
    - `CreateInstance` with a free port from 8581; the delete rules; `CreateModelProfile` into
      `models.ini`, copying the stay keys only; saves answer the affected running instances.
    Done when: each method's success, refusals and render effect are tested over D-Bus and the pipe.
-4. **IP4** (`pai-bff`, contract; reconciled with briefs 26 section 0 and 22 IP5.0, 2026-11-27).
-   The routes, each over the IP3 method named:
-   - `GET /api/profiles/instance` (`instance_profiles`): rows `{id, server, models, usedBy}`.
-   - `POST /api/profiles/instance` `{id, server}` (`create_instance_profile`): 201.
-   - `GET /api/profiles/instance/{p}` (`instance_profile`): `{id, server, models, usedBy, revision}`.
-   - `DELETE /api/profiles/instance/{p}` (`delete_instance_profile`): 204, or 409
-     `instance-profile-in-use`.
-   - **`POST /api/profiles/instance/{p}/models` `{model}` adds an entry**
-     (`add_instance_profile_model`).
-   - `DELETE .../models/{m}` removes one (`remove_instance_profile_model`).
-   - **`PUT .../models/{m}` `{values, revision}` only saves an entry's keys** (IP3b's
-     `SetInstanceProfileModel`). The single PUT for both is withdrawn: the brief's split is right, an
-     add creates and a save replaces.
-   - `PUT .../server` `{server}` (IP3b's server switch).
-   - `GET .../models/{m}`: `{profile, server, model, values, revision}`.
-   - `PUT /api/instances/{id}/profile` `{instanceProfile, revision}` (`set_instance_profile`).
-   - `PUT /api/instances/{id}/address` `{hostname, port, revision}` (`set_instance_address`).
-   - `POST /api/instances` `{id, instanceProfile}`: 201 `{id, port}`.
-   - The model profile rows of `GET /api/profiles/model` and the page `GET /api/profiles/model/{id}`
-     gain **`usedBy`**, the instance profiles that list the model, in pool order. The bff computes it
-     from `instance_profiles`, and it matches the delete refusal `model-profile-in-use`.
-   - `PUT /api/profiles/model/{id}` refuses a moved key: 422 `model-profile-placement-key`, `field`.
-   - The switch route, `enabled`, `assignments` and the 17d and 17e routes are removed (404).
+4. **IP4** (`pai-bff`, `pai-core` client, the manager's transports). The route contract, settled
+   2026-11-28 (architect; the user asleep, the coordinator taking the recommended options) from
+   brief 26 section 0, the IP3 methods as built and the IP4 follow-ups of `PLAN.md` step 10. It is
+   the source `fe/briefs/api-contract.md` copies.
 
-   **Writes that act at once (the brief's page has no Save bar).**
-   - Add, remove and the server switch carry **no revision**, as IP3a's add and remove take none.
-     Each is one set-like change refused on its own conflict (`instance-profile-model-listed`,
-     `no-instance-profile-model`, `model-profile-device-outside`), so a stale page loses nothing by
-     acting, and a revision would only turn a concurrent unrelated edit into a 409.
-   - Each answers `{running: [<instance id>…]}`, the running instances that use the profile. The page
-     keeps one restart offer and updates its list after each change, then re-reads the profile.
-   - Only the entry save (`PUT .../models/{m}`), the instance's profile and its address carry a
-     revision: each replaces values the page read.
-   - **The revision on the wire is a hash, not the text.** IP3a's revision is the whole pool text
-     (`instance_profile` answers it). The bff answers `revision` as a SHA-256 hex of the profile's
-     own sections (`[<p>]` and its `[<p>/*]`), so an edit of another profile does not stale this
-     page. On a write it reads the pool again, compares that hash, and hands the text it read to the
-     manager, which compares the whole text under the `writing` lock. A change elsewhere in that
-     short window is a rare 409 `stale-revision`, read again.
-   - The instance's own revision is the same over `instances.ini`'s section of that instance.
+   **Rules every route keeps.**
+   - Behind the session, as today: 401 `session-required`, 403 `session-not-administrator`, the
+     manager's `As` refusal ending the session; 503 `client-unavailable` before the call was handed
+     over, 504 `client-timeout` after.
+   - **Wire keys are brief 26's.** The bff maps the manager's names to them, one small table:
+     `instance-profile-bad-id` to 422 `invalid-instance-profile-id` (field `id`),
+     `InstanceProfileExists` to 409 `instance-profile-name-taken` (field `id`), `NoInstanceProfile`
+     to 404 (on a path) or 422 (in a body) `no-instance-profile-named`, `NoServerProfile` to 422
+     `no-server-profile-named` (field `server`), `InstanceProfileInUse` to 409
+     `instance-profile-in-use [instance]`. Every other keyed refusal keeps the manager's key and args
+     (422 for a value rule, 409 for a conflict), as `server_profiles.rs` does. Why: IP6a already
+     tests these names, and one table in the bff is cheaper than renaming strings in the web UI.
+   - **Every write that re-renders answers `{running: [<instance id>…], notConverged: [{instance,
+     key, args}…]}`**, decoded from the manager's `Affected` (bus `a{sv}`, the pipe's object).
+     `running` is a list on every such route, the model and server profile saves included (they
+     answer `running: bool` today: their web UI readers change in the same slice, and a reader must
+     test `running.length`, an empty array being truthy in JavaScript).
+   - Revisions: only the entry save carries one on the wire, a SHA-256 hex of the profile's own
+     sections (`[<p>]` and its `[<p>/*]`); the bff reads the pool, compares the hash, and hands the
+     pool text it read to the manager, which compares it under `writing` (409 `stale-revision`).
+     Every other instance profile and instance write acts at once with no revision; the bff passes
+     the manager the text it has just read (`GetInstanceProfile`'s revision, `instances.ini` by
+     `ReadFileAs`), so the manager's compare guards only its own read-to-write window. This
+     withdraws the revision the earlier IP4 list gave `PUT .../profile` and `.../address`: each is
+     one control on the instance page, and last writer wins on one value.
 
-   Done when: every route's answer and refusal is pinned in the bff tests; the removed routes answer
-   404; a write with no revision is accepted where none is asked and refused 422
-   `model-profiles-malformed` where one is; `usedBy` is pinned on both model profile reads.
+   **Instance profiles** (new routes; IP6a's three keep their shapes).
+   - `GET /api/profiles/instance`: `{rows: [{id, server, models: [<model id>…], usedBy: [<instance
+     id>…]}]}`, pool order. `usedBy` is computed by the bff from the instance rows' `instanceProfile`.
+   - `POST /api/profiles/instance` `{id, server}`: 201 `{id}`; 422 `invalid-instance-profile-id`,
+     409 `instance-profile-name-taken`, 422 `no-server-profile-named`.
+   - `GET /api/profiles/instance/{p}`: `{id, server, models: [{id, keys: <count>}], usedBy,
+     revision}`; 404 `no-instance-profile-named`. The counts and the hash come from the pool text
+     `GetInstanceProfile` answers, parsed by the bff with `pai-core`'s INI reader: no new method.
+   - `DELETE /api/profiles/instance/{p}`: 204; 409 `instance-profile-in-use [instance]`, 404.
+   - `PUT /api/profiles/instance/{p}/server` `{server}` (`SetInstanceProfileServer`): the affected
+     answer; 404, 422 `no-server-profile-named`. A card the switch takes away is no refusal: the
+     instances it no longer fits are in `notConverged` ("Convergence").
+   - **The proposal is settled: `POST /api/profiles/instance/{p}/models` `{model}` adds an entry**
+     (`AddInstanceProfileModel`): 201 with the affected answer; 404, 422 `no-model-profile-named`
+     (field `model`), 409 `instance-profile-model-listed`. **`PUT .../models/{m}` `{values, revision}`
+     only saves an entry** (`SetInstanceProfileModel`): 200 `{revision, running, notConverged}`, the
+     new hash so a second save needs no re-read; 404 `no-instance-profile-model`, 422
+     `model-profile-stay-key [key]` and the value rules (`not-whole-number-in-range`,
+     `tensor-split-format`, `override-no-device`, the enums), 409 `stale-revision`, 422
+     `model-profiles-malformed` with no revision. Why the split: a create and a replace are
+     different acts with different refusals, and a PUT that creates would need a revision the add
+     does not.
+   - `DELETE .../models/{m}` (`RemoveInstanceProfileModel`): the affected answer; 404
+     `no-instance-profile-model`.
+   - `GET .../models/{m}`: `{profile, server, model, values: {<key>: <value>…}, revision}`, the
+     entry's keys in file order, from the same pool text; 404 as above.
+
+   **Instances.**
+   - `GET /api/instances` rows gain `instanceProfile`, `hostname` (null when the record sets none),
+     `converged`, `reason` (`{key, args}` or null) and `pendingRestart`, the last three from
+     `InstanceStates()`.
+   - `PUT /api/instances/{id}/profile` `{instanceProfile}` (`SetInstanceProfile`): the affected
+     answer; 404 for the instance, 422 `no-instance-profile-named`, 409 `address-in-use [instance]`.
+   - `PUT /api/instances/{id}/address` `{hostname, port}` (`SetInstanceAddress`; `hostname` null
+     clears it): the affected answer; 422 `invalid-port`, 422 `invalid-hostname`, 409
+     `address-in-use [instance]` (the manager's names; the bff maps any that differ).
+   - `POST /api/instances` `{engine, id, instanceProfile}`: 201 `{id, port}`, the port the manager
+     proposed from 8581; 409 `instance-exists`, 422 `no-instance-profile-named`, 503 `no-free-port`.
+     `CreateInstance` takes the instance profile instead of the server profile and answers the port.
+
+   **Model profiles.**
+   - `GET /api/profiles/model` rows and `GET /api/profiles/model/{id}` gain `usedBy`, the instance
+     profiles that list the model, pool order, computed by the bff from `InstanceProfiles`.
+   - `DELETE /api/profiles/model/{id}`: 204; 409 `model-profile-assigned [profile, "<a>, <b>"]`
+     naming the instance profiles (the manager's key, kept: the earlier `model-profile-in-use` name
+     here is withdrawn); **409 `model-profile-enabled` is dropped** with its mapping and its doc.
+   - `PUT /api/profiles/model/{id}`: a moved key is 422 `model-profile-placement-key [key]`, field.
+
+   **Removed (404).** `PUT /api/profiles/model/{id}/enabled`, `PUT /api/instances/{id}/profiles/server`,
+   `GET|PUT /api/instances/{id}/profiles/model` and `PUT .../profiles/model/{profile}`, with the
+   manager's `SetModelProfile(As)` and `SetServerProfile(As)` on both transports and in the client,
+   and every write of `assignments.ini` left in `CreateInstance` and `RemoveInstance`. The checks'
+   `model-profile-enabled` key and string go with them. `GET|PUT /api/instances/{id}/server` stays
+   (brief 26 section 7 owns its fate).
+
+   **Transport changes the contract needs** (what exists, checked 2026-11-28: the client's instance
+   profile writes answer `()`, `SetInstanceProfileServer` exists only in `service.rs`, the bus
+   `Instances` row has no instance profile or host, `CreateInstance` takes a server profile, and
+   `SetInstanceProfileModel` takes an `instance` argument it only checks for existence).
+   - `pai-core` client: an `Affected {running, not_converged}` type; every re-rendering write
+     returns it (`write_file_if`, the entry add, remove and save, the server switch,
+     `set_instance_profile`, `set_instance_address`, the model profile delete).
+   - `SetInstanceProfileServer(As)` exported on the bus and the pipe, answering `Affected`.
+   - `SetInstanceProfileModel` loses its `instance` argument (`(s profile, s model, a(ss) values, s
+     revision)`): the entry belongs to the profile, and the entry page names no instance.
+   - The instance row (bus `Instances`, pipe `ListInstances`) gains `instanceProfile` and
+     `hostname`, appended to the row; the protocol number in `Version()` goes up. No fallback for
+     an older row: no manager past IP2 is deployed, and the manager, bff and `pai` ship at one
+     version in the framework's packages, so the one migrating deploy installs them together. The
+     states stay in `InstanceStates()`.
+   - `CreateInstance(engine, id, instanceProfile)` answering the port.
+
+   **Slices**, each one tester and coder round, in order:
+   - **IP4a** (`pai-core` client, manager transports): `Affected` on every re-rendering write;
+     `SetInstanceProfileServer(As)` exported; `SetInstanceProfileModel` without `instance`; the
+     client's `set_instance_profile_model` and `set_instance_profile_server`. Done when: over D-Bus
+     and the pipe, each write's `running` and `notConverged` rows decode in the client (one save that
+     leaves an instance over its memory), and the two new client methods round trip with their
+     refusal keys.
+   - **IP4b** (manager, client): the instance row's `instanceProfile` and `hostname`, the protocol
+     bump; `CreateInstance` by instance profile answering the port. Done when: both transports' rows
+     carry both fields and the states; a create answers `8581` on an empty record and `8582` with
+     8581 taken; `Version()` answers the new protocol number.
+   - **IP4c** (bff): the instance profile routes above with the key table and the hash revision.
+     Done when: every route's answer and refusal is pinned; a stale hash is 409; an edit of another
+     profile leaves the hash unchanged; `usedBy` is pinned.
+   - **IP4d** (bff): the instance routes (rows, profile, address, create). Done when: each answer
+     and refusal is pinned, the rows' three states included.
+   - **IP4e** (bff, and the two web UI readers): `usedBy` on both model profile reads, the dropped
+     409, the moved-key 422, and the model and server profile saves answering the list shape. Done
+     when: pinned in the bff tests, and the web UI's restart offer tests pass with `running: []`.
+   - **IP4f** (manager, client, bff): the removals. Done when: the four routes answer 404, the two
+     verbs are unknown methods on both transports, and no production code names `assignments.ini`
+     except the migration and its refusal of a write.
+
 5. **IP5** (`fe`, briefs 22 and 02e): the plain Models list; the model profile page without the
    switch and without the moved keys' cards and fields. Done when: the brief's tests are green and
    the designer's UX check passes.
@@ -4867,7 +4949,8 @@ chose:
   **Real-machine check:** after the deploy, a model profile save on this machine shows "pending
   restart" on `default` until the user restarts it.
 - **IP4**: the instance rows gain `converged`, `reason`, `pendingRestart`; every re-rendering save
-  answers `running` and `notConverged`.
+  answers `running` and `notConverged` (the contract and slices IP4a to IP4f: "Instance profiles",
+  amendment, IP4).
 - **Recorded at the IP3c review (2026-11-27):**
   - Fit is judged against the instance's pair **on disk** (the last good one), not against the
     sources as the write found them. Otherwise the next unrelated save would write a non-fitting
