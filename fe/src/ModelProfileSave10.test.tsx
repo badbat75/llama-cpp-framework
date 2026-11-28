@@ -36,6 +36,8 @@ import {
 const ID = 'Qwen3-27B'
 const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
+// 22 IP5.5: Load on startup is a placement key, so the pair 2h.164 reads has
+// only its text half left on this page: the card shows the file's text.
 const LOAD = en('model-profile-load-on-startup')
 const KWARGS = en('model-profile-chat-kwargs')
 const MARKERS = en('field-error-comment-markers')
@@ -106,16 +108,6 @@ function input(main: HTMLElement, label: string): HTMLInputElement {
 
 function type(input: HTMLElement, value: string) {
   fireEvent.change(input, { target: { value } })
-}
-
-function selectOf(main: HTMLElement, label: string): HTMLSelectElement {
-  return within(main).getByRole('combobox', {
-    name: label,
-  }) as HTMLSelectElement
-}
-
-function pick(main: HTMLElement, label: string, value: string) {
-  fireEvent.change(selectOf(main, label), { target: { value } })
 }
 
 function saveButton(main: HTMLElement): HTMLElement {
@@ -213,9 +205,13 @@ function expectNoError(el: HTMLElement, what: string) {
 
 test('2h.164: on a read that holds both keys of the card, the select shows the file value and the text input holds the file text: both enabled', async () => {
   const { main } = await form()
-  const select = selectOf(main, LOAD)
-  expect(select.disabled, 'Load on startup enabled (164)').toBe(false)
-  expect(select.value, 'the file value shows').toBe('true')
+  // 22 IP5.5: the pair's select is a placement key and is off the page, so
+  // 164's "both enabled" is the text field alone, and no Load on startup
+  // control stands where the pair's select was.
+  expect(
+    within(main).queryByRole('combobox', { name: LOAD }),
+    `${en('model-profile-load-on-startup')}: 22 IP5.5 leaves the select off the page`,
+  ).toBeNull()
   const el = input(main, KWARGS)
   expect(el.disabled, 'Chat kwargs enabled (164)').toBe(false)
   expect(el.id, 'the field id').toBe(
@@ -225,55 +221,9 @@ test('2h.164: on a read that holds both keys of the card, the select shows the f
   expectNoError(el, 'a valid object loaded: no error')
 })
 
-test('2h.164: on a read that holds neither key, both controls are enabled: the select shows off and the text input is empty', async () => {
-  const { main } = await form(
-    without('load-on-startup', 'chat-template-kwargs'),
-  )
-  const select = selectOf(main, LOAD)
-  expect(select.disabled, 'Load on startup enabled (164)').toBe(false)
-  expect(select.value, 'an absent key shows off').toBe('false')
-  const el = input(main, KWARGS)
-  expect(el.disabled, 'Chat kwargs enabled (164)').toBe(false)
-  expect(el.value, 'an absent key shows the empty text').toBe('')
-})
-
 // ── 167, 2e's 122: the truthy reading decides what the select shows ─────
 
-/** A present value and the option the select shows for it: `on`, `enabled`,
- * `true`, `1` are on; every other value, `""` included, is off. */
-const READINGS: { set: string; shows: string }[] = [
-  { set: 'true', shows: 'true' },
-  { set: '1', shows: 'true' },
-  { set: 'on', shows: 'true' },
-  { set: 'yes', shows: 'false' },
-  { set: '', shows: 'false' },
-]
-
-test.each(READINGS)(
-  '2h.167: load-on-startup = $set is read as $shows',
-  async (c) => {
-    const { main } = await form({ ...AS_LOADED, 'load-on-startup': c.set })
-    expect(selectOf(main, LOAD).value, `the select shows ${c.shows}`).toBe(
-      c.shows,
-    )
-  },
-)
-
 // ── 133: the off / on select, and the text ─────────────────────────────
-
-test('2h.133: load-on-startup off sends null for the key the file holds, and on sends "true"', async () => {
-  const { bff, main } = await form()
-  pick(main, LOAD, 'false')
-  await save(main, bff)
-  expect(sentValues(bff), 'off removes the key').toEqual({
-    'load-on-startup': null,
-  })
-  pick(main, LOAD, 'true')
-  await save(main, bff, 2)
-  expect(sentValues(bff, 2), 'on writes the key').toEqual({
-    'load-on-startup': 'true',
-  })
-})
 
 /** A valid kwargs text the file holds for the GOOD table, different from every
  * text typed there: 132 makes a text field changed only when its TRIMMED text
@@ -378,30 +328,6 @@ test('2h.133: a Chat kwargs the file lacks, typed and emptied again, is clean: n
   )
 })
 
-test('2h.166: a Chat kwargs unchanged from the file is not sent, and the loaded value is still checked on Save', async () => {
-  // A value the file holds that is no JSON object: untouched, so nothing to
-  // send, yet the check runs and Save refuses.
-  const first = await form({ ...AS_LOADED, 'chat-template-kwargs': '[1]' })
-  expect(status(first.main).textContent, 'untouched: clean').toBe('')
-  fireEvent.click(saveButton(first.main))
-  await within(first.main).findByText(en('save-invalid'))
-  const el = input(first.main, KWARGS)
-  expectError(el, JSONOBJ, 'the loaded [1] is checked')
-  expectAlert(first.main, en('save-invalid'))
-  expect(first.bff.to('PUT', PUT), 'nothing sent').toHaveLength(0)
-  // A valid value left untouched: a change elsewhere carries the save, and the
-  // kwargs stay out of the body. One page at a time: the first form unmounts
-  // before the second render, so a single <main> is on screen.
-  cleanup()
-  const second = await form()
-  pick(second.main, LOAD, 'false')
-  await save(second.main, second.bff)
-  expect(
-    Object.keys(sentValues(second.bff)),
-    'only the changed key travels',
-  ).toEqual(['load-on-startup'])
-})
-
 // ── 169: the new string ───────────────────────────────────────────────
 
 test('2h.169: strings/en_US.json carries field-error-json-object with the brief text of 169', () => {
@@ -438,17 +364,6 @@ test('2h.132: a trailing space added to a Chat kwargs equal to the file text kee
   expect(status(main).textContent, 'a trailing space: clean').toBe('')
   fireEvent.click(saveButton(main))
   expect(bff.to('PUT', PUT), 'nothing sent').toHaveLength(0)
-})
-
-test('2h.132: a Chat kwargs equal to the file text when trimmed travels in no body: the PUT of a save from a changed select carries only that key', async () => {
-  const { bff, main } = await form()
-  type(input(main, KWARGS), `${FILE_KWARGS} `)
-  pick(main, LOAD, 'false')
-  await save(main, bff)
-  expect(
-    Object.keys(sentValues(bff)),
-    'the trimmed-equal kwargs stay out of the body',
-  ).toEqual(['load-on-startup'])
 })
 
 // ── 164: the Chat kwargs input is a code input ──────────────────────────

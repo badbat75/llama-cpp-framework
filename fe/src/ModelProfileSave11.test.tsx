@@ -48,7 +48,6 @@ const EFFORT = en('model-profile-reasoning-effort')
 const PRESERVE = en('model-profile-keep-past-thinking')
 /** The KV cache card's tri-state, editable since 2h.5's 164: the same reading
  * as `reasoning-preserve`, pinned beside it. */
-const FLASH = en('model-profile-flash-attention')
 const BUDGET = en('model-profile-thinking-budget')
 const MSG = en('model-profile-budget-message')
 const MAXOUT = en('model-profile-max-output')
@@ -587,22 +586,6 @@ test.each(TRI_STATE)(
 
 // ── 171, 133: the tri-state reading, at a card editable before 2h.6 ─────
 
-test('2h.133, 2h.171: the tri-state reading of a card that was editable before this one, flash-attn: a file default is the default option and clean, not the on', async () => {
-  // 133's tri-state row: `default` is the row's absent option, so a file that
-  // holds `default` is the absence, and the control shows `default` where a
-  // `true` shows on. Pinned on the KV cache card's select, editable since
-  // 2h.5's 164, so 2h.6 cannot move the reading of the card it opens.
-  const { bff, main } = await form({ ...AS_LOADED, 'flash-attn': 'default' })
-  const flash = selectOf(main, FLASH)
-  expect(flash.value, 'a file default shows default, not on').toBe('default')
-  expect(status(main).textContent, 'loaded as read, so the form is clean').toBe(
-    '',
-  )
-  pick(main, FLASH, 'true')
-  await save(main, bff)
-  expect(sentValues(bff)['flash-attn'], 'on sends "true"').toBe('true')
-})
-
 // ── 172: the Budget message text ────────────────────────────────────────
 
 /** Texts with a `;` or a `#`: the comment markers check refuses them (172). */
@@ -731,37 +714,30 @@ test.each(NUMBERS)(
 )
 
 // ── 132, 133: the tri-state row read at every select that reads a flag ───
-// The tri-state selects of 133's flag row that the form edits (kv-unified,
-// backend-sampling, reasoning-preserve), read at the control as well as at the
-// body: what the select SHOWS is the state the form is dirty against (132), so a
-// pick of `default` from a loaded `true` has to show `default` while the save
-// removes the key, and a file that holds the word `default` is that same absence
-// (133's last paragraph: the row's absent option, so an untouched form sends
-// nothing). The row's `off` sends the string `"false"` (`emit_bool`), which is
-// NOT the key's removal, so it is pinned beside the `default` row. The row is
-// read at an enabled control only: a disabled flag select shows the state the
-// engine acts as (122, 125), so the word `default` there reads as the on it
-// stands for, and no option can be picked from it. The two keys of the row that
-// sit on the Hardware card (`op-offload`, `repack`) have no `editable` yet
-// (2e.4), so they are read there as the read-only card of 122, whose states are
-// pinned in ModelProfileCards4.test.tsx (absent, true, false and an unlisted
-// spelling, the word `default` not among them: observed on 2026-11-17, the
-// disabled select reads the word `default` as the on it stands for, exactly as
-// the paragraph above, and that read is left unpinned).
+// The tri-state selects of 133's flag row that the form edits
+// (backend-sampling, reasoning-preserve), read at the control as well as at
+// the body: what the select SHOWS is the state the form is dirty against
+// (132), so a pick of `default` from a loaded `true` has to show `default`
+// while the save removes the key, and a file that holds the word `default` is
+// that same absence (133's last paragraph: the row's absent option, so an
+// untouched form sends nothing). The row's `off` sends the string `"false"`
+// (`emit_bool`), which is NOT the key's removal, so it is pinned beside the
+// `default` row. The row is read at an enabled control only: a disabled flag
+// select shows the state the engine acts as (122, 125), so the word `default`
+// there reads as the on it stands for, and no option can be picked from it.
+// Brief 22 IP5 left these two on the page; the row's other keys left with the
+// cards of `PLACEMENT_KEYS` (Unified KV) or never had an editable control.
 
 /** The tri-state selects of 133's flag row that the form edits, each with the
  * label of its field. */
 const FLAGS = [
-  { key: 'kv-unified', label: en('model-profile-unified-kv') },
   { key: 'backend-sampling', label: en('model-profile-backend-sampling') },
   { key: 'reasoning-preserve', label: PRESERVE },
 ]
 
-/** The card's keys as loaded, with the flag `key` at `value`. `parallel` is
- * present so no number field's default box locks a select (155's
- * `needsUnticked`). */
+/** The card's keys as loaded, with the flag `key` at `value`. */
 function flags(key: string, value: string): Record<string, string> {
-  return { ...AS_LOADED, parallel: '1', [key]: value }
+  return { ...AS_LOADED, [key]: value }
 }
 
 /** The text of the option a select shows the user (132: what the user reads is

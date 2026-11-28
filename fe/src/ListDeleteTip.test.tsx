@@ -30,7 +30,6 @@ import {
 } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
-import strings from './strings/en_US.json'
 import {
   accName,
   type BffOptions,
@@ -79,15 +78,28 @@ const iconModule = async (): Promise<IconModule> =>
 
 // ── The two lists ───────────────────────────────────────────────────────
 
-function modelProfile(id: string, enabled: boolean): ModelProfile {
-  return { id, engine: 'llama.cpp', engineAvailable: true, enabled, model: '' }
+function modelProfile(id: string, usedBy: string[]): ModelProfile {
+  // `enabled` is the key the page reads today, and a row without it is a row
+  // the page reads as malformed; slice IP5 takes the key out of the read, so
+  // the rows carry it beside `usedBy`. It is set to "an instance profile lists
+  // this model", which is the row today's page blocks (its profile is on) and
+  // the row IP5 blocks (IP5.3): the same row under both readings.
+  return {
+    id,
+    engine: 'llama.cpp',
+    engineAvailable: true,
+    enabled: usedBy.length > 0,
+    usedBy,
+    model: '',
+  }
 }
 
-/** Two on, one off: only the last row's delete can act. */
+/** Two rows an instance profile lists, one it does not: only the last row's
+ *  delete can act (22 IP5.3). */
 const MODEL_LIST: ModelProfile[] = [
-  modelProfile('Qwen3-27B', true),
-  modelProfile('Coder-30B', true),
-  modelProfile('Old-Coder', false),
+  modelProfile('Qwen3-27B', ['default']),
+  modelProfile('Coder-30B', ['default']),
+  modelProfile('Old-Coder', []),
 ]
 
 function serverRow(id: string, instance: string | null): ServerProfile {
@@ -127,7 +139,7 @@ const MODELS: List = {
     return main
   },
   deleteKey: 'model-profiles-delete-row',
-  reasonKey: 'model-profiles-delete-needs-off',
+  reasonKey: 'model-profiles-delete-in-use',
   blocked: 'Qwen3-27B',
   free: 'Old-Coder',
 }
@@ -713,11 +725,3 @@ test('22 D4.21: the sheet makes every .ot-add a 40 px round outlined button (bor
 })
 
 // ── 22 D4.22: the refusal of a switched-on delete ────────────────────────
-
-test('22 D4.22: en_US.json carries the switched-on refusal the brief gives, the same words on the list and on the page (the page has its own switch since brief 24 A2, so "in the list" is wrong there: 3.3.3)', () => {
-  const table: Record<string, string> = strings
-  expect(
-    table['api-model-profile-enabled'],
-    '22 D4.22: the English of the brief',
-  ).toBe('{0} is switched on, so it cannot be deleted. Switch it off first.')
-})

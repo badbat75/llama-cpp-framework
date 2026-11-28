@@ -116,6 +116,12 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
 
 ## Pitfalls
 
+- A media block that sits above the base rule of the same selector loses to it (same specificity, later wins):
+  `.model-profiles td:first-child .muted` never showed at 320 px for that reason. jsdom cannot see it: read
+  the computed `display` in a browser for every narrow-width rule a brief names.
+- An absolutely positioned `th` (a visually hidden header) still shifts the header row against the body
+  in Chromium: measure each `th`'s left and right against its column's `td` at 320 px.
+
 - `display: flex` on a `td` makes it a flex box, not a table cell: `vertical-align` stops applying
   and its content sits at the top. Brief a wrapper inside the cell instead.
 
@@ -194,3 +200,6 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
   of `const STATES = [` by pattern (the first `^]$` after it) each time. Playwright's `click` waits
   forever on an `aria-disabled` button; use `click({ force: true })` to check that a switched-off
   control sends nothing.
+- Do not ask for `overflow-wrap: normal` (or `break-word`) on a table cell to stop mid-word breaks:
+  only `anywhere` lowers the cell's min-content, so a long id without a break point keeps the table in
+  its box at 320 px (CSS Text 3 `overflow-wrap`); the same goes for `nowrap` on a link holding an id.

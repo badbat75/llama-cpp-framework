@@ -26,6 +26,7 @@ import {
   fakeBff,
   isHidden,
   modelProfileDoc,
+  PLACEMENT_KEYS,
   reply,
   startAt,
 } from './test/bff.ts'
@@ -95,7 +96,7 @@ type Row = {
 }
 
 /** The field table of 92 and 93, in the cards' and the GUI's order. */
-const FIELDS: Row[] = [
+const FIELDS_IP5_ALL: Row[] = [
   {
     card: 'model-profile-resource-context',
     key: 'ctx-size',
@@ -168,16 +169,23 @@ const FIELDS: Row[] = [
     shown: en('option-last'),
   },
 ]
+/** Slice IP5 (fe/briefs/22-model-sources.md, IP5.5: "Each card keeps only the
+ *  fields and notes whose key is in MODEL_PROFILE_STAY_KEYS"): the rows of the
+ *  keys that moved to the instance profile's entry leave the table, so every
+ *  assertion below reads the page the slice leaves. */
+const FIELDS: Row[] = FIELDS_IP5_ALL.filter(
+  (f) => !PLACEMENT_KEYS.includes(f.key),
+)
 
 /** The controls 92 and 93 put in the two cards: a box and an input per number. */
 const CONTROLS =
   FIELDS.filter((f) => f.kind === 'number').length * 2 +
   FIELDS.filter((f) => f.kind === 'select').length
 
-const RESOURCE_CARDS = [
-  'model-profile-resource-context',
-  'model-profile-embeddings',
-]
+/** The cards of 2e.1 that brief 22 IP5 leaves on the page: Resource / context
+ * is every key of `PLACEMENT_KEYS`, so the card is gone and Embeddings stands
+ * alone. */
+const RESOURCE_CARDS = ['model-profile-embeddings']
 
 beforeEach(() => startAt(HASH))
 
@@ -363,47 +371,36 @@ function expectAbsentSelect(main: HTMLElement, f: Row): void {
 
 // ── The page structure (83, 84) ─────────────────────────────────────────
 
-test('2e.83 (as 24 A2.1 amends it): the section of the h2 holds, in order, the h2, the jump list of 2h.10, then every card of 83 in the page order (the list of test/modelProfileCards.ts), and the state line stays above the h2', async () => {
-  for (const [what, extra, off] of [
-    ['a switched-on model profile', {}, false],
-    ['a switched-off model profile', { enabled: false }, true],
-  ] as [string, Record<string, unknown>, boolean][]) {
-    const { main, h1 } = await loaded({
-      modelProfile: () => reply(200, docOf(SET, extra)),
-    })
-    const h2 = settingsTitle(main)
-    const section = h2.closest('section')
-    expect(section, `${what}: the h2 sits in a section`).toBeTruthy()
-    const nodes: [string, Node][] = [['the h1', h1]]
-    // 24 A2.1: the state line, the page's own switch and the short word of the
-    // state, is above the h2 whether the profile is switched on or off.
-    nodes.push([
-      'the state line',
-      within(main).getByText(
-        en(off ? 'model-profile-off-short' : 'model-profile-on-short'),
-      ),
-    ])
-    nodes.push(['the h2', h2], ['the jump list', navOf(main)])
-    for (const title of cardHeadingKeys()) {
-      const card = cardOf(main, title)
-      expect(
-        section!.contains(card),
-        `${what}: the ${en(title)} card is inside the section`,
-      ).toBe(true)
-      nodes.push([`the ${en(title)} card`, card])
-    }
-    for (let i = 0; i + 1 < nodes.length; i++)
-      expect(
-        before(nodes[i]![1], nodes[i + 1]![1]),
-        `${what}: ${nodes[i]![0]} before ${nodes[i + 1]![0]}`,
-      ).toBe(true)
+test('2e.83 (as 24 A2.1 amends it, as 22 IP5.4 amends it again): the section of the h2 holds, in order, the h2, the jump list of 2h.10, then every card of 83 in the page order (the list of test/modelProfileCards.ts), and IP5.4 leaves no state line above the h2', async () => {
+  const { main: head, h1 } = await loaded({
+    modelProfile: () => reply(200, docOf(SET)),
+  })
+  const h2 = settingsTitle(head)
+  const section = h2.closest('section')
+  expect(section, 'the h2 sits in a section').toBeTruthy()
+  const nodes: [string, Node][] = [['the h1', h1]]
+  // 22 IP5.4: the state line and the page's own switch are gone, so the
+  // section's first node after the h1 is the h2, then the jump list.
+  nodes.push(['the h2', h2], ['the jump list', navOf(head)])
+  for (const title of cardHeadingKeys()) {
+    const card = cardOf(head, title)
     expect(
-      notices(main).length,
-      `${what}: 2h.10's 194 took the read-only Notice away`,
-    ).toBe(0)
-    cleanup()
-    vi.unstubAllGlobals()
+      section!.contains(card),
+      `the ${en(title)} card is inside the section`,
+    ).toBe(true)
+    nodes.push([`the ${en(title)} card`, card])
   }
+  for (let i = 0; i + 1 < nodes.length; i++)
+    expect(
+      before(nodes[i]![1], nodes[i + 1]![1]),
+      `${nodes[i]![0]} before ${nodes[i + 1]![0]}`,
+    ).toBe(true)
+  expect(
+    notices(head).length,
+    "2h.10's 194 took the read-only Notice away",
+  ).toBe(0)
+  cleanup()
+  vi.unstubAllGlobals()
   // The engine Notice of 72 keeps its place: 2h.10's 196 puts the jump list
   // between the h2 and the engine Notice, and H11b.2 keeps the Notice above
   // the Assets card, the row's card.
@@ -456,7 +453,7 @@ test('2e.84 (2h.10 194, 198): the Notice model-profile-partly-editable is gone: 
 
 // ── The shared rules of the cards (85, 86, 89, 90) ──────────────────────
 
-test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is natively disabled unless the card is editable, the default boxes included, while every About toggle stays enabled', async () => {
+test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the cards IP5 leaves is natively disabled unless the card is editable, the default boxes included, while every About toggle stays enabled', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   const values = docOf(SET).values
   const controls = RESOURCE_CARDS.flatMap((title) => [
@@ -464,8 +461,8 @@ test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is nativel
       'input, select, textarea',
     ),
   ])
-  expect(controls.length, 'the controls of 92 and 93').toBe(CONTROLS)
-  // 2h.1's 130 and 2h.4's 155: the two cards are editable, so their controls
+  expect(controls.length, 'the controls of 93').toBe(CONTROLS)
+  // 2h.1's 130 and 2h.4's 155: the cards are editable, so their controls
   // lose disabled. A number's default box is always enabled (155); its input
   // follows the box, which a key the file holds leaves unticked (156).
   const rowOf = (id: string): Row | undefined =>
@@ -495,7 +492,7 @@ test('2e.85 (2h.1 130, 2h.4 155, 156): every control of the two cards is nativel
     ).toBe(false)
 })
 
-test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards hold exactly the fields of 92 and 93 in the table order', async () => {
+test('2e.86, 2e.81: a key the page does not show adds no field, so the cards IP5 leaves hold exactly the fields of 93 in the table order', async () => {
   const { main } = await loaded({
     modelProfile: () =>
       reply(200, docOf({ ...SET, temp: '0.7', faqs: 'zz-secret' })),
@@ -514,13 +511,9 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the two cards
   }
   // The fields of a card follow its table.
   const fields = [
-    ...cardOf(main, 'model-profile-resource-context').querySelectorAll(
-      '.field',
-    ),
+    ...cardOf(main, 'model-profile-embeddings').querySelectorAll('.field'),
   ]
-  const inOrder = FIELDS.filter(
-    (f) => f.card === 'model-profile-resource-context',
-  )
+  const inOrder = FIELDS.filter((f) => f.card === 'model-profile-embeddings')
   for (let i = 0; i < inOrder.length; i++)
     expect(
       fields[i]!.contains(aboutOf(main, en(inOrder[i]!.label))),
@@ -541,7 +534,7 @@ test.each(
   },
 )
 
-test('2e.89, 2e.90: no 2e.1 field carries a unit and no card of 2e.1 has a note or a group, so no unit, no h4 and no role=group division in them', async () => {
+test('2e.89, 2e.90: no field IP5 leaves of 2e.1 carries a unit and no such card has a note or a group, so no unit, no h4 and no role=group division in them', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   for (const title of RESOURCE_CARDS) {
     const card = cardOf(main, title)
@@ -634,19 +627,20 @@ test.each(FIELDS)(
 test.each(['0172032', 'abc', '-1', '4096.50', ' 4096 '])(
   '2e.87, 2e.94: a number shows the reply string exactly, with no parsing and no reformatting, and its default box unticked: %s',
   async (value) => {
-    const label = en('model-profile-context-size')
+    // Cache reuse: a number field the page keeps (brief 22 IP5.5).
+    const label = en('model-profile-cache-reuse')
     const { main } = await loaded({
-      modelProfile: () => reply(200, exactOf({ 'ctx-size': value })),
+      modelProfile: () => reply(200, exactOf({ 'cache-reuse': value })),
     })
     const group = groupBox(main, label)
-    expect(inputOf(group, label).value, `ctx-size ${value}`).toBe(value)
-    expect(boxOf(group).checked, `ctx-size ${value}: the box unticked`).toBe(
+    expect(inputOf(group, label).value, `cache-reuse ${value}`).toBe(value)
+    expect(boxOf(group).checked, `cache-reuse ${value}: the box unticked`).toBe(
       false,
     )
   },
 )
 
-test('2e.87, 2e.94: a value the mapping does not list becomes one extra last option carrying the reply string as its value and its text, selected: pooling weird (2e.3b: a flag select has no extra option, criterion 125, and kv-unified auto shows on with the line of 126)', async () => {
+test('2e.87, 2e.94: a value the mapping does not list becomes one extra last option carrying the reply string as its value and its text, selected: pooling weird (2e.3b: a flag select has no extra option, criterion 125)', async () => {
   for (const [f, value] of [
     [FIELDS.find((x) => x.key === 'pooling')!, 'weird'],
   ] as [Row, string][]) {
@@ -698,11 +692,8 @@ test.each([
   },
 )
 
-test('2e.93, 2e.1.3: Embedding mode is off / on and Unified KV is the tri-state: false shows off, and the shared option texts are the ones of 1.3', async () => {
-  for (const f of [
-    FIELDS.find((x) => x.key === 'embeddings')!,
-    FIELDS.find((x) => x.key === 'kv-unified')!,
-  ]) {
+test('2e.93, 2e.1.3: Embedding mode is off / on: false shows off, and the shared option texts are the ones of 1.3 (IP5: Unified KV is the instance profile’s, so only the key that stays is read here)', async () => {
+  for (const f of [FIELDS.find((x) => x.key === 'embeddings')!]) {
     const { main } = await loaded({
       modelProfile: () => reply(200, exactOf({ ...SET, [f.key]: 'false' })),
     })

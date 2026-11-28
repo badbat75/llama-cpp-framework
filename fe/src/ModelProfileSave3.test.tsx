@@ -75,21 +75,20 @@ async function loaded(
 }
 
 /** The page, dirty: Embedding mode off, and the save answered `body`.
- * `n-gpu-layers` and `fit-ctx` are in the read so the Hardware card's 157 row
- * has an enabled control to mark and focus (2h.7's 175 made GPU layers
- * editable and 2h.8's 183 the Fit min context, and the keys leave their default
- * boxes unticked, 156). `n-cpu-moe` is in for the same reason on 19 G.14's
- * row: the facts answer a reason, so the field is editable and the key leaves
- * its box unticked. `fit-ctx` is the value the `min-above-max` row below
- * names in its args, the number the manager refused. */
+ * `pooling: 'weird'` is the value the `not-one-of` row below names, and
+ * `embeddings: 'true'` leaves the dirty change of the Embedding mode select.
+ * Brief 22 IP5: the Hardware card is gone, so the read carries no key of
+ * `PLACEMENT_KEYS` and the table's rows name only fields of this page. */
 async function refused(body: Record<string, unknown>) {
   const { bff, main } = await loaded(
     {
       embeddings: 'true',
       pooling: 'weird',
-      'n-gpu-layers': '99',
-      'n-cpu-moe': '20',
-      'fit-ctx': '8192',
+      // The `not-whole-number-in-range` row names this field: its key in the
+      // read leaves the default box unticked, so the input is enabled and can
+      // take the focus (144), and the value passes the client-side check of
+      // 157, so the save goes out and the manager's 422 is what marks it.
+      'cache-reuse': '256',
     },
     () => reply(422, body),
   )
@@ -305,12 +304,12 @@ const TABLE_150: [
     'not-whole-number-in-range: args[0]',
     {
       key: 'not-whole-number-in-range',
-      args: ['n-gpu-layers', '-5', '0', '1024'],
+      args: ['cache-reuse', '-5', '1', '2147483647'],
     },
     'text',
-    en('model-profile-gpu-layers'),
-    // 2h.7's 175 made GPU layers editable and the read has its key, so the
-    // input is enabled and takes the focus (144).
+    en('model-profile-cache-reuse'),
+    // Cache reuse is an editable number field (2h.5's 164) with a key in the
+    // read, so its input is enabled and takes the focus (144).
     true,
     '',
   ],
@@ -323,17 +322,6 @@ const TABLE_150: [
     '',
   ],
   [
-    'not-a-number: args[0]',
-    { key: 'not-a-number', args: ['n-cpu-moe', 'many'] },
-    'text',
-    en('model-profile-moe-cpu-layers'),
-    // Brief 19's 19 G.14: MoE CPU layers is editable when the model facts read
-    // answers a reason, which is what the fake answers, so the input is
-    // enabled and takes the focus (144).
-    true,
-    '',
-  ],
-  [
     'not-json-object: args[0]',
     { key: 'not-json-object', args: ['chat-template-kwargs'] },
     'text',
@@ -342,55 +330,19 @@ const TABLE_150: [
     '',
   ],
   [
-    'min-above-max: args[0]',
+    // 198a's own shape, on a field of this page that has nothing to focus: the
+    // read has no `mmproj`, so the Vision card is disabled (176) and the pair
+    // of image-token inputs cannot take the focus. The manager refuses the
+    // whole file on it, so the alert names the field and its card.
+    'min-above-max: image-min-tokens',
     {
       key: 'min-above-max',
-      args: ['fit-ctx', '8192', 'ctx-size', '4096'],
+      args: ['image-min-tokens', '2048', 'image-max-tokens', '1024'],
     },
     'text',
-    en('model-profile-fit-min-context'),
-    // 2h.8's 183 made Fit min context editable: the read's key leaves its box
-    // unticked and 186 leaves the field enabled while Fit to VRAM reads
-    // checked, so its input is enabled and takes the focus (144).
-    true,
-    '',
-  ],
-  [
-    'fit-target-format: fit-target',
-    { key: 'fit-target-format', args: ['2048,x', 'use'] },
-    'text',
-    en('model-profile-fit-free-vram'),
-    // 2h.8's 183 made Fit free VRAM editable and 186 leaves it enabled while
-    // Fit to VRAM reads checked, which it does with no `fit` in the read
-    // (2h.127), so its input is enabled and takes the focus.
-    true,
-    '',
-  ],
-  [
-    'moe-cache-with-tensor-split: moe-cache-mib',
-    { key: 'moe-cache-with-tensor-split', args: [] },
-    'text',
-    en('model-profile-moe-cache'),
-    // 178, as the row above, and 198a's own example: the manager refuses the
-    // whole file on it (Split mode is not on the page in 2h).
+    en('model-profile-min-image-tokens'),
     false,
-    en('model-profile-hardware-config'),
-  ],
-  [
-    'load-on-startup-over-max: load-on-startup',
-    { key: 'load-on-startup-over-max', args: ['3', '2'] },
-    'select',
-    en('model-profile-load-on-startup'),
-    true,
-    '',
-  ],
-  [
-    'load-on-startup-unlimited: load-on-startup',
-    { key: 'load-on-startup-unlimited', args: ['2'] },
-    'select',
-    en('model-profile-load-on-startup'),
-    true,
-    '',
+    en('model-profile-vision'),
   ],
   [
     'not-one-of: pooling (the one enabled control)',
@@ -525,63 +477,3 @@ test('2h.142 (139): a 422 with a key the fe does not know is api-other with the 
 })
 
 // ── 144: the field's control is disabled ────────────────────────────────
-
-test('2h.144 (2h.6 170, 2h.10 198a): not-one-of on Reasoning effort, an editable select, marks it and moves focus to it and the bar keeps save-refused; on Unified KV, disabled by 155 with no box of its own, the error goes on the control, the focus stays on Save changes and the alert says on which card the field is', async () => {
-  const ARGS = [
-    'reasoning-effort',
-    'ultra',
-    'default, minimal, low, medium, high, xhigh, max',
-  ]
-  const { bff, main } = await refused({
-    key: 'not-one-of',
-    args: ARGS,
-    field: 'reasoning-effort',
-  })
-  saveButton(main).focus()
-  await save(main, bff)
-  const text = en('api-not-one-of', ...ARGS)
-  await within(main).findByText(en('save-refused', text))
-  const effort = selectOf(main, en('model-profile-reasoning-effort'))
-  // 170: the Chat / reasoning card is editable, so 142 applies: the marked
-  // control is enabled and takes the focus.
-  expect(effort.disabled, 'the Reasoning effort select is enabled').toBe(false)
-  expectError(effort, text, 'Reasoning effort (enabled)')
-  expect(document.activeElement, 'focus on Reasoning effort').toBe(effort)
-  expectAlert(main, en('save-refused', text), 'the Reasoning effort field')
-  expect(status(main).textContent).toBe(en('save-unsaved'))
-  cleanup()
-  vi.unstubAllGlobals()
-  // The other half of 144: a control of an editable card that this read
-  // leaves disabled (155: Parallel slots at its default keeps Unified KV
-  // off), with no enabled control of its own to take the focus. 2h.10's 198a:
-  // the field has no default box either, so the bar's alert says where it is.
-  const second = await refused({
-    key: 'not-one-of',
-    args: ['kv-unified', 'ultra', 'auto, on, off'],
-    field: 'kv-unified',
-  })
-  saveButton(second.main).focus()
-  await save(second.main, second.bff)
-  const text2 = en('api-not-one-of', 'kv-unified', 'ultra', 'auto, on, off')
-  const at2 = en(
-    'save-refused-at',
-    text2,
-    en('model-profile-unified-kv'),
-    en('model-profile-resource-context'),
-  )
-  await within(second.main).findByText(at2)
-  const unified = selectOf(second.main, en('model-profile-unified-kv'))
-  expect(unified.disabled, 'the Unified KV select is disabled').toBe(true)
-  expectError(unified, text2, 'Unified KV (disabled)')
-  expectAlert(second.main, at2, 'the disabled Unified KV field (198a)')
-  expect(
-    within(second.main).queryByText(en('save-refused', text2)),
-    '198a: not the alert that names no place',
-  ).toBeNull()
-  // No enabled control of that field (it has no default box), so 144 leaves
-  // the focus where it was.
-  expect(document.activeElement, 'focus stays on Save changes').toBe(
-    saveButton(second.main),
-  )
-  expect(status(second.main).textContent).toBe(en('save-unsaved'))
-})

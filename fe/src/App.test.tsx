@@ -476,6 +476,14 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
   // 22 P.9a adds one more: the bff answers a repo with no GGUF 502
   // hf-bad-answer, never a 200 with no files, so the text that named an empty
   // listing leaves the strings list with it.
+  // Slice IP5 (fe/briefs/22-model-sources.md, IP5.1 to IP5.7) adds the words of
+  // the Status column, the list's switch answers, the off note, the page's
+  // switch state texts and the delete-needs-off reason: a model profile has no
+  // switch, so all of them leave the strings file. Two stay: the Server page's
+  // model list is not IP5's page and still shows the switch's On/Off word
+  // (model-profiles-status-on, model-profiles-status-off, 16 17e), and
+  // api-model-profile-enabled is a reason the manager answers a delete, read by
+  // RowDelete.tsx for every list.
   const removed = [
     'server-read-only',
     'server-api-key-withheld',
@@ -495,6 +503,19 @@ test('1a strings: en_US.json holds the English the brief gives (section 5.5)', (
     'instance-label-saved',
     'instance-label-cleared',
     'hf-quants-empty',
+    'model-profiles-column-status',
+    'model-profiles-delete-needs-off',
+    'model-profiles-off-note',
+    'model-profiles-switched-on',
+    'model-profiles-switched-off',
+    'model-profiles-switched-on-restart',
+    'model-profiles-switched-off-restart',
+    'model-profiles-switched-on-restart-ids',
+    'model-profiles-switched-off-restart-ids',
+    'model-profile-on-short',
+    'model-profile-off-short',
+    'model-profile-switch-dirty',
+    'api-model-profile-enabled',
   ]
   expect(
     Object.keys(table).filter((key) => removed.includes(key)),

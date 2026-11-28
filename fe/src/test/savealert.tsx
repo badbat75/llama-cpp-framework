@@ -38,8 +38,10 @@ export type Bff = ReturnType<typeof fakeBff>
 
 export const MODE = en('model-profile-embedding-mode')
 export const POOLING = en('model-profile-pooling')
-export const CTX = en('model-profile-context-size')
-export const FIT = en('model-profile-fit-to-vram')
+// 22 IP5.5: Context size left the model profile page with the placement keys,
+// so the rows' text field is Top-K, a number box of the Sampling card. Its
+// label is the literal: an acronym is no strings key (table 97).
+export const TOP_K = 'Top-K'
 export const PORT = en('server-port')
 export const BIND = en('server-bind-to')
 export const BIND_LOCALHOST = en('server-bind-localhost')
@@ -55,14 +57,13 @@ export const SAVING = en('save-saving')
 /** The Server page's loaded Port (198h's example). */
 export const PORT_LOADED = '8080'
 
-/** What the model profile page reads: Context size present (its default box
- * unticked and its input editable, 156), Fit to VRAM off and valid (185: only
- * an invalid `fit` blocks a Save, and these rows must reach the PUT), the
- * Embeddings selects set, and the loaded Pooling value not one of the options,
- * so Pooling shows the extra option 132a gives a loaded value that is not on
- * the list. */
+/** What the model profile page reads: Top-K present (22 IP5.5's text field of
+ * these rows), Fit to VRAM off and valid (185: only an invalid `fit` blocks a
+ * Save, and these rows must reach the PUT), the Embeddings selects set, and the
+ * loaded Pooling value not one of the options, so Pooling shows the extra
+ * option 132a gives a loaded value that is not on the list. */
 export const AS_LOADED: Record<string, string> = {
-  'ctx-size': '172032',
+  'top-k': '20',
   fit: 'false',
   embeddings: 'true',
   pooling: 'weird',
@@ -160,12 +161,13 @@ export function checkBox(
   ) as HTMLInputElement
 }
 
-/** The model profile page's Fit to VRAM checkbox: the field holds one, named
- * by the toggle text 184 picks, so it is taken by its position. */
-export function fitBox(main: HTMLElement): HTMLInputElement {
-  return within(within(main).getByRole('group', { name: FIT })).getByRole(
-    'checkbox',
-  ) as HTMLInputElement
+/** A checkbox of the model profile page that 22 IP5.5 keeps: the Chat template
+ * toggle of the Chat & reasoning card, named by its toggle text (the Fit to
+ * VRAM box left the page with the placement keys). */
+export function toggleBox(main: HTMLElement): HTMLInputElement {
+  return within(main).getByRole('checkbox', {
+    name: en('model-profile-chat-template-toggle'),
+  }) as HTMLInputElement
 }
 
 /** Types `value` into a text input. */

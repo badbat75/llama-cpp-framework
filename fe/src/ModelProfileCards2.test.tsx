@@ -24,6 +24,7 @@ import {
   fakeBff,
   isHidden,
   modelProfileDoc,
+  PLACEMENT_KEYS,
   reply,
   startAt,
 } from './test/bff.ts'
@@ -112,7 +113,7 @@ type Row = {
 }
 
 /** The field table of 96, 97 and 98, in the cards' and the GUI's order. */
-const FIELDS: Row[] = [
+const FIELDS_IP5_ALL: Row[] = [
   {
     card: 'model-profile-kv-cache',
     key: 'cache-type-k',
@@ -281,6 +282,13 @@ const FIELDS: Row[] = [
     shown: '{"enable_thinking":false}',
   },
 ]
+/** Slice IP5 (fe/briefs/22-model-sources.md, IP5.5: "Each card keeps only the
+ *  fields and notes whose key is in MODEL_PROFILE_STAY_KEYS"): the rows of the
+ *  keys that moved to the instance profile's entry leave the table, so every
+ *  assertion below reads the page the slice leaves. */
+const FIELDS: Row[] = FIELDS_IP5_ALL.filter(
+  (f) => !PLACEMENT_KEYS.includes(f.key),
+)
 
 /** The cards of 2e.2, in the order of criterion 83. */
 const CARDS = [
@@ -698,91 +706,11 @@ test('2e.86, 2e.81: a key the page does not show adds no field, so the three car
 })
 
 // ── The cache types (96) ────────────────────────────────────────────────
+// The two cache-type selects are `PLACEMENT_KEYS` (brief 22 IP5.5), so the
+// card shows no select of them: the eleven options, the value each option
+// carries and the extra option of 99 leave with the keys.
 
-test.each(['cache-type-k', 'cache-type-v'])(
-  '2e.96: %s lists default then the ten literals of MP 95-96, in order and with the file values, and q8_0 selects its own option',
-  async (key) => {
-    const label = en(
-      key === 'cache-type-k'
-        ? 'model-profile-k-cache-type'
-        : 'model-profile-v-cache-type',
-    )
-    const { main } = await loaded({
-      modelProfile: () => reply(200, exactOf({ [key]: 'q8_0' })),
-    })
-    const select = selectOf(main, label)
-    expect(
-      optionTexts(select),
-      `${key}: the eleven options in the table's order`,
-    ).toEqual(CACHE_TYPES)
-    expect(
-      optionsOf(select).map((o) => o.value),
-      `${key}: each option carries the value the file holds`,
-    ).toEqual(CACHE_TYPE_VALUES)
-    expect(selectedText(select), `${key}: q8_0 selects its own option`).toBe(
-      'q8_0',
-    )
-  },
-)
-
-test.each(
-  (['cache-type-k', 'cache-type-v'] as string[]).flatMap((key) =>
-    CACHE_TYPE_VALUES.slice(1).map((value) => [key, value] as [string, string]),
-  ),
-)(
-  '2e.96: each listed cache type value selects its own option: %s %s',
-  async (key, value) => {
-    const label = en(
-      key === 'cache-type-k'
-        ? 'model-profile-k-cache-type'
-        : 'model-profile-v-cache-type',
-    )
-    const { main } = await loaded({
-      modelProfile: () => reply(200, exactOf({ [key]: value })),
-    })
-    expect(
-      selectedText(selectOf(main, label)),
-      `${key}: ${value} selects its own option`,
-    ).toBe(value)
-  },
-)
-
-test('2e.96, 2e.99: a cache type no option lists (q3_k) becomes one extra last option carrying it as its value and its text, selected, and so does one differing only in case', async () => {
-  for (const value of ['q3_k', 'F16']) {
-    const { main } = await loaded({
-      modelProfile: () => reply(200, exactOf({ 'cache-type-k': value })),
-    })
-    const select = selectOf(main, en('model-profile-k-cache-type'))
-    const opts = optionsOf(select)
-    expect(opts.length, `${value}: the listed options plus one`).toBe(
-      CACHE_TYPES.length + 1,
-    )
-    expect(
-      optionTexts(select).slice(0, CACHE_TYPES.length),
-      `${value}: the listed options keep their place`,
-    ).toEqual(CACHE_TYPES)
-    const extra = opts[opts.length - 1]!
-    expect(extra.value, `${value}: the extra option carries the value`).toBe(
-      value,
-    )
-    expect((extra.textContent ?? '').trim(), `${value}: and its text`).toBe(
-      value,
-    )
-    expect(selectedText(select), `${value}: the extra option is selected`).toBe(
-      value,
-    )
-    // 2h.164: the KV cache card is editable, so this select is enabled.
-    expect(select.disabled, `${value}: the select enabled`).toBe(false)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
-
-test.each([
-  ['flash-attn', TRISTATE],
-  ['backend-sampling', TRISTATE],
-  ['load-on-startup', OFF_ON],
-] as [string, string[]][])(
+test.each([['backend-sampling', TRISTATE]] as [string, string[]][])(
   '2e.97, 2e.1.3: %s is the tri-state/off-on with the shared option texts and their mappings',
   async (key, options) => {
     const f = FIELDS.find((x) => x.key === key)!
@@ -807,31 +735,13 @@ test.each([
 
 // ── The unit, the numbers and the text field (87, 89, 99) ──────────────
 
-test('2e.89, 2e.96: Cache RAM shows the unit MiB after the input as a literal, and no other field of 2e.2 carries a unit', async () => {
+test('2e.89: no field of the three cards carries a unit (IP5: Cache RAM and its MiB left the page)', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
-  const field = fieldOf(main, en('model-profile-cache-ram'))
-  const units = [...field.querySelectorAll('.unit')].map((u) => text(u))
-  expect(units, 'one unit in the Cache RAM field').toEqual(['MiB'])
-  const group = groupBox(main, en('model-profile-cache-ram'))
-  expect(
-    before(
-      inputOf(group, en('model-profile-cache-ram')),
-      field.querySelector('.unit')!,
-    ),
-    'the unit sits after the input',
-  ).toBe(true)
-  // The label is the strings text, with no unit in it (89: "Cache RAM (MiB)"
-  // becomes "Cache RAM" plus MiB).
-  expect(text(field), 'the label is shown').toContain(
-    en('model-profile-cache-ram'),
-  )
-  expect(text(field), 'no unit in the label').not.toContain('(MiB)')
   for (const f of FIELDS)
-    if (f.key !== 'cache-ram')
-      expect(
-        fieldOf(main, f.label).querySelectorAll('.unit').length,
-        `${f.key}: no unit`,
-      ).toBe(0)
+    expect(
+      fieldOf(main, f.label).querySelectorAll('.unit').length,
+      `${f.key}: no unit`,
+    ).toBe(0)
 })
 
 test('2e.87, 2h.158, 2e.96, 2e.97: a ranged integer key of 2e.2 takes the numeric form of the input, an any-whole-number key and a float key a plain text input', async () => {
@@ -843,9 +753,10 @@ test('2e.87, 2h.158, 2e.96, 2e.97: a ranged integer key of 2e.2 takes the numeri
       `${f.key}: ${expectedInputMode(f.key, f.integer) ?? 'plain'}`,
     ).toBe(expectedInputMode(f.key, f.integer))
   }
-  // 158 names these keys: the two any-whole-number keys get none, the
-  // ranged ones keep numeric (the loop above pins both sides).
-  for (const key of ['cache-ram', 'top-k']) {
+  // 158 names these keys: the any-whole-number keys get none, the ranged ones
+  // keep numeric (the loop above pins both sides). IP5: cache-ram is one of the
+  // keys that moved, so only the key that stays is read here.
+  for (const key of ['top-k']) {
     const f = FIELDS.find((x) => x.key === key)!
     expect(
       inputOf(groupBox(main, f.label), f.label).getAttribute('inputmode'),
@@ -857,7 +768,6 @@ test('2e.87, 2h.158, 2e.96, 2e.97: a ranged integer key of 2e.2 takes the numeri
 test.each([
   ['presence-penalty', '1,5'],
   ['temp', '0.60'],
-  ['cache-ram', '-1'],
   ['top-k', '020'],
   ['min-p', ' 0 '],
 ] as [string, string][])(
@@ -944,20 +854,33 @@ test.each(CHAT_KWARGS_VALUES.slice(2))(
 
 // ── The cards: tables only, disabled, in their place (83, 85, 90) ──────
 
-test('2e.90: the three cards of 2e.2 are tables only, so no card has an h4, a role=group division, a note paragraph or an intro', async () => {
+test('2e.90: the three cards of 2e.2 are tables only, so no card has an h4, a role=group division or a note paragraph; the KV cache card shows only the intro of 22 IP5', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
+  const kv = 'model-profile-kv-cache'
   for (const title of CARDS) {
     const card = cardOf(main, title)
-    for (const sel of ['h4', '[role="group"]', '.note', '.intro'])
+    for (const sel of ['h4', '[role="group"]', '.note'])
       expect(card.querySelectorAll(sel).length, `${en(title)}: no ${sel}`).toBe(
         0,
       )
+    // 22 IP5.5: the KV cache card keeps `cache-reuse` alone, so it carries one
+    // intro, the sentence that says where the rest of its rows went. The other
+    // two cards keep all their rows, so they show none.
+    const intros = [...card.querySelectorAll('.intro')]
+    expect(
+      intros.length,
+      `${en(title)}: ${title === 'model-profile-kv-cache' ? 'one intro' : 'no intro'}`,
+    ).toBe(title === kv ? 1 : 0)
+    if (title === kv)
+      expect(text(intros[0]!), 'the intro is the strings sentence').toBe(
+        en('model-profile-kv-cache-reuse-intro'),
+      )
     // A note sits between the fields, so it is a paragraph of the card itself:
-    // every paragraph is inside a field (its hint), none is between them.
+    // every paragraph is inside a field (its hint) or is that intro.
     for (const p of [...card.querySelectorAll('p')])
       expect(
-        p.closest('.field') !== null,
-        `${en(title)}: the paragraph is a hint, not a note`,
+        p.closest('.field') !== null || p.classList.contains('intro'),
+        `${en(title)}: the paragraph is a hint or the intro, not a note`,
       ).toBe(true)
   }
 })
@@ -1043,7 +966,7 @@ test('2e.91: Tab in main reaches the back link, the save bar of 22 D2.5, the ten
 
 // ── The strings (100) ───────────────────────────────────────────────────
 
-test('2e.100: the three cards, every label, every hint and every option of 2e.2 show the English of the 32 new strings of 100, Top-K, Top-P and Min-P are literals, and Cache RAM carries no unit in its label', async () => {
+test('2e.100: the three cards, every label, every hint and every option of 2e.2 that IP5 leaves show the English of the strings of 100, and Top-K, Top-P and Min-P are literals', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, docOf(SET)) })
   expect(
     text(cardOf(main, 'model-profile-kv-cache').querySelector('h3')!),
@@ -1073,11 +996,8 @@ test('2e.100: the three cards, every label, every hint and every option of 2e.2 
       `${f.hint}: the strings key has English`,
     ).toBeGreaterThan(0)
   }
-  // The literals of 96 and 97 are the literals of the brief, not strings.
-  expect(
-    optionTexts(selectOf(main, en('model-profile-k-cache-type'))).slice(1),
-    'the ten cache types, as the file writes them',
-  ).toEqual(CACHE_TYPES.slice(1))
+  // The ten cache-type literals of 96 left the page with `cache-type-k` and
+  // `cache-type-v` (brief 22 IP5.5), so the page shows no list of them.
   // Top-K, Top-P and Min-P carry the literal of MP 987 as their label: each is
   // the group of its number field, named by that literal.
   for (const literal of ['Top-K', 'Top-P', 'Min-P'])

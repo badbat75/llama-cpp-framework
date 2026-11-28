@@ -28,10 +28,8 @@ import {
   startAt,
 } from './test/bff.ts'
 import {
-  cardAboutToggle,
   cardHeadings,
   fieldAboutToggles,
-  MODEL_PROFILE_CARDS,
   saveBarTabStops,
 } from './test/modelProfileCards.ts'
 
@@ -53,15 +51,10 @@ const BODY_ID = 'model-profile-assets-body'
 const HINT_KEY = 'model-profile-engine-hint'
 /** The card headings in the page order of 83 (the ten jump buttons' names). */
 const TITLES = cardHeadings()
-/** The About toggle 22 D4.31 gives the GPU distribution card, a Tab stop right
- *  after its h3 (the designer’s ruling of 2026-11-27). The first card of 83
- *  after Assets is that card, so its own About is the stop right after the
- *  Assets toggle, before the first field’s About of 91. */
-const GPU_CARD_ABOUT = cardAboutToggle(
-  MODEL_PROFILE_CARDS.find(
-    (card) => card.heading === 'model-profile-gpu-distribution',
-  )!,
-)!
+// 22 IP5.5 took the GPU distribution card, and 22 D4.31 with it, off this page:
+// the first card after Assets is Embeddings, and no card of this page carries a
+// card-level About, so the stop right after the Assets toggle is the first
+// field’s About of 91.
 
 beforeEach(() => startAt(HASH))
 
@@ -296,23 +289,20 @@ describe('H11b.3: the strings', () => {
 })
 
 describe('H11b.4: the tab order', () => {
-  test("H11b.4 (22 D2.5 as 22 L2.B1 amends it, 22 D4.10, 22 D4.31): Tab in main goes the back link, the jump toggle, the ten jumps, the Assets toggle, the GPU distribution card’s own About of 22 D4.31, the first field's About toggle of 91, and the save bar with its Delete last: the Engine About toggle and select are out", async () => {
+  test("H11b.4 (22 D2.5 as 22 L2.B1 amends it, 22 D4.10, 22 IP5.1 and 22 IP5.5): Tab in main goes the back link, the jump toggle, the card jumps, the Assets toggle, the first field's About toggle of 91, and the save bar with its Delete last: the Engine About toggle and select are out", async () => {
     const { main } = await form()
     const names = tabbableElements(main).map(nameOf)
     const head = [
       en('model-profile-back'),
-      // 24 A2.1: the state line's switch, named by the h1 (its text is the id).
-      ID,
       // 22 L2.B1 moved the bar to the end of the settings section, so the
-      // jumps lead the page.
+      // jumps lead the page; 22 IP5.1 took the state line's switch of 24 A2.1
+      // off the page, so nothing stands between the back link and the jumps.
       en('model-profile-jump-label'),
       ...TITLES,
       ASSETS,
-      // 22 D4.31 (the designer’s ruling of 2026-11-27): the card’s About is a
-      // Tab stop right after the card’s h3, so the GPU distribution card, the
-      // first card of 83 after Assets, opens with its own About.
-      GPU_CARD_ABOUT,
-      // The first field’s About toggle of 91: it follows the card’s own About.
+      // 22 IP5.5: no card left on this page carries a card-level About
+      // (22 D4.31's cards are the GPU and device cards, which moved), so the
+      // stop right after the Assets toggle is the first field’s About of 91.
       fieldAboutToggles()[0],
     ]
     expect(names.slice(0, head.length), 'the page start, H11b.4').toEqual(head)

@@ -51,9 +51,14 @@ STATE = {
     # Brief 21 (21 T.2 to 21 T.9): `ot=1` puts the state's three rules in the
     # profile, so the Tensor placement card shows its rows and their legends.
     "ot": "none",
-    # Brief 22 slice 22D (22 D.1, the state `model-profile-delete` of check.js):
-    # `off=1` reads the model profile switched off, where the delete is offered.
-    "off": "0",
+    # Brief 22 slice IP5 (IP5.6, the state `model-profile-delete-tip` of
+    # check.js): `used=1` reads the model profile listed by the `default` instance
+    # profile, where its Delete is switched off.
+    "used": "0",
+    # Brief 22 slice IP5 review (the state `model-profiles-narrow` of check.js):
+    # `usedby=long` lists each model by the widest instance profile ids the pool
+    # takes, so the check reads the Used by cell where an id has to break.
+    "usedby": "short",
     # Brief 16 slice 17c (17c.6a, the state `instance-remove` of check.js):
     # `removable=1` says the instance's record can be removed, where the page
     # offers the remove verb.
@@ -145,12 +150,29 @@ LONG_POOL_ROW = {
     "instance": None,
 }
 
-# GET /api/profiles/model: rows with every engine shape the list shows.
+# GET /api/profiles/model: rows with every engine shape the list shows. Brief 22
+# slice IP5 (IP5.0): a row carries no `enabled` and no `assignments`, and carries
+# `usedBy`, the instance profiles that list the model in their file order; the
+# row's Delete can act when it is empty (IP5.3). Two rows are used, by one
+# instance profile and by two, and two are free.
 MODEL_PROFILES = [
-    {"id": "Qwen3.6-35B-A3B-UD-Q4_K_XL", "engine": "llama.cpp", "engineAvailable": True, "enabled": True, "model": ""},
-    {"id": "Qwen3-27B", "engine": "llama.cpp", "engineAvailable": True, "enabled": True, "model": "/m/qwen/Qwen3-27B-Q8_0.gguf"},
-    {"id": "Swift-Flash-Next-Draft", "engine": "Strata", "engineAvailable": False, "enabled": True, "model": ""},
-    {"id": "Old-Coder", "engine": "llama.cpp", "engineAvailable": True, "enabled": False, "model": ""},
+    {"id": "Qwen3.6-35B-A3B-UD-Q4_K_XL", "engine": "llama.cpp", "engineAvailable": True, "usedBy": ["default"], "model": ""},
+    {"id": "Qwen3-27B", "engine": "llama.cpp", "engineAvailable": True, "usedBy": ["default", "coder"], "model": "/m/qwen/Qwen3-27B-Q8_0.gguf"},
+    {"id": "Swift-Flash-Next-Draft", "engine": "Strata", "engineAvailable": False, "usedBy": ["default"], "model": ""},
+    {"id": "Old-Coder", "engine": "llama.cpp", "engineAvailable": True, "usedBy": [], "model": ""},
+]
+
+# GET /api/profiles/model with `usedby=long` (brief 22, slice IP5 review A5, the
+# state `model-profiles-narrow` of check.js): the same rows listed by instance
+# profile ids at the 32 character cap of an id, each carrying its break points.
+# The Used by cell of these is the narrowest the id reaches, so the check reads
+# where an id breaks.
+USED_BY_LONG = ["office-gpu-alpha-node-0123", "private-ai-coder-profile-01"]
+MODEL_PROFILES_USED_BY_LONG = [
+    dict(MODEL_PROFILES[0], usedBy=[USED_BY_LONG[0]]),
+    dict(MODEL_PROFILES[1], usedBy=list(USED_BY_LONG)),
+    dict(MODEL_PROFILES[2], usedBy=[USED_BY_LONG[1]]),
+    MODEL_PROFILES[3],
 ]
 
 # GET /api/node/model-files (brief 22, slice 22C1, 22 C.10a, the state
@@ -264,7 +286,14 @@ MODEL_PROFILE_DOC = {
     "id": "Qwen3-27B",
     "engine": "llama.cpp",
     "engineAvailable": True,
-    "enabled": True,
+    # Brief 22 slice IP5 (IP5.0): the document carries `usedBy`, and the page
+    # reads no `enabled`: the switch is gone (IP5.4), so the stub sends none and
+    # every state proves the page works without it. The two states of `usedBy`
+    # are the shape the Delete verb reads: the default is a profile no instance
+    # profile lists, whose Save bar offers its Delete (IP5.6, 22 D4.10);
+    # `used=1` (below) is the profile an instance profile lists, whose Delete is
+    # switched off.
+    "usedBy": [],
     "revision": "r1",
     "projectUrl": "https://huggingface.co/unsloth/Qwen3-27B-GGUF",
     "values": {
@@ -569,7 +598,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json(200, doc)
             return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
         if p == "/api/profiles/model":
-            return self.json(200, MODEL_PROFILES)
+            return self.json(
+                200,
+                MODEL_PROFILES_USED_BY_LONG
+                if STATE["usedby"] == "long"
+                else MODEL_PROFILES,
+            )
         # Brief 22 slice 22C1 (22 C.10a, the state `model-profiles-new` of
         # check.js): the folder the Model file picker reads.
         if p == "/api/node/model-files":
@@ -605,10 +639,10 @@ class Handler(SimpleHTTPRequestHandler):
                     values = dict(doc["values"])
                     values["override-tensor"] = OT_RULES
                     doc["values"] = values
-                if STATE["off"] == "1":
-                    # Brief 22, 22 D.1: a switched-off profile, the page where
-                    # the delete is offered.
-                    doc["enabled"] = False
+                if STATE["used"] == "1":
+                    # Brief 22 slice IP5 (IP5.6): the profile an instance profile
+                    # lists, the page whose Delete is switched off.
+                    doc["usedBy"] = ["default"]
                 return self.json(200, doc)
             return self.json(404, {"key": "no-model-profile-named", "args": [pid]})
         return super().do_GET()
@@ -658,16 +692,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json(
                     404, {"key": "no-model-profile-named", "args": [pid]}
                 )
-        # Brief 16 slice 17d (the state `model-profiles-restart-offer` of
-        # check.js): the Models list's row switch. The check clicks one switch
-        # and reads what the write leaves, so the answer is the one that asks
-        # for a restart: the profile switched on, the instance up, and the
-        # instance to restart (fe/briefs/api-contract.md, the `restart` ids of
-        # 17d.5).
+        # Brief 22 slice IP5 (IP5.0): the switch route is gone. A write to it
+        # answers 404, as the bff does: the model profile is no longer switched
+        # on or off, it is used by an instance profile or not.
         if p.startswith("/api/profiles/model/") and p.endswith("/enabled"):
-            return self.json(
-                200, {"enabled": True, "running": True, "restart": ["default"]}
-            )
+            return self.json(404, {"key": "client-no-route", "args": [p]})
         return self.send_error(404, "no PUT of " + p)
 
     def do_POST(self):

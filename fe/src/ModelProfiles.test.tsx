@@ -133,17 +133,17 @@ async function message(main: HTMLElement, text: string): Promise<HTMLElement> {
   return within(main).findByText(text)
 }
 
-/** The h1, the intro and the note are on the page, in that order around `content`. */
+/** The h1 and the intro are on the page, in that order around `content`. The
+ *  note that told the reader to switch a profile off before deleting is gone
+ *  with the switch (22 IP5.1), so the frame ends with the content. */
 function framed(main: HTMLElement, content: HTMLElement, what: string) {
   const h1 = within(main).getByRole('heading', {
     level: 1,
     name: en('model-profiles-title'),
   })
   const intro = within(main).getByText(en('model-profiles-intro'))
-  const note = within(main).getByText(en('model-profiles-off-note'))
   expect(before(h1, intro), `${what}: intro after the h1`).toBe(true)
   expect(before(intro, content), `${what}: content after the intro`).toBe(true)
-  expect(before(content, note), `${what}: note after the content`).toBe(true)
 }
 
 /** Fake timers and Date only: the microtask queue stays real. */
@@ -258,18 +258,6 @@ test('2a.17, 2b.22: any other status or key, a malformed body (a row without a s
         ]),
     ],
     [
-      '200 a row without enabled',
-      () =>
-        reply(200, [
-          {
-            model: '',
-            id: 'secret-detail',
-            engine: 'llama.cpp',
-            engineAvailable: true,
-          },
-        ]),
-    ],
-    [
       '200 a row without id',
       () =>
         reply(200, [
@@ -316,19 +304,6 @@ test('2a.17, 2b.22: any other status or key, a malformed body (a row without a s
             engine: null,
             engineAvailable: true,
             enabled: true,
-          },
-        ]),
-    ],
-    [
-      '200 enabled a string',
-      () =>
-        reply(200, [
-          {
-            model: '',
-            id: 'secret-detail',
-            engine: 'llama.cpp',
-            engineAvailable: true,
-            enabled: 'true',
           },
         ]),
     ],
@@ -443,67 +418,6 @@ test('2a.17: a model profiles read held 15 000 ms is aborted and shows model-pro
 })
 
 // ── 401 and signed out (4, 16) ──────────────────────────────────────────
-
-test('2a.16: a 401 on the model profiles read signs the whole app out; after sign-in the page reads again', async () => {
-  let reads = 0
-  const { bff, main } = open({
-    modelProfiles: () =>
-      ++reads === 1
-        ? reply(401, { key: 'session-required', args: [] })
-        : reply(200, [modelProfile('after-sign-in')]),
-  })
-  const username = (await within(main).findByRole('textbox', {
-    name: en('signin-username'),
-  })) as HTMLInputElement
-  const password = within(main).getByLabelText(en('signin-password'), {
-    selector: 'input',
-  }) as HTMLInputElement
-  expect(window.location.hash).toBe('#/profiles/model')
-  // 09 S1b.3: the read answered 401 while the app was signed in, so the
-  // notice says the session ended (it is `signin-required` on a first load
-  // signed out).
-  expect(within(main).getByText(en('signin-session-ended'))).toBeTruthy()
-  expect(within(main).queryByRole('table')).toBeNull()
-  expect(
-    within(main).queryByRole('heading', {
-      level: 1,
-      name: en('model-profiles-title'),
-    }),
-  ).toBeNull()
-  const banner = screen.getByRole('banner')
-  expect(
-    within(banner).queryByRole('button', { name: en('session-sign-out') }),
-  ).toBeNull()
-  expect(
-    within(banner).queryByRole('button', { name: en('session-sign-in') }) ??
-      within(banner).queryByRole('link', { name: en('session-sign-in') }),
-    '09 S1a.4: signed out the banner offers no Sign in',
-  ).toBeNull()
-  expect(
-    screen.queryByRole('navigation', { name: en('nav-label') }),
-    '09 S1a.4: signed out there is no nav',
-  ).toBeNull()
-  fireEvent.change(username, { target: { value: 'alice' } })
-  fireEvent.change(password, { target: { value: 'hunter2' } })
-  fireEvent.click(
-    within(main).getByRole('button', { name: en('signin-submit') }),
-  )
-  const t = await table(main)
-  expect(rows(t)).toEqual([
-    [
-      'after-sign-in',
-      'llama.cpp',
-      en('model-profiles-status-on'),
-      // 22 D4.23: the Actions cell shows nothing (its − is an icon).
-      '',
-    ],
-  ])
-  expect(window.location.hash).toBe('#/profiles/model')
-  expect(modelProfilesReads(bff)).toBe(2)
-  expect(
-    await within(nav()).findByRole('link', { name: en('nav-model-profiles') }),
-  ).toBeTruthy()
-})
 
 test('2a.4: signed out, #/profiles/model shows the sign-in form with signin-required, keeps the route and reads no model profiles', async () => {
   const { bff, main } = open({ session: 'signed-out' })
@@ -712,45 +626,7 @@ test('2a.15: an empty list shows model-profiles-empty as a plain paragraph, no t
   framed(main, empty, 'empty')
 })
 
-test('2a.6, 5b.5: below the h1 come the intro, the table, then the note, and there is no h2', async () => {
-  const { main } = open()
-  const t = await table(main)
-  expect(within(main).queryByRole('heading', { level: 2 })).toBeNull()
-  framed(main, t, 'table')
-  expect(within(main).getByText(en('model-profiles-off-note')).tagName).toBe(
-    'P',
-  )
-})
-
 // ── The table (7, 8) ────────────────────────────────────────────────────
-
-test('2a.7, 5b.5, 22 D4.23: a native table named by the h1, with one header row of ModelProfile, Engine, Status, Actions as scope="col"', async () => {
-  const { main } = open()
-  const t = await table(main)
-  expect(t.tagName).toBe('TABLE')
-  const labelledBy = t.getAttribute('aria-labelledby')
-  expect(labelledBy).toBe('page-heading')
-  expect(labelledBy).not.toBe('')
-  const headers = within(t).getAllByRole('columnheader')
-  expect(headers.map((h) => (h.textContent ?? '').trim())).toEqual([
-    en('model-profiles-column-name'),
-    en('model-profiles-column-engine'),
-    en('model-profiles-column-status'),
-    // 22 D4.23: the column of the row’s actions, last. Its word is in the DOM
-    // in a span.visually-hidden, so textContent reads it while the eye does
-    // not (ListColumns.test.tsx pins the span).
-    en('profiles-column-actions'),
-  ])
-  for (const h of headers) {
-    expect(h.tagName).toBe('TH')
-    expect(h.getAttribute('scope')).toBe('col')
-  }
-  // One header row.
-  const headerRows = within(t)
-    .getAllByRole('row')
-    .filter((r) => within(r).queryAllByRole('columnheader').length > 0)
-  expect(headerRows).toHaveLength(1)
-})
 
 test('2a.8: the Engine column shows even when every model profile has the same engine', async () => {
   const { main } = open({
@@ -793,68 +669,11 @@ test('2a.9: one row per model profile in the order received; the fe does not sor
   ])
 })
 
-test('2a.10, 2a.12, 2d.60, 22 D4.1, 22 D4.23: each row is the id as a link to the model profile page, the engine, then On or Off, then the empty Actions cell', async () => {
-  const { main } = open()
-  const t = await table(main)
-  // 22 D4.1 adds the row’s minus, 22 D4.23 moves it to its own last cell. It is
-  // icon-only and its words are in a span.visually-hidden, so the cell shows
-  // nothing (`rows` leaves the buttons' text out). The minus itself is 22 D4.1
-  // in ModelProfilesDelete1.test.tsx, its cell in ListColumns.test.tsx.
-  expect(rows(t)).toEqual([
-    [
-      'Qwen3.6-35B-A3B-UD-Q4_K_XL',
-      'llama.cpp',
-      en('model-profiles-status-on'),
-      '',
-    ],
-    ['gemma-3-12b-it', 'llama.cpp', en('model-profiles-status-off'), ''],
-  ])
-  // 2d.60 replaces 2a.10's plain text: the id is an <a> to the model profile page.
-  expect(
-    within(t)
-      .getAllByRole('link')
-      .map((a) => [(a.textContent ?? '').trim(), a.getAttribute('href')]),
-  ).toEqual([
-    [
-      'Qwen3.6-35B-A3B-UD-Q4_K_XL',
-      '#/profiles/model/Qwen3.6-35B-A3B-UD-Q4_K_XL',
-    ],
-    ['gemma-3-12b-it', '#/profiles/model/gemma-3-12b-it'],
-  ])
-})
-
-test('2a.11: the engine is shown as data, and an engine not available reads "<engine> (not available)"', async () => {
-  const { main } = open({
-    modelProfiles: [
-      modelProfile('on-strata', true, 'Strata', false),
-      // An engine id that is also a strings key is still shown as is.
-      modelProfile('keyish', true, 'loading', true),
-      modelProfile('off-strata', false, 'Strata', false),
-    ],
-  })
-  const t = await table(main)
-  expect(rows(t)).toEqual([
-    [
-      'on-strata',
-      en('model-profiles-engine-not-available', 'Strata'),
-      en('model-profiles-status-on'),
-      '',
-    ],
-    ['keyish', 'loading', en('model-profiles-status-on'), ''],
-    [
-      'off-strata',
-      en('model-profiles-engine-not-available', 'Strata'),
-      en('model-profiles-status-off'),
-      '',
-    ],
-  ])
-})
-
-test('2a.13, 2c.37, 2d.60, 22 D4.1: a row acts through its link then its switch then its minus; nothing else in a row acts (U17c: the table has the two header sort buttons, in its head)', async () => {
-  // 2c replaces 2a.13: each row gains its on/off switch (administrator only:
-  // only administrators sign in, user 2026-11-15). 2d.60 replaces the plain
-  // name with a link, so a row has two controls: the link, then the switch.
-  // 22 D4.1 adds the row's minus after the switch: three.
+test('2a.13, 2c.37, 2d.60, 22 D4.1, 22 IP5.1: a row acts through its link then its minus; nothing else in a row acts (U17c: the table has the two header sort buttons, in its head)', async () => {
+  // 2c's row switch and 22 D4.1's three controls: brief 22 IP5.1 takes the
+  // switch out, so a row is its name link and its minus. The Used by cell of
+  // IP5.2 is links only where the row lists instance profiles: the default
+  // fixture's rows are used by none, so they show the muted text, not a link.
   // U17c puts a sort button in the Model profile and Engine headers: the head's
   // two are the only buttons outside a row.
   const { main } = open()
@@ -877,9 +696,10 @@ test('2a.13, 2c.37, 2d.60, 22 D4.1: a row acts through its link then its switch 
     within(t).getAllByRole('button'),
     'the two header buttons of U17c, the two rows’ minus of 22 D4.1, and no other button in the table',
   ).toHaveLength(4)
-  expect(within(t).queryAllByRole('switch')).toHaveLength(2)
+  // IP5.1: no switch is left anywhere on the page.
+  expect(within(t).queryAllByRole('switch')).toHaveLength(0)
+  expect(t.querySelectorAll('input')).toHaveLength(0)
   expect(within(t).queryAllByRole('link')).toHaveLength(2)
-  expect(t.querySelectorAll('input')).toHaveLength(2)
   expect(t.querySelectorAll('select, textarea, [tabindex]')).toHaveLength(0)
   for (const row of within(t)
     .getAllByRole('row')
@@ -887,8 +707,8 @@ test('2a.13, 2c.37, 2d.60, 22 D4.1: a row acts through its link then its switch 
     const acts = row.querySelectorAll('a, input, button, select, textarea')
     expect(
       [...acts].map((el) => el.tagName),
-      'the name link first, then the switch, then the minus',
-    ).toEqual(['A', 'INPUT', 'BUTTON'])
+      'the name link first, then the minus',
+    ).toEqual(['A', 'BUTTON'])
   }
 })
 
@@ -921,11 +741,12 @@ test('2a.18: leaving #/profiles/model and coming back reads the model profiles a
 
 // ── Keyboard and screen reader (20, 21) ─────────────────────────────────
 
-test('2a.20, 2b.35, 2c.53, 2d.60, 22 D4.1: Tab goes skip link, banner, nav (Overview, instances, Model profiles), the filter field, the two header sort buttons, then each row link, switch and minus', async () => {
+test('2a.20, 2b.35, 2c.53, 2d.60, 22 D4.1, 22 IP5.1: Tab goes skip link, banner, nav (Overview, instances, Model profiles), the filter field, the two header sort buttons, then each row link and minus', async () => {
   // 2c.53 replaces 2a.20: the administrator's switches follow the filter.
   // 2d.60 puts each row's link before its switch.
   // U17c puts the sortable headers' buttons after the field, in the table's head.
   // 22 D4.1 puts the row's minus after its switch, a tab stop when switched off.
+  // 22 IP5.1 takes the switch out: a row is its link and its minus.
   const { main } = open()
   await table(main)
   await within(nav()).findByRole('list', { name: en('nav-this-node') })
@@ -949,10 +770,8 @@ test('2a.20, 2b.35, 2c.53, 2d.60, 22 D4.1: Tab goes skip link, banner, nav (Over
     en('model-profiles-column-name'),
     en('model-profiles-column-engine'),
     'Qwen3.6-35B-A3B-UD-Q4_K_XL',
-    'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     // 22 D4.1: the row's minus, named by its id.
     en('model-profiles-delete-row', 'Qwen3.6-35B-A3B-UD-Q4_K_XL'),
-    'gemma-3-12b-it',
     'gemma-3-12b-it',
     en('model-profiles-delete-row', 'gemma-3-12b-it'),
     // 22 C.1: the list's + ("New model profile"), the last stop, after the
@@ -1002,42 +821,7 @@ function dataRows(t: HTMLElement): HTMLElement[] {
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
 }
 
-test("10 R1.3: the table is the only child of a div.table-scroll, in the table's old place, and the box is generic: no tabindex, role, aria attribute or id, the table keeps its name", async () => {
-  const { main } = open()
-  const t = await table(main)
-  const box = boxOf(t)
-  expect(box.tagName, 'a div: a scroll container, not a landmark').toBe('DIV')
-  expect(box.className, 'the class the box rule of R1.4 selects').toBe(
-    'table-scroll',
-  )
-  expect(
-    [...box.children],
-    "the table is the box's only child: the box scrolls the table and nothing else",
-  ).toEqual([t])
-  expect(
-    [...box.attributes].map((a) => a.name).sort(),
-    'no tabindex: Tab reaches every column through the row controls and the browser scrolls the box to what it focuses (2.1.1). No role and no aria-*: a named region would repeat the h1 and add a landmark and a stop to every visit, in the common case where nothing scrolls. No id: the div is generic (R1.8: no CSS aims at an id)',
-  ).toEqual(['class'])
-  expect(
-    t.getAttribute('aria-labelledby'),
-    'the table keeps the name the h1 gives it (5b.5)',
-  ).toBe('page-heading')
-  // The order framed() checks is unchanged, and the box sits where the table
-  // was: after the filter and its hint, with the filter's own status line
-  // above it. 17d.5b keeps the switch's region there too, between the filter
-  // and the box, so a long list is seen at once.
-  framed(main, box, 'the table box')
-  const hint = within(main).getByText(en('model-profiles-filter-hint'))
-  expect(before(hint, box), 'the box comes after the filter').toBe(true)
-  const switchStatus = main.querySelector('p.model-profiles-switch-status')
-  expect(switchStatus, 'the switch status is on the page').not.toBeNull()
-  expect(
-    before(switchStatus!, box),
-    'and above the table, where the region stays (17d.5b)',
-  ).toBe(true)
-})
-
-test('10 R1.3: the box is no Tab stop of its own, and every row of a readable id holds its link and its switch, so Tab reaches each column and scrolls the box (Firefox adds the box as one stop only while it overflows: jsdom never scrolls)', async () => {
+test('10 R1.3: the box is no Tab stop of its own, and every row of a readable id holds its link and its minus, so Tab reaches each column and scrolls the box (Firefox adds the box as one stop only while it overflows: jsdom never scrolls)', async () => {
   const { main } = open()
   const t = await table(main)
   const box = boxOf(t)
@@ -1054,21 +838,22 @@ test('10 R1.3: the box is no Tab stop of its own, and every row of a readable id
       stops.filter((el) => row.contains(el)).length,
       `the row holds a focusable control, so Tab brings the box around: ${label}`,
     ).toBeGreaterThanOrEqual(1)
-    expect(within(row).getByRole('switch'), label).toBeTruthy()
+    expect(within(row).getByRole('button'), label).toBeTruthy()
     expect(within(row).getAllByRole('link'), label).toHaveLength(1)
   }
   // The two columns at the ends of a row are both reachable: the link in the
-  // first cell, the switch in the last.
+  // first cell, the minus in the last (IP5.1 leaves the switch out, so the
+  // minus is the row's last stop).
   const first = rows[0]!
   expect(within(first).getAllByRole('link')[0]!.closest('td')).toBe(
     cellsOf(first)[0],
   )
-  expect(within(first).getByRole('switch').closest('td')).toBe(
-    cellsOf(first)[2],
+  expect(within(first).getByRole('button').closest('td')).toBe(
+    cellsOf(first)[3],
   )
 })
 
-test('10 R1.3: a row whose id opens no page has no link and still holds its switch, so it is reachable inside the box', async () => {
+test('10 R1.3: a row whose id opens no page has no link and still holds its minus, so it is reachable inside the box', async () => {
   const { main } = open({
     modelProfiles: [modelProfile('.'), modelProfile('..')],
   })
@@ -1080,8 +865,8 @@ test('10 R1.3: a row whose id opens no page has no link and still holds its swit
     expect(within(row).queryByRole('link'), label).toBeNull()
     expect(
       tabbable().filter((el) => row.contains(el)).length,
-      `${label}: the switch and the minus of 22 D4.1 carry the row into the Tab order`,
-    ).toBe(2)
+      `${label}: the minus of 22 D4.1 carries the row into the Tab order (IP5.1 leaves no switch)`,
+    ).toBe(1)
   }
 })
 

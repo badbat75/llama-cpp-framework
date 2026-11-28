@@ -242,10 +242,6 @@ export const EN: Record<string, string> = {
   'restart-offer-sent':
     '{0} is restarting: its page shows when it is running again.',
   'save-saved-restart-ids': 'Saved: restart {0} to apply.',
-  'model-profiles-switched-on-restart-ids':
-    'Switched {0} on: restart {1} to apply.',
-  'model-profiles-switched-off-restart-ids':
-    'Switched {0} off: restart {1} to apply.',
   'instance-server-open': 'Open {0}',
   'instance-server-switch-label': 'Switch to',
   'instance-server-switch-hint':
@@ -524,19 +520,29 @@ export const EN: Record<string, string> = {
     "Each model profile is one model with its settings. Every instance of the profile's engine can serve it.",
   'model-profiles-column-name': 'Model profile',
   'model-profiles-column-engine': 'Engine',
-  'model-profiles-column-status': 'Status',
+  // Slice IP5 (fe/briefs/22-model-sources.md, IP5.1, IP5.2, IP5.3): the plain
+  // Models list. `model-profiles-column-status` and the row switch are gone with
+  // the switch (IP5.1); `Used by` says who lists the model, and is the reason a
+  // row's − cannot act (IP5.3). The words are the brief's.
+  'model-profiles-column-used-by': 'Used by',
+  'model-profiles-unused': 'No instance profile',
+  // The Server page's model list keeps its switch and its word (16 17e), so
+  // these two stay in the strings file with IP5: the Models list leaves them
+  // (IP5.1), the Server page's list does not.
+  'model-profiles-status-on': 'On',
+  'model-profiles-status-off': 'Off',
   // Slice U17c (fe/briefs/17-ux-pass.md): the sortable headers' announcements, on
   // the filter's own status line.
   'model-profiles-sorted-asc': 'Sorted by {0}, A to Z.',
   'model-profiles-sorted-desc': 'Sorted by {0}, Z to A.',
   'model-profiles-sorted-file': 'In file order.',
-  'model-profiles-status-on': 'On',
-  'model-profiles-status-off': 'Off',
-  // Brief 22 slice 22D4 (22 D4.1, D4.2, D4.4, D4.6): the − in the Status cell of
-  // each row of the Model profiles list, its reason when it cannot act, the
-  // question of its confirm row, and the line the region says when it is done.
+  // Brief 22 slice 22D4 (22 D4.1, D4.2, D4.4, D4.6): the − in the row's Actions
+  // cell of the Model profiles list, its reason when it cannot act, the question
+  // of its confirm row, and the line the region says when it is done. IP5.3
+  // replaces the reason: an instance profile uses the model.
   'model-profiles-delete-row': 'Delete model profile {0}',
-  'model-profiles-delete-needs-off': 'Switch it off to delete it.',
+  'model-profiles-delete-in-use':
+    'An instance profile uses it: remove it from that instance profile to delete this one.',
   'model-profiles-delete-question':
     'Delete the model profile {0}? Its settings are removed; the model file is not deleted. This cannot be undone.',
   'model-profiles-deleted': 'The model profile {0} was deleted.',
@@ -544,8 +550,6 @@ export const EN: Record<string, string> = {
   'model-profiles-loading': 'Loading the model profiles…',
   'model-profiles-empty': 'No model profiles yet.',
   'model-profiles-load-failed': 'The model profiles could not be read.',
-  'model-profiles-off-note':
-    'A model profile switched off is kept, but its engine does not serve it and OpenCode does not offer it.',
   // Brief 22 slice 22C1 (fe/briefs/22-model-sources.md, section 2 22C): the New
   // model profile form on the Models list, and the file half of its picker
   // (22 P.1 to P.6, as the 2026-11-26 check amends). The Hugging Face keys
@@ -626,13 +630,9 @@ export const EN: Record<string, string> = {
   'model-profiles-filter-clear': 'Clear filter',
   'model-profiles-filter-count': 'Model profiles shown: {0} of {1}.',
   'model-profiles-no-match': 'No model profiles match the filter.',
-  // Slice 2c (fe/briefs/02-models.md, section 2c.8): the on/off switch.
-  'model-profiles-switched-on': 'Switched {0} on.',
-  'model-profiles-switched-off': 'Switched {0} off.',
-  'model-profiles-switched-on-restart':
-    'Switched {0} on: restart the running instances of {1} to apply.',
-  'model-profiles-switched-off-restart':
-    'Switched {0} off: restart the running instances of {1} to apply.',
+  // IP5.8: the list's on/off switch (slice 2c) and its words are gone: a model
+  // profile is served by the instance profiles that list it, and the Used by
+  // column says them.
   'api-no-model-profile-named':
     'There is no model profile named {0} any more: it was renamed or deleted elsewhere. Open the list of all model profiles again to see them as they are.',
   // Slice 2d (fe/briefs/02-models.md, section 2d.10): the model profile page, the
@@ -644,19 +644,25 @@ export const EN: Record<string, string> = {
   // Slice 22D (fe/briefs/22-model-sources.md, section 2): deleting a model
   // profile from its page. `delete-unknown` is 17f's text, brought by 22D.
   'model-profile-delete': 'Delete model profile',
-  // Brief 24 slice A2 (fe/briefs/24-ux-audit.md, 23 A2.1): the state paragraph
-  // of 22 D4.9 becomes a state line with the page's own switch, so its two long
-  // sentences leave the strings file (they sit in App.test.tsx's `1a strings`
-  // removed list) and these short texts take their place. 23 A2.3 adds the line
-  // that says why the switch cannot act under unsaved edits.
-  'model-profile-on-short': 'Switched on: its engine serves it.',
-  'model-profile-off-short': 'Switched off: kept, but not served.',
-  'model-profile-switch-dirty': 'Save or discard your changes first.',
+  // IP5.4 and IP5.5 (fe/briefs/22-model-sources.md): the state line's switch and
+  // its short texts are gone; the head gains a Used by row (its links are the
+  // list's, IP5.2) and a note saying where the hardware settings live now, with
+  // a link to the first instance profile's entry page. The words are the brief's.
+  'model-profile-placement-elsewhere':
+    'Where the model runs, its context and its memory are set per model in each instance profile that lists it.',
+  'model-profile-placement-link': 'Placement in {0}',
+  // IP5.5: the KV cache card keeps `cache-reuse` alone, and its intro says what
+  // moved away.
+  'model-profile-kv-cache-reuse-intro':
+    "How much of the last prompt's cache a new request may reuse. The cache's size and types are set per model in the instance profile.",
   'model-profile-delete-question':
     'Delete the model profile {0}? Its settings are removed, with any unsaved changes on this page. The model file is not deleted. This cannot be undone.',
   'model-profile-deleted': 'The model profile {0} was deleted.',
-  'api-model-profile-enabled':
-    '{0} is switched on, so it cannot be deleted. Switch it off first.',
+  // IP5.7: the bff refuses a save of a key that moved to the instance profile's
+  // entry (ARCHITECTURE.md IP4): 422 model-profile-placement-key, with `field`
+  // the key. The form never sends one, so this only shows for a hand-edited file.
+  'api-model-profile-placement-key':
+    'This setting now belongs to the instance profile: {0} cannot be saved in a model profile.',
   'api-model-profile-assigned':
     "{0} is given to the instances {1}, so it cannot be deleted. Remove it from each of them first, on the instance's page; a row set to Off counts too.",
   'delete-unknown':
@@ -897,7 +903,7 @@ export const EN: Record<string, string> = {
   'model-profile-device-same-as-model': '(auto / same as model)',
   // Brief 14 (fe/briefs/14-gpu-distribution.md), section 2: the GPU distribution
   // card. GD1's keys, from model-profile-gpu-distribution to
-  // model-profile-gpu-moved and api-device-bad-name, then GD2's (the weights).
+  // api-device-bad-name, then GD2's (the weights).
   // Every English is the brief's, the web text of the column that says "web".
   'model-profile-gpu-distribution': 'GPU distribution',
   // 22 D4.31 as its D1 review (2026-11-27) amends it: the intro is the card's
@@ -927,7 +933,6 @@ export const EN: Record<string, string> = {
   'model-profile-gpu-not-detected': '(not detected)',
   'model-profile-gpu-move-up': 'Move up',
   'model-profile-gpu-move-down': 'Move down',
-  'model-profile-gpu-moved': '{0}: position {1} of {2}',
   'api-device-bad-name':
     '{0}: `{1}` is not a device llama.cpp accepts: no spaces, none of ; # =, not CPU, and none only alone',
   // GD2: the weights (tensor-split).
@@ -938,8 +943,6 @@ export const EN: Record<string, string> = {
   'model-profile-gpu-share-unused': 'unused',
   'model-profile-gpu-auto': 'Auto',
   'model-profile-gpu-even': 'Even',
-  'model-profile-gpu-weights-incomplete':
-    'Give every checked GPU a weight of 0 or more, or clear them all for Auto.',
   'model-profile-gpu-split-without-device':
     "This profile's tensor-split {0} applies to every GPU llama.cpp finds, in its order. Checking GPUs here replaces it.",
   'api-tensor-split-format':
@@ -987,14 +990,6 @@ export const EN: Record<string, string> = {
   'model-profile-ot-text': 'Rules as text',
   'model-profile-ot-text-hint':
     'The whole value as llama.cpp reads it: rules <pattern>=<device> joined by commas, the first match winning. Paste a value from a guide here, or change the order of the rules. Applied when you press Enter or leave the field.\nFlag: --override-tensor',
-  'model-profile-ot-layers-bad':
-    'Layers {0} is not a list of layers. Write numbers from 0 to 999 and ranges such as 10-12, 15, at most 256 layers, or leave it empty for every layer.',
-  'model-profile-ot-pattern-empty': 'Write a pattern, or pick a tensor kind.',
-  // The only brace group of this text is the regex example `{1,2}`, so the
-  // page shows it with no args and `en` leaves the braces alone.
-  'model-profile-ot-pattern-separator':
-    'A pattern cannot hold , or =: llama.cpp splits the rules on them, and neither can be escaped. Write the pattern without them (a range such as {1,2} as a class or an alternative).',
-  'model-profile-ot-device-missing': "Pick where this rule's tensors go.",
   // Brief 21, sub-slice TP3 (section 2, as the TP3 check amends it): the
   // coverage line of a rule and the cut list. Every English is the brief's.
   'model-profile-ot-tensors-one': '1 tensor, {0}',
@@ -1568,23 +1563,39 @@ export const MODEL_INFO: ModelInfo = {
   reason: { key: 'model-info-missing', args: [MODEL_FILE] },
 }
 
-/** One model profile as GET /api/profiles/model lists it (fe/briefs/api-contract.md). */
+/**
+ * One model profile as GET /api/profiles/model lists it (fe/briefs/api-contract.md,
+ * as slice IP5 amends it, IP5.0): `usedBy` are the instance profiles that list
+ * the model, in their file order (ARCHITECTURE.md, IP4), and `removable` is
+ * `usedBy` empty.
+ *
+ * `enabled` is the pre-IP5 field: every test that pins the row switch sends it,
+ * and the list page still reads it, so it stays until IP5 lands. A row of the
+ * IP5 shape carries `usedBy` and no `enabled`: the IP5 tests build those.
+ */
 export type ModelProfile = {
   id: string
   engine: string
   engineAvailable: boolean
-  enabled: boolean
+  enabled?: boolean
+  /** The instance profiles that list this model, in their file order (IP5.0). */
+  usedBy?: string[]
   /** The section's `model` value as the file holds it; "" when unset (2b). */
   model: string
 }
 
-/** The default model profile list: one switched on, one switched off, one engine. */
+/**
+ * The default model profile list: one profile an instance profile lists and one
+ * that none lists, one engine, both switched on (the switch is the pre-IP5
+ * shape). The used one is the row whose − cannot act under IP5.
+ */
 export const MODEL_PROFILES: ModelProfile[] = [
   {
     id: 'Qwen3.6-35B-A3B-UD-Q4_K_XL',
     engine: 'llama.cpp',
     engineAvailable: true,
-    enabled: true,
+    enabled: false,
+    usedBy: [],
     model:
       '/var/lib/private-ai/.llama.cpp/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',
   },
@@ -1593,6 +1604,7 @@ export const MODEL_PROFILES: ModelProfile[] = [
     engine: 'llama.cpp',
     engineAvailable: true,
     enabled: false,
+    usedBy: [],
     model: '',
   },
 ]
@@ -1615,12 +1627,15 @@ export const SERVER_PROFILES: ServerProfile[] = [{ id: 'default', tags: [] }]
 
 /**
  * One row of GET /api/instances/{id}/profiles/model (fe/briefs/api-contract.md
- * 868, brief 16 slice 17e): the pool row's fields without `assignments`, plus
+ * 868, brief 16 slice 17e): the pool row's fields, plus `enabled` (the 17e
+ * record's own value: ARCHITECTURE.md IP4 removes these routes and this field
+ * with them, and brief 26 (IP6) rewrites the picker on the instance profile),
  * `value` (the explicit key only, `none` when only `*` covers it), `viaAll`
  * (the row is served through `*`) and `effective` (served by this instance
  * after its next start).
  */
 export type InstanceModelRow = ModelProfile & {
+  enabled: boolean
   value: 'none' | 'inherit' | 'on' | 'off'
   viaAll: boolean
   effective: boolean
@@ -1666,6 +1681,7 @@ export const INSTANCE_MODELS: InstanceModels = {
       engine: 'llama.cpp',
       engineAvailable: true,
       enabled: true,
+      usedBy: ['default'],
       model: '/m/qwen/Qwen3-27B-Q8_0.gguf',
       value: 'none',
       viaAll: true,
@@ -1676,6 +1692,7 @@ export const INSTANCE_MODELS: InstanceModels = {
       engine: 'llama.cpp',
       engineAvailable: true,
       enabled: false,
+      usedBy: ['default'],
       model: '/m/coder/Coder-30B.gguf',
       value: 'on',
       viaAll: false,
@@ -1686,6 +1703,7 @@ export const INSTANCE_MODELS: InstanceModels = {
       engine: 'llama.cpp',
       engineAvailable: true,
       enabled: false,
+      usedBy: [],
       model: '',
       value: 'off',
       viaAll: false,
@@ -1710,6 +1728,7 @@ function instanceModelRow(
       engine: 'llama.cpp',
       engineAvailable: true,
       enabled: true,
+      usedBy: ['default'],
       model: '',
       value: 'none',
       viaAll: true,
@@ -1738,7 +1757,15 @@ export function modelProfileDoc(
     id: MODEL_PROFILE_ID,
     engine: 'llama.cpp',
     engineAvailable: true,
+    // The pre-IP5 shape: the page read still carries `enabled`, and every test
+    // that pins the switch, the cards of `PLACEMENT_KEYS` and the old `running`
+    // answer reads this. Slice IP5 (fe/briefs/22-model-sources.md, IP5.0)
+    // removes them; its own tests drop `enabled` from the document they answer
+    // with (`ModelProfilePageIP5.test.tsx`), so the files brief 26 rewrites keep
+    // running until then. `usedBy` is IP5's addition: the instance profiles
+    // that list the model, in pool order.
     enabled: true,
+    usedBy: [] as string[],
     values: {
       model: '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf',
       'spec-type': 'ngram-mod,draft-mtp',
@@ -1784,6 +1811,100 @@ export function modelFilesBody(
     ...extra,
   }
 }
+
+/**
+ * The model profile keys that MOVE into the instance profile's entry, as the
+ * Rust side lists them (`crates/core/src/checks.rs`, `PLACEMENT_KEYS`, mirror
+ * of 2026-11-27). Slice IP5 (fe/briefs/22-model-sources.md, IP5.5, IP5.7): the
+ * model profile page shows no control for any of them, its save never sends
+ * one, and the stub's save route below refuses one.
+ */
+export const PLACEMENT_KEYS: string[] = [
+  'device',
+  'split-mode',
+  'tensor-split',
+  'override-tensor',
+  'n-gpu-layers',
+  'n-cpu-moe',
+  'n-cpu-ffn',
+  'moe-cache-mib',
+  'op-offload',
+  'repack',
+  'no-host',
+  'lazy-mode',
+  'load-mode',
+  'fit',
+  'fit-ctx',
+  'fit-target',
+  'device-draft',
+  'n-gpu-layers-draft',
+  'mmproj-device',
+  'mmproj-offload',
+  'ctx-size',
+  'parallel',
+  'kv-unified',
+  'kv-unified-per-slot',
+  'batch-size',
+  'ubatch-size',
+  'cache-type-k',
+  'cache-type-v',
+  'flash-attn',
+  'cache-ram',
+  'ctx-checkpoints',
+  'checkpoint-min-step',
+  'spec-draft-n-ubatch',
+  'spec-draft-type-k',
+  'spec-draft-type-v',
+  'load-on-startup',
+]
+
+/**
+ * The model profile keys that STAY in the model profile (`MODEL_PROFILE_STAY_KEYS`
+ * on the Rust side, same mirror): the keys slice IP5's page keeps a control for.
+ */
+export const MODEL_PROFILE_STAY_KEYS: string[] = [
+  'model',
+  'hf-repo',
+  'hf-file',
+  'mmproj',
+  'model-draft',
+  'temp',
+  'top-k',
+  'top-p',
+  'min-p',
+  'repeat-penalty',
+  'presence-penalty',
+  'backend-sampling',
+  'n-predict',
+  'jinja',
+  'chat-template-kwargs',
+  'prefill-assistant',
+  'reasoning',
+  'reasoning-format',
+  'reasoning-effort',
+  'reasoning-preserve',
+  'reasoning-budget',
+  'reasoning-budget-message',
+  'embeddings',
+  'pooling',
+  'cache-reuse',
+  'image-min-tokens',
+  'image-max-tokens',
+  'spec-type',
+  'spec-draft-n-max',
+  'spec-draft-n-min',
+  'spec-draft-p-min',
+  'spec-ngram-mod-n-match',
+  'spec-ngram-mod-n-min',
+  'spec-ngram-mod-n-max',
+  'spec-ngram-simple-size-n',
+  'spec-ngram-simple-size-m',
+  'spec-ngram-map-k-size-n',
+  'spec-ngram-map-k-size-m',
+  'spec-ngram-map-k4v-size-n',
+  'spec-ngram-map-k4v-size-m',
+  'spec-ngram-map-k4v-min-hits',
+]
 
 /** A row of `dir`. `category` defaults to the first subfolder, `null` for a
  *  file sitting in `dir` (fe/briefs/api-contract.md 239). */
@@ -2061,20 +2182,10 @@ export type BffOptions = {
     init?: RequestInit,
   ) => Response | Promise<Response>
   /**
-   * PUT /api/profiles/model/{id}/enabled: the reply to the n-th switch (from 1),
-   * given the parsed body and the decoded id. Default 200 with the body's
-   * `enabled` echoed and `running: false`.
-   */
-  modelProfileSwitch?: (
-    body: unknown,
-    id: string,
-    n: number,
-    init?: RequestInit,
-  ) => Response | Promise<Response>
-  /**
    * PUT /api/profiles/model/{id}: the reply to the n-th save (from 1), given the
    * parsed body and the decoded id. Default 200 {"revision": "r2",
-   * "running": false} (fe/briefs/api-contract.md).
+   * "running": []} (fe/briefs/api-contract.md, as IP5.0 amends it: the save
+   * answers the running instances whose render lists the model, as ids).
    */
   modelProfileSave?: (
     body: unknown,
@@ -2452,20 +2563,12 @@ export function fakeBff(options: BffOptions = {}) {
         return answer(m, init)
       return Promise.resolve(reply(200, m))
     }
-    const modelProfileSwitch =
-      /^PUT \/api\/profiles\/model\/([^/]+)\/enabled$/.exec(route)
-    if (modelProfileSwitch) {
-      const id = decodeURIComponent(modelProfileSwitch[1]!)
-      const n = calls.filter(
-        (c) =>
-          c.method === 'PUT' &&
-          /^\/api\/profiles\/model\/[^/]+\/enabled$/.test(c.path),
-      ).length
-      const enabled = (body as { enabled?: unknown } | undefined)?.enabled
+    // Slice IP5 (IP5.1, IP5.5): the model profile's on/off switch is gone, and
+    // with it PUT /api/profiles/model/{id}/enabled. The route answers 404, so a
+    // page that still sends it shows the call rather than a network failure.
+    if (/^PUT \/api\/profiles\/model\/[^/]+\/enabled$/.test(route)) {
       return Promise.resolve(
-        options.modelProfileSwitch
-          ? options.modelProfileSwitch(body, id, n, init)
-          : reply(200, { enabled, running: false }),
+        reply(404, { error: 'not-found', message: 'No such route' }),
       )
     }
     const modelProfileSave = /^PUT \/api\/profiles\/model\/([^/]+)$/.exec(route)
@@ -2474,6 +2577,12 @@ export function fakeBff(options: BffOptions = {}) {
       const n = calls.filter(
         (c) => c.method === 'PUT' && c.path === path,
       ).length
+      // IP5.0 (fe/briefs/22-model-sources.md): a save answers `running`, the
+      // ids of the running instances whose render lists the model. The default
+      // stays the pre-IP5 `running: false`, the shape the page reads today:
+      // the page's restart offer of 17d.4a moves to the array with the slice,
+      // and the suites brief 26 rewrites read this. IP5's tests, and every
+      // suite that pins the offer, name their own answer.
       return Promise.resolve(
         options.modelProfileSave
           ? options.modelProfileSave(body, id, n, init)

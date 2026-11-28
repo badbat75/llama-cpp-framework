@@ -17,7 +17,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
   within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -29,7 +28,6 @@ import {
   fakeBff,
   isHidden,
   navigate,
-  quiet,
   reply,
   startAt,
   stubDialog,
@@ -38,10 +36,6 @@ import {
 } from './test/bff.ts'
 
 const FILES = '/api/node/model-files'
-const CREATE = '/api/profiles/model'
-
-/** The `plus` of Icon.tsx (brief 15): the glyph of a list's add. */
-const PLUS = ['M5 12h14', 'M12 5v14']
 
 /** Three profiles, in the file order the list is read in. */
 function modelProfile(id: string, enabled: boolean, model = ''): ModelProfile {
@@ -132,36 +126,11 @@ function picker(form: HTMLElement): HTMLElement {
   })
 }
 
-/** The text a sighted user reads inside `el`: no aria-hidden icon, no
- *  `visually-hidden` span (17b2.2, the rule 22 C.1a keeps for the +). */
-function visibleText(el: HTMLElement): string {
-  return [...el.childNodes]
-    .filter(
-      (n) =>
-        !(n instanceof Element && n.getAttribute('aria-hidden') === 'true') &&
-        !(n instanceof Element && n.classList.contains('visually-hidden')),
-    )
-    .map((n) => n.textContent ?? '')
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-/** The `role="status"` lines inside `root`, in the document's order. */
-function statusLines(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>('[role="status"]')]
-}
-
 /** The text of every `role="alert"` inside `root`. */
 function alertTexts(root: HTMLElement): string[] {
   return [...root.querySelectorAll('[role="alert"]')].map(
     (a) => a.textContent ?? '',
   )
-}
-
-/** The creates the bff was asked for, in order. */
-function posts(bff: ReturnType<typeof fakeBff>) {
-  return bff.to('POST', CREATE)
 }
 
 /** The folder reads the bff was asked for, in order. */
@@ -170,151 +139,6 @@ function folderReads(bff: ReturnType<typeof fakeBff>) {
 }
 
 // ── 22 C.1a, C.1: the opener and the form ───────────────────────────────
-
-test('22 C.1a, C.1: the Models list puts the model-profiles-new + after the model-profiles-off-note and nothing after it, and pressing it opens right after it a form named by its h2 model-profiles-new-title, holding the note, the Name field with its hint, the Start from picker with A model file checked, Create primary then Cancel, a status line and no alert, the focus moving to Name', async () => {
-  const { bff, main } = await loaded()
-  await quiet(bff)
-  const note = within(main).getByText(en('model-profiles-off-note'))
-  const box = table(main).closest('div.table-scroll')
-  expect(box, 'the table is in its scrolling box').not.toBeNull()
-  const opener = newButton(main)
-  // 22 C.1a: the + is the list's `.ot-add`, after the note that belongs to the
-  // table, and before nothing else.
-  expect(opener.classList.contains('ot-add'), 'the list add of 17b2.2').toBe(
-    true,
-  )
-  expect(before(box!, opener), 'the + is after the table').toBe(true)
-  expect(opener.closest('div.table-scroll'), 'and outside its box').toBeNull()
-  expect(before(note, opener), '22 C.1a: the + comes after the off-note').toBe(
-    true,
-  )
-  expect(opener.nextElementSibling, 'and before nothing else').toBeNull()
-  expect(opener.getAttribute('aria-expanded'), 'a disclosure, closed').toBe(
-    'false',
-  )
-  const icon = opener.querySelector('svg.icon')
-  expect(icon, 'the opener carries its icon').not.toBeNull()
-  expect(icon!.getAttribute('aria-hidden'), 'decorative').toBe('true')
-  expect(
-    [...icon!.querySelectorAll('path')].map((p) => p.getAttribute('d')),
-    'the plus of Icon.tsx (brief 15)',
-  ).toEqual(PLUS)
-  expect(visibleText(opener), '22 C.1a: the + shows no visible text').toBe('')
-  // Opening.
-  press(opener)
-  expect(opener.getAttribute('aria-expanded'), 'the press opens').toBe('true')
-  const form = await within(main).findByRole('form', {
-    name: en('model-profiles-new-title'),
-  })
-  const h2 = within(form).getByRole('heading', {
-    level: 2,
-    name: en('model-profiles-new-title'),
-  })
-  expect(h2.getAttribute('id'), 'the form is named by its h2').toBe(
-    form.getAttribute('aria-labelledby'),
-  )
-  expect(opener.nextElementSibling, 'the form is right after the +').toBe(form)
-  // What the form holds.
-  within(form).getByText(en('model-profiles-new-note'))
-  const name = boxIn(form, en('model-profile-name'))
-  expect(document.activeElement, 'the focus moves to Name').toBe(name)
-  expect(name.tagName, 'Name is a text input').toBe('INPUT')
-  expect(name.getAttribute('type') ?? 'text', 'a plain text input').toBe('text')
-  expect(name.getAttribute('autocomplete'), 'no browser fill').toBe('off')
-  expect(name.getAttribute('spellcheck'), 'no spellcheck').toBe('false')
-  const hint = within(form).getByText(en('model-profile-name-hint'))
-  expect(isHidden(hint), 'the hint starts closed').toBe(true)
-  press(
-    within(form).getByRole('button', {
-      name: `${en('field-about')} ${en('model-profile-name')}`,
-    }),
-  )
-  expect(isHidden(hint), 'About shows the hint').toBe(false)
-  // The picker, with the file choice checked on opening (22 C.1).
-  const group = picker(form)
-  const file = radioIn(form, 'model-source-file')
-  const hf = radioIn(form, 'model-source-hf')
-  const copy = radioIn(form, 'model-source-copy')
-  expect(file.checked, '22 C.1: A model file is checked on opening').toBe(true)
-  expect(hf.checked, 'the Hugging Face choice is not').toBe(false)
-  expect(copy.checked, 'the copy choice is not').toBe(false)
-  expect(before(picker(form), name), 'the picker is not above Name').toBe(false)
-  // 22C2 adds the Hugging Face radio, between the other two (the slice cut).
-  const radios = within(group).getAllByRole('radio')
-  expect(radios, 'three choices today').toHaveLength(3)
-  expect(
-    radios.indexOf(hf),
-    '22 P.1, the slice cut: A Hugging Face repo is the second choice',
-  ).toBe(1)
-  // The buttons, the status line, the alert place.
-  const create = buttonIn(form, 'create-button')
-  const cancel = buttonIn(form, 'create-cancel')
-  expect(create.classList.contains('primary'), 'Create is the primary').toBe(
-    true,
-  )
-  expect(before(name, create), 'Create is after the fields').toBe(true)
-  expect(before(create, cancel), 'Cancel is after Create').toBe(true)
-  expect(alertTexts(form), 'no alert: the place is empty').toEqual([])
-  expect(posts(bff), 'opening sends no create').toHaveLength(0)
-  // 22 P.4: the file choice is shown on opening, so the folder is read once.
-  expect(folderReads(bff), 'the folder is read once').toHaveLength(1)
-})
-
-test('22 C.1a: the filter status, the switch status region and its restart offer stay above the table, and the form keeps its own status lines', async () => {
-  const { main } = await loaded({
-    // The switch leaves a restart offer (16 17d.5b), which is what 22 C.1a
-    // names beside the switch region.
-    modelProfileSwitch: () =>
-      reply(200, { enabled: true, running: true, restart: ['default'] }),
-  })
-  const t = table(main)
-  const filterStatus = main.querySelector('p.model-profiles-filter-status')
-  const switchStatus = main.querySelector('p.model-profiles-switch-status')
-  expect(filterStatus, 'the filter status line is on the page').not.toBeNull()
-  expect(switchStatus, 'the switch region is on the page').not.toBeNull()
-  expect(before(filterStatus!, t), 'the filter status is above the table').toBe(
-    true,
-  )
-  expect(
-    before(switchStatus!, t),
-    '17d.5b: the switch region is above the table',
-  ).toBe(true)
-  // The switch's answer names an instance, so the offer shows: it too is above
-  // the table.
-  press(within(main).getAllByRole('switch')[0]!)
-  await waitFor(() =>
-    expect(main.querySelector('div.restart-offer')).not.toBeNull(),
-  )
-  const offer = main.querySelector('div.restart-offer')!
-  expect(before(offer, t), '17d.5b: the offer is above the table').toBe(true)
-  // The form opens after the +, so below all of them, and its status lines are
-  // its own (22 C.1a: the page's regions never hold the form's status).
-  const form = await openForm(main)
-  expect(
-    before(switchStatus!, form),
-    'the form opens below the switch region',
-  ).toBe(true)
-  expect(before(offer, form), 'and below the offer').toBe(true)
-  const lines = statusLines(form)
-  expect(lines.length, 'the form has a status line of its own').toBeGreaterThan(
-    0,
-  )
-  for (const line of lines) {
-    expect(line.closest('form'), 'the line is inside the form').toBe(form)
-    expect(
-      line.classList.contains('model-profiles-switch-status'),
-      '22 C.1a: the form holds no page switch region',
-    ).toBe(false)
-    expect(
-      line.classList.contains('restart-offer-status'),
-      '22 C.1a: the form holds no offer status',
-    ).toBe(false)
-  }
-  expect(
-    main.querySelector('p.model-profiles-switch-status'),
-    'the page keeps its own region, outside the form',
-  ).toBe(switchStatus)
-})
 
 test('22 C.1: the + is shown when the list is empty, and the form then holds no copy radio; it is not shown while the list is loading or after a failed read', async () => {
   // The empty list: the + is there, the form has one choice.

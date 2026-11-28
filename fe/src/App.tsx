@@ -758,8 +758,6 @@ function Page({
         onSort={onSort}
         onSignedOut={onSignedOut}
         onRenewed={onRenewed}
-        nameOf={nameOf}
-        onInstances={onInstances}
       />
     )
   }

@@ -266,7 +266,7 @@ test('H2b.2, 10 R1.4, R1.5: the scroll box is the lifted box (--bg, --radius-car
 
 // ── H2b.3: the table cells ───────────────────────────────────────────────
 
-test('H2b.3: th is --muted at --fs-sm with the header line kept, td divides on --line, the last row drops its divider, the cell paddings and .model-profiles tr.off hold', () => {
+test('H2b.3: th is --muted at --fs-sm with the header line kept, td divides on --line, the last row drops its divider and the cell paddings hold', () => {
   const th = topBy('th', 'the th rule')
   expect(
     prop(th.body, 'color'),
@@ -304,10 +304,9 @@ test('H2b.3: th is --muted at --fs-sm with the header line kept, td divides on -
     ),
     'and the Model profiles table keeps its own, unchanged',
   ).toBe('var(--space-2)')
-  expect(
-    prop(topBy('.model-profiles tr.off', 'the switched-off row').body, 'color'),
-    'a switched-off profile stays --muted (2c.39)',
-  ).toBe('var(--muted)')
+  // 2c.39's muted switched-off row left the sheet with the list's switch, when
+  // 22 IP5.1 took the switch off the rows: no row of the Model profiles list is
+  // switched off any more, so no rule mutes one.
 })
 
 test.each(

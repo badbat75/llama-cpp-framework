@@ -139,16 +139,6 @@ export function otSetLayersText(row: TensorRow, text: string): TensorRow {
   }
 }
 
-/** A Layers text to refuse at Save (21 T.11): the row shows a Layers field (a
- *  kind with blocks) and its text on screen is one `parseLayers` cannot read.
- *  What the save sends is the pattern the last readable text composed (21 T.6),
- *  and the text on screen is in no part of it, so the save is refused while the
- *  text stands, whatever was typed before it (the ruling of 2026-11-22, the TP2
- *  review's D1). A row whose kind has no Layers field shows no text to read. */
-export function otLayersBad(row: TensorRow): boolean {
-  return kindOf(row).block !== '' && 'unreadable' in parseLayers(row.layersText)
-}
-
 /** The id of the format paragraph, the description of every Layers and Pattern
  *  field (21 T.4, WCAG 3.3.2). One card, so one id on the page. */
 export const FORMAT_ID = 'model-profile-ot-format'

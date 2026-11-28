@@ -700,8 +700,31 @@ main > * {
     display: none;
   }
 
-  .model-profiles td:first-child .muted {
+  /* The extra `tbody` is what shows the line: a media query adds no
+     specificity, and the rule that hides the line (`.model-profiles
+     td:first-child .muted`, further down the sheet) answers at the same
+     specificity and is read later. */
+  .model-profiles tbody td:first-child .muted {
     display: block;
+  }
+
+  /* The column keeps a box, so every head stands over its column (22 D4.25):
+     the head row has four cells, and a row whose second cell is out of the
+     layout fills its `Used by` and `−` into the first two columns, one column
+     left of their heads. The box is therefore kept and emptied: the rule above
+     takes its words out of the tree (22 D4.35), and these take out its size,
+     so the column is as wide as nothing (the `max-width` is what collapses it:
+     the auto table layout sizes a column from its cells' specified widths). The
+     name cell's muted line carries the words. */
+  .model-profiles tbody td:nth-child(2) {
+    display: table-cell;
+    visibility: hidden;
+    width: 0;
+    max-width: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    line-height: 0;
   }
 
   /* The header keeps the sort: `display: none` on a `th` takes its whole
@@ -884,10 +907,6 @@ tr:last-child td {
   vertical-align: middle;
 }
 
-.model-profiles tr.off {
-  color: var(--muted);
-}
-
 /* The Server profiles table (brief 16 17a.11, as its 17a review D1 amends it):
    the base break lets every column shrink to one character, so at 320 px the
    two headers that are one phrase, the port and a short instance id stood one
@@ -946,17 +965,6 @@ tr:last-child td {
   .mark {
     color: inherit;
   }
-}
-
-/* The switches' feedback, at the body size (2c.50). */
-.model-profiles-switch-status {
-  margin: 0;
-  min-height: 1lh;
-}
-
-.model-profiles-switch-alert {
-  color: var(--danger);
-  font-weight: 600;
 }
 
 /* The filter over the model profiles (02-models.md 2b): field and Clear on one
@@ -1023,12 +1031,6 @@ tr:last-child td {
 .model-profiles-filter-hint,
 .model-profiles-filter-status {
   margin: 0;
-  color: var(--muted);
-  font-size: var(--fs-sm);
-}
-
-.model-profiles-note {
-  margin-top: var(--space-2);
   color: var(--muted);
   font-size: var(--fs-sm);
 }
@@ -1784,6 +1786,15 @@ legend.field-label {
    before it. */
 .assets + h3 {
   margin-top: var(--space-6);
+}
+
+/* The note that follows a value list (22 IP5.5, its review A5): the model
+   profile page's head lists the instance profiles that list the model, and the
+   note under it says where the placement lives. The two are one block at the
+   list's own leading, so the note reads as one more row of it: the note starts
+   --space-3 below (DESIGN.md 9). */
+.assets + .intro {
+  margin-top: var(--space-3);
 }
 
 .muted {

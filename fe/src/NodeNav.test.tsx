@@ -21,7 +21,6 @@ import { StrictMode } from 'react'
 import App from './App.tsx'
 import {
   HOST_FAILURES,
-  MODEL_PROFILES,
   VERSION_HOST,
   en,
   fakeBff,
@@ -250,48 +249,6 @@ test('13 N.3: a sign-out and a sign-in as another user send one more', async () 
   expect(hostReads(bff), "bob's session reads again").toBe(3)
 })
 
-test('13 N.3: a sign-in in a page dialog as the same user sends no shell read; as another user it sends one', async () => {
-  // The dialog: a page's write answering 401 leaves a Sign in on the page
-  // (fe/briefs/09-signin-only.md S1b.6); the visitor signs in there, with no
-  // page change.
-  for (const [user, want] of [
-    ['alice', 1],
-    ['bob', 2],
-  ] as Array<[string, number]>) {
-    startAt('#/profiles/model')
-    const bff = fakeBff({
-      version: VERSION_HOST,
-      signIn: asPosted,
-      modelProfileSwitch: () =>
-        reply(401, { key: 'session-required', args: [] }),
-    })
-    render(<App />)
-    const nav = await navOf()
-    await within(nav).findByRole('link', { name: 'default' })
-    const main = screen.getByRole('main')
-    const box = await within(main).findByRole('switch', {
-      name: MODEL_PROFILES[0]!.id,
-    })
-    await quiet(bff)
-    expect(hostReads(bff), `${user}: the session read`).toBe(1)
-    fireEvent.click(box)
-    const ask = await within(main).findByRole('button', {
-      name: en('session-sign-in'),
-    })
-    fireEvent.click(ask)
-    const dialog = screen.getByRole('dialog', { name: en('signin-title') })
-    await signIn(dialog, user)
-    await within(main).findByRole('switch', { name: MODEL_PROFILES[0]!.id })
-    await quiet(bff)
-    expect(
-      hostReads(bff),
-      `${user}: a dialog sign-in as ${user} ${want === 1 ? 'keeps the one read' : 'is a new session'}`,
-    ).toBe(want)
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
-
 // The three shapes of 13 N.3 the review of the built slice (2026-11-20) found
 // untested: the tree main.tsx really renders, StrictMode included, where every
 // effect runs twice; a sign-out and a sign-in as the same user, which 13 N.3
@@ -354,45 +311,6 @@ test('13 N.3: a sign-out then a sign-in as the same user is a new session: one m
   expect(await hostLabel(nav), 'and the host once it answers').toBe(
     VERSION_HOST.name,
   )
-})
-
-test('13 N.3: a sign-in in a page dialog as the same user while the host read is open sends no second read, and the name of the read already on its way arrives', async () => {
-  // The dialog: a page write answering 401 (S1b.6), signed in as the user of
-  // the session that is already there.
-  startAt('#/profiles/model')
-  const h = held()
-  const bff = fakeBff({
-    version: h.answer,
-    signIn: asPosted,
-    modelProfileSwitch: () => reply(401, { key: 'session-required', args: [] }),
-  })
-  render(<App />)
-  const nav = await navOf()
-  const main = screen.getByRole('main')
-  const box = await within(main).findByRole('switch', {
-    name: MODEL_PROFILES[0]!.id,
-  })
-  expect(await hostLabel(nav), 'the fallback while the read is open').toBe(
-    en('nav-this-node'),
-  )
-  fireEvent.click(box)
-  fireEvent.click(
-    await within(main).findByRole('button', { name: en('session-sign-in') }),
-  )
-  await signIn(
-    screen.getByRole('dialog', { name: en('signin-title') }),
-    'alice',
-  )
-  await within(main).findByRole('switch', { name: MODEL_PROFILES[0]!.id })
-  await quiet(bff)
-  expect(hostReads(bff), 'the same user in a dialog is not a new session').toBe(
-    1,
-  )
-  h.resolve(reply(200, VERSION_HOST))
-  expect(
-    await hostLabel(nav),
-    'the read that was already on its way names the nav: the sign-in drops nothing',
-  ).toBe(VERSION_HOST.name)
 })
 
 test.each(HOST_FAILURES)(

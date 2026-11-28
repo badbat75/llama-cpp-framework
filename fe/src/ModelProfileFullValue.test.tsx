@@ -6,11 +6,14 @@
 // 2e.2 gets it. 2h.4's 160 and 2h.5's 164 keep the rule (134: the line is
 // only for a control that is disabled now, a rule's lock of 176 included), and
 // 2h.8's 183 to 186 left no read-only field anywhere on the model profile page: every
-// card is editable now. So every example here is of a control a rule disables,
-// one per kind: Fit free VRAM of the Hardware card as the text input and as
-// the number box, both disabled while the Fit to VRAM box is off (186), and
-// the Draft K-cache type of the Speculative decoding card, the select 2h.9's
-// 190 disables while the model profile names no drafter. The fields, their controls
+// card is editable now. So every example here is of a control a rule disables.
+// Brief 22 IP5 took the placement cards away, and with them every disabled text
+// input and select of the page: the controls a rule still leaves disabled are
+// the number rows of the Speculative decoding card's locked groups (190, 191)
+// and of the Vision card while the read names no mmproj file (176), so the
+// examples are number boxes. The 20-character edge of a text input or a select
+// has no disabled control left on this page to show it on; the shared renderer
+// keeps the rule (119). The fields, their controls
 // and how a value is shown are ModelProfileCards1.test.tsx and
 // ModelProfileCards2.test.tsx; the route and the read are ModelProfilePage.test.tsx. The
 // colour and the wrap at 320 px are the designer's review, not jsdom:
@@ -25,7 +28,6 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import strings from './strings/en_US.json'
 import {
-  before,
   en,
   fakeBff,
   isHidden,
@@ -45,44 +47,14 @@ const MODEL = '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-Q8_0.gguf'
  * 8 characters fit (index.css `input.number`). */
 const NUM_8 = '17203200'
 const NUM_9 = '172032000'
-/** The two sides of the text and select limit: 20 characters, what a control
- * holds in the field column at 320 px. The text pair keeps capitals and two
- * trailing spaces, so trimming or lower-casing changes it. */
-const TEXT_20 = '{"MixedCase":TRUE}  '
-const TEXT_21 = '{"MixedCaseX":TRUE}  '
-const SELECT_20 = 'mean-attention-pools'
-const SELECT_21 = 'Last-Attention-Pool-X'
-/** An unlisted select value past the limit, with spaces and capitals. The
- * select that carries it, the Draft K-cache type of the Speculative decoding
- * card, is disabled by `NO_DRAFTERS` below; the brief's pooling stub has the
- * same shape, but pooling sits on the editable Embeddings card, which shows no
- * line (134). */
-const SELECT_LONG = 'Last Attention Pool X  '
 
 /** 2h.9's 190 and 191: every group of the Speculative decoding card is locked
  * when the read names no drafter, no `model-draft` and no `draft-` entry of
- * `spec-type`, so 134 leaves the full-value line under its select. The stub's
- * own `spec-type` (`ngram-mod,draft-mtp`) opens the draft group and the
- * `ngram-mod` group, and the line goes. */
+ * `spec-type`, and names no n-gram type, so 134 leaves the full-value line
+ * under the locked group's number rows. The stub's own `spec-type`
+ * (`ngram-mod,draft-mtp`) opens the draft group and the `ngram-mod` group, and
+ * the lines go. */
 const NO_DRAFTERS = { 'spec-type': 'none' }
-
-/** A number value a trim would change, past the number limit. */
-const NUM_PAD = ' 172032000 '
-
-const CTX = en('model-profile-context-size')
-const MOE = en('model-profile-moe-cache')
-/** The fields that carry the examples (134): Fit free VRAM is the text
- * `fit-target`, the Draft K-cache type the select `spec-draft-type-k` (2h.7's
- * 175 made the Hardware card's Lazy tensors and Load mode editable, so 134
- * takes their line away; 2h.9's 189 made the Speculative decoding card
- * editable, so its select keeps the line only under `NO_DRAFTERS`). */
-const FIT = en('model-profile-fit-free-vram')
-const MIN_CTX = en('model-profile-fit-min-context')
-const DRAFT_K = en('model-profile-draft-k-cache-type')
-/** The other editable number fields of the Resource / context card (2h.4). */
-const SLOT = en('model-profile-per-slot-context')
-const BATCH = en('model-profile-batch-size')
-const UBATCH = en('model-profile-u-batch-size')
 
 beforeEach(() => startAt(HASH))
 
@@ -127,65 +99,12 @@ function exactOf(values: Record<string, string>) {
   return modelProfileDoc({}, { values })
 }
 
-/** The field that holds the About toggle of `label` (Field.tsx `.field`). */
-function fieldOf(main: HTMLElement, label: string): HTMLElement {
-  const about = within(main).getByRole('button', {
-    name: `${en('field-about')} ${label}`,
-  })
-  const field = about.closest('.field')
-  expect(field, `${label}: its Field wrapper`).toBeTruthy()
-  return field as HTMLElement
-}
-
-/** The control of the field named `label`, by its kind. */
-function controlOf(
-  main: HTMLElement,
-  kind: 'number' | 'text' | 'select',
-  label: string,
-): HTMLElement {
-  if (kind === 'select')
-    return within(main).getByRole('combobox', { name: label })
-  return within(main).getByRole('textbox', { name: label })
-}
-
-function selectOf(main: HTMLElement, label: string): HTMLSelectElement {
-  return within(main).getByRole('combobox', {
-    name: label,
-  }) as HTMLSelectElement
-}
-
-/** The text of the selected option as written: `textContent`, which keeps the
- *  whitespace. The IDL `option.text` (the label the browser draws) collapses
- *  spaces, `textContent` and `value` do not, so criterion 118's "as written"
- *  comparison is this one. */
-function selectedText(select: HTMLSelectElement): string {
-  const options = [...select.querySelectorAll('option')]
-  expect(select.selectedIndex, 'an option is selected').toBeGreaterThanOrEqual(
-    0,
-  )
-  return options[select.selectedIndex]!.textContent ?? ''
-}
-
 /** The full-value line of `key`, found by the id criterion 118 names. */
 function lineOf(main: HTMLElement, key: string): HTMLElement {
   const id = `model-profile-full-${key}`
   const line = main.querySelector(`#${id}`)
   expect(line, `#${id}: the full-value line`).toBeTruthy()
   return line as HTMLElement
-}
-
-function expectNoLine(main: HTMLElement, key: string): void {
-  expect(
-    main.querySelector(`#model-profile-full-${key}`),
-    `${key}: no line`,
-  ).toBeNull()
-}
-
-/** The line's hint, named by the field's id (Field.tsx). */
-function hintOf(main: HTMLElement, key: string): HTMLElement {
-  const hint = main.querySelector(`#model-profile-${key}-hint`)
-  expect(hint, `${key}: its hint`).toBeTruthy()
-  return hint as HTMLElement
 }
 
 /** The elements Tab reaches inside `main`, in DOM order (criterion 91). */
@@ -226,252 +145,6 @@ function nameOf(el: HTMLElement): string {
 
 // ── 118: the line, its text and its place ───────────────────────────────
 
-test('2e.118: a MoE cache of 9 characters shows the line: a paragraph with the id model-profile-full-moe-cache-mib, shown, holding the value', async () => {
-  const { main } = await page({ 'moe-cache-mib': NUM_9 })
-  const line = lineOf(main, 'moe-cache-mib')
-  expect(line.tagName, 'the line is a paragraph').toBe('P')
-  expect(line.textContent, 'the line holds the value').toBe(NUM_9)
-  expect(isHidden(line), 'the line is shown').toBe(false)
-})
-
-test('2e.118: the line holds the value exactly as written, for a number, a text and an unlisted select value with capitals, a leading space and trailing spaces', async () => {
-  const { main } = await page({
-    'moe-cache-mib': NUM_PAD,
-    'fit-target': TEXT_21,
-    // 2h.8's 186: the Fit fields are editable, so the free-VRAM input is
-    // disabled only while the Fit to VRAM box is off.
-    fit: 'off',
-    'spec-draft-type-k': SELECT_LONG,
-    // 2h.9's 190: no drafter, so the draft group and its select are disabled.
-    ...NO_DRAFTERS,
-  })
-  // Every one of these changes when trimmed or lower-cased, so a line built
-  // from a trimmed or normalised copy reads red.
-  for (const value of [NUM_PAD, TEXT_21, SELECT_LONG])
-    expect(
-      value.trim() === value && value.toLowerCase() === value,
-      `${value}: trimming and lower-casing both leave it alone, so it pins nothing`,
-    ).toBe(false)
-  const cases: [string, 'number' | 'text' | 'select', string, string][] = [
-    ['moe-cache-mib', 'number', MOE, NUM_PAD],
-    ['fit-target', 'text', FIT, TEXT_21],
-    ['spec-draft-type-k', 'select', DRAFT_K, SELECT_LONG],
-  ]
-  for (const [key, kind, label, value] of cases) {
-    const line = lineOf(main, key)
-    expect(line.textContent, `${key}: the line is the value, as written`).toBe(
-      value,
-    )
-    const control = controlOf(main, kind, label)
-    if ('value' in control)
-      expect(
-        control.value,
-        `${key}: the line repeats what the control holds`,
-      ).toBe(value)
-  }
-})
-
-test('2e.118: an unlisted select value shows on the line the text of the selected option', async () => {
-  const { main } = await page({
-    'spec-draft-type-k': SELECT_LONG,
-    ...NO_DRAFTERS,
-  })
-  const select = selectOf(main, DRAFT_K)
-  const line = lineOf(main, 'spec-draft-type-k')
-  // The extra option of an unlisted value carries the value as its text, and
-  // the line repeats that text as written. A trimmed comparison can never
-  // hold: SELECT_LONG ends in spaces, and the green 118 test above pins the
-  // line's text to the value as the reply has it.
-  expect(selectedText(select), 'the option is the value').toBe(SELECT_LONG)
-  expect(line.textContent, 'the line is the selected option text').toBe(
-    selectedText(select),
-  )
-})
-
-test('2e.118: the line sits under its own control, after its unit, before its hint, inside its own field', async () => {
-  const { main } = await page({
-    'moe-cache-mib': NUM_9,
-    'fit-target': TEXT_21,
-    fit: 'off',
-  })
-  const cases: [string, 'number' | 'text', string, boolean][] = [
-    ['moe-cache-mib', 'number', MOE, true],
-    ['fit-target', 'text', FIT, true],
-  ]
-  for (const [key, kind, label, hasUnit] of cases) {
-    const field = fieldOf(main, label)
-    const control = controlOf(main, kind, label)
-    const line = lineOf(main, key)
-    expect(
-      line.closest('.field'),
-      `${key}: the line is inside the field of its control`,
-    ).toBe(field)
-    expect(before(control, line), `${key}: the line is under the control`).toBe(
-      true,
-    )
-    const unit = field.querySelector('.unit')
-    expect(unit !== null, `${key}: the unit is ${hasUnit}`).toBe(hasUnit)
-    if (unit !== null)
-      expect(before(unit, line), `${key}: the line is after the unit`).toBe(
-        true,
-      )
-    expect(
-      before(line, hintOf(main, key)),
-      `${key}: the line is before the hint`,
-    ).toBe(true)
-  }
-})
-
-test('2e.118, 2h.160, 2h.170, 2h.175, 2h.190: one line per long field: each line is in its own field, a short field of the same card has none, and no field of the editable card has one', async () => {
-  const { main } = await page({
-    'moe-cache-mib': NUM_9,
-    'spec-draft-type-k': SELECT_LONG,
-    // 2h.9's 190: the model profile names no drafter, so the draft group is locked
-    // and its select keeps the line.
-    ...NO_DRAFTERS,
-    // The Resource / context card, every key past its limit: 160 says an
-    // enabled control shows no line, so none of these has one. Parallel slots
-    // is present, so its box is unticked and Unified KV is enabled too.
-    'ctx-size': NUM_9,
-    parallel: '817203200',
-    'kv-unified': SELECT_LONG,
-    'kv-unified-per-slot': NUM_9,
-    // The KV cache card, editable since 2h.5's 164: 134 keeps its long
-    // values off the lines.
-    'cache-ram': NUM_9,
-    'cache-type-k': SELECT_LONG,
-    // The Advanced card, editable since 2h.5's 164: the text and the off / on
-    // select show a long value the same way, so 134 keeps both off the lines.
-    'chat-template-kwargs': TEXT_21,
-    'load-on-startup': SELECT_LONG,
-    // The Chat / reasoning card, editable since 2h.6's 170: its text, its
-    // selects and its two numbers are enabled, so 134 keeps every long value
-    // off the lines.
-    'reasoning-budget-message': TEXT_21,
-    'reasoning-effort': SELECT_LONG,
-    'reasoning-budget': NUM_9,
-    'n-predict': NUM_9,
-    // The Hardware card, editable since 2h.7's 175 and 2h.8's 183: its
-    // number's box is unticked by the key, so its input is enabled, and its
-    // three selects are always enabled. The MoE pair and the Fit trio are the
-    // exceptions: 178 keeps the MoE cache box disabled until 2g, and with the
-    // Fit to VRAM box off 186 leaves the min-context input and the free-VRAM
-    // input disabled. 134 keeps the line under a control disabled now, so these
-    // three long values get one.
-    'n-gpu-layers': NUM_9,
-    'lazy-mode': SELECT_LONG,
-    'load-mode': SELECT_LONG,
-    fit: 'off',
-    'fit-ctx': NUM_9,
-    'fit-target': TEXT_21,
-  })
-  const lines = [...main.querySelectorAll('[id^="model-profile-full-"]')]
-  expect(
-    lines.length,
-    'exactly the four long disabled fields have a line',
-  ).toBe(4)
-  for (const key of [
-    'ctx-size',
-    'parallel',
-    'kv-unified',
-    'kv-unified-per-slot',
-    'cache-ram',
-    'cache-type-k',
-    'chat-template-kwargs',
-    'load-on-startup',
-    'reasoning-budget-message',
-    'reasoning-effort',
-    'reasoning-budget',
-    'n-predict',
-    'n-gpu-layers',
-    'lazy-mode',
-    'load-mode',
-  ])
-    expectNoLine(main, key)
-  const owners = new Set(lines.map((l) => l.closest('.field')))
-  expect(owners.size, 'no field holds both lines').toBe(4)
-  // The four owners, each of them a control disabled right now in this fixture,
-  // which is what 134 asks for: MoE cache, disabled until 2g (178); the Draft
-  // K-cache type, its card editable since 189, locked by 190 with this read's
-  // `NO_DRAFTERS`; and Fit min context and Fit free VRAM, locked by 186 while
-  // the Fit to VRAM box is off.
-  for (const [key, kind, label] of [
-    ['moe-cache-mib', 'number', MOE],
-    ['spec-draft-type-k', 'select', DRAFT_K],
-    ['fit-ctx', 'number', MIN_CTX],
-    ['fit-target', 'text', FIT],
-  ] as const) {
-    const field = fieldOf(main, label)
-    expect(
-      field.querySelector(`#model-profile-full-${key}`),
-      `${key}: its line is in its own field`,
-    ).toBeTruthy()
-    const control = controlOf(main, kind, label) as HTMLInputElement
-    expect(
-      control.disabled,
-      `${key}: 134: the line sits under a control that is disabled right now`,
-    ).toBe(true)
-  }
-})
-
-test('2h.160: in the Resource / context card only Unified KV is ever disabled with a value, a ticked box leaves its input empty, and the card shows no line', async () => {
-  // Every key present, each value past the limit of 119: Parallel slots' box
-  // is unticked, so Unified KV is enabled (155) and every input is enabled
-  // (156). 134: an enabled control shows no line, so the card has none.
-  const long = {
-    'ctx-size': NUM_9,
-    parallel: '817203200',
-    'kv-unified': SELECT_LONG,
-    'kv-unified-per-slot': NUM_9,
-    'batch-size': NUM_9,
-    'ubatch-size': NUM_9,
-  }
-  const enabled = await page(long)
-  for (const label of [CTX, SLOT, BATCH, UBATCH]) {
-    const input = within(enabled.main).getByRole('textbox', {
-      name: label,
-    }) as HTMLInputElement
-    expect(
-      input.disabled,
-      `${label}: the input is enabled, it can scroll`,
-    ).toBe(false)
-  }
-  expect(
-    selectOf(enabled.main, en('model-profile-unified-kv')).disabled,
-    'Unified KV is enabled while Parallel slots is unticked',
-  ).toBe(false)
-  expect(
-    enabled.main.querySelectorAll('[id^="model-profile-full-"]').length,
-    'an enabled control shows no line',
-  ).toBe(0)
-  cleanup()
-  // Every key absent: every box is ticked (156), so every input is disabled
-  // AND EMPTY (160: a ticked box has no value to show, so it never has a
-  // line), and Unified KV is the one control disabled while holding a value.
-  const dflt = await loaded({ modelProfile: () => reply(200, exactOf({})) })
-  for (const label of [CTX, SLOT, BATCH, UBATCH]) {
-    const input = within(dflt.main).getByRole('textbox', {
-      name: label,
-    }) as HTMLInputElement
-    expect(input.disabled, `${label}: a ticked box disables its input`).toBe(
-      true,
-    )
-    expect(input.value, `${label}: and leaves it empty`).toBe('')
-  }
-  const kv = selectOf(dflt.main, en('model-profile-unified-kv'))
-  expect(
-    kv.disabled,
-    'Unified KV: the card control disabled with a value',
-  ).toBe(true)
-  expect(selectedText(kv), 'and the value it holds is what it shows').not.toBe(
-    '',
-  )
-  expect(
-    dflt.main.querySelectorAll('[id^="model-profile-full-"]').length,
-    'the card shows no line: 134 needs a disabled control, 160 a long value',
-  ).toBe(0)
-})
-
 test('2e.118: index.css draws the line in --muted, the monospace font, 0.875rem and wrapping anywhere', () => {
   // jsdom does no layout, so the style of criterion 118 is pinned as the CSS
   // rule, as App.test.tsx pins the banner's. Comments are dropped first, so a
@@ -497,45 +170,6 @@ test('2e.118: index.css draws the line in --muted, the monospace font, 0.875rem 
 
 // ── 119: the limits ─────────────────────────────────────────────────────
 
-test('2e.119: a number shows no line at 8 characters and its line at 9', async () => {
-  expect(NUM_8.length, 'the number stub is 8 characters').toBe(8)
-  expect(NUM_9.length, 'the number stub is 9 characters').toBe(9)
-  const short = await page({ 'moe-cache-mib': NUM_8 })
-  expectNoLine(short.main, 'moe-cache-mib')
-  cleanup()
-  const long = await page({ 'moe-cache-mib': NUM_9 })
-  expect(
-    lineOf(long.main, 'moe-cache-mib').textContent,
-    'the 9-character line',
-  ).toBe(NUM_9)
-})
-
-test('2e.119: a text value shows no line at 20 characters and its line at 21', async () => {
-  expect(TEXT_20.length, 'the text stub is 20 characters').toBe(20)
-  expect(TEXT_21.length, 'the text stub is 21 characters').toBe(21)
-  const short = await page({ 'fit-target': TEXT_20, fit: 'off' })
-  expectNoLine(short.main, 'fit-target')
-  cleanup()
-  const long = await page({ 'fit-target': TEXT_21, fit: 'off' })
-  expect(
-    lineOf(long.main, 'fit-target').textContent,
-    'the 21-character line',
-  ).toBe(TEXT_21)
-})
-
-test('2e.119: an unlisted select value shows no line at 20 characters and its line at 21', async () => {
-  expect(SELECT_20.length, 'the select stub is 20 characters').toBe(20)
-  expect(SELECT_21.length, 'the select stub is 21 characters').toBe(21)
-  const short = await page({ 'spec-draft-type-k': SELECT_20, ...NO_DRAFTERS })
-  expectNoLine(short.main, 'spec-draft-type-k')
-  cleanup()
-  const long = await page({ 'spec-draft-type-k': SELECT_21, ...NO_DRAFTERS })
-  expect(
-    lineOf(long.main, 'spec-draft-type-k').textContent,
-    'the 21-character line',
-  ).toBe(SELECT_21)
-})
-
 test('2e.119: no key, no line: an empty values object shows no line on any field of the page', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, exactOf({})) })
   expect(
@@ -544,48 +178,29 @@ test('2e.119: no key, no line: an empty values object shows no line on any field
   ).toBe(0)
 })
 
-test('2e.119: a short value shows no line: a 1-character number, a short text and a select showing a short option text', async () => {
-  const { main } = await page({
-    parallel: '8',
-    'fit-target': '{"short":1}',
-    fit: 'off',
-    'kv-unified': 'auto',
-    'spec-draft-type-k': 'auto',
-    ...NO_DRAFTERS,
-  })
-  expectNoLine(main, 'parallel')
-  expectNoLine(main, 'fit-target')
-  expectNoLine(main, 'kv-unified')
-  expectNoLine(main, 'spec-draft-type-k')
-})
-
 // ── 120: accessibility ──────────────────────────────────────────────────
 
-/** Long fields of every kind the line covers, and the short ones. */
+/** Long fields of every kind the line covers, and the short ones. All are
+ * number rows of a group a rule locks: the Draft max number of the draft group
+ * the `NO_DRAFTERS` spec-type locks (190), the n-gram mod max number of the
+ * `ngram-mod` group the same spec-type leaves off the list (191), and the
+ * Minimum image tokens row the missing `mmproj` disables (176). */
 const LONG = {
-  'moe-cache-mib': NUM_9,
-  // Fit min context, the number disabled by 2h.8's 186 rule, and Fit free
-  // VRAM, the text disabled by the same rule.
-  'fit-ctx': NUM_9,
-  'fit-target': TEXT_21,
-  fit: 'off',
-  // The Draft K-cache type select, disabled by 190 on a read with no drafter.
   ...NO_DRAFTERS,
-  'spec-draft-type-k': SELECT_LONG,
+  'spec-draft-n-max': NUM_9,
+  'spec-ngram-mod-n-max': NUM_9,
+  'image-min-tokens': NUM_9,
 }
 const SHORT = {
-  'moe-cache-mib': NUM_8,
-  'fit-ctx': NUM_8,
-  'fit-target': TEXT_20,
-  fit: 'off',
   ...NO_DRAFTERS,
-  'spec-draft-type-k': SELECT_20,
+  'spec-draft-n-max': NUM_8,
+  'spec-ngram-mod-n-max': NUM_8,
+  'image-min-tokens': NUM_8,
 }
 const LONG_KEYS = [
-  'moe-cache-mib',
-  'fit-ctx',
-  'fit-target',
-  'spec-draft-type-k',
+  'spec-draft-n-max',
+  'spec-ngram-mod-n-max',
+  'image-min-tokens',
 ] as const
 
 test('2e.120: the line is aria-hidden, so a screen reader reads the value once from the control', async () => {
@@ -631,19 +246,17 @@ test('2e.120: the line takes no focus: it is not a tab stop, and the tab order o
 // ── 121: the stub values, and no new string ─────────────────────────────
 
 const FULL_VALUE_CASES: [Record<string, string>, string | null][] = [
-  [{ 'moe-cache-mib': '172032000' }, '172032000'],
-  [{ 'moe-cache-mib': '17203200' }, null],
+  [{ 'spec-draft-n-max': '172032000' }, '172032000'],
+  [{ 'spec-draft-n-max': '17203200' }, null],
   [{}, null],
-  [{ 'spec-draft-type-k': SELECT_21 }, SELECT_21],
-  [{ 'spec-draft-type-k': SELECT_20 }, null],
-  [{ 'kv-unified': 'auto' }, null],
-  [
-    // The text example of the brief's list is chat-template-kwargs, editable
-    // since 2h.5's 164, so the same 25-character JSON is shown on the one
-    // text field a rule disables (186).
-    { 'fit-target': '{"enable_thinking":false}', fit: 'off' },
-    '{"enable_thinking":false}',
-  ],
+  // The `exactOf` stub has no `spec-type` at all, so 191 locks every n-gram
+  // group and 190 the draft group: each number row is a disabled control.
+  [{ 'spec-ngram-mod-n-max': NUM_9 }, NUM_9],
+  [{ 'spec-ngram-mod-n-max': NUM_8 }, null],
+  // The Vision card of 176: with no `mmproj` in the read, its number rows are
+  // disabled, so a long one shows the line.
+  [{ 'image-min-tokens': NUM_9 }, NUM_9],
+  [{ 'image-min-tokens': NUM_8 }, null],
 ]
 
 test.each(FULL_VALUE_CASES)(

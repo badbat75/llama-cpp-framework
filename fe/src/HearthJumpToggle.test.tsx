@@ -304,11 +304,11 @@ test('H10.4: opening the list and activating an entry moves focus to that card h
   const title = TITLES[MIDDLE]!
   const h3 = within(main).getByRole('heading', { level: 3, name: title })
   expect(h3.getAttribute('tabindex'), `${title}: the h3 takes focus`).toBe('-1')
-  const ctx = document.getElementById(
-    'model-profile-ctx-size-control',
+  const reuse = document.getElementById(
+    'model-profile-cache-reuse-control',
   ) as HTMLInputElement
-  fireEvent.change(ctx, { target: { value: '65536' } })
-  expect(ctx.value, 'the form is dirty before the jump').toBe('65536')
+  fireEvent.change(reuse, { target: { value: '65536' } })
+  expect(reuse.value, 'the form is dirty before the jump').toBe('65536')
 
   fireEvent.click(toggleOf())
   expectOpen()
@@ -320,7 +320,7 @@ test('H10.4: opening the list and activating an entry moves focus to that card h
   expect(
     (
       document.getElementById(
-        'model-profile-ctx-size-control',
+        'model-profile-cache-reuse-control',
       ) as HTMLInputElement
     ).value,
     'H10.4: the jump keeps the edit',
@@ -481,7 +481,7 @@ function tabbableElements(root: HTMLElement): HTMLElement[] {
 const tabNames = (root: HTMLElement): string[] =>
   tabbableElements(root).map((el) => accName(el))
 
-test('H10.10 (22 D2.5 as 22 L2.B1 amends it): in jsdom, with no CSS, Tab from the top reaches the back link, then the jump toggle, then the ten jump buttons in card order (the page start of 2h.197 with the toggle inserted), and the save bar last', async () => {
+test('H10.10 (22 D2.5 as 22 L2.B1 amends it): in jsdom, with no CSS, Tab from the top reaches the back link, then the jump toggle, then the jump buttons of the eight cards, in card order (the page start of 2h.197 with the toggle inserted), and the save bar last', async () => {
   const { main } = await form()
   // 22 L2.B1 moved the bar to the end of the settings section, so its stops
   // left the head of the order; 22 D4.10 puts the page's Delete in the bar and
@@ -491,13 +491,12 @@ test('H10.10 (22 D2.5 as 22 L2.B1 amends it): in jsdom, with no CSS, Tab from th
   const names = tabNames(main)
   const head = [
     en('model-profile-back'),
-    '',
     en('model-profile-jump-label'),
     ...TITLES,
   ]
   expect(
     names.slice(0, head.length),
-    'H10.10 with 22 L2.B1: back link, switch, toggle, the ten entries in card order',
+    'H10.10 with 22 L2.B1 and 22 IP5.1: back link, toggle, the entries in card order',
   ).toEqual(head)
   expect(
     names.slice(-saveBarTabStops().length),

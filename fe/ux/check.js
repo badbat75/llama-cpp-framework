@@ -38,6 +38,9 @@ const CHOICE_STATES = ['overview', 'server-profile', 'model-profile']
 // there is nothing for axe to read and nothing for the dark scheme to show).
 const TEXT_WIDTH = 320
 const TEXT_THEME = 'light'
+// The fold of 22 D4.35: below this width the Models table folds its Engine
+// column into the name cell, which is where a probe of the folded layout reads.
+const NARROW_MAX = 480
 // The spacing of WCAG 1.4.12 Text Spacing: line height 1.5, letter 0.12em,
 // word 0.16em, paragraph 2em.
 const SPACING =
@@ -107,27 +110,6 @@ const NAME_EDIT = `main button:has-text("${S['instance-name-edit']}")`
 // 17d.11 adds: absent from the strings file it names a button of the text
 // "undefined", so the state fails until the slice lands, as it asks.
 const SWITCH_BUTTON = `main button:has-text("${S['instance-server-switch']}")`
-// The restart offer's button of 16 17d.1a, named by the key 17d.11 fills with
-// the instance's display name (22 D4.37), which the stub's `default` row spells
-// DEFAULT_NAME. Absent from the strings file the key's own shape is used, so
-// the button is not there and the state fails, as it asks.
-const OFFER_BUTTON = `main button:has-text("${(
-  S['restart-offer-button'] ?? 'Restart {0}'
-).replace('{0}', DEFAULT_NAME)}")`
-// The start of the GPU card's as-of line (brief 14 GD1.7): the sentence of
-// `model-profile-gpu-probed-at` up to its `{0}`, which the page fills with the
-// probe's moment in the browser's own locale, so no state can name the whole
-// sentence. The stub's probe answers, so the line lands.
-const AS_OF = S['model-profile-gpu-probed-at'].split('{0}')[0]
-// The start of the GPU card's budget line (brief 19, 19 G.5): the sentence of
-// `model-profile-gpu-blocks-budget` up to its `{0}`, which the page fills with
-// the places the facts read gives. Absent from the strings file until LS1
-// lands, where the state's marker is the slider alone.
-const BUDGET = S['model-profile-gpu-blocks-budget']?.split('{0}')[0]
-// The legend of the third rule of brief 21's placement state (section 7): the
-// string `model-profile-ot-rule` with the rule's position. Absent from the
-// strings file until TP1 lands, where the state's marker is a legend alone.
-const RULE3 = S['model-profile-ot-rule']?.replace('{0}', '3')
 // The start of the delete's question (brief 22, 22 D.2): the string
 // `model-profile-delete-question` up to its `{0}`, which the page fills with the
 // profile's name. It names the Confirm group, whose selector alone is not the
@@ -610,6 +592,26 @@ const STATES = [
     ],
   },
   {
+    // Brief 22, slice IP5, review A3 to A5: the Models list in the narrow
+    // layout, its rows listed by the widest instance profile ids the pool takes
+    // (stub.py `usedby=long`). The state's `probe` reads the three rules the
+    // folded table owes the eye below 480 px: the engine line under each name
+    // (22 D4.35, kept by IP5.1), the head of a column standing over its column
+    // (22 D4.25), and a Used by id broken only at a break point of its own
+    // (IP5.2, with the D4.37 rule that names it).
+    name: 'model-profiles-narrow',
+    set: 'session=admin&usedby=long',
+    hash: '#/profiles/model',
+    expect: [
+      { selector: '#page-heading', text: S['model-profiles-title'] },
+      {
+        selector: 'main table.model-profiles tbody tr',
+        message: 'a row of the Models list',
+      },
+    ],
+    probe: 'model-profiles-narrow',
+  },
+  {
     // Brief 22, slice 22C1 (22 C.10a): the Models list's New model profile form,
     // opened on the file choice, so the check reads the picker, the Model file
     // combobox and its options at 320 px and at 200 % text. The stub answers the
@@ -669,10 +671,11 @@ const STATES = [
     ],
   },
   {
-    // Brief 22, slice 22D4 (22 D4.1, 22 D4.4): the Models list with the confirm
-    // row of a switched-off profile open. The pool at rest has one profile
-    // reading `enabled` false (stub.py `MODEL_PROFILES`), so its − can act with
-    // no set beyond the session. The row's − has an id the page draws from
+    // Brief 22, slice 22D4 (22 D4.1, 22 D4.4) as 22 IP5.3 amends it: the Models
+    // list with the confirm row of a profile no instance profile lists open. The
+    // pool at rest has profiles the stub's `usedBy` leaves empty (stub.py
+    // `MODEL_PROFILES`), so their − can act with no set beyond the session. The
+    // row's − has an id the page draws from
     // React's own counter (no id of the brief), so the state names it by the
     // cell's box: the − that can act carries no `aria-disabled`. Its confirm is
     // a `tr` of the table, its group named by the list's question.
@@ -695,9 +698,10 @@ const STATES = [
     },
   },
   {
-    // Brief 22, slice 22D4 (22 D4.2, 22 D4.3): the − that cannot act, with its
-    // reason open. The pool at rest has switched-on profiles, so their − are
-    // `aria-disabled` and keep the focus; the keyboard reaches one and the
+    // Brief 22, slice 22D4 (22 D4.2, 22 D4.3) as 22 IP5.3 amends it: the − that
+    // cannot act, with its reason open. The pool at rest has profiles an instance
+    // profile lists, so their − are `aria-disabled` and keep the focus; the
+    // keyboard reaches one and the
     // reason shows under it. The tip is what the check reads: at 320 px and at
     // 200 % text it must not push the page sideways.
     name: 'model-profiles-delete-tip',
@@ -707,7 +711,8 @@ const STATES = [
       { selector: '#page-heading', text: S['model-profiles-title'] },
       {
         selector: 'main .ot-add[aria-disabled="true"]',
-        message: 'the − of a switched-on row, switched off but focusable',
+        message:
+          'the − of a row an instance profile uses, blocked but focusable',
       },
     ],
     focus: {
@@ -716,108 +721,56 @@ const STATES = [
     },
   },
   {
-    // Brief 16, slice 17d (as its 17d check of 2026-11-26 amends it, 17d.5a,
-    // 17d.10): the Models list with a row switch answered by a restart. The
-    // stub answers the switch with `running: true` and `restart: ["default"]`
-    // (stub.py do_PUT), so the region the write leaves is the status, the
-    // offer's button and nothing else, and 17d.5a puts the whole region right
-    // after the table: the rows never move under the pointer. The button's
-    // text is the key 17d.11 fills with the stub's instance name, so the state
-    // fails until the slice lands, as it asks. At 320 px and at 200 % text the
-    // offer's buttons wrap, one per line if needed, with no sideways scroll.
-    name: 'model-profiles-restart-offer',
-    set: 'session=admin',
-    hash: '#/profiles/model',
-    expect: [
-      { selector: '#page-heading', text: S['model-profiles-title'] },
-      {
-        selector: 'main .model-profiles-switch input',
-        count: 1,
-        message: 'a row switch to write',
-      },
-    ],
-    open: {
-      // The first row's switch: `open` clicks one element, so the selector has
-      // to be one (strict mode).
-      click: 'main tbody tr:first-child .model-profiles-switch input',
-      then: OFFER_BUTTON,
-    },
-  },
-  {
+    // Brief 22, slice IP5 (IP5.4, IP5.5): the page of a model profile. The
+    // state line's switch, the state line's words and the four placement cards
+    // are gone, so the marker the check reads is the note the page puts under
+    // the head, beside the first card (IP5.5). The key is IP5.8's new one, so
+    // the state fails until the slice lands, as it asks.
+    //
+    // IP5 retires two states of earlier slices and moves two: 16 17d's
+    // model-profiles-restart-offer and 24 A2's model-profile-switch, whose
+    // switch the slice removes, and 19 19 G.4's model-profile-blocks and 21
+    // section 7's model-profile-placement, whose cards brief 26 gives to the
+    // instance profile's entry page.
     name: 'model-profile',
     set: 'session=admin',
     hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
-    // The GPU distribution card is the last read of the page (brief 14
-    // GD1.3): its as-of line lands once the device probe answered, so the
-    // check reads the page with the GPU rows, their memory lines and their
-    // weights there. The text is the sentence up to its `{0}`, whose date
-    // depends on the browser's locale.
     expect: [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       { selector: 'h3', text: S['model-profile-assets'] },
-      { selector: 'p', text: AS_OF },
+      {
+        selector: 'main p.intro',
+        text: `${S['model-profile-placement-elsewhere']}`,
+        message:
+          'the note that says where the placement is set (IP5.5): the key is' +
+          ' IP5.8\'s new one, so the state reads the text "undefined" and fails' +
+          ' until the slice lands, as the check asks (a raw `S[key]` here would be' +
+          ' undefined and the harness would read the selector alone).',
+      },
     ],
   },
   {
-    // Brief 24, slice A2 (23 A2.1, 23 A2.2), as 22 L2.B2 amends it: the model
-    // profile page's own switch, in the state line under the summary line. The
-    // stub reads this profile switched on, so the line says so in the short
-    // words beside the switch, and the Save bar's Delete is switched off. The
-    // line, the switch and the words are what the check reads at 320 px and at
-    // 200 % text. The reason (23 A2.2) is not read here: 22 L2.B2 keeps it in a
-    // visually hidden element the Delete names, shown only as the floating tip
-    // on hover and focus, and the tip of this verb is read by the model profile
-    // page's own state.
-    name: 'model-profile-switch',
-    set: 'session=admin',
+    // Brief 22, slice IP5 (IP5.6), as 22 L2.B2 keeps it: the page of a model
+    // profile an instance profile lists, whose Save bar Delete cannot act. The
+    // stub answers the read with usedBy naming the instance profile (stub.py,
+    // `used=1`), so the Delete is `aria-disabled` and keeps the focus, and its
+    // reason, the IP5.3 `model-profiles-delete-in-use` the check reads at 320 px
+    // and at 200 % text, shows as the floating tip. The reason's key is IP5.8's
+    // new one, so the state fails until the slice lands, as it asks.
+    name: 'model-profile-delete-tip',
+    set: 'session=admin&used=1',
     hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
     expect: [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       {
-        selector: 'main [role="switch"]',
-        message: "the page's own switch (23 A2.1)",
-      },
-      {
-        selector: 'main label.model-profiles-switch + span',
-        text: S['model-profile-on-short'],
+        selector: '#model-profile-delete[aria-disabled="true"]',
+        message: "the Save bar's Delete of a model an instance profile uses",
       },
     ],
     focus: {
       on: '#model-profile-delete',
       then: 'main .hint-tip',
     },
-  },
-  {
-    name: 'model-profile-blocks',
-    // Brief 19, 19 G.4 and 19 G.5: the same page with the split in the file's
-    // mode and a ratio the facts read projects to block counts (stub.py
-    // `split=layer`, and the model-info read with 64 blocks), so the GPU rows
-    // carry a block number field, a range slider, and the range and share text
-    // beside them, under the budget line. The text is the budget's sentence up
-    // to its `{0}`, whose places come from the facts read.
-    set: 'session=admin&split=layer',
-    hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
-    expect: [
-      { selector: '#page-heading', text: MODEL_PROFILE_ID },
-      { selector: 'p', text: BUDGET },
-      { selector: 'input[type="range"]' },
-    ],
-  },
-  {
-    name: 'model-profile-placement',
-    // Brief 21, section 7: the Tensor placement card with three rules (the stub
-    // answers `ot=1`): the experts of a run of layers on the CPU, the embedding
-    // table on a GPU, and a hand-written pattern no kind owns, so a Custom row
-    // with its Pattern input shows. The marker is the legend of the last rule;
-    // the device read's as-of line is waited for, the rule selects list the
-    // probe's GPUs.
-    set: 'session=admin&ot=1',
-    hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
-    expect: [
-      { selector: '#page-heading', text: MODEL_PROFILE_ID },
-      { selector: 'p', text: AS_OF },
-      { selector: 'legend', text: RULE3 },
-    ],
   },
   {
     name: 'model-profile-open',
@@ -837,19 +790,21 @@ const STATES = [
   {
     // Brief 22, slice 22D (22 D.1 and 22 D.2) as 22D4 amends it (22 D4.10): the
     // Confirm in place of the delete, opened from the Save bar's Delete, on the
-    // page of a switched-off model profile (stub.py `off=1` reads `enabled`
-    // false, and answers the DELETE with 204). 22 D2.2 put the opener in the
+    // page of a model profile no instance profile lists (stub.py's document
+    // reads `usedBy` empty, and answers the DELETE with 204, IP5.6). 22 D2.2
+    // put the opener in the
     // status row under the summary line; 22 D4.9 takes that row away and 22
     // D4.10 makes the opener the bar's first button, a text button keeping the
     // id the brief gives it.
     name: 'model-profile-delete',
-    set: 'session=admin&off=1',
+    set: 'session=admin',
     hash: `#/profiles/model/${MODEL_PROFILE_ID}`,
     expect: [
       { selector: '#page-heading', text: MODEL_PROFILE_ID },
       {
         selector: '#model-profile-delete',
-        message: "the Save bar's Delete, offered while the profile is off",
+        message:
+          "the Save bar's Delete, offered while no instance profile lists the model",
       },
     ],
     open: {
@@ -1145,19 +1100,129 @@ async function focused(page, state) {
   return []
 }
 
+/** The Models list in the narrow layout, read as the page stands below the
+ *  480 px fold where the table folds (22 D4.35): the three rules brief 22's IP5
+ *  review adds, on the rows the stub lists by the widest instance profile ids
+ *  (stub.py `usedby=long`).
+ *  - A3 (22 D4.35, kept by IP5.1): the Engine column is folded away, so every
+ *    row says what runs it: the name cell's engine line is visible and holds
+ *    the words of the Engine column's cell.
+ *  - A4 (22 D4.25): the head of a column stands over its column: a header
+ *    cell's left and right edges are its body cells' edges, within 1 px.
+ *  - A5 (IP5.2, with the D4.37 rule that names the id): a Used by id breaks
+ *    only at a break point of its own, a hyphen or a space: no line of an id
+ *    starts inside a word. */
+async function modelsListNarrow(page, width) {
+  if (width > NARROW_MAX) return []
+  return page.evaluate(() => {
+    const found = []
+    const table = document.querySelector('table.model-profiles')
+    if (table === null) return ['models list: no table.model-profiles']
+    const taken = (el) => {
+      const s = getComputedStyle(el)
+      const r = el.getBoundingClientRect()
+      return s.display === 'none' || r.width < 2 || r.height < 2
+    }
+    const word = (el) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
+    const rows = [...table.querySelectorAll('tbody tr')].filter(
+      (tr) => !tr.classList.contains('confirm-row'),
+    )
+    const cells = (tr) => [...tr.children].filter((c) => c.tagName === 'TD')
+    // A3: the engine line of each row.
+    for (const tr of rows) {
+      const td = cells(tr)
+      const line = td[0]?.querySelector('.muted')
+      if (line === null || line === undefined) {
+        found.push(`engine line: the name cell of "${word(td[0])}" holds none`)
+        continue
+      }
+      if (taken(line)) {
+        found.push(`engine line: not visible in the row "${word(td[0])}"`)
+        continue
+      }
+      const column = td[1]
+      if (column !== undefined && word(column) !== word(line)) {
+        found.push(
+          `engine line: "${word(line)}" is not the Engine column "${word(column)}" of the row "${word(td[0])}"`,
+        )
+      }
+    }
+    // A4: each head over its column.
+    const heads = [...table.querySelectorAll('thead th')]
+    heads.forEach((th, n) => {
+      if (taken(th)) return
+      const head = th.getBoundingClientRect()
+      for (const tr of rows) {
+        const td = cells(tr)[n]
+        if (td === undefined || taken(td)) continue
+        const cell = td.getBoundingClientRect()
+        if (
+          Math.abs(head.left - cell.left) > 1 ||
+          Math.abs(head.right - cell.right) > 1
+        ) {
+          found.push(
+            `column ${n + 1} "${word(th)}": head ${Math.round(head.left)}..${Math.round(head.right)}, body cell of the row "${word(cells(tr)[0])}" ${Math.round(cell.left)}..${Math.round(cell.right)}`,
+          )
+        }
+      }
+    })
+    // A5: each Used by id breaks only at a hyphen or a space.
+    for (const tr of rows) {
+      const td = cells(tr)[2]
+      if (td === undefined) continue
+      for (const a of td.querySelectorAll('a')) {
+        const text = a.textContent ?? ''
+        const node = [...a.childNodes].find((n) => n.nodeType === 3)
+        if (node === undefined || text === '') continue
+        const tops = []
+        for (let i = 0; i < text.length; i++) {
+          const r = a.ownerDocument.createRange()
+          r.setStart(node, i)
+          r.setEnd(node, i + 1)
+          tops.push(r.getBoundingClientRect().top)
+        }
+        for (let i = 1; i < text.length; i++) {
+          if (
+            tops[i] !== tops[i - 1] &&
+            text[i - 1] !== '-' &&
+            text[i - 1] !== ' '
+          ) {
+            found.push(
+              `used by: "${text}" breaks inside a word, "${text.slice(i)}" starts a line`,
+            )
+            break
+          }
+        }
+      }
+    }
+    return found
+  })
+}
+
+/** The probes, by the name a state's `probe` gives. */
+const PROBES = { 'model-profiles-narrow': modelsListNarrow }
+
+/** What the state's `probe` measures, on the page at rest. Every probe reads a
+ *  rule of the narrow layout, so a page at or above the 480 px fold, where the
+ *  layout does not fold, says nothing. */
+async function probed(page, state, width) {
+  if (state.probe === undefined) return []
+  return PROBES[state.probe](page, width)
+}
+
 /** The state on the page: the stub's set, then the route. The stub keeps every
  *  key a /__set did not carry, so the state's own set goes after a reset to
  *  the default list of instances, the default tags, the fast reads and the
  *  answering node: the two tile states ask for list=many themselves, the tags
  *  state for tags=long, the loading ones for load=session or load=slow and the
  *  node states for node=down or node=long, the blocks state for split=layer,
- *  the placement state for ot=1, the delete state for off=1, and a state that
+ *  the placement state for ot=1, the delete state for used=1, and a state that
  *  ran before them leaves none of them behind for the pages after it. A hash
  *  change does not reload the app, so every state starts from a blank page. */
 async function load(page, state, base) {
   const found = []
   for (const q of [
-    'list=one&tags=few&load=fast&node=ok&split=tensor&ot=none&off=0',
+    'list=one&tags=few&load=fast&node=ok&split=tensor&ot=none&used=0&usedby=short',
     state.set,
   ]) {
     const res = await fetch(`${base}/__set?${q}`)
@@ -1338,6 +1403,7 @@ async function check(browser, name, base, lines) {
               found.push(...(await hovered(page, state)))
               found.push(...(await focused(page, state)))
               await sleep(SETTLE_MS)
+              found.push(...(await probed(page, state, width)))
               found.push(...(await problems(page, width)))
               if (stored) {
                 found.push(...(await chosen(page, other, otherBackground)))

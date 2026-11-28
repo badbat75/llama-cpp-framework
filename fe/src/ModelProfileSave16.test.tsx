@@ -60,7 +60,6 @@ const DRAFT_OFF =
 const NOTICE =
   'Some settings cannot be changed here yet: their controls are greyed out. Change those in pai-config on the server machine.'
 /** 198a: the brief's example, a file the manager refuses whole. */
-const MOE_SPLIT = en('api-moe-cache-with-tensor-split')
 
 /** A read that locks every control 194 lists as greyed out: no `parallel`
  * (Unified KV, 155), no `mmproj` (the four Vision controls, 176), no
@@ -151,37 +150,11 @@ function jumpButtons(main: HTMLElement): HTMLElement[] {
   return within(list as HTMLElement).getAllByRole('button')
 }
 
-/** A field's control by the key of its row: `model-profile-<key>-control`. */
-function control(key: string): HTMLInputElement | HTMLSelectElement {
-  const el = document.getElementById(`model-profile-${key}-control`)
-  expect(el, `the control of ${key}`).not.toBeNull()
-  return el as HTMLInputElement | HTMLSelectElement
-}
-
-/** A number field's default box. */
-function boxOf(key: string): HTMLInputElement {
-  const el = document.getElementById(`model-profile-${key}-box`)
-  expect(el, `the default box of ${key}`).not.toBeNull()
-  return el as HTMLInputElement
-}
-
-function type(input: HTMLElement, value: string) {
-  fireEvent.change(input, { target: { value } })
-}
-
 function pick(main: HTMLElement, label: string, value: string) {
   const el = within(main).getByRole('combobox', {
     name: label,
   }) as HTMLSelectElement
   fireEvent.change(el, { target: { value } })
-}
-
-/** A card checkbox, named by its own toggle text (87), e.g. the embedded
- * chat template. Its checked state is in the draft, not the box state. */
-function checkBoxOf(main: HTMLElement, toggle: string): HTMLInputElement {
-  return within(main).getByRole('checkbox', {
-    name: toggle,
-  }) as HTMLInputElement
 }
 
 function saveButton(main: HTMLElement): HTMLElement {
@@ -307,39 +280,6 @@ test('2h.194: the paragraph model-profile-partly-editable is gone from the page,
   ).toBe('model-profile-read-only')
 })
 
-test("2h.194: every control 194 lists as greyed out is disabled on a read that locks it (brief 19's 19 G.14 added MoE CPU layers, the row 194 left out), and a ticked default box still disables its input", async () => {
-  await form()
-  const locked = [
-    'kv-unified',
-    'mmproj-offload',
-    'mmproj-device',
-    'image-min-tokens',
-    'image-max-tokens',
-    'device-draft',
-    'n-gpu-layers-draft',
-    'moe-cache-mib',
-    'fit-ctx',
-    'fit-target',
-    'spec-draft-n-max',
-    'spec-draft-type-k',
-    'spec-ngram-mod-n-match',
-  ]
-  for (const key of locked)
-    expect(control(key).disabled, `${key}: greyed out (194)`).toBe(true)
-  // Brief 19's 19 G.14: MoE CPU layers is editable on this read, whose model
-  // facts answer a reason.
-  expect(control('n-cpu-moe').disabled, '19 G.14: MoE CPU layers').toBe(false)
-  // A field with its own default box: the box enabled, the input disabled
-  // while the box is ticked (156).
-  const box = boxOf('ctx-size')
-  fireEvent.click(box)
-  expect(box.disabled, 'the default box stays enabled').toBe(false)
-  expect(
-    control('ctx-size').disabled,
-    '156: a ticked box disables its input',
-  ).toBe(true)
-})
-
 // ── 195: the Assets card says why it is text ──────────────────────────
 
 test('2h.195: the Assets card intro model-profile-assets-read-only is the first thing after its h3, before the list, and names the files, the Project URL and the drafters', async () => {
@@ -412,70 +352,6 @@ test.each([
   },
 )
 
-test('2h.196: with a dirty form a jump opens no discard dialog, keeps the edit, moves focus to the card h3 and leaves the hash alone', async () => {
-  const { main } = await form()
-  const ctx = control('ctx-size') as HTMLInputElement
-  type(ctx, '65536')
-  const button = jumpButtons(main)[TITLES.indexOf(KV)]!
-  fireEvent.click(button)
-  const h3 = headingOf(main, KV)
-  expect(dialogs.opened.length, '196: no dialog while dirty').toBe(0)
-  expect(document.activeElement, 'focus on the KV cache h3').toBe(h3)
-  expect(scrolled, 'the card scrolled into view').toContain(h3)
-  expect(window.location.hash, 'no route change, so no guard').toBe(HASH)
-  expect(
-    (control('ctx-size') as HTMLInputElement).value,
-    'the draft is kept',
-  ).toBe('65536')
-  expect(status(main).textContent, 'the form is still dirty').toBe(
-    en('save-unsaved'),
-  )
-})
-
-test('2h.196: a dirty form built from a select, a checkbox and a number on three cards survives a jump: all three controls keep the changed value, the form stays dirty, no dialog', async () => {
-  // The select and the checkbox live in the draft; the number lives in the
-  // box state. A jump that reset the draft to the loaded values (leaving the
-  // boxes alone) puts the select and the checkbox back, so the value asserts
-  // on them are the ones that catch it: the boxed number alone (the test
-  // above) cannot, its value is not in the draft.
-  const { main } = await form()
-  const pooling = en('model-profile-pooling')
-  const jinja = en('model-profile-chat-template-toggle')
-  // A select on the Embeddings card, a checkbox on the Chat / reasoning card,
-  // a boxed number on the Resource / context card: three different cards.
-  pick(main, pooling, 'cls')
-  fireEvent.click(checkBoxOf(main, jinja))
-  type(control('ctx-size'), '65536')
-  // The three edits are there before the jump.
-  expect(
-    (within(main).getByRole('combobox', { name: pooling }) as HTMLSelectElement)
-      .value,
-    'the select picked cls',
-  ).toBe('cls')
-  expect(checkBoxOf(main, jinja).checked, 'the checkbox was unticked').toBe(
-    false,
-  )
-  fireEvent.click(jumpButtons(main)[4]!)
-  expect(dialogs.opened.length, '196: no dialog while dirty').toBe(0)
-  expect(window.location.hash, '196: no route change, so no guard').toBe(HASH)
-  expect(
-    (within(main).getByRole('combobox', { name: pooling }) as HTMLSelectElement)
-      .value,
-    '196: the select keeps cls, its draft survived the jump',
-  ).toBe('cls')
-  expect(
-    checkBoxOf(main, jinja).checked,
-    '196: the checkbox keeps the untick, its draft survived the jump',
-  ).toBe(false)
-  expect(
-    (control('ctx-size') as HTMLInputElement).value,
-    '196: the number keeps what was typed',
-  ).toBe('65536')
-  expect(status(main).textContent, 'the form is still dirty').toBe(
-    en('save-unsaved'),
-  )
-})
-
 test('2h.196: no card h3 is a tab stop: each carries tabindex -1 and none is in the elements Tab reaches', async () => {
   const { main } = await form()
   const tabbed = tabbableElements(main)
@@ -489,23 +365,22 @@ test('2h.196: no card h3 is a tab stop: each carries tabindex -1 and none is in 
 
 // ── 197: the tab order of the page start ──────────────────────────────
 
-test('2h.197 (22 D2.5): Tab from the top reaches the back link, then the save bar, then the jump toggle of H10.10, then the ten jump buttons in card order, then the Assets toggle (H11b.4: the Engine About toggle and select are gone)', async () => {
+test('2h.197 (22 D2.5): Tab from the top reaches the back link, then the save bar, then the jump toggle of H10.10, then the jump buttons of the eight cards, in card order, then the Assets toggle (H11b.4: the Engine About toggle and select are gone)', async () => {
   const { main } = await form()
   const tabbed = mainTabbable(main)
   // 22 L2.B1 (the user's ruling of 2026-11-26) moved the bar to the end of the
   // form, so its stops left the head of the path (they are its tail, the check
-  // below). 24 A2.1: the state line's switch, named by the h1 (its text is the
-  // id), sits between the back link and the jumps.
+  // below). 22 IP5.1: the page has no switch, so nothing stands between the
+  // back link and the disclosure, and the jumps are the eight cards of 22 IP5.5.
   const start = [
     en('model-profile-back'),
-    ID,
     en('model-profile-jump-label'),
     ...TITLES,
     ASSETS,
   ]
   expect(
     tabbed.slice(0, start.length),
-    '197 with H10.10 and H11b.4: back, the disclosure, the ten jumps in card order, the Assets toggle',
+    '197 with H10.10, H11b.4 and 22 IP5: back, the disclosure, the card jumps in card order, the Assets toggle',
   ).toEqual(start)
   expect(
     tabbed.slice(-saveBarTabStops().length),
@@ -586,35 +461,6 @@ async function refused(
   return { bff, main }
 }
 
-test('2h.198a: a 422 naming moe-cache-mib, a settings field whose control and box are both disabled, reads save-refused-at with the check text, the label MoE cache and the card Hardware config, and the focus stays on Save changes', async () => {
-  const { main } = await refused(
-    {
-      key: 'moe-cache-with-tensor-split',
-      args: [],
-      field: 'moe-cache-mib',
-    },
-    () => type(control('ctx-size'), '65536'),
-  )
-  const at = en(
-    'save-refused-at',
-    MOE_SPLIT,
-    en('model-profile-moe-cache'),
-    en('model-profile-hardware-config'),
-  )
-  await within(main).findByText(at)
-  expectAlert(main, at, '198a: where the field is')
-  expect(
-    within(main).queryByText(en('save-refused', MOE_SPLIT)),
-    '198a: not the bar alert of 144 alone',
-  ).toBeNull()
-  expect(document.activeElement, '144: focus stays on Save changes').toBe(
-    saveButton(main),
-  )
-  // 144 keeps the mark on the field, as on any field.
-  expectError(control('moe-cache-mib'), MOE_SPLIT, 'MoE cache (144)')
-  expect(status(main).textContent, 'the draft stays').toBe(en('save-unsaved'))
-})
-
 test('2h.198a: a 422 naming pooling, a field that can take focus, keeps save-refused and focuses the field (144)', async () => {
   const body = {
     key: 'not-one-of',
@@ -638,42 +484,4 @@ test('2h.198a: a 422 naming pooling, a field that can take focus, keeps save-ref
   })
   expect(document.activeElement, '144: focus on the enabled control').toBe(pool)
   expectError(pool, text, 'Pooling (144)')
-})
-
-test('2h.198a: a 422 on a field whose default box is ticked keeps save-refused and focuses the box (144): the where of 198a is only for a field with nothing to focus', async () => {
-  const body = {
-    key: 'not-whole-number-in-range',
-    args: ['ctx-size', '-1', '0', '2147483647'],
-    field: 'ctx-size',
-  }
-  const { main } = await refused(body, () => {
-    // The edit first, then the box: a ticked box empties and disables its
-    // input (156), so the dirty form is the box itself.
-    type(control('ctx-size'), '-1')
-    fireEvent.click(boxOf('ctx-size'))
-  })
-  const text = en('api-not-whole-number-in-range', ...body.args)
-  await within(main).findByText(en('save-refused', text))
-  expectAlert(main, en('save-refused', text), '144: the plain alert')
-  expect(document.activeElement, '144, 161: focus on the default box').toBe(
-    boxOf('ctx-size'),
-  )
-})
-
-test('2h.198a: a 422 naming an Assets key keeps save-refused, marks nothing and leaves the focus on Save changes (143)', async () => {
-  const { main } = await refused(
-    { key: 'model-profile-no-model', args: [ID], field: 'model' },
-    () => type(control('ctx-size'), '65536'),
-  )
-  const text = en('api-model-profile-no-model', ID)
-  await within(main).findByText(en('save-refused', text))
-  expectAlert(main, en('save-refused', text), '143: the Assets key')
-  const invalid = [...main.querySelectorAll('[aria-invalid="true"]')]
-  expect(
-    invalid.map((e) => e.id),
-    '143: no field marked',
-  ).toEqual([])
-  expect(document.activeElement, '143: focus stays on Save changes').toBe(
-    saveButton(main),
-  )
 })

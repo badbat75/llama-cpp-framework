@@ -1,15 +1,16 @@
-// The Vision card editable, the first part of sub-slice 2h.7 of
-// fe/briefs/02h-model-profile-save.md (175, 176, 179, 181, 182): every control of the
-// card enabled only while the read's `mmproj` is present and not empty, Vision
-// GPU also while Vision on GPU is checked (live), the note `model-profile-vision-off`
-// after the card's h3 while `mmproj` is missing (a plain paragraph, not a live
-// region, not in any aria-describedby), what each field of 2e's table 102 sends
-// by its kind (133: the `mmproj-offload` checkbox, the `mmproj-device` device
-// select of 179, the two 1-or-more integers of 157), and the exact text of the
-// new string (182). The Hardware card of 175 is a later task. The card's
-// read-only look is 2e's 102, in ModelProfileCards3.test.tsx; the helpers are those
-// of ModelProfileSave8, ModelProfileSave9, ModelProfileSave10 and ModelProfileSave11.test.tsx, which
-// this file repeats (a test file imports no other test file).
+// Part of sub-slice 2h.7 of fe/briefs/02h-model-profile-save.md, as brief 22
+// IP5 narrows it (176, 181, 182): every control the card still shows is enabled
+// only while the read's `mmproj` is present and not empty, the note
+// `model-profile-vision-off` sits after the card's h3 while `mmproj` is missing
+// (a plain paragraph, not a live region, not in any aria-describedby), what each
+// remaining field of 2e's table 102 sends by its kind (133: the two 1-or-more
+// integers of 157), and the exact text of the new string (182). The Vision on
+// GPU checkbox and the Vision GPU device select are `PLACEMENT_KEYS` and left
+// the page with them, so the checkbox rule of 176 and the device select's list
+// of 179 left too. The Hardware card of 175 went to the instance profile. The
+// card's read-only look is 2e's 102, in ModelProfileCards3.test.tsx; the helpers
+// are those of ModelProfileSave8 to ModelProfileSave11.test.tsx, which this file
+// repeats (a test file imports no other test file).
 import {
   cleanup,
   fireEvent,
@@ -37,10 +38,6 @@ const HASH = `#/profiles/model/${ID}`
 const PUT = `/api/profiles/model/${ID}`
 const HEADING = en('model-profile-vision')
 const NEXT = en('model-profile-speculative-decoding')
-const OFF_TOGGLE = en('model-profile-vision-offload-toggle')
-const GPU = en('model-profile-vision-gpu')
-/** The text of the device select's empty option (2e's 102, 110). */
-const FOLLOWS = en('model-profile-device-follows-model')
 const MIN = en('model-profile-min-image-tokens')
 const MAX = en('model-profile-max-image-tokens')
 const DEFAULT = en('field-default')
@@ -50,12 +47,10 @@ const OFF_TEXT =
 /** 157's row of image-min-tokens and image-max-tokens: 1 or more. */
 const MIN_ONE = en('field-error-number-min', '1')
 const MMPROJ = 'Qwen3-VL-mmproj-BF16.gguf'
-/** What the read gives: every key of the card present, each a value the
- * configurator itself would write (so no written-as line). */
+/** What the read gives: every key the card still shows present, each a value
+ * the configurator itself would write (so no written-as line). */
 const AS_LOADED: Record<string, string> = {
   mmproj: MMPROJ,
-  'mmproj-offload': 'true',
-  'mmproj-device': 'ROCm1',
   'image-min-tokens': '1024',
   'image-max-tokens': '2048',
 }
@@ -107,13 +102,6 @@ function headingOf(main: HTMLElement, name: string): HTMLElement {
   return within(main).getByRole('heading', { level: 3, name })
 }
 
-/** The card's checkbox, named by its own toggle text (87). */
-function checkBoxOf(main: HTMLElement, toggle: string): HTMLInputElement {
-  return within(main).getByRole('checkbox', {
-    name: toggle,
-  }) as HTMLInputElement
-}
-
 function selectOf(main: HTMLElement, label: string): HTMLSelectElement {
   return within(main).getByRole('combobox', {
     name: label,
@@ -155,14 +143,12 @@ function type(input: HTMLElement, value: string) {
   fireEvent.change(input, { target: { value } })
 }
 
-/** Every control of the card: the checkbox, the device select, the two boxes
- * and the two inputs (the order of 2e's table 102). */
+/** Every control of the card: the box and the input of each number field (the
+ * order of 2e's table 102, as IP5 leaves it). */
 function cardControls(
   main: HTMLElement,
 ): Array<HTMLInputElement | HTMLSelectElement> {
   return [
-    checkBoxOf(main, OFF_TOGGLE),
-    selectOf(main, GPU),
     checkBox(main, MIN),
     box(main, MIN),
     checkBox(main, MAX),
@@ -172,10 +158,6 @@ function cardControls(
 
 function saveButton(main: HTMLElement): HTMLElement {
   return within(main).getByRole('button', { name: en('save-button') })
-}
-
-function discardButton(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('button', { name: en('save-discard') })
 }
 
 /** Clicks Save changes and waits for the n-th PUT of this model profile. */
@@ -191,24 +173,6 @@ function sentValues(
 ): Record<string, unknown> {
   const body = bff.to('PUT', PUT)[n - 1]!.body as Record<string, unknown>
   return body.values as Record<string, unknown>
-}
-
-/**
- * The save bar's status line. The GPUs card keeps its own status region
- * in the DOM from its first render (brief 14 GD1.9), so the bar's line is
- * picked inside the bar, not by counting the page's status regions (section
- * 6 of fe/briefs/14-gpu-distribution.md, ruling of 2026-11-21).
- */
-function status(main: HTMLElement): HTMLElement {
-  within(main).getByRole('heading', {
-    level: 2,
-    name: en('model-profile-settings-title'),
-  })
-  const all = within(main)
-    .queryAllByRole('status')
-    .filter((s) => s.closest('.save-bar') !== null)
-  expect(all, 'the save bar has its status line').toHaveLength(1)
-  return all[0]!
 }
 
 /** The ids of `aria-describedby`, in order. */
@@ -237,14 +201,6 @@ function expectError(el: HTMLElement, text: string, what: string) {
   expect(before(el, error!), `${what}: the error comes after the control`).toBe(
     true,
   )
-}
-
-/** The save bar's buttons are inert: the form is clean. */
-function expectInert(main: HTMLElement, what: string) {
-  for (const b of [saveButton(main), discardButton(main)])
-    expect(b.getAttribute('aria-disabled'), `${what}: the buttons inert`).toBe(
-      'true',
-    )
 }
 
 /** The card's note (176), by its text. */
@@ -277,7 +233,7 @@ test.each(NO_MMPROJ)(
     const h3 = headingOf(main, HEADING)
     expect(before(h3, line), 'the note comes after the card h3').toBe(true)
     expect(
-      before(line, checkBoxOf(main, OFF_TOGGLE)),
+      before(line, box(main, MIN)),
       'the note comes before the first field',
     ).toBe(true)
     expect(
@@ -309,20 +265,12 @@ test('2h.181: the note is a plain paragraph: no live region, no role, not in any
 
 // ── 176: the enable rule of the card ───────────────────────────────────
 
-test('2h.176, 2h.158: with mmproj present, no note and every control enabled: the checkbox checked, the select on the file value, each box unticked with its input on the file text and inputmode numeric', async () => {
+test('2h.176, 2h.158: with mmproj present, no note and every control enabled: each box unticked with its input on the file text and inputmode numeric', async () => {
   const { main } = await form()
   expect(
     within(main).queryByText(OFF_TEXT),
     'an MMProj: no note (176)',
   ).toBeNull()
-  const off = checkBoxOf(main, OFF_TOGGLE)
-  expect(off.disabled, 'Vision on GPU enabled').toBe(false)
-  expect(off.checked, 'mmproj-offload = true shows checked').toBe(true)
-  expect(off.id, 'the field id').toBe('model-profile-mmproj-offload-control')
-  const gpu = selectOf(main, GPU)
-  expect(gpu.disabled, 'Vision GPU enabled (offload checked)').toBe(false)
-  expect(gpu.id, 'the field id').toBe('model-profile-mmproj-device-control')
-  expect(gpu.value, 'the file device shows').toBe('ROCm1')
   for (const [label, key] of [
     [MIN, 'image-min-tokens'],
     [MAX, 'image-max-tokens'],
@@ -345,102 +293,7 @@ test('2h.176, 2h.158: with mmproj present, no note and every control enabled: th
   }
 })
 
-test('2h.176, 2h.122: mmproj-offload false: Vision GPU disabled with no note of its own, Vision on GPU and the two numbers enabled', async () => {
-  const { main } = await form({ ...AS_LOADED, 'mmproj-offload': 'false' })
-  expect(
-    within(main).queryByText(OFF_TEXT),
-    'an MMProj: no note (176: the switch is just above)',
-  ).toBeNull()
-  const off = checkBoxOf(main, OFF_TOGGLE)
-  expect(off.disabled, 'Vision on GPU enabled (mmproj present)').toBe(false)
-  expect(off.checked, 'mmproj-offload = false shows unchecked').toBe(false)
-  expect(
-    selectOf(main, GPU).disabled,
-    'Vision GPU disabled while offload is unchecked (176)',
-  ).toBe(true)
-  for (const label of [MIN, MAX]) {
-    expect(checkBox(main, label).disabled, `${label}: box enabled`).toBe(false)
-    expect(box(main, label).disabled, `${label}: input enabled`).toBe(false)
-  }
-})
-
-test('2h.176: the rule is live: unchecking Vision on GPU disables Vision GPU at once, checking it back enables it', async () => {
-  const { main } = await form()
-  const gpu = selectOf(main, GPU)
-  expect(gpu.disabled, 'enabled with offload checked').toBe(false)
-  fireEvent.click(checkBoxOf(main, OFF_TOGGLE))
-  expect(
-    selectOf(main, GPU).disabled,
-    'unchecked: Vision GPU disabled at once (176)',
-  ).toBe(true)
-  fireEvent.click(checkBoxOf(main, OFF_TOGGLE))
-  expect(
-    selectOf(main, GPU).disabled,
-    'checked again: Vision GPU enabled again (176)',
-  ).toBe(false)
-  // The card's own rule does not reach the rest of the page: the note stays
-  // out, the numbers stay enabled.
-  expect(within(main).queryByText(OFF_TEXT), 'no note').toBeNull()
-  expect(box(main, MIN).disabled, 'Min image tokens stays enabled').toBe(false)
-})
-
 // ── 175, 133: what each field sends by its kind ────────────────────────
-
-test('2h.175, 2h.133: mmproj-offload checked sends "true" and unchecked sends "false" (the checkbox row)', async () => {
-  // Loaded true, checked: unchecking is the change and sends "false".
-  const first = await form()
-  fireEvent.click(checkBoxOf(first.main, OFF_TOGGLE))
-  await save(first.main, first.bff)
-  expect(sentValues(first.bff), 'unchecked sends "false"').toEqual({
-    'mmproj-offload': 'false',
-  })
-  // Loaded false, unchecked: checking sends "true".
-  cleanup()
-  const second = await form({ ...AS_LOADED, 'mmproj-offload': 'false' })
-  fireEvent.click(checkBoxOf(second.main, OFF_TOGGLE))
-  await save(second.main, second.bff)
-  expect(sentValues(second.bff), 'checked sends "true"').toEqual({
-    'mmproj-offload': 'true',
-  })
-})
-
-test('2h.179, 2h.133: Vision GPU lists the empty option and the file value only, and picking the empty option sends null', async () => {
-  const { bff, main } = await form()
-  const gpu = selectOf(main, GPU)
-  expect(
-    Array.from(gpu.options).map((o) => o.value),
-    '103: the empty option first, then the file value only',
-  ).toEqual(['', 'ROCm1'])
-  expect(gpu.value, 'the file value selected').toBe('ROCm1')
-  expect(
-    gpu.options[0]?.text,
-    'the empty option is the one that follows the model',
-  ).toBe(FOLLOWS)
-  pick(main, GPU, '')
-  expect(gpu.value, 'picking the empty option shows it').toBe('')
-  await save(main, bff)
-  expect(sentValues(bff)['mmproj-device'], 'the empty option sends null').toBe(
-    null,
-  )
-})
-
-test('2h.179, 2h.132: mmproj-device absent shows the empty option alone: leaving it is clean, the buttons inert, a save sends nothing', async () => {
-  const { bff, main } = await form(without('mmproj-device'))
-  const gpu = selectOf(main, GPU)
-  expect(gpu.disabled, 'Vision GPU enabled (mmproj, offload checked)').toBe(
-    false,
-  )
-  expect(gpu.value, 'an absent key shows the empty option').toBe('')
-  expect(
-    Array.from(gpu.options).map((o) => o.value),
-    'the empty option alone, until 2f brings the devices',
-  ).toEqual([''])
-  pick(main, GPU, '')
-  expect(status(main).textContent, 'leaving it is no change').toBe('')
-  expectInert(main, 'empty option back')
-  fireEvent.click(saveButton(main))
-  expect(bff.to('PUT', PUT), 'a clean Save sends nothing').toHaveLength(0)
-})
 
 /** The card's two integer fields (2e's 102, 157's 1-or-more row). */
 const NUMBERS = [
@@ -497,44 +350,12 @@ test('2h.156, 2h.133: an absent Vision number starts with its box ticked, its in
 })
 
 // ── 179: the device select's list does not follow the pick ─────────────
+// The Vision GPU device select is a `PLACEMENT_KEYS` key (brief 22 IP5.5), so
+// the card shows no device select and 179's list pin leaves with it.
 
 /** The Pooling select of the Embeddings card: a field of another card, used
  * below as the change the user does make (nothing else on the page moves). */
 const POOLING = en('model-profile-pooling')
-
-/** The option values of a select, in the order they are listed. */
-function optionValues(select: HTMLSelectElement): string[] {
-  return Array.from(select.options).map((o) => o.value)
-}
-
-test('2h.179: after the empty option is picked the select still lists the empty option and the file value in the same order, and picking the file value back is clean: the buttons inert, Save sends nothing', async () => {
-  const { bff, main } = await form()
-  const gpu = selectOf(main, GPU)
-  const listed = ['', 'ROCm1']
-  expect(
-    optionValues(gpu),
-    '179: the empty option first, then the file value',
-  ).toEqual(listed)
-  pick(main, GPU, '')
-  // The defect: the list is built from what the control shows, so the option
-  // the user just left vanishes and can never be picked again.
-  expect(
-    optionValues(gpu),
-    '179: the list the user reads is still the empty option and the file value, in the same order',
-  ).toEqual(listed)
-  expect(gpu.value, 'the empty option shows').toBe('')
-  expect(gpu.options[1]?.text, 'the file value option keeps its own text').toBe(
-    'ROCm1',
-  )
-  pick(main, GPU, 'ROCm1')
-  expect(
-    status(main).textContent,
-    'picking the file value back is no change',
-  ).toBe('')
-  expectInert(main, 'the file value picked back')
-  fireEvent.click(saveButton(main))
-  expect(bff.to('PUT', PUT), 'a clean Save sends nothing').toHaveLength(0)
-})
 
 // ── 157, 176: a field a rule locks is not checked at Save ──────────────
 

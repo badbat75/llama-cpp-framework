@@ -764,7 +764,7 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
   )
   expect(
     rest,
-    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the status lines 1lh, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9), and the fact row of a tile and its value cell shrink below their content (17b), and the tag suggestion list shrinks to the field (15 section 11 D2), and the confirm group of a list row shrinks in its cell (22 D4.8)',
+    'the sizes of the page, per rule: the controls are --control-h (buttons, fields, the filter input, the 720 px label, the icon-only theme switch below 480 px), the switch label, the checkbox row and the pill keep 24px, the jump list 32px until H9, the filter status line keeps no size, the app 100vh, and a flex child keeps min-width 0 so it can shrink; the id of the tile shrinks in its head row and the badge pill is 28 px (H6a.7, H6a.8), the save bar button row shrinks with the bar (H5c.7), the x of a chip keeps its 24 px and the + and the icons of the pill their 32 px circles (15 section 10 R2), and the chip text, the new-tag pill and its box shrink to the row (its R3), and the sortable header button keeps 24 px (17c.9), and the fact row of a tile and its value cell shrink below their content (17b), and the tag suggestion list shrinks to the field (15 section 11 D2), and the confirm group of a list row shrinks in its cell (22 D4.8)',
   ).toEqual([
     '#root: min-height: 100vh',
     // Brief 16, slice 17f2 (17f2.9, fe/briefs/16-server-profiles-and-instances.md):
@@ -791,14 +791,15 @@ test('H1a.12 guard: the sizes that moved are the controls, and H2a draws with th
     '.model-profiles th button: min-height: 24px',
     '.model-profiles-switch: min-height: 24px',
     '.model-profiles-switch: min-width: 24px',
-    '.model-profiles-switch-status: min-height: 1lh',
     '.model-profiles-filter-row input: min-height: var(--control-h)',
     '.model-profiles-filter-row input: min-width: 0',
     // 22 D4.33 as its D2 review (2026-11-27) amends it: the filter's status
     // line reserves a line while empty, which is the gap the review measures
-    // (35 px under the hint), so it keeps no height of its own. The switch's
-    // status line above, which sits between the table and its offer, keeps the
-    // 1lh floor (17d.5a).
+    // (35 px under the hint), so it keeps no height of its own. The status line
+    // of the row switch (17d.5a's 1lh floor) left the sheet with the switch,
+    // when 22 IP5.1 took the row switch off the list; the delete words that
+    // remain above the table share the Server lists' `.save-status`, which
+    // carries no size of its own.
     // H6a.7: the id shrinks inside its tile; H6a.8: the pill is 28 px.
     '.tile-id: min-width: 0',
     // 17b.5 (brief 17 U17b): the fact row and its value cell are flex/grid

@@ -186,15 +186,14 @@ test('H9b.4: the disclosure and the entries are the stops right after the save b
   ).toEqual([toggle, ...buttons])
 
   // In the page, the disclosure and the entries are the stops right after the
-  // state line's switch: 22 L2.B1 (the user's ruling of 2026-11-26) moved the
-  // save bar to the end of the settings section, so its stops left the head of
-  // the order (H10.10, 22 D2.5).
+  // back link: 22 L2.B1 (the user's ruling of 2026-11-26) moved the save bar to
+  // the end of the settings section, so its stops left the head of the order
+  // (H10.10, 22 D2.5), and 22 IP5.1 took the state line's switch of 24 A2.1 off
+  // the page, leaving the back link alone before the disclosure.
   const stops = tabbables(main)
   expect(stops[0], 'the back link stays the first stop of the page').toBe(
     screen.getByRole('link', { name: en('model-profile-back') }),
   )
-  // 24 A2.1: the state line's switch is the stop right after the back link.
-  const sw = within(main).getByRole('switch')
   // 22 D4.10 puts the page's Delete in the bar and 22 D4.30 moves it to the
   // bar's end.
   const barStops = [
@@ -203,12 +202,8 @@ test('H9b.4: the disclosure and the entries are the stops right after the save b
     within(main).getByRole('button', { name: en('model-profile-delete') }),
   ]
   expect(
-    stops[1],
-    '24 A2.1: the state line’s switch is the stop right after the back link',
-  ).toBe(sw)
-  expect(
-    stops.slice(2, buttons.length + 3),
-    'H10.10 with 22 L2.B1: the disclosure then the entries are the stops right after the switch',
+    stops.slice(1, buttons.length + 2),
+    'H10.10 with 22 L2.B1 and 22 IP5.1: the disclosure then the entries are the stops right after the back link',
   ).toEqual([toggle, ...buttons])
   expect(
     stops.slice(-barStops.length),

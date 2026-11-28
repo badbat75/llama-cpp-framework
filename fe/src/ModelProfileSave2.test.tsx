@@ -870,13 +870,13 @@ test("2h.141 (22 D2.7 as 22 L2.B1 amends it): the tab order takes each Embedding
   // the form, so they are last again, now with the page's Delete after Discard
   // and Save changes (22 D4.10 with 22 D4.30 and L2.A2).
   expect(
-    focusable.slice(0, 2).map((el) => (el.textContent ?? '').trim()),
-    'the back link and the state line’s switch of 24 A2.1 lead the page',
-  ).toEqual([
-    en('model-profile-back'),
-    // 24 A2.1: the switch is an input, so it carries no text of its own.
-    '',
-  ])
+    focusable.slice(0, 1).map((el) => (el.textContent ?? '').trim()),
+    '22 IP5.1: the back link alone leads the page, the state line’s switch of 24 A2.1 being gone',
+  ).toEqual([en('model-profile-back')])
+  expect(
+    focusable[1]!.id,
+    '2h.197: the jump disclosure of H10.10 comes next',
+  ).toBe('model-profile-jump-toggle')
   expect(
     focusable.slice(-3).map((el) => accName(el)),
     '22 L2.B1: the bar’s Discard, Save changes and Delete are the page’s last stops',

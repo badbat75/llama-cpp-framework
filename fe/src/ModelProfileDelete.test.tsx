@@ -40,7 +40,6 @@ import {
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
 import {
-  accName,
   before,
   type BffOptions,
   deferred,
@@ -107,17 +106,6 @@ function offDoc(id = ID) {
     modelProfileDoc(
       { embeddings: 'true', pooling: 'mean' },
       { id, enabled: false },
-    ),
-  )
-}
-
-/** The document of a switched-on profile. */
-function onDoc(id = ID) {
-  return reply(
-    200,
-    modelProfileDoc(
-      { embeddings: 'true', pooling: 'mean' },
-      { id, enabled: true },
     ),
   )
 }
@@ -235,108 +223,6 @@ async function signInInDialog(user: string) {
 }
 
 // ── 22 D.1: offered while switched off ──────────────────────────────────
-
-test('22 D.1 (as 22 D4.10 moves its place and 22 D4.30 its order): a switched-off profile offers the model-profile-delete delete as the last button of the save bar’s group, after Discard and Save changes, and outside every fieldset; a switched-on profile keeps it, aria-disabled with the list’s reason; the status row of 22 D2.1 is gone', async () => {
-  const { main } = await loaded()
-  const summary = main.querySelector('p.model-profile-summary')
-  expect(summary, 'the summary line is there').not.toBeNull()
-  expect(
-    main.querySelector('div.page-status'),
-    '22 D4.9: the status row of 22 D2.1 is gone',
-  ).toBeNull()
-  const bar = saveBar(main)
-  expect(bar, 'the save bar is there').not.toBeNull()
-  const button = deleteButton(main)
-  const actions = barActions(main)
-  expect(
-    button.closest('.save-actions'),
-    'the delete is in the bar’s group',
-  ).toBe(actions)
-  expect(button.closest('fieldset'), 'outside the form').toBeNull()
-  expect(
-    [...actions.children].indexOf(button),
-    '22 D4.30: it is the group’s last button, after Discard and Save changes',
-  ).toBe(actions.children.length - 1)
-  expect(
-    within(actions)
-      .getAllByRole('button')
-      .map((b) => accName(b)),
-    '22 D4.30: Discard, Save changes, then the Delete the bar ends with',
-  ).toEqual([en('save-discard'), en('save-button'), en('model-profile-delete')])
-  expect(
-    button.getAttribute('aria-disabled'),
-    'a switched-off profile: the delete can act',
-  ).not.toBe('true')
-  expect(
-    within(main).queryByText(en('model-profile-on-short')),
-    '24 A2.1: a switched-off profile says nothing about being on',
-  ).toBeNull()
-  cleanup()
-  vi.unstubAllGlobals()
-  // A switched-on profile: the same button, switched off with the reason.
-  const on = await loaded({ modelProfile: () => onDoc() })
-  const kept = within(on.main).getByRole('button', {
-    name: en('model-profile-delete'),
-  })
-  expect(
-    kept.getAttribute('aria-disabled'),
-    '22 D4.10: a switched-on profile cannot be deleted',
-  ).toBe('true')
-  expect(kept.closest('.save-actions'), 'and it stays in the bar').toBe(
-    barActions(on.main),
-  )
-  expect(
-    (within(on.main).getByText(en('model-profile-on-short')).textContent ?? '')
-      .replace(/\s+/g, ' ')
-      .trim(),
-    '24 A2.1: the state line says the state in the short sentence, beside the page’s own switch',
-  ).toBe(en('model-profile-on-short'))
-})
-
-test('22 D.1 (as 22 D4.10 amends it): the offer follows the document read: nothing while the read is open, an active delete when a read answers switched off, a delete switched off with the reason when it answers switched on', async () => {
-  const gate = deferred()
-  fakeBff({ modelProfile: () => gate.promise })
-  render(<App />)
-  const main = screen.getByRole('main')
-  await within(main).findByRole('heading', { level: 1, name: ID })
-  expect(
-    within(main).queryByRole('button', { name: en('model-profile-delete') }),
-    'nothing while the document is open',
-  ).toBeNull()
-  expect(
-    within(main).queryByText(en('model-profile-on-short')),
-    'nor the state line that replaces it',
-  ).toBeNull()
-  gate.resolve(offDoc())
-  const off = await within(main).findByRole('button', {
-    name: en('model-profile-delete'),
-  })
-  expect(
-    off.getAttribute('aria-disabled'),
-    '22 D4.10: switched off, so the delete can act',
-  ).not.toBe('true')
-  // The next read of the same page answers switched on: the delete stays,
-  // switched off (22 D4.10: a Delete that cannot act is never hidden).
-  cleanup()
-  vi.unstubAllGlobals()
-  const gate2 = deferred()
-  fakeBff({ modelProfile: () => gate2.promise })
-  render(<App />)
-  const m = screen.getByRole('main')
-  await within(m).findByRole('heading', { level: 1, name: ID })
-  gate2.resolve(onDoc())
-  const on = await within(m).findByRole('button', {
-    name: en('model-profile-delete'),
-  })
-  expect(
-    on.getAttribute('aria-disabled'),
-    'the delete follows the switch: it stays, switched off',
-  ).toBe('true')
-  expect(
-    within(m).getByText(en('model-profile-on-short')),
-    'and the state reads on the page',
-  ).toBeTruthy()
-})
 
 // ── 22 D.2: confirm in place ────────────────────────────────────────────
 
@@ -599,59 +485,6 @@ test('22 D.3: a profile whose id needs encoding is deleted at a percent-encoded 
 })
 
 // ── 22 D.4: switched on meanwhile ───────────────────────────────────────
-
-test('22 D.4 (as 22 D4.11 amends it): a 409 model-profile-enabled reads the document again: the group goes, the delete stays switched off, its text lands in the bar’s alert with the focus on the delete, and the state line says model-profile-on-short', async () => {
-  let reads_ = 0
-  const { bff, main } = await loaded({
-    modelProfile: (id) => (++reads_ === 1 ? offDoc(id) : onDoc(id)),
-    modelProfileDelete: () =>
-      reply(409, { key: 'model-profile-enabled', args: [ID] }),
-  })
-  const text = en('api-model-profile-enabled', ID)
-  const group = await confirmGroup(main)
-  press(confirmIn(group, 'confirm-delete'))
-  const alert = await within(main).findByText(text)
-  expect(
-    alert.closest('[role="alert"]'),
-    'the text is in an alert',
-  ).not.toBeNull()
-  // The read again lands: the switch shows, the group goes, and the text is
-  // the bar's: the bar outlives the group.
-  await within(main).findByText(en('model-profile-on-short'))
-  expect(queryConfirm(main), 'the confirm is gone').toBeNull()
-  expect(reads(bff), 'the document was read again').toBe(2)
-  expect(bff.to('GET', ROUTE), 'one read, then the re-read').toHaveLength(2)
-  const kept = within(main).getByText(text)
-  expect(kept.tagName, 'the text is in a paragraph').toBe('P')
-  expect(kept.getAttribute('role'), 'an alert').toBe('alert')
-  expect(kept.getAttribute('tabindex'), 'a place the focus can take').toBe('-1')
-  expect(
-    kept.closest('.save-bar'),
-    '22 D4.11: it is the bar’s alert, the place the bar keeps for a refusal',
-  ).toBe(saveBar(main))
-  const del = deleteButton(main)
-  expect(
-    del.getAttribute('aria-disabled'),
-    '22 D4.11: the delete stays switched off, the page says why',
-  ).toBe('true')
-  expect(document.activeElement, '22 D4.11: the focus moves to Delete').toBe(
-    del,
-  )
-  expect(document.activeElement, 'the focus did not drop to body').not.toBe(
-    document.body,
-  )
-  // The next read of the page leaves it out.
-  navigate(OTHER_HASH)
-  await flushTasks()
-  await within(main).findByRole('heading', { level: 1, name: OTHER })
-  navigate(HASH)
-  await flushTasks()
-  await within(main).findByRole('heading', { level: 1, name: ID })
-  expect(
-    within(main).queryByText(text),
-    'the next read leaves the refusal text out',
-  ).toBeNull()
-})
 
 // ── 22 D.5: assigned ────────────────────────────────────────────────────
 

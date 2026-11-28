@@ -21,11 +21,12 @@ import {
   accName,
   before,
   type BffOptions,
-  en,
   EN,
+  en,
   fakeBff,
   isHidden,
   modelProfileDoc,
+  PLACEMENT_KEYS,
   reply,
   startAt,
 } from './test/bff.ts'
@@ -95,18 +96,16 @@ const CARD = 'model-profile-speculative-decoding'
  * text: the strings text of `model-profile-draft-model-group`, and the four
  * speculator names as the INI literals they are (114, D7). */
 type Group = { heading: string; headingKey?: string; keys: string[] }
+
+/** Slice IP5 (fe/briefs/22-model-sources.md, IP5.5): a group of the
+ *  Speculative decoding card keeps the keys that stay, and loses the ones that
+ *  moved to the instance profile's entry (the draft model group loses its
+ *  ubatch and its cache types). */
 const GROUPS: Group[] = [
   {
     heading: en('model-profile-draft-model-group'),
     headingKey: 'model-profile-draft-model-group',
-    keys: [
-      'spec-draft-n-max',
-      'spec-draft-p-min',
-      'spec-draft-n-min',
-      'spec-draft-n-ubatch',
-      'spec-draft-type-k',
-      'spec-draft-type-v',
-    ],
+    keys: ['spec-draft-n-max', 'spec-draft-p-min', 'spec-draft-n-min'],
   },
   {
     heading: 'ngram-mod',
@@ -217,7 +216,7 @@ function cacheType(key: string, labelKey: string): Row {
 }
 
 /** The field table of 112, in the GUI's order. */
-const FIELDS: Row[] = [
+const FIELDS_IP5_ALL: Row[] = [
   num(
     'spec-draft-n-max',
     DRAFT,
@@ -313,6 +312,13 @@ const FIELDS: Row[] = [
     '110',
   ),
 ]
+/** Slice IP5 (fe/briefs/22-model-sources.md, IP5.5: "Each card keeps only the
+ *  fields and notes whose key is in MODEL_PROFILE_STAY_KEYS"): the rows of the
+ *  keys that moved to the instance profile's entry leave the table, so every
+ *  assertion below reads the page the slice leaves. */
+const FIELDS: Row[] = FIELDS_IP5_ALL.filter(
+  (f) => !PLACEMENT_KEYS.includes(f.key),
+)
 
 const row = (key: string): Row => FIELDS.find((f) => f.key === key)!
 
@@ -556,14 +562,6 @@ function selectedText(select: HTMLSelectElement): string {
     0,
   )
   return (optionsOf(select)[select.selectedIndex]!.textContent ?? '').trim()
-}
-
-/** The selected option's text exactly as the page writes it (87). */
-function selectedTextExact(select: HTMLSelectElement): string {
-  expect(select.selectedIndex, 'an option is selected').toBeGreaterThanOrEqual(
-    0,
-  )
-  return optionsOf(select)[select.selectedIndex]!.textContent ?? ''
 }
 
 function text(el: Element): string {
@@ -1058,46 +1056,13 @@ test('2e.112, 2e.90, 2h.192: the notes of the card in browse order are model-pro
     'ngram-map-k4v',
   ])
   const notes = notesOf(el)
+  // 22 IP5.5: `draft-cache-note` moves with the draft cache types, so the card
+  // shows no note of its own: the notes of 192, one per group the rule leaves
+  // off, are all of them.
   expect(
     notes.map((p) => text(p)),
     `${en(CARD)}: the notes of the card, in browse order (181, 192)`,
-  ).toEqual([
-    en('model-profile-draft-cache-note'),
-    ...off.map((g) => en('model-profile-ngram-off', g)),
-  ])
-  const note = notes[0]!
-  expect(note.tagName, `${en(CARD)}: the note is a paragraph`).toBe('P')
-  expect(
-    text(note),
-    'model-profile-draft-cache-note: the text of toml 377',
-  ).toBe(en('model-profile-draft-cache-note'))
-  expect(
-    note.className,
-    'model-profile-draft-cache-note: the note style of 90',
-  ).toContain('note')
-  expect(
-    note.closest('.field'),
-    'model-profile-draft-cache-note: the note is not inside a field',
-  ).toBeNull()
-  const group = groupOf(el, DRAFT)
-  expect(
-    group.contains(note),
-    'model-profile-draft-cache-note: inside the Draft model group',
-  ).toBe(true)
-  expect(
-    before(fieldIn(group, en('model-profile-draft-n-ubatch')), note),
-    'Draft n-ubatch before the note',
-  ).toBe(true)
-  expect(
-    before(note, fieldIn(group, en('model-profile-draft-k-cache-type'))),
-    'the note before Draft K-cache type',
-  ).toBe(true)
-  expect(
-    within(el).queryByRole('button', {
-      name: `${en('field-about')} ${en('model-profile-draft-cache-note')}`,
-    }),
-    'model-profile-draft-cache-note: no About toggle for a note',
-  ).toBeNull()
+  ).toEqual(off.map((g) => en('model-profile-ngram-off', g)))
   // 192: each reason line sits inside the role=group division of its group,
   // right after its h4 and before the group's first field, in the Card note
   // style of D5.2, and carries no About toggle.
@@ -1140,10 +1105,9 @@ test('2h.192, 2h.193: a group the rule enables shows no reason line and one it l
   const notes = notesOf(card(main))
   expect(
     notes.map((p) => text(p)),
-    `${en(CARD)}: a read with no rule key shows the five lines of 192, and the card's own note`,
+    `${en(CARD)}: a read with no rule key shows the five lines of 192 (22 IP5.5 leaves no card note)`,
   ).toEqual([
     en('model-profile-draft-group-off'),
-    en('model-profile-draft-cache-note'),
     ...NGRAMS.map((g) => en('model-profile-ngram-off', g)),
   ])
   for (const g of NGRAMS) {
@@ -1183,8 +1147,8 @@ test('2h.192, 2h.193: a group the rule enables shows no reason line and one it l
   })
   expect(
     notesOf(card(on)).map((p) => text(p)),
-    `${en(CARD)}: every group enabled leaves no reason line`,
-  ).toEqual([en('model-profile-draft-cache-note')])
+    `${en(CARD)}: every group enabled leaves no reason line, and 22 IP5.5 leaves no card note`,
+  ).toEqual([])
   for (const g of GROUPS)
     expect(
       FIELDS.filter((f) => f.group === g.heading)
@@ -1386,38 +1350,6 @@ test.each(
   },
 )
 
-test('2e.112, 2e.96, 2e.87: a draft cache type no option lists (q3_k, and F16 which differs only in case) becomes one extra last option carrying it as its value and its text, selected', async () => {
-  for (const value of ['q3_k', 'F16']) {
-    const { main } = await loaded({
-      modelProfile: () => reply(200, exactOf({ 'spec-draft-type-k': value })),
-    })
-    const select = selectIn(
-      rowGroup(main, row('spec-draft-type-k')),
-      row('spec-draft-type-k').label,
-    )
-    const opts = optionsOf(select)
-    expect(opts.length, `${value}: the listed options plus one`).toBe(
-      CACHE_TYPES.length + 1,
-    )
-    expect(
-      optionTexts(select).slice(0, CACHE_TYPES.length),
-      `${value}: the listed options keep their place`,
-    ).toEqual(CACHE_TYPES)
-    const extra = opts[opts.length - 1]!
-    expect(extra.value, `${value}: the extra option carries the value`).toBe(
-      value,
-    )
-    expect((extra.textContent ?? '').trim(), `${value}: and its text`).toBe(
-      value,
-    )
-    expect(selectedText(select), `${value}: the extra option is selected`).toBe(
-      value,
-    )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
-
 // ── Values exactly as the file holds them, and absent keys (86, 87, 89) ─
 
 test.each([
@@ -1425,7 +1357,6 @@ test.each([
   ['spec-draft-n-max', '0172032'],
   ['spec-draft-p-min', ' 0.75 '],
   ['spec-draft-p-min', '0.750'],
-  ['spec-draft-n-ubatch', '512.0'],
   ['spec-ngram-map-k4v-min-hits', '007'],
 ] as [string, string][])(
   '2e.87, 2e.115: a value of 2e.5 shows exactly as the reply holds it, with no parsing, no trimming and no case change: %s %s',
@@ -1444,22 +1375,6 @@ test.each([
     )
   },
 )
-
-test('2e.87, 2e.115: a select shows the string the page adds for it as written', async () => {
-  // A select shows the string the page adds for it as written.
-  const { main } = await loaded({
-    modelProfile: () => reply(200, exactOf({ 'spec-draft-type-v': ' q8_0 ' })),
-  })
-  expect(
-    selectedTextExact(
-      selectIn(
-        rowGroup(main, row('spec-draft-type-v')),
-        row('spec-draft-type-v').label,
-      ),
-    ),
-    'an unlisted draft cache type keeps its spaces and its case',
-  ).toBe(' q8_0 ')
-})
 
 test.each(FIELDS)(
   '2e.86, 2e.115: a key of 112 whose value is the empty string reads as absent, for every key of the card (2e.5 adds no flag of its own, so 2e.3b reads no key of this card as a flag): $key',
@@ -1543,8 +1458,8 @@ test('2e.91, 2h.190, 2h.191: Tab in the card reaches every About toggle of 112 i
   // two selects; the three groups the rule leaves off add no stop (91).
   expect(
     stops.length,
-    `${en(CARD)}: 16 toggles and the controls of the two enabled groups`,
-  ).toBe(FIELDS.length + 16)
+    `${en(CARD)}: one toggle per field, and the box and the input of the six fields of the two enabled groups`,
+  ).toBe(FIELDS.length + 12)
   const toggles = FIELDS.map((f) => `${en('field-about')} ${f.label}`)
   expect(
     stops.filter((n) => n.startsWith(`${en('field-about')} `)),
@@ -1612,9 +1527,8 @@ test('2e.116, 2h.193: the card, its five group headings, every label, hint and n
   }
   expect(
     notesOf(el).map((p) => text(p)),
-    'the notes show the English of the card note and of the three groups this read leaves off (192, 193)',
+    'the notes show the English of the three groups this read leaves off (192, 193; 22 IP5.5 leaves no card note)',
   ).toEqual([
-    en('model-profile-draft-cache-note'),
     en('model-profile-ngram-off', 'ngram-simple'),
     en('model-profile-ngram-off', 'ngram-map-k'),
     en('model-profile-ngram-off', 'ngram-map-k4v'),

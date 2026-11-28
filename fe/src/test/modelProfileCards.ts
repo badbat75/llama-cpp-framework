@@ -4,7 +4,7 @@
 // tests (the h3 list, the About toggles, the tab path, the heading levels)
 // derives from this one list: a sub-slice that adds cards adds them here, at
 // the place 83 gives them, and nowhere else.
-import { en, MODEL_PROFILE_ID } from './bff.ts'
+import { en } from './bff.ts'
 
 /** A field's label: its strings key, or `shown(...)` where the brief gives
  * the label as literal text and not a string (Top-K, Top-P, Min-P of 97). */
@@ -84,62 +84,9 @@ export type Card = {
 }
 
 export const MODEL_PROFILE_CARDS: Card[] = [
-  { heading: 'model-profile-assets', fields: [] },
-  // Brief 14 (fe/briefs/14-gpu-distribution.md, GD1.1): 02e's 83 reserved this
-  // place between Assets and Hardware. The GPUs are no field of 2e's table 112,
-  // so the card's one field is the split mode select; the GPU rows, their
-  // checkboxes, weights and move buttons depend on the device read and the
-  // user's checks, and are pinned in ModelProfileGpu*.test.tsx.
   {
-    heading: 'model-profile-gpu-distribution',
-    fields: ['model-profile-split-mode'],
-  },
-  // Brief 21 (fe/briefs/21-tensor-placement.md, 21 T.2): the place 02e's 83
-  // gives the card is after GPU distribution, before Hardware config. Its
-  // rules are no field of 2e's table 112, so the card has no field of its own;
-  // its controls that are always there are Add rule and, with TP2, the Rules
-  // as text field (21 T.10: its About toggle, then its input), so the
-  // whole-page tab path carries them in that order (21 T.13). The rule rows'
-  // controls depend on the value and the device read, and are pinned in
-  // TensorPlacement1.test.tsx and TensorPlacement2.test.tsx.
-  {
-    heading: 'model-profile-tensor-placement',
+    heading: 'model-profile-assets',
     fields: [],
-    extraStops: [
-      'model-profile-ot-add',
-      { about: 'model-profile-ot-text' },
-      { input: 'model-profile-ot-text' },
-    ],
-  },
-  {
-    heading: 'model-profile-hardware-config',
-    fields: [
-      'model-profile-gpu-layers',
-      'model-profile-moe-cpu-layers',
-      'model-profile-moe-cache',
-      'model-profile-dense-ffn-cpu-layers',
-      'model-profile-op-offload',
-      'model-profile-repack',
-      'model-profile-no-host-buffer',
-      'model-profile-lazy-tensors',
-      'model-profile-load-mode',
-      'model-profile-fit-to-vram',
-      'model-profile-fit-min-context',
-      'model-profile-fit-free-vram',
-      'model-profile-draft-device',
-      'model-profile-draft-gpu-layers',
-    ],
-  },
-  {
-    heading: 'model-profile-resource-context',
-    fields: [
-      'model-profile-context-size',
-      'model-profile-parallel-slots',
-      'model-profile-unified-kv',
-      'model-profile-per-slot-context',
-      'model-profile-batch-size',
-      'model-profile-u-batch-size',
-    ],
   },
   {
     heading: 'model-profile-embeddings',
@@ -147,15 +94,7 @@ export const MODEL_PROFILE_CARDS: Card[] = [
   },
   {
     heading: 'model-profile-kv-cache',
-    fields: [
-      'model-profile-k-cache-type',
-      'model-profile-v-cache-type',
-      'model-profile-flash-attention',
-      'model-profile-cache-ram',
-      'model-profile-cache-reuse',
-      'model-profile-context-checkpoints',
-      'model-profile-checkpoint-step',
-    ],
+    fields: ['model-profile-cache-reuse'],
   },
   {
     heading: 'model-profile-chat-reasoning',
@@ -185,13 +124,11 @@ export const MODEL_PROFILE_CARDS: Card[] = [
   },
   {
     heading: 'model-profile-advanced',
-    fields: ['model-profile-load-on-startup', 'model-profile-chat-kwargs'],
+    fields: ['model-profile-chat-kwargs'],
   },
   {
     heading: 'model-profile-vision',
     fields: [
-      'model-profile-vision-on-gpu',
-      'model-profile-vision-gpu',
       'model-profile-min-image-tokens',
       'model-profile-max-image-tokens',
     ],
@@ -214,13 +151,6 @@ export const MODEL_PROFILE_CARDS: Card[] = [
         key: 'spec-draft-n-min',
         boxed: true,
       },
-      {
-        label: 'model-profile-draft-n-ubatch',
-        key: 'spec-draft-n-ubatch',
-        boxed: true,
-      },
-      { label: 'model-profile-draft-k-cache-type', key: 'spec-draft-type-k' },
-      { label: 'model-profile-draft-v-cache-type', key: 'spec-draft-type-v' },
       {
         label: 'model-profile-match-length',
         key: 'spec-ngram-mod-n-match',
@@ -292,13 +222,9 @@ export function cardHeadingKeys(): string[] {
  * 19 G.14 gives `n-cpu-moe` the range 0 to 4096, so it is no longer one of
  * them. */
 export const NO_INPUT_MODE_KEYS: string[] = [
-  'cache-ram',
   'top-k',
   'n-predict',
   'reasoning-budget',
-  'n-gpu-layers',
-  'n-cpu-ffn',
-  'n-gpu-layers-draft',
 ]
 
 /** The input mode a number field takes (87 as superseded by 2h.158):
@@ -324,15 +250,14 @@ export function fieldAboutToggles(): string[] {
 }
 
 /** The cards whose intro sits behind an About of the card itself (22 D4.31:
- *  the GPU distribution and the Tensor placement card show only the first line
- *  of their intro, the rest is in the card's panel). Their toggle is the card's
- *  first stop, right after the card's h3, before the first field's About (the
- *  designer's ruling of 2026-11-27): a reader who tabs the page reaches it as
- *  they reach a card, and the panel is the card's own words. */
-const CARD_INTRO_PANEL = [
-  'model-profile-gpu-distribution',
-  'model-profile-tensor-placement',
-]
+ *  the card shows only the first line of its intro, the rest is in the card's
+ *  panel). Their toggle is the card's first stop, right after the card's h3,
+ *  before the first field's About (the designer's ruling of 2026-11-27): a
+ *  reader who tabs the page reaches it as they reach a card, and the panel is
+ *  the card's own words. IP5.5 leaves no card of the model profile page with an
+ *  intro panel: the two that had one (GPU distribution, Tensor placement) are
+ *  set per instance, in the instance profile's entry. */
+const CARD_INTRO_PANEL: string[] = []
 
 /** The accessible name of a card's own About toggle, or null when the card has
  *  no intro panel. */
@@ -385,27 +310,11 @@ function fieldId(field: Label): string {
  * by their label.
  * Every other field's control stays disabled, so it takes no tab stop. */
 const EDITABLE_FIELDS: Label[] = [
-  // Brief 14 (GD1.2): the GPU distribution card's split mode select, always
-  // enabled (decision 6).
-  'model-profile-split-mode',
-  // Brief 21 (21 T.10): the Rules as text field's input, editable while the
-  // page is (the TP1 card holds no input, select or textarea of its own).
   'model-profile-ot-text',
   'model-profile-context-size',
-  'model-profile-parallel-slots',
-  'model-profile-unified-kv',
-  'model-profile-per-slot-context',
-  'model-profile-batch-size',
-  'model-profile-u-batch-size',
   'model-profile-embedding-mode',
   'model-profile-pooling',
-  'model-profile-k-cache-type',
-  'model-profile-v-cache-type',
-  'model-profile-flash-attention',
-  'model-profile-cache-ram',
   'model-profile-cache-reuse',
-  'model-profile-context-checkpoints',
-  'model-profile-checkpoint-step',
   'model-profile-temperature',
   shown('Top-K'),
   shown('Top-P'),
@@ -413,7 +322,6 @@ const EDITABLE_FIELDS: Label[] = [
   'model-profile-repeat-penalty',
   'model-profile-presence-penalty',
   'model-profile-backend-sampling',
-  'model-profile-load-on-startup',
   'model-profile-chat-kwargs',
   'model-profile-chat-template',
   'model-profile-prefill-assistant',
@@ -424,36 +332,11 @@ const EDITABLE_FIELDS: Label[] = [
   'model-profile-thinking-budget',
   'model-profile-budget-message',
   'model-profile-max-output',
-  'model-profile-vision-on-gpu',
-  'model-profile-vision-gpu',
   'model-profile-min-image-tokens',
   'model-profile-max-image-tokens',
-  'model-profile-gpu-layers',
-  // Brief 19 (19 G.14): MoE CPU layers joins the editable fields. Its state
-  // follows the model file's facts (pending and a dense model disable it),
-  // which the cards' tests never read: the bff fake answers a reason, and a
-  // reason leaves the field enabled. 19 G.14 is pinned in
-  // ModelProfileLayers1.test.tsx.
-  'model-profile-moe-cpu-layers',
-  'model-profile-dense-ffn-cpu-layers',
-  'model-profile-op-offload',
-  'model-profile-repack',
-  'model-profile-no-host-buffer',
-  'model-profile-lazy-tensors',
-  'model-profile-load-mode',
-  'model-profile-fit-to-vram',
-  'model-profile-fit-min-context',
-  'model-profile-fit-free-vram',
-  'model-profile-draft-device',
-  'model-profile-draft-gpu-layers',
-  // 2h.9's 189 to 191: the Speculative decoding card's sixteen fields, each
-  // enabled by its group's rule (190, 191).
   'model-profile-draft-n-max',
   'model-profile-draft-p-min',
   'model-profile-draft-n-min',
-  'model-profile-draft-n-ubatch',
-  'model-profile-draft-k-cache-type',
-  'model-profile-draft-v-cache-type',
   'model-profile-match-length',
   'model-profile-min-draft',
   'model-profile-max-draft',
@@ -515,59 +398,8 @@ type Rule = { present: string[]; checked?: string }
  * free VRAM are enabled while the Fit to VRAM box reads checked at load
  * (2h.8's 186). */
 const ENABLE_RULE: Record<string, Rule> = {
-  'model-profile-unified-kv': { present: ['parallel'] },
-  'model-profile-vision-on-gpu': { present: ['mmproj'] },
-  'model-profile-vision-gpu': {
-    present: ['mmproj'],
-    checked: 'mmproj-offload',
-  },
   'model-profile-min-image-tokens': { present: ['mmproj'] },
   'model-profile-max-image-tokens': { present: ['mmproj'] },
-  'model-profile-draft-device': { present: ['model-draft'] },
-  'model-profile-draft-gpu-layers': { present: ['model-draft'] },
-  // 2h.8's 186: both Fit dependents are enabled only while the Fit to VRAM
-  // box is checked, which is the load state below and the user's clicks.
-  'model-profile-fit-min-context': { present: [], checked: 'fit' },
-  'model-profile-fit-free-vram': { present: [], checked: 'fit' },
-}
-
-/** The flag spellings 2e.3c's 127 reads as on for `fit` (`common/arg.cpp`
- * `is_truthy`, compared trimmed), and the four it reads as off
- * (`is_falsey`). Any other value is invalid: 128 shows the box unchecked. */
-const FIT_ON = ['on', 'enabled', 'true', '1']
-
-/** True when 2e.3c's 127 shows the Fit to VRAM box checked on a read: the key
- * absent (llama.cpp's own default is on), or one of the four on words. */
-export function fitCheckedAtLoad(values: Record<string, string>): boolean {
-  const value = values['fit']
-  if (value === undefined) return true
-  return FIT_ON.includes(value.trim())
-}
-
-/** True when 2h.8's 184 counts the key as "set": the field's default box is
- * unticked, which is a key the file holds with a value (2e's 86: an empty
- * value reads as absent). */
-function keySet(values: Record<string, string>, key: string): boolean {
-  return values[key] !== undefined && values[key] !== ''
-}
-
-/** The strings key of the toggle text that names the Fit to VRAM checkbox
- * (2h.8's 184), from what the read leaves the two default boxes and the box's
- * own state. */
-export function fitToggleKey(values: Record<string, string>): string {
-  const ctx = keySet(values, 'ctx-size')
-  const layers = keySet(values, 'n-gpu-layers')
-  if (!ctx && !layers) return 'model-profile-fit-allowed'
-  if (!fitCheckedAtLoad(values)) return 'model-profile-fit-not-allowed'
-  if (ctx && layers) return 'model-profile-fit-nothing'
-  if (ctx) return 'model-profile-fit-layers-only'
-  return 'model-profile-fit-context-only'
-}
-
-/** The toggle text that names the Fit to VRAM checkbox (2h.8's 184), from
- * what the read leaves the two default boxes and the box's own state. */
-export function fitToggleText(values: Record<string, string>): string {
-  return en(fitToggleKey(values))
 }
 
 /** The flag spellings 2e's 122 reads as unchecked. Any other value, the empty
@@ -575,7 +407,6 @@ export function fitToggleText(values: Record<string, string>): string {
 const FLAG_UNCHECKED = ['off', 'disabled', 'false', '0']
 
 function flagChecked(values: Record<string, string>, key: string): boolean {
-  if (key === 'fit') return fitCheckedAtLoad(values)
   const value = values[key]
   return value === undefined || !FLAG_UNCHECKED.includes(value)
 }
@@ -680,10 +511,6 @@ export function fieldTabStops(values: Record<string, string>): string[] {
         if (isEditableField(field) && ruleHolds(field, values))
           stops.push(en('field-default'))
       if (!controlEnabled(field, values)) continue
-      if (fieldId(fieldLabel(field)) === 'model-profile-fit-to-vram') {
-        stops.push(fitToggleText(values))
-        continue
-      }
       const toggle = CHECKBOX_TOGGLES[fieldId(fieldLabel(field))]
       stops.push(toggle === undefined ? label : en(toggle))
     }
@@ -709,9 +536,6 @@ export function fieldTabStops(values: Record<string, string>): string[] {
 export function pageTopTabStops(): string[] {
   return [
     en('model-profile-back'),
-    // 24 A2.1: the state line's switch, named by the h1, so its accessible
-    // name is the id of the profile the fixture reads.
-    MODEL_PROFILE_ID,
     en('model-profile-jump-label'),
     ...cardHeadings(),
     en('model-profile-assets'),

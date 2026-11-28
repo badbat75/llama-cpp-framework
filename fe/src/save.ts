@@ -48,16 +48,27 @@ export function saveAnswer(
   if (sessionRevoked(reply)) return { kind: 'revoked' }
   const body = reply.body
   if (reply.ok) {
-    return isRecord(body) &&
-      typeof body.revision === 'string' &&
-      typeof body.running === 'boolean'
+    // Brief 22, IP5.0: a model profile save answers the instances whose render
+    // lists what it saved, as their ids. The ids are the restart list of
+    // 16 17d.4 and say the same `running` says as a boolean.
+    if (!isRecord(body) || typeof body.revision !== 'string')
+      return failed(t('save-failed'))
+    const ids = Array.isArray(body.running)
+      ? body.running.filter((id): id is string => typeof id === 'string')
+      : null
+    const flag = typeof body.running === 'boolean' ? body.running : null
+    return ids !== null || flag !== null
       ? {
           kind: 'saved',
           revision: body.revision,
-          running: body.running,
-          restart: Array.isArray(body.restart)
-            ? body.restart.filter((id): id is string => typeof id === 'string')
-            : [],
+          running: flag ?? (ids !== null && ids.length > 0),
+          restart:
+            ids ??
+            (Array.isArray(body.restart)
+              ? body.restart.filter(
+                  (id): id is string => typeof id === 'string',
+                )
+              : []),
         }
       : failed(t('save-failed'))
   }

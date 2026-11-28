@@ -25,7 +25,6 @@ import {
   navigate,
   reply,
   rowName,
-  shownText,
   startAt,
   type BffOptions,
   type ModelProfile,
@@ -88,23 +87,6 @@ function shownIds(main: HTMLElement): string[] {
     .getAllByRole('row')
     .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
     .map((row) => rowName(row.querySelector('td, th')!))
-}
-
-/** The data rows' cells' text, the row's − of 22 D4.1 left out (its words are
- *  its accessible name, in a `.visually-hidden` span). The name cell is the id
- *  alone, as in `shownIds`. */
-function rows(main: HTMLElement): string[][] {
-  const t = within(main).getByRole('table', {
-    name: en('model-profiles-title'),
-  })
-  return within(t)
-    .getAllByRole('row')
-    .filter((row) => within(row).queryAllByRole('columnheader').length === 0)
-    .map((row) =>
-      [...row.querySelectorAll('td, th')].map((c, i) =>
-        i === 0 ? rowName(c) : shownText(c),
-      ),
-    )
 }
 
 function type(input: HTMLInputElement, value: string) {
@@ -343,31 +325,6 @@ test('2b.27: no trimming of a trailing space, no wildcard or pattern', async () 
   }
 })
 
-test('2b.28: shown rows keep the reply order and their cells; switched-off rows are filtered like the others; nothing is highlighted', async () => {
-  const { main } = open({
-    modelProfiles: [
-      modelProfile('zeta-a', ''),
-      modelProfile('Alpha', '', false),
-      modelProfile('mid', '/x/none.gguf'),
-      // Matched by its model path only.
-      modelProfile('beto', '/x/A.gguf', false),
-    ],
-  })
-  const input = await field(main)
-  type(input, 'a')
-  expect(rows(main)).toEqual([
-    ['zeta-a', 'llama.cpp', en('model-profiles-status-on'), ''],
-    ['Alpha', 'llama.cpp', en('model-profiles-status-off'), ''],
-    ['beto', 'llama.cpp', en('model-profiles-status-off'), ''],
-  ])
-  const t = await table(main)
-  expect(t.querySelectorAll('mark, b, strong, em')).toHaveLength(0)
-  type(input, 'alpha')
-  expect(rows(main)).toEqual([
-    ['Alpha', 'llama.cpp', en('model-profiles-status-off'), ''],
-  ])
-})
-
 // ── When it updates, what is heard (29, 30) ─────────────────────────────
 
 test('2b.29: each change updates the table at once; Enter does nothing; focus and route stay', async () => {
@@ -387,38 +344,6 @@ test('2b.29: each change updates the table at once; Enter does nothing; focus an
   expect(shownIds(main)).toEqual(['Qwen3-27B'])
   expect(document.activeElement).toBe(input)
   expect(window.location.hash).toBe('#/profiles/model')
-})
-
-test('2b.30, 2c.50: the filter status paragraph, in the page before its text changes: empty, the count, or no-match with no table and the note kept', async () => {
-  const { main } = open({ modelProfiles: EXAMPLE })
-  const input = await field(main)
-  const line = status(main)
-  expect(line.tagName).toBe('P')
-  expect(line.getAttribute('role')).toBe('status')
-  expect(line.textContent).toBe('')
-
-  type(input, 'qwen')
-  expect(status(main)).toBe(line)
-  expect(line.textContent).toBe(en('model-profiles-filter-count', '1', '2'))
-
-  type(input, '-')
-  expect(status(main)).toBe(line)
-  expect(line.textContent).toBe(en('model-profiles-filter-count', '2', '2'))
-
-  type(input, 'nothing-like-it')
-  expect(status(main)).toBe(line)
-  expect(line.textContent).toBe(en('model-profiles-no-match'))
-  expect(within(main).queryByRole('table')).toBeNull()
-  expect(within(main).queryAllByRole('columnheader')).toHaveLength(0)
-  const note = within(main).getByText(en('model-profiles-off-note'))
-  expect(before(line, note)).toBe(true)
-  // The field stays, so the user can change the text.
-  expect(within(main).getByRole('searchbox')).toBe(input)
-
-  type(input, '')
-  expect(status(main)).toBe(line)
-  expect(line.textContent).toBe('')
-  expect(shownIds(main)).toEqual(['Qwen3-27B', 'Old-Coder'])
 })
 
 test('2b.30: the count is of the shown rows and the total of the reply', async () => {
@@ -509,7 +434,7 @@ test('2b.34, 2d.62: the text is in no URL and no storage, and the page reopens w
 
 // ── Keyboard and screen reader (35, 36) ─────────────────────────────────
 
-test('2b.35, 2c.53, 2d.60, 22 D4.1 (as 17c.2 amends it: the two sortable headers are tab stops): with text, Tab reaches the field, Clear filter, the Model profile and Engine header buttons, then the shown row link, switch and minus; focus on arrival stays on the h1', async () => {
+test('2b.35, 2c.53, 2d.60, 22 D4.1, 22 IP5.1 (as 17c.2 amends it: the two sortable headers are tab stops): with text, Tab reaches the field, Clear filter, the Model profile and Engine header buttons, then the shown row link and minus; focus on arrival stays on the h1', async () => {
   // 2c.53 replaces 2b.35: the administrator's switches follow Clear filter.
   // Focus moves to the h1 only after a route change, never on a first load.
   startAt('#/')
@@ -523,12 +448,13 @@ test('2b.35, 2c.53, 2d.60, 22 D4.1 (as 17c.2 amends it: the two sortable headers
   const input = await field(main)
   await waitFor(() => expect(document.activeElement).toBe(h1))
   type(input, 'q')
-  // 2d.60: each shown row's name is a link; it precedes the row's switch.
+  // 2d.60: each shown row's name is a link. 22 IP5.1 takes the row's switch
+  // out, so the link is the row's first stop and its minus the last.
   // 17c.2: the header buttons sit in the table's thead, so after the filter's
   // Clear and before the first row's link.
-  // 22 D4.1: the row's minus follows its switch.
+  // 22 D4.1: the row's minus follows its link.
   const order = tabbable().map(nameOf)
-  expect(order.slice(-12)).toEqual([
+  expect(order.slice(-11)).toEqual([
     // 20 N.10: Node info rides the host list so it comes with the instances,
     // then, brief 16 (17a.2), Server profiles and Model profiles, then About,
     // all before the filter.
@@ -541,7 +467,6 @@ test('2b.35, 2c.53, 2d.60, 22 D4.1 (as 17c.2 amends it: the two sortable headers
     en('model-profiles-column-name'),
     en('model-profiles-column-engine'),
     'Qwen3-27B',
-    'Qwen3-27B',
     en('model-profiles-delete-row', 'Qwen3-27B'),
     // 22 C.1: the list's + ("New model profile"), the last stop, after the
     // table.
@@ -549,11 +474,11 @@ test('2b.35, 2c.53, 2d.60, 22 D4.1 (as 17c.2 amends it: the two sortable headers
   ])
   const t = await table(main)
   // 22 D4.1: the row's minus is a button in the row, so the table's stops are
-  // the head's two buttons, then each row's link, switch and minus.
+  // the head's two buttons, then each row's link and minus.
   const head = [...t.querySelectorAll('thead button')]
   const rowStops = [...t.querySelectorAll('tbody a, tbody input, tbody button')]
   expect(head, '17c.2: the two sortable header buttons').toHaveLength(2)
-  expect(rowStops, '22 D4.1: three stops per shown row').toHaveLength(3)
+  expect(rowStops, '22 D4.1 and IP5.1: two stops per shown row').toHaveLength(2)
   expect(tabbable().filter((el) => t.contains(el))).toEqual([
     ...head,
     ...rowStops,

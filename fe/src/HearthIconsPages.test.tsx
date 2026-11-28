@@ -144,8 +144,27 @@ function expectIcon(host: Element, name: string, why: string): void {
 const ID = 'Qwen3-27B'
 const PROFILE = `#/profiles/model/${ID}`
 
-/** The field error of a refused `fit` (2e.3c, 128). */
-const FIT_INVALID = en('model-profile-fit-invalid')
+// 22 IP5.5 moved the Fit to VRAM card off this page, and the Fit row is the
+// only one whose value is refused as it is read (128). The field error this
+// file draws on is therefore made the way 163 makes one on a stay key of that
+// slice: Top-K typed a value that is not a whole number, then Save changes.
+const WHOLE = en('field-error-whole-number')
+const TOP_K = 'Top-K'
+
+/** The page's Save changes button. */
+const saveButton = (main: HTMLElement): HTMLButtonElement =>
+  within(main).getByRole('button', { name: en('save-button') })
+
+/** Marks Top-K: the field carries the error of 163, and the bff is asked
+ *  nothing (the client check refuses before the write). */
+async function markTopK(main: HTMLElement) {
+  const box = (await within(main).findByRole('textbox', {
+    name: TOP_K,
+  })) as HTMLInputElement
+  fireEvent.change(box, { target: { value: 'abc' } })
+  fireEvent.click(saveButton(main))
+  await within(main).findByText(WHOLE)
+}
 
 /** The bff ends the session: 403, key session-not-administrator (S1). */
 const REVOKED = () => reply(403, { key: 'session-not-administrator', args: [] })
@@ -175,6 +194,9 @@ type PageCase = {
   hash: string
   options: BffOptions
   ready: (main: HTMLElement) => Promise<unknown>
+  /** What brings the page to its state past being read (22 IP5.5: a model
+   *  profile's field error is made, not read). */
+  dirty?: (main: HTMLElement) => Promise<unknown>
 }
 
 const PAGES: PageCase[] = [
@@ -207,11 +229,9 @@ const PAGES: PageCase[] = [
   {
     what: 'a model profile with a field error',
     hash: PROFILE,
-    options: {
-      modelProfile: () =>
-        reply(200, modelProfileDoc({}, { values: { fit: 'yes' } })),
-    },
-    ready: (main) => within(main).findByText(FIT_INVALID),
+    options: {},
+    ready: (main) => within(main).findByRole('textbox', { name: TOP_K }),
+    dirty: markTopK,
   },
 ]
 
@@ -432,14 +452,12 @@ test('H8b.4: the filter row holds Icon search as its first child before the inpu
 // ── H8b.6: the field error ────────────────────────────────────────────────
 
 test('H8b.6: the field error draws Icon circle-alert in place of its own svg, keeps its text, its id and the aria-describedby link, and no .error-icon is left on the page', async () => {
-  const main = openAt(PROFILE, {
-    modelProfile: () =>
-      reply(200, modelProfileDoc({}, { values: { fit: 'yes' } })),
-  })
-  const err = await within(main).findByText(FIT_INVALID)
+  const main = openAt(PROFILE)
+  await markTopK(main)
+  const err = within(main).getByText(WHOLE)
   expect(err.tagName, 'a paragraph (128)').toBe('P')
   expect(err.id, 'the id 128 gives the field error').toBe(
-    'model-profile-fit-error',
+    'model-profile-top-k-error',
   )
   expect(
     err.classList.contains('field-error'),
@@ -452,11 +470,11 @@ test('H8b.6: the field error draws Icon circle-alert in place of its own svg, ke
   expect(
     text(err),
     'the words of 129 exactly: the icon of 24 adds no text',
-  ).toBe(FIT_INVALID)
+  ).toBe(WHOLE)
   expect(
     [...main.querySelectorAll('.field-error')].map((el) => el.id),
     'this field is the only one with an error',
-  ).toEqual(['model-profile-fit-error'])
+  ).toEqual(['model-profile-top-k-error'])
   expect(
     main.querySelector('svg.error-icon'),
     'the drawn svg of Field.tsx, with its circle and two rects, is gone',
@@ -467,13 +485,13 @@ test('H8b.6: the field error draws Icon circle-alert in place of its own svg, ke
   ).toBeNull()
   // The link the announcement runs on (section 5: the field error's announcement).
   const control = main.querySelector(
-    '[aria-describedby~="model-profile-fit-error"]',
+    '[aria-describedby~="model-profile-top-k-error"]',
   )
   expect(control, 'a control names the error in aria-describedby').toBeTruthy()
   expect(
     control!.getAttribute('aria-describedby')!.split(/\s+/),
     'the ids it names, in order, include the error',
-  ).toContain('model-profile-fit-error')
+  ).toContain('model-profile-top-k-error')
   expect(
     control!.getAttribute('aria-invalid'),
     'and the control says it is invalid',
@@ -487,6 +505,7 @@ test.each(PAGES)(
   async (page) => {
     const main = openAt(page.hash, page.options)
     await page.ready(main)
+    await page.dirty?.(main)
     const svgs = [...document.querySelectorAll('svg')]
     expect(
       svgs.length,
@@ -513,6 +532,7 @@ test.each(PAGES)(
   async (page) => {
     const main = openAt(page.hash, page.options)
     await page.ready(main)
+    await page.dirty?.(main)
     const icons = [...document.querySelectorAll('.icon')]
     expect(
       icons.length,

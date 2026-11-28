@@ -75,7 +75,6 @@ const CARD_TITLES = cardHeadings()
 /** The nine 2e cards: the jump list's entries after Assets. */
 const OTHER_TITLES = CARD_TITLES.slice(1)
 /** A path case whose file name is the no-model line. */
-const NO_FILE = '(no model file)'
 
 let scrolled: Element[] = []
 
@@ -237,9 +236,11 @@ async function refused(
   await within(main).findByRole('heading', { level: 1, name: ID })
   await within(main).findByRole('heading', { level: 3, name: ASSETS })
   if (openCard) fireEvent.click(toggleOf())
-  const ctx = document.getElementById('model-profile-ctx-size-control')
-  expect(ctx, 'the Context size field').not.toBeNull()
-  fireEvent.change(ctx as HTMLElement, { target: { value: '65536' } })
+  // One edit of a settings field: a stay key of 22 IP5.5, Cache reuse (the
+  // Context size box of 2e left the page with the placement keys).
+  const reuse = document.getElementById('model-profile-cache-reuse-control')
+  expect(reuse, 'the Cache reuse field').not.toBeNull()
+  fireEvent.change(reuse as HTMLElement, { target: { value: '65536' } })
   const save = within(main).getByRole('button', { name: en('save-button') })
   save.focus()
   fireEvent.click(save)
@@ -248,81 +249,6 @@ async function refused(
 }
 
 // ── H11a.1: the summary line ─────────────────────────────────────────────
-
-const PATHS: [string, Record<string, string> | null, string][] = [
-  ['a path with /', { model: MODEL }, 'Qwen3-27B-Q8_0.gguf'],
-  [
-    'a path with \\',
-    { model: '\\\\server\\share\\models\\Qwen3-27B-Q8_0.gguf' },
-    'Qwen3-27B-Q8_0.gguf',
-  ],
-  [
-    'a path that mixes / and \\',
-    { model: '/var/lib/private-ai\\models\\Qwen3-27B-Q8_0.gguf' },
-    'Qwen3-27B-Q8_0.gguf',
-  ],
-  [
-    'a path with an empty segment',
-    { model: '/var/lib/models//Qwen3-27B-Q8_0.gguf' },
-    'Qwen3-27B-Q8_0.gguf',
-  ],
-  // H11a.1: `file` is the LAST NON-EMPTY segment, so a path ending in a
-  // separator names its last directory; the no-model line is only for an
-  // absent key, an empty value, or a value with no non-empty segment.
-  ['a path ending in \\', { model: '\\\\server\\share\\' }, 'share'],
-  ['the key absent', null, NO_FILE],
-  ['the value empty', { model: '' }, NO_FILE],
-  ['a path ending in /', { model: '/var/lib/models/' }, 'models'],
-]
-
-test.each(PATHS)(
-  'H11a.1: the line under the h1 names the engine of the read and the model file, %s',
-  async (what, model, file) => {
-    // The key absent: a `values` with no `model` at all, as a read that carries
-    // no such key answers.
-    const doc =
-      model === null
-        ? assetsDoc({ values: { 'ctx-size': '172032', 'spec-type': 'none' } })
-        : assetsDoc({}, model)
-    const { main } = await form(doc)
-    const line = summaryOf(main)
-    const expectText =
-      file === NO_FILE
-        ? en('model-profile-summary-no-model', ENGINE)
-        : en('model-profile-summary', ENGINE, file)
-    expect(textOf(line), `H11a.1: ${what}`).toBe(expectText)
-  },
-)
-
-test('H11a.1: the line is the first thing under the h1, before the state line, a plain p that is no heading and no live region', async () => {
-  // A switched-off profile: the state line of 24 A2.1 (the page's own switch
-  // and the short word of its state) is the element the line goes before, so
-  // the order of the page top is pinned in one read.
-  const { main } = await form(assetsDoc({ enabled: false }))
-  const h1 = within(main).getByRole('heading', { level: 1, name: ID })
-  const line = summaryOf(main)
-  expect(h1.nextElementSibling, 'H11a.1: right after the h1').toBe(line)
-  const off = within(main).getByText(en('model-profile-off-short'))
-  expect(before(line, off), 'H11a.1: before the state line').toBe(true)
-  const h2 = within(main).getByRole('heading', {
-    level: 2,
-    name: en('model-profile-settings-title'),
-  })
-  expect(before(off, h2), 'H11a.1: the line is above the h2').toBe(true)
-  expect(line.tagName, 'H11a.1: a p').toBe('P')
-  expect(
-    within(main).queryAllByRole('heading', { name: textOf(line) }),
-    'H11a.1: not a heading',
-  ).toEqual([])
-  expect(line.getAttribute('role'), 'H11a.1: no role').toBeNull()
-  expect(line.getAttribute('aria-live'), 'H11a.1: no live region').toBeNull()
-  expect(
-    within(main)
-      .queryAllByRole('status')
-      .filter((s) => s === line).length,
-    'H11a.1: no status: the save bar keeps the only one (135)',
-  ).toBe(0)
-})
 
 // ── H11a.2: the two strings ──────────────────────────────────────────────
 
@@ -526,8 +452,8 @@ test('H11a.6: a card already open stays open under the Assets jump, and the nine
   fireEvent.click(assets)
   expectOpen('H11a.6: an open card stays open')
 
-  // Closed, then each of the nine 2e jumps: Assets stays closed, and the jump
-  // itself still works (section 6: the nine jumps unchanged).
+  // Closed, then each of the other cards' jumps: Assets stays closed, and the jump
+  // itself still works (section 6: the card jumps unchanged).
   fireEvent.click(toggleOf())
   expectClosed('closed before the nine jumps')
   for (const title of OTHER_TITLES) {

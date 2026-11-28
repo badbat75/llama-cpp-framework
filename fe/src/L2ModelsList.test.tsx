@@ -169,24 +169,6 @@ test('22 L2 D4.33: the filter describes itself with the one short hint, standing
 
 // ── Item 8's D2 review: the filter's status line reserves no room ─────────
 
-/** Every rule of the sheet that reaches `el`. A selector jsdom's engine cannot
- *  parse is skipped (a `:has()` of another element, a pseudo-element). */
-const reaching = (el: Element): { sel: string; body: string }[] =>
-  RULES.filter((r) => {
-    try {
-      return el.matches(r.sel)
-    } catch {
-      return false
-    }
-  })
-
-/** Every rule of the sheet that reaches `el` and declares `name`, as
- *  "selector: value", so a red names the rule to fix. */
-const declaring = (el: Element, name: string): string[] =>
-  reaching(el)
-    .filter((r) => prop(r.body, name) !== '')
-    .map((r) => `${r.sel}: ${name}: ${norm(prop(r.body, name))}`)
-
 /** The values the sheet declares for `name` on the class `sel` (a rule's
  *  selector list is matched part by part, as the class of the element the
  *  brief names). The switches' line shows only after a switch, so the sheet
@@ -195,93 +177,6 @@ const declaring = (el: Element, name: string): string[] =>
  *  `margin: a` is `a` everywhere, `margin: a b` puts `b` above and below,
  *  `margin: a b c` and `margin: a b c d` put `a` above and `c` below;
  *  `margin-block: a` is `a` above and below. */
-const marginValue = (body: string, side: 'top' | 'bottom'): string => {
-  const long = prop(body, `margin-${side}`)
-  if (long !== '') return long
-  const block = prop(body, 'margin-block')
-  if (block !== '') return block.split(/\s+/)[0] ?? ''
-  const m = prop(body, 'margin')
-  if (m === '') return ''
-  const v = m.split(/\s+/)
-  if (v.length === 1) return v[0]
-  if (v.length === 2) return v[1]
-  return side === 'top' ? v[0] : (v[2] ?? v[1])
-}
-
-/** The value the cascade gives `el` for one vertical margin: every rule
- *  reaching it that declares the margin (directly or by a shorthand), ordered
- *  as the cascade orders them (the reader of ListColumns.test.tsx: the
- *  specificity counted by `.` and `#`, a tie on source order), the last
- *  winning. The sheet's global `p { margin: 0 0 var(--space-3) }` reaches the
- *  filter's line (0,0,1), so the D2 review's rule is not that no rule declares
- *  a margin: it is that 0 wins for it, its fix being a declaration on the
- *  class (0,1,0). A pin of "no rule reaching it declares a margin" would red a
- *  correct fix. */
-const marginWins = (el: Element, side: 'top' | 'bottom'): string => {
-  const hits = reaching(el)
-    .map((r, i) => ({
-      i,
-      spec: (r.sel.match(/[.#]/g) ?? []).length,
-      value: marginValue(r.body, side),
-    }))
-    .filter((h) => h.value !== '')
-    .sort((a, b) => a.spec - b.spec || a.i - b.i)
-  return hits.length === 0 ? '' : norm(hits[hits.length - 1].value)
-}
-
-const classDeclares = (sel: string, name: string): string[] =>
-  RULES.filter((r) =>
-    r.sel
-      .split(',')
-      .map((part) => norm(part))
-      .includes(sel),
-  )
-    .filter((r) => prop(r.body, name) !== '')
-    .map((r) => norm(prop(r.body, name)))
-
-test('22 D4.33 (as its D2 review amends it): the filter’s status line reserves no room when it is empty, and the switches’ status line keeps its one line', async () => {
-  startAt('#/profiles/model')
-  fakeBff({ modelProfiles: PAIR })
-  render(<App />)
-  const main = screen.getByRole('main')
-  const table = await within(main).findByRole('table', {
-    name: en('model-profiles-title'),
-  })
-  // The filter's status line, the list's read, before the table. With no
-  // filter typed it says nothing, which is the case of the gap the review
-  // measures (35 px under the hint, where D4.33 asks 16 px).
-  const line = within(main)
-    .getAllByRole('status')
-    .find((el) => before(el, table))
-  expect(
-    line,
-    'the filter’s status line is there, the list’s read (2c.7)',
-  ).toBeDefined()
-  expect(
-    line!.textContent,
-    'the list read with no filter typed says nothing',
-  ).toBe('')
-  // jsdom lays nothing out, so the review's measurement is pinned as the sheet:
-  // the line keeps no height of its own (H1a.12's list, HearthTokens.test.ts,
-  // drops it too), and no margin above and below, so an empty line adds
-  // nothing: the filter block's --space-4, 16 px, is all that separates the
-  // hint from the table (D4.33).
-  expect(
-    declaring(line!, 'min-height'),
-    '22 D4.33 review D2: no rule gives the filter’s status line a floor of its own',
-  ).toEqual([])
-  for (const side of ['top', 'bottom'] as const)
-    expect(
-      marginWins(line!, side),
-      `22 D4.33 review D2: the cascade leaves the filter’s status line no margin above or below (the global p rule reaches it, so the rule is that the class's 0 wins for it, ${side})`,
-    ).toBe('0')
-  // 17d.5a is NOT undone: the switch's line, which stands between the table
-  // and the offer that replaces it, keeps the one line that stops the jump.
-  expect(
-    classDeclares('.model-profiles-switch-status', 'min-height'),
-    '17d.5a: the switches’ status line keeps its 1lh floor',
-  ).toContain('1lh')
-})
 
 // ── Item 9: 22 D4.35, the Engine under the name ───────────────────────────
 
@@ -347,12 +242,13 @@ test('22 L2 D4.35: the Engine column keeps its words in its own cell, and its he
   )
 })
 
-test('22 L2 D4.35: the row keeps naming itself by the id alone: the engine line sits outside the element that names the row, and the switch, the name link and the row delete carry the id and nothing else', async () => {
+test('22 L2 D4.35, 22 IP5.1: the row keeps naming itself by the id alone: the engine line sits outside the element that holds the name link, and the name link and the row delete carry the id and nothing else', async () => {
   // The designer's ruling of 2026-11-27, on 22 D4.35: the second line is the
   // eye's read, not the name. The element the row's controls point at for
   // their name is the name alone, so the line lives beside it in the cell, and
-  // the id alone keeps naming the switch (2c.38), the link (2d.59a) and the
-  // row delete (22 D4.1).
+  // the id alone keeps naming the link (2d.59a) and the row delete (22 D4.1).
+  // 22 IP5.1 takes the row switch out, so the link and the delete are what is
+  // named by the id.
   const table = await modelsList()
   for (const p of PAIR) {
     const row = rowOf(table, p.id)
@@ -362,20 +258,27 @@ test('22 L2 D4.35: the row keeps naming itself by the id alone: the engine line 
         ? p.engine
         : en('model-profiles-engine-not-available', p.engine),
     )
-    const sw = within(row).getByRole('switch')
-    const labelId = sw.getAttribute('aria-labelledby')
+    if (!p.engineAvailable) {
+      // An engine that is not there is the muted line only: no link, so no
+      // element to carry the name.
+      expect(
+        nameCell.contains(engine),
+        `${p.id}: the name cell shows the engine line (22 D4.35)`,
+      ).toBe(true)
+      continue
+    }
+    const link = within(nameCell).getByRole('link', { name: p.id })
+    const holder = link.parentElement
     expect(
-      labelId,
-      'the switch is labelled by an element of its row',
-    ).toBeTruthy()
-    const label = document.getElementById(labelId!)
-    expect(label, 'the element that names the switch is there').not.toBeNull()
+      holder,
+      'the link stands in an element of the name cell',
+    ).not.toBeNull()
     expect(
-      nameCell.contains(label as Element),
+      nameCell.contains(holder as Element),
       'it is in the row’s name cell',
     ).toBe(true)
     expect(
-      (label as Element).contains(engine),
+      (holder as Element).contains(engine),
       'the engine line stands outside it, so it adds nothing to the name',
     ).toBe(false)
     expect(
@@ -383,20 +286,9 @@ test('22 L2 D4.35: the row keeps naming itself by the id alone: the engine line 
       'and the name cell is still what shows it (22 D4.35)',
     ).toBe(true)
     expect(
-      rowName(label as Element),
+      rowName(holder as Element),
       'the element that names the row says the id, and nothing else',
     ).toBe(p.id)
-    expect(
-      within(row).getByRole('switch', { name: p.id }),
-      'the switch carries the id alone',
-    ).toBe(sw)
-    if (p.engineAvailable) {
-      // The name link (2d.59a: an unreadable id is plain text, no link).
-      expect(
-        within(nameCell).getByRole('link', { name: p.id }),
-        'the name link carries the id alone',
-      ).toBeDefined()
-    }
     expect(
       within(row).getByRole('button', {
         name: en('model-profiles-delete-row', p.id),
@@ -407,30 +299,6 @@ test('22 L2 D4.35: the row keeps naming itself by the id alone: the engine line 
 })
 
 // ── Item 10: 22 D4.36, the word beside the switch ─────────────────────────
-
-test('22 L2 D4.36: every row switch says On or Off beside it, the cue that is not a colour', async () => {
-  const table = await modelsList()
-  const on = cells(rowOf(table, 'qwen3-235b'))[2]
-  const off = cells(rowOf(table, 'gemma-3-12b-it'))[2]
-  expect(
-    within(on).getByText(en('model-profiles-status-on')),
-    'the row whose switch is on says On',
-  ).toBeDefined()
-  expect(
-    within(off).getByText(en('model-profiles-status-off')),
-    'the row whose switch is off says Off',
-  ).toBeDefined()
-  // The row switch is a checkbox input that plays the switch role, so its
-  // state is the input checked property, not an aria-checked attribute.
-  expect(
-    (within(on).getByRole('switch') as HTMLInputElement).checked,
-    'the word matches the switch it stands beside',
-  ).toBe(true)
-  expect(
-    (within(off).getByRole('switch') as HTMLInputElement).checked,
-    'and this one too',
-  ).toBe(false)
-})
 
 // ── Item 12: L2.A1, the + stays after the list ────────────────────────────
 

@@ -33,7 +33,6 @@ import {
   deferred,
   en,
   fakeBff,
-  isHidden,
   reply,
   rowName,
   shownText,
@@ -57,15 +56,24 @@ const PLUS_VERTICAL = 'M12 5v14'
 
 function modelProfile(
   id: string,
-  enabled: boolean,
+  inUse: boolean,
   model = '',
   engine = 'llama.cpp',
   engineAvailable = true,
 ): ModelProfile {
-  return { id, engine, engineAvailable, enabled, model }
+  // 22 IP5.1 takes the row's switch out, and 22 IP5.3 leaves the assignment as
+  // the one reason a − cannot act: the row says which instances list it.
+  return {
+    id,
+    engine,
+    engineAvailable,
+    model,
+    usedBy: inUse ? ['default'] : [],
+  }
 }
 
-/** Two on, one off, in the bff's order: only the last row's − can act. */
+/** Two listed by an instance profile, one not, in the bff's order: only the
+ *  last row's − can act. */
 const LIST: ModelProfile[] = [
   modelProfile('Qwen3-27B', true, '/m/qwen/Qwen3-27B-Q8_0.gguf'),
   modelProfile('Coder-30B', true, '/m/coder/Coder-30B.gguf'),
@@ -141,24 +149,6 @@ function minusOf(main: HTMLElement, id: string): HTMLElement {
   })
 }
 
-/** The box that holds the row's − and the reason it shows (22 D4.13). */
-function boxOf(main: HTMLElement, id: string): HTMLElement {
-  const minus = minusOf(main, id)
-  const box = minus.parentElement
-  expect(box, 'the − sits in a box of its own').not.toBeNull()
-  return box!
-}
-
-function switches(main: HTMLElement): HTMLInputElement[] {
-  return within(table(main)).queryAllByRole('switch') as HTMLInputElement[]
-}
-
-function switchOf(main: HTMLElement, id: string): HTMLInputElement {
-  return within(table(main)).getByRole('switch', {
-    name: id,
-  }) as HTMLInputElement
-}
-
 function inactive(el: HTMLElement): boolean {
   return el.getAttribute('aria-disabled') === 'true'
 }
@@ -166,16 +156,6 @@ function inactive(el: HTMLElement): boolean {
 function press(el: HTMLElement) {
   el.focus()
   fireEvent.click(el)
-}
-
-function filterField(main: HTMLElement): HTMLInputElement {
-  return within(main).getByRole('searchbox', {
-    name: en('model-profiles-filter-label'),
-  }) as HTMLInputElement
-}
-
-function type(input: HTMLElement, value: string) {
-  fireEvent.change(input, { target: { value } })
 }
 
 /** The words a node shows, whitespace folded. */
@@ -190,10 +170,6 @@ function confirmRow(main: HTMLElement): Element | null {
 
 /** The list's question for `id` (22 D4.4), the page's own being another key. */
 const question = (id: string) => en('model-profiles-delete-question', id)
-
-function queryConfirm(main: HTMLElement, id: string): HTMLElement | null {
-  return within(main).queryByRole('group', { name: question(id) })
-}
 
 /** The confirm group, once the row's − is pressed. */
 async function confirmGroup(
@@ -222,18 +198,13 @@ function alertTexts(root: HTMLElement): string[] {
     .filter((s) => s !== '')
 }
 
-/** The region above the table: the switch's status line (2c.50), the line 22
- *  D4.6 says names the profile that was deleted. */
+/** The region above the table: the list's status line, the switch's line of
+ *  2c.50 with the switch gone (22 IP5.1) and the row delete's words kept in it,
+ *  as on the Server profiles list (22 D4.6). */
 function regionStatus(main: HTMLElement): HTMLElement {
-  const line = main.querySelector('.model-profiles-switch-status')
-  expect(line, 'the switch region line is there').not.toBeNull()
+  const line = main.querySelector('.save-status')
+  expect(line, 'the region line above the table is there').not.toBeNull()
   return line as HTMLElement
-}
-
-/** The region's alert line (2c.50), where 22 D4.7 puts a refusal that leaves no
- *  group behind. */
-function regionAlert(main: HTMLElement): HTMLElement | null {
-  return main.querySelector('.model-profiles-switch-alert')
 }
 
 const deleteRoute = (id: string) =>
@@ -298,7 +269,7 @@ function cascade(el: HTMLElement): {
 
 // ── 22 D4.1: the − on every row ─────────────────────────────────────────
 
-test('22 D4.1 (as 22 D4.21 changes its icon, as 22 D4.23 moves it to its own cell): every row has a − in the Actions cell after the switch, in the shared 40 px .ot-add square with flex: none and the ot-delete class, the aria-hidden trash-2 icon and a visually hidden model-profiles-delete-row naming it with the row id, in a cell that is a plain table cell (22 D4.25)', async () => {
+test('22 D4.1 (as 22 D4.21 changes its icon, as 22 D4.23 moves it to its own cell): every row has a − in the Actions cell after the Used-by cell, in the shared 40 px .ot-add square with flex: none and the ot-delete class, the aria-hidden trash-2 icon and a visually hidden model-profiles-delete-row naming it with the row id, in a cell that is a plain table cell (22 D4.25)', async () => {
   const { main } = await open()
   const rs = dataRows(main)
   expect(rs, 'one row per profile').toHaveLength(LIST.length)
@@ -311,10 +282,16 @@ test('22 D4.1 (as 22 D4.21 changes its icon, as 22 D4.23 moves it to its own cel
       minus.closest('td'),
       '22 D4.23: the − is in the row’s last cell, the Actions column',
     ).toBe(cell)
-    const input = cells[2]!.querySelector('input')!
+    // 22 IP5.1 takes the row's switch out, so what stands before the − is the
+    // Used-by cell 22 IP5.2 gives the row.
     expect(
-      input.compareDocumentPosition(minus) & Node.DOCUMENT_POSITION_FOLLOWING,
-      '22 D4.1: after the switch, which stays in the Status cell',
+      cells.length,
+      '22 IP5.1 with 22 IP5.2: name, engine, Used-by, Actions',
+    ).toBe(4)
+    const usedBy = cells[2]!
+    expect(
+      usedBy.compareDocumentPosition(minus) & Node.DOCUMENT_POSITION_FOLLOWING,
+      '22 D4.1: the − follows the Used-by cell, which stands where the Status cell was',
     ).not.toBe(0)
     expect(minus.tagName, 'a native button').toBe('BUTTON')
     expect(minus.getAttribute('type'), 'it submits nothing').toBe('button')
@@ -373,211 +350,9 @@ test('22 D4.1 (as 22 D4.21 changes its icon, as 22 D4.23 moves it to its own cel
 
 // ── 22 D4.2: enabled only when deletable ────────────────────────────────
 
-test('22 D4.2: the − of a switched-off row is active; a switched-on row’s carries aria-disabled and aria-describedby to a visually hidden span with model-profiles-delete-needs-off, a press sends nothing and opens nothing, and the state follows each switch', async () => {
-  const { bff, main } = await open()
-  for (const p of LIST) {
-    const minus = minusOf(main, p.id)
-    if (p.enabled) {
-      expect(inactive(minus), `${p.id} is on: aria-disabled`).toBe(true)
-      expect(
-        minus.hasAttribute('disabled'),
-        'aria-disabled, not disabled: it stays focusable (22 D4.2)',
-      ).toBe(false)
-      const id = minus.getAttribute('aria-describedby')
-      expect(id, 'the reason is its description').toBeTruthy()
-      const reason = document.getElementById(id!)
-      expect(reason, 'an element the id names').not.toBeNull()
-      expect(text(reason), 'the words of the brief').toBe(
-        en('model-profiles-delete-needs-off'),
-      )
-      expect(isHidden(reason), 'visually hidden').toBe(true)
-    } else {
-      expect(inactive(minus), `${p.id} is off: active`).toBe(false)
-      expect(
-        minus.getAttribute('aria-describedby'),
-        'an active − needs no reason',
-      ).toBeNull()
-    }
-  }
-  // A press of a disabled −: nothing.
-  press(minusOf(main, 'Qwen3-27B'))
-  await flushTasks()
-  expect(
-    bff.to('DELETE', deleteRoute('Qwen3-27B')),
-    'nothing sent',
-  ).toHaveLength(0)
-  expect(queryConfirm(main, 'Qwen3-27B'), 'nothing opened').toBeNull()
-  expect(confirmRow(main), 'and no confirm row').toBeNull()
-  // It follows the switch: switching Qwen3-27B off makes its − active.
-  press(switchOf(main, 'Qwen3-27B'))
-  await within(main).findByText(en('model-profiles-switched-off', 'Qwen3-27B'))
-  expect(
-    inactive(minusOf(main, 'Qwen3-27B')),
-    '22 D4.2: switched off, its − can act',
-  ).toBe(false)
-  // And back: switching it on disables it again, with the reason.
-  press(switchOf(main, 'Qwen3-27B'))
-  await within(main).findByText(en('model-profiles-switched-on', 'Qwen3-27B'))
-  const back = minusOf(main, 'Qwen3-27B')
-  expect(inactive(back), 'switched on, its − cannot').toBe(true)
-  expect(
-    text(document.getElementById(back.getAttribute('aria-describedby')!)),
-    'and the reason is there',
-  ).toBe(en('model-profiles-delete-needs-off'))
-})
-
 // ── 22 D4.3, D4.13: the reason beside the − ─────────────────────────────
 
-test('22 D4.3, D4.13, D4.18 (as 22 D4.16 to D4.18 amend them): hovering a disabled −, and focusing it, shows its reason as a .hint-tip box floating over the table (a --surface fill, a --control border, at most min(16rem, 100vw - 16px) wide, wrapping, never over the button, placed by 22 D4.17); it stays while the pointer is over it, the pointer leaving the box hides it, Escape hides it and keeps the focus on the −, a tap on the inactive − shows it and a pointerdown outside the box hides it, and an active − shows nothing', async () => {
-  const { main } = await open()
-  const box = boxOf(main, 'Qwen3-27B')
-  const minus = minusOf(main, 'Qwen3-27B')
-  // The reason the − names as its description (22 D4.2), kept hidden.
-  const said = document.getElementById(minus.getAttribute('aria-describedby')!)
-  expect(said, '22 D4.2: the − names its reason').not.toBeNull()
-  // The reason the eye reads: a line of the box, not the hidden description.
-  const shown = () =>
-    Array.from(box.querySelectorAll('span')).filter(
-      (s) => !isHidden(s) && text(s) === en('model-profiles-delete-needs-off'),
-    )
-  expect(shown(), 'nothing shows at rest').toHaveLength(0)
-  fireEvent.mouseOver(minus)
-  await flushTasks()
-  expect(shown(), '22 D4.3: the hover shows the reason').toHaveLength(1)
-  const line = shown()[0]!
-  expect(line, '22 D4.13: it is not the hidden description').not.toBe(said)
-  expect(box.contains(line), 'in the box that holds the −').toBe(true)
-  expect(minus.contains(line), 'the − does not wrap the reason').toBe(false)
-  expect(
-    line.closest('button'),
-    'the reason is not inside the button',
-  ).toBeNull()
-  const look = cascade(line).decls
-  expect(norm(look['background'] ?? ''), 'the --surface fill').toBe(
-    'var(--surface)',
-  )
-  expect(
-    `${norm(look['border'] ?? '')} ${norm(look['border-color'] ?? '')}`,
-    'a --control border',
-  ).toContain('var(--control)')
-  expect(
-    (look['max-width'] ?? '').replace(/\s+/g, ''),
-    '22 D4.17: at most 16rem, and never past the gutters at 320 px (1.4.10)',
-  ).toBe('min(16rem,100vw-16px)')
-  expect(
-    norm(look['white-space'] ?? 'normal'),
-    'and it wraps: no nowrap',
-  ).not.toBe('nowrap')
-  expect(
-    look['font-size'] === undefined,
-    'the body text size: it declares no font-size of its own',
-  ).toBe(true)
-  // The pointer moves from the − to the reason: 1.4.13, it stays. The reason is
-  // inside the box, so the pointer never leaves it.
-  fireEvent.mouseOut(minus, { relatedTarget: line })
-  fireEvent.mouseOver(line)
-  await flushTasks()
-  expect(shown(), 'kept while over the reason').toHaveLength(1)
-  // The pointer leaves the box: the reason goes.
-  fireEvent.mouseOut(box, { relatedTarget: document.body })
-  await flushTasks()
-  expect(shown(), 'gone when the pointer leaves the box').toHaveLength(0)
-  // 22 D4.13: the hint box owns the pointer handlers, not the −: a pointer over
-  // the box, beside the −, shows the reason too.
-  fireEvent.mouseOver(box)
-  await flushTasks()
-  expect(shown(), '22 D4.13: the box shows it, not only the −').toHaveLength(1)
-  fireEvent.mouseLeave(box)
-  await flushTasks()
-  expect(shown(), 'and a mouseleave of the box hides it').toHaveLength(0)
-  // Keyboard: the focus on the − shows it, Escape and the focus leaving hide it.
-  minus.focus()
-  await flushTasks()
-  expect(shown(), '22 D4.3: the focus shows it').toHaveLength(1)
-  fireEvent.keyDown(minus, { key: 'Escape' })
-  await flushTasks()
-  expect(shown(), '22 D4.13: Escape hides it').toHaveLength(0)
-  expect(
-    document.activeElement,
-    '22 D4.18: Escape keeps the focus on the −, it sends the user nowhere',
-  ).toBe(minus)
-  // Escape leaves the focus on the −, and a focus() on an element that already
-  // has it fires no focus event (probed): the focus has to leave and come back
-  // for the reason to show again (22 D4.13: shown on focus, hidden on blur).
-  minus.blur()
-  await flushTasks()
-  minus.focus()
-  await flushTasks()
-  expect(shown(), 'and it comes back on focus').toHaveLength(1)
-  minus.blur()
-  await flushTasks()
-  expect(shown(), 'and it goes with the focus').toHaveLength(0)
-  // 22 D4.18: touch. A tap on the inactive − shows the reason (its click does
-  // nothing else), and a pointerdown outside the box hides it.
-  fireEvent.pointerDown(minus, { pointerType: 'touch' })
-  fireEvent.click(minus)
-  await flushTasks()
-  expect(shown(), '22 D4.18: a tap on the inactive − shows it').toHaveLength(1)
-  fireEvent.pointerDown(document.body)
-  await flushTasks()
-  expect(
-    shown(),
-    '22 D4.18: a pointerdown outside the box hides it',
-  ).toHaveLength(0)
-  // An active − shows nothing: its name says what it does.
-  const active = minusOf(main, 'Old-Coder')
-  fireEvent.mouseOver(active)
-  active.focus()
-  await flushTasks()
-  expect(
-    boxOf(main, 'Old-Coder').children,
-    '22 D4.3: an active − shows nothing beside it',
-  ).toHaveLength(1)
-})
-
 // ── 22 D4.13, D4.16: the reason floats (22D4 review D1, amended) ────────
-
-test('22 D4.13, D4.16 (22 D4 review D1, as the 22D4 amendment amends it): the − and its reason are siblings in the .hint-box of the cell, the − first, and the rule that styles the reason places it against the viewport (position: fixed), so showing it changes no layout', async () => {
-  const { main } = await open()
-  const cells = cellsOf(rowOf(main, 'Qwen3-27B'))
-  const cell = cells[cells.length - 1]!
-  const box = boxOf(main, 'Qwen3-27B')
-  const minus = minusOf(main, 'Qwen3-27B')
-  expect(box.parentElement, 'the box sits in the cell, where the − sat').toBe(
-    cell,
-  )
-  fireEvent.mouseOver(minus)
-  await flushTasks()
-  const line = Array.from(box.querySelectorAll('span')).find(
-    (s) => !isHidden(s) && text(s) === en('model-profiles-delete-needs-off'),
-  )
-  expect(line, 'the hover shows the reason').not.toBeUndefined()
-  expect(line!.parentElement, 'the − and the reason are siblings').toBe(box)
-  expect(
-    line!.getAttribute('aria-hidden'),
-    '22 D4.13: it is the eye’s copy: the − names the hidden one',
-  ).toBe('true')
-  expect(
-    box.firstElementChild,
-    '22 D4.13: the − comes first, so the reason starts under it',
-  ).toBe(minus)
-  // 22 D4.16: the reason floats. `position: fixed` takes it out of the cell's
-  // flow, so showing it changes no row height, no column width and no scroll
-  // box: the amendment's replacement for the review's "in the flow". The
-  // measurements are the designer's, the declaration is pinned here.
-  const decls = TOP.filter((r) =>
-    r.compact.split(',').includes('.hint-tip'),
-  ).flatMap((r) => r.body.split(';').map((d) => norm(d)))
-  expect(decls.length, 'the reason has rules in the sheet').toBeGreaterThan(0)
-  expect(
-    decls.filter((d) => d.startsWith('position:')),
-    '22 D4.16: the reason is placed against the viewport and not against the cell, so the table’s scroll box neither clips it nor counts it',
-  ).toEqual(['position: fixed'])
-  expect(
-    cascade(line!).decls['position'],
-    '22 D4.16: the rule that reaches the shown reason says fixed',
-  ).toBe('fixed')
-})
 
 // ── 22 D5: the list reason wraps (22D4 D1 decision review) ──────────────
 
@@ -651,13 +426,18 @@ test('22 D7: the reason is not contained (no contain on .hint-tip)', () => {
 test('22 D4 review D2: the disabled − is drawn inactive the way the aria-disabled buttons are: the sheet gives it the --muted icon on the --bg fill with the default cursor, the rule that draws .primary and .secondary inactive naming .ot-add too, and the active − keeps its --text icon', async () => {
   const { main } = await open()
   const off = minusOf(main, 'Qwen3-27B')
-  expect(inactive(off), 'a switched-on row: the − is aria-disabled').toBe(true)
+  expect(
+    inactive(off),
+    'a row an instance profile lists: the − is aria-disabled (22 IP5.3)',
+  ).toBe(true)
   const box = cascade(off).decls
   expect(norm(box['color'] ?? ''), 'the icon is --muted').toBe('var(--muted)')
   expect(norm(box['background'] ?? ''), 'on the --bg fill').toBe('var(--bg)')
   expect(norm(box['cursor'] ?? ''), 'and the cursor is default').toBe('default')
   const on = minusOf(main, 'Old-Coder')
-  expect(inactive(on), 'a switched-off row: the − is active').toBe(false)
+  expect(inactive(on), 'a row no instance profile lists: the − is active').toBe(
+    false,
+  )
   expect(
     norm(cascade(on).decls['color'] ?? ''),
     '22 D4 review D2: the active − keeps its --text icon',
@@ -666,101 +446,9 @@ test('22 D4 review D2: the disabled − is drawn inactive the way the aria-disab
 
 // ── 22 D4.4: the confirm row ────────────────────────────────────────────
 
-test('22 D4.4: pressing an active − inserts right after the row a tr.confirm-row with one td spanning the three columns, holding the group named by its model-profiles-delete-question paragraph, confirm-delete then confirm-cancel, an empty status line and no alert; the − takes aria-expanded true and the focus goes to Cancel; Cancel and Escape remove the row and focus the −; another row’s confirm closes the first, and the filter hiding the row closes it', async () => {
-  const { bff, main } = await open()
-  const row = rowOf(main, 'Old-Coder')
-  const columns = cellsOf(row).length
-  const minus = minusOf(main, 'Old-Coder')
-  const group = await confirmGroup(main, 'Old-Coder')
-  const tr = confirmRow(main)
-  expect(tr, '22 D4.4: the confirm row').not.toBeNull()
-  expect(tr!.previousElementSibling, 'right after the profile’s row').toBe(row)
-  expect(tr!.parentElement, 'in the table’s body').toBe(row.parentElement)
-  const tds = [...tr!.querySelectorAll('td')]
-  expect(tds, 'one td').toHaveLength(1)
-  expect(Number(tds[0]!.getAttribute('colspan')), 'spanning every column').toBe(
-    columns,
-  )
-  expect(group.tagName, 'a div of role="group"').toBe('DIV')
-  expect(tds[0]!.contains(group), 'the group is in the td').toBe(true)
-  const label = group.getAttribute('aria-labelledby')
-  expect(label, 'named by an element').toBeTruthy()
-  const asked = document.getElementById(label!)
-  expect(asked, 'its paragraph').not.toBeNull()
-  expect(asked!.tagName, 'a paragraph').toBe('P')
-  expect(text(asked), 'the list’s own question').toBe(question('Old-Coder'))
-  expect(group.contains(asked), 'the question is in the group').toBe(true)
-  expect(
-    within(group)
-      .getAllByRole('button')
-      .map((b) => (b.textContent ?? '').trim()),
-    'the verb then Cancel',
-  ).toEqual([en('confirm-delete'), en('confirm-cancel')])
-  expect(groupStatus(group).textContent, 'the status line is empty').toBe('')
-  expect(alertTexts(group), 'no alert: the place is empty').toEqual([])
-  expect(minus.getAttribute('aria-expanded'), 'the − says it is open').toBe(
-    'true',
-  )
-  const cancel = confirmIn(group, 'confirm-cancel')
-  expect(document.activeElement, 'the focus is on Cancel').toBe(cancel)
-  expect(
-    bff.to('DELETE', deleteRoute('Old-Coder')),
-    'nothing sent',
-  ).toHaveLength(0)
-  press(cancel)
-  await flushTasks()
-  expect(confirmRow(main), 'Cancel removes the row').toBeNull()
-  expect(queryConfirm(main, 'Old-Coder'), 'and the group').toBeNull()
-  expect(document.activeElement, 'the focus is back on the −').toBe(minus)
-  expect(minus.getAttribute('aria-expanded'), 'closed').toBe('false')
-  // Escape.
-  const again = await confirmGroup(main, 'Old-Coder')
-  expect(document.activeElement, 'open again, on Cancel').toBe(
-    confirmIn(again, 'confirm-cancel'),
-  )
-  fireEvent.keyDown(document.activeElement as Element, { key: 'Escape' })
-  await flushTasks()
-  expect(confirmRow(main), 'Escape closes it').toBeNull()
-  expect(document.activeElement, 'on the −').toBe(minus)
-  // One at a time: the list has one switched-off profile, so switch another
-  // off and open its confirm while the first is open.
-  press(switchOf(main, 'Qwen3-27B'))
-  await within(main).findByText(en('model-profiles-switched-off', 'Qwen3-27B'))
-  const first = await confirmGroup(main, 'Old-Coder')
-  expect(
-    confirmRow(main)!.previousElementSibling,
-    'the first row’s confirm',
-  ).toBe(rowOf(main, 'Old-Coder'))
-  const second = await confirmGroup(main, 'Qwen3-27B')
-  expect(confirmRow(main), 'one confirm row').not.toBeNull()
-  expect(
-    confirmRow(main)!.previousElementSibling,
-    '22 D4.4: it is the second row’s now',
-  ).toBe(rowOf(main, 'Qwen3-27B'))
-  expect(
-    second.isConnected && first.isConnected,
-    'the first group is gone',
-  ).not.toBe(true)
-  expect(
-    minusOf(main, 'Old-Coder').getAttribute('aria-expanded'),
-    'and its − says closed',
-  ).toBe('false')
-  expect(document.activeElement, 'the focus is on the new Cancel').toBe(
-    confirmIn(second, 'confirm-cancel'),
-  )
-  // The filter hiding the row closes it.
-  type(filterField(main), 'Coder-30')
-  await flushTasks()
-  expect(
-    dataRows(main).map(nameOf),
-    'the filter hides Qwen3-27B',
-  ).not.toContain('Qwen3-27B')
-  expect(confirmRow(main), '22 D4.4: and its confirm went').toBeNull()
-})
-
 // ── 22 D4.5: one delete at a time ───────────────────────────────────────
 
-test('22 D4.5: while the delete runs the group’s status reads confirm-deleting with its buttons aria-disabled, every row’s − and switch are aria-disabled, and a second press sends nothing', async () => {
+test('22 D4.5: while the delete runs the group’s status reads confirm-deleting with its buttons aria-disabled, every row’s − is aria-disabled, and a second press sends nothing', async () => {
   const gate = deferred()
   const { bff, main } = await open({
     modelProfileDelete: () => gate.promise,
@@ -780,8 +468,6 @@ test('22 D4.5: while the delete runs the group’s status reads confirm-deleting
     expect(inactive(minusOf(main, p.id)), `${p.id}’s − is aria-disabled`).toBe(
       true,
     )
-  for (const s of switches(main))
-    expect(inactive(s), 'every switch is aria-disabled').toBe(true)
   press(confirmIn(group, 'confirm-delete'))
   press(minusOf(main, 'Old-Coder'))
   await flushTasks()
@@ -843,37 +529,6 @@ test('22 D4.6: a 204 removes the profile’s row and the confirm row, the region
 })
 
 // ── 22 D4.7: refusals ───────────────────────────────────────────────────
-
-test('22 D4.7: a 409 model-profile-enabled reads the list again, the confirm row goes, the row shows the profile switched on with its − disabled and focusable, api-model-profile-enabled is in the region’s alert above the table and the focus is on the row’s −', async () => {
-  let reads = 0
-  const { bff, main } = await open({
-    modelProfiles: () =>
-      reply(200, ++reads === 1 ? LIST : LIST.map((p) => ({ ...p }))),
-    modelProfileDelete: () =>
-      reply(409, { key: 'model-profile-enabled', args: ['Old-Coder'] }),
-  })
-  const refusal = en('api-model-profile-enabled', 'Old-Coder')
-  const group = await confirmGroup(main, 'Old-Coder')
-  press(confirmIn(group, 'confirm-delete'))
-  await within(main).findByText(refusal)
-  await flushTasks()
-  expect(reads, 'the list was read again').toBe(2)
-  expect(bff.to('GET', '/api/profiles/model').length, 'twice').toBe(2)
-  expect(confirmRow(main), 'the confirm row is gone').toBeNull()
-  expect(queryConfirm(main, 'Old-Coder'), 'and so is the group').toBeNull()
-  const kept = within(main).getByText(refusal)
-  expect(kept.getAttribute('role'), 'the region’s alert').toBe('alert')
-  expect(before(kept, table(main)), 'above the table').toBe(true)
-  expect(kept, 'the region’s own alert line').toBe(regionAlert(main))
-  const minus = minusOf(main, 'Old-Coder')
-  expect(
-    switchOf(main, 'Old-Coder').checked,
-    'the row shows the profile switched on',
-  ).toBe(true)
-  expect(inactive(minus), 'with its − disabled').toBe(true)
-  expect(document.activeElement, '22 D4.7: the focus is on the −').toBe(minus)
-  expect(minus, 'and it is still focusable, not gone').not.toBe(document.body)
-})
 
 test('22 D4.7: a 409 model-profile-assigned puts api-model-profile-assigned in the group’s alert with the focus staying on confirm-delete, the row staying and the list not read again', async () => {
   const { bff, main } = await open({

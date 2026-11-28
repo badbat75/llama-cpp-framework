@@ -20,9 +20,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App.tsx'
-import strings from './strings/en_US.json'
 import {
-  EN,
   before,
   deferred,
   en,
@@ -32,7 +30,6 @@ import {
   startAt,
   stubDialog,
   type BffOptions,
-  type ModelProfile,
 } from './test/bff.ts'
 
 const ID = 'Qwen3-27B'
@@ -50,7 +47,6 @@ const ABOUT = en('nav-about')
 /** Slice 18 (18 AN.6): Node info, the entry before About. */
 const NODE_INFO = en('nav-node')
 /** The strings file itself (5b.11 pins its keys and texts, exactly). */
-const S = strings as Record<string, string>
 
 let dialogs: ReturnType<typeof stubDialog> | null = null
 
@@ -71,16 +67,6 @@ afterEach(async () => {
 })
 
 // ── Helpers ─────────────────────────────────────────────────────────────
-
-function modelProfile(
-  id: string,
-  enabled = true,
-  engine = 'llama.cpp',
-  engineAvailable = true,
-  model = '',
-): ModelProfile {
-  return { id, engine, engineAvailable, enabled, model }
-}
 
 /** The app at the address the location holds; returns the fake bff and main. */
 function open(options: BffOptions = {}) {
@@ -140,26 +126,6 @@ async function heading1(main: HTMLElement): Promise<HTMLElement> {
 
 async function table(main: HTMLElement): Promise<HTMLElement> {
   return within(main).findByRole('table', { name: en('model-profiles-title') })
-}
-
-/** The list's filter field. */
-function filterField(main: HTMLElement): HTMLInputElement {
-  return within(main).getByRole('searchbox', {
-    name: en('model-profiles-filter-label'),
-  }) as HTMLInputElement
-}
-
-async function switchOf(
-  main: HTMLElement,
-  id: string,
-): Promise<HTMLInputElement> {
-  await table(main)
-  return within(main).getByRole('switch', { name: id }) as HTMLInputElement
-}
-
-function press(el: HTMLElement) {
-  el.focus()
-  fireEvent.click(el)
 }
 
 /**
@@ -456,32 +422,6 @@ test('5b.4: with the menu open, activating Model profiles closes the menu and mo
 })
 
 // ── 5b.5: the list page ─────────────────────────────────────────────────
-
-test('5b.5: at #/profiles/model the h1 is Model profiles, so is the document title, there is no h2 and no #model-profiles-title, and the table is named by the h1', async () => {
-  const { main } = open()
-  const h1 = await heading1(main)
-  expect(h1.id).toBe('page-heading')
-  expect(h1.getAttribute('tabindex')).toBe('-1')
-  expect(document.title).toBe(en('page-title', en('model-profiles-title')))
-  expect(
-    within(main).queryAllByRole('heading', { level: 2 }),
-    'the list page has no h2',
-  ).toHaveLength(0)
-  expect(
-    document.getElementById('model-profiles-title'),
-    'the h2 and its id are gone',
-  ).toBeNull()
-  const t = await table(main)
-  expect(t.getAttribute('aria-labelledby')).toBe('page-heading')
-  // Under the h1, in today's order: the intro, the filter, the table, the note.
-  const intro = within(main).getByText(en('model-profiles-intro'))
-  const note = within(main).getByText(en('model-profiles-off-note'))
-  const filter = filterField(main)
-  expect(before(h1, intro), 'intro after the h1').toBe(true)
-  expect(before(intro, filter), 'filter after the intro').toBe(true)
-  expect(before(filter, t), 'table after the filter').toBe(true)
-  expect(before(t, note), 'note after the table').toBe(true)
-})
 
 test('5b.5: signed out at #/profiles/model the sign-in form shows with signin-required, the address is kept and nothing is read; signing in opens the list with the focus on its h1 and one read', async () => {
   const { bff, main } = open({ session: 'signed-out' })
@@ -905,59 +845,3 @@ test('5b.10: from a model profile page to the list through the nav, and back thr
 })
 
 // ── 5b.11: the strings ──────────────────────────────────────────────────
-
-test('5b.11: en_US.json has the 05b keys and texts exactly, the two old keys are gone, and nav-server-profiles is the key brief 16 (17a.2) adds', () => {
-  expect(S['nav-profiles']).toBe('Profiles')
-  expect(S['nav-model-profiles']).toBe('Model profiles')
-  expect('nav-models' in S, 'the old nav key is gone').toBe(false)
-  expect('models-title' in S, 'the old page title key is gone').toBe(false)
-  expect(S['model-profiles-title'], 'it is the h1 now').toBe('Model profiles')
-  expect(S['model-profile-back'], 'the back link text is unchanged').toBe(
-    'All model profiles',
-  )
-  expect(S['api-no-model-profile-named']).toBe(
-    'There is no model profile named {0} any more: it was renamed or deleted elsewhere. Open the list of all model profiles again to see them as they are.',
-  )
-  expect(
-    S['model-profile-off-short'],
-    '24 A2.1: the state line’s short words replace the paragraph',
-  ).toBe('Switched off: kept, but not served.')
-  expect(
-    S['model-profile-on-short'],
-    '24 A2.1: and so for the switched-on state',
-  ).toBe('Switched on: its engine serves it.')
-  expect(
-    'model-profile-off' in S,
-    '24 A2.1: the paragraph’s key leaves the strings file with it',
-  ).toBe(false)
-  expect(S['nav-server-profiles'], '17a.2 added the key').toBe(
-    'Server profiles',
-  )
-  // The test mirror follows the file (App.test.tsx pins that they match).
-  expect(EN['nav-profiles']).toBe(S['nav-profiles'])
-  expect(EN['nav-model-profiles']).toBe(S['nav-model-profiles'])
-  expect(EN['api-no-model-profile-named']).toBe(S['api-no-model-profile-named'])
-  // The words that name a folder or a llama-server flag stay (5b.11).
-  expect(S['server-models-folder']).toBeTruthy()
-  expect(S['server-max-models']).toBeTruthy()
-})
-
-test('5b.11: the changed text of api-no-model-profile-named is what a 404 no-model-profile-named on a switch shows, with the id filled in', async () => {
-  const { bff, main } = open({
-    modelProfiles: [modelProfile('Old-Coder', false)],
-    modelProfileSwitch: () =>
-      reply(404, { key: 'no-model-profile-named', args: ['Old-Coder'] }),
-  })
-  await table(main)
-  press(await switchOf(main, 'Old-Coder'))
-  const text = en('api-no-model-profile-named', 'Old-Coder')
-  await within(main).findByText(text)
-  expect(
-    within(main).getByText(text).closest('[role="alert"], [role="status"]'),
-    'the text is announced',
-  ).not.toBeNull()
-  expect(
-    bff.calls.filter((c) => c.method === 'PUT'),
-    'one write',
-  ).toHaveLength(1)
-})

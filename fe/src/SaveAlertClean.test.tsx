@@ -25,7 +25,7 @@ import {
   AS_LOADED,
   BIND,
   BIND_LOCALHOST,
-  CTX,
+  TOP_K,
   ID,
   LOG_LEVEL,
   MODE,
@@ -51,7 +51,7 @@ import {
   expectNoError,
   expectNotAnnounced,
   expectQuiet,
-  fitBox,
+  toggleBox,
   focusable,
   marked,
   pick,
@@ -82,15 +82,16 @@ const PORT_DIRTY = '8081'
 const POOLING_ARGS = ['pooling', 'mean', 'default, none, mean, cls, last, rank']
 const POOLING_REFUSAL = { key: 'not-one-of', args: POOLING_ARGS }
 const POOLING_TEXT = en('api-not-one-of', ...POOLING_ARGS)
-/** 198a's field with nothing to focus: MoE cache, the Hardware card row brief
- * 19's 19 G.14 leaves disabled (its floor needs the model's tensors). */
-const MOE_CACHE = en('model-profile-moe-cache')
-const HW_CARD = en('model-profile-hardware-config')
-const MOE_CACHE_REFUSAL = {
+/** 198a's field with nothing to focus: Min image tokens, the Vision card row
+ * the page leaves disabled while the read names no vision file (`mmproj`). */
+const IMG_MIN = en('model-profile-min-image-tokens')
+const VISION_CARD = en('model-profile-vision')
+const IMG_MIN_REFUSAL = {
   key: 'not-a-number',
-  args: ['moe-cache-mib', 'many'],
+  args: ['image-min-tokens', 'many'],
+  field: 'image-min-tokens',
 }
-const MOE_CACHE_TEXT = en('api-not-a-number', 'moe-cache-mib', 'many')
+const IMG_MIN_TEXT = en('api-not-a-number', 'image-min-tokens', 'many')
 /** 198h's Server row: a refused comment marker in ModelsDir (144). */
 const FOLDER = en('server-models-folder')
 const MARKERS_TEXT = en('api-comment-markers', 'ModelsDir')
@@ -317,18 +318,19 @@ const profileRow = (
 
 const PROFILE_ROWS: Row[] = [
   {
-    // 198h's model profile scenario: ctx-size abc loaded and untouched (162),
-    // Embedding mode the edit. The client check marks the field nobody edited.
-    what: '198h: the client check of a loaded ctx-size abc (save-invalid)',
+    // 198h's model profile scenario, on a field 22 IP5.5 leaves on the page:
+    // top-k abc loaded and untouched (162), Embedding mode the edit. The client
+    // check marks the field nobody edited.
+    what: '198h: the client check of a loaded top-k abc (save-invalid)',
     control: { label: MODE, kind: 'select' },
     from: AS_LOADED['embeddings'],
     to: MODE_DIRTY,
-    loaded: { 'ctx-size': 'abc' },
+    loaded: { 'top-k': 'abc' },
     alert: INVALID,
     mark: {
-      label: CTX,
+      label: TOP_K,
       kind: 'box',
-      text: en('field-error-number-min', '0'),
+      text: en('field-error-whole-number'),
       keeps: true,
     },
   },
@@ -354,12 +356,12 @@ const PROFILE_ROWS: Row[] = [
     control: { label: MODE, kind: 'select' },
     from: AS_LOADED['embeddings'],
     to: MODE_DIRTY,
-    answer: () => reply(422, MOE_CACHE_REFUSAL),
-    alert: en('save-refused-at', MOE_CACHE_TEXT, MOE_CACHE, HW_CARD),
+    answer: () => reply(422, IMG_MIN_REFUSAL),
+    alert: en('save-refused-at', IMG_MIN_TEXT, IMG_MIN, VISION_CARD),
     mark: {
-      label: MOE_CACHE,
+      label: IMG_MIN,
       kind: 'box',
-      text: MOE_CACHE_TEXT,
+      text: IMG_MIN_TEXT,
       keeps: true,
     },
   },
@@ -720,7 +722,7 @@ const bindRow = clickMoves((main) =>
     { name: BIND_LOCALHOST },
   ),
 )
-const fitCheckbox = clickMoves(fitBox)
+const toggleCheckbox = clickMoves(toggleBox)
 
 test('198d, the Server page: the alert goes when a text is typed back exactly, and when a checkbox is re-ticked, and stays while an edit is left', async () => {
   await routeGoes(
@@ -761,12 +763,12 @@ test('198d, the Server page: the alert goes with a select back on its loaded opt
   )
 })
 
-test('198d, the model profile page: the alert goes when a text is typed back exactly, and when Fit to VRAM is re-ticked, and stays while an edit is left', async () => {
+test('198d, the model profile page: the alert goes when a text is typed back exactly, and when the Chat template toggle is re-ticked, and stays while an edit is left', async () => {
   await routeGoes(
     () => profileLoaded(() => reply(500, {})),
     PROFILE_PUT,
     profileStatus,
-    textMoves(CTX, '4096'),
+    textMoves(TOP_K, '21'),
     modeSelect,
     'the text typed back',
   )
@@ -774,9 +776,9 @@ test('198d, the model profile page: the alert goes when a text is typed back exa
     () => profileLoaded(() => reply(500, {})),
     PROFILE_PUT,
     profileStatus,
-    fitCheckbox,
+    toggleCheckbox,
     modeSelect,
-    'Fit to VRAM re-ticked',
+    'the Chat template toggle re-ticked',
   )
 })
 
@@ -795,7 +797,7 @@ test('198d, the model profile page: the alert goes with a select back on its loa
     PROFILE_PUT,
     profileStatus,
     modeSelect,
-    textMoves(CTX, '4096'),
+    textMoves(TOP_K, '21'),
     'the mode select back',
   )
 })

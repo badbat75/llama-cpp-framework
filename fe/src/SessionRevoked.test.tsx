@@ -126,21 +126,6 @@ async function loaded(options: BffOptions = {}, hash = '#/instances/default') {
   return { bff, main }
 }
 
-/** The model profiles list at #/profiles/model, on fake timers, with the table loaded. */
-async function loadedModels(options: BffOptions = {}) {
-  fakeClock()
-  startAt('#/profiles/model')
-  const bff = fakeBff({ modelProfiles: LIST, ...options })
-  render(<App />)
-  await flush()
-  const main = screen.getByRole('main')
-  expect(
-    within(main).queryByRole('table', { name: en('model-profiles-title') }),
-    'the table is loaded',
-  ).not.toBeNull()
-  return { bff, main }
-}
-
 /** The app at `hash`, on the real clock, against `options`. */
 function openAt(hash: string, options: BffOptions = {}) {
   startAt(hash)
@@ -318,63 +303,8 @@ function modelProfile(id: string, enabled: boolean, model = ''): ModelProfile {
   return { id, engine: 'llama.cpp', engineAvailable: true, enabled, model }
 }
 
-const LIST: ModelProfile[] = [
-  modelProfile('Qwen3-27B', true, '/m/qwen/Qwen3-27B-Q8_0.gguf'),
-  modelProfile('Coder-30B', true, '/m/coder/Coder-30B.gguf'),
-  modelProfile('Old-Coder', false),
-]
-
-function table(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('table', { name: en('model-profiles-title') })
-}
-
-function switchOf(main: HTMLElement, id: string): HTMLInputElement {
-  return within(table(main)).getByRole('switch', {
-    name: id,
-  }) as HTMLInputElement
-}
-
-function alerts(main: HTMLElement): string[] {
-  return within(main)
-    .queryAllByRole('alert')
-    .map((a) => a.textContent ?? '')
-}
-
-/** Which model profiles switches are inactive (aria-disabled), in table order. */
-function switchesInactive(main: HTMLElement): boolean[] {
-  return within(table(main))
-    .queryAllByRole('switch')
-    .map((s) => s.getAttribute('aria-disabled') === 'true')
-}
-
-/** The switch region's status (2c.50): the second status of the page. */
-function switchStatus(main: HTMLElement): HTMLElement {
-  const all = within(main).getAllByRole('status')
-  expect(all, 'the filter status and the switch status').toHaveLength(2)
-  return all[1]!
-}
-
-/** The Sign in buttons of the page, outside any dialog. */
-function signIns(main: HTMLElement): HTMLButtonElement[] {
-  return (
-    within(main).queryAllByRole('button', {
-      name: en('session-sign-in'),
-    }) as HTMLButtonElement[]
-  ).filter((b) => b.closest('dialog') === null)
-}
-
 function modelProfilesReads(bff: ReturnType<typeof fakeBff>): number {
   return bff.to('GET', '/api/profiles/model').length
-}
-
-function modelProfileWrites(
-  bff: ReturnType<typeof fakeBff>,
-): [string, unknown][] {
-  return bff.calls
-    .filter(
-      (c) => c.method === 'PUT' && c.path.startsWith('/api/profiles/model/'),
-    )
-    .map((c) => [c.path, c.body])
 }
 
 // The Server form's save bar.
@@ -514,28 +444,6 @@ test('S1.1: the guard keys and boot-malformed on sign-in show signin-failed and 
     expect(bff.to('POST', '/api/session'), what).toHaveLength(1)
     reset()
     startAt('#/sign-in')
-  }
-})
-
-test('S1.1: the guard keys and boot-malformed on a model profile switch show request-failed, then the row is read again, with no Sign in and the session kept', async () => {
-  for (const [key, status] of GUARD_KEYS) {
-    const what = `${status} ${key}`
-    const { bff, main } = await loadedModels({
-      modelProfileSwitch: guard(key, status),
-    })
-    press(switchOf(main, 'Qwen3-27B'))
-    await flush()
-    expect(alerts(main), what).toEqual([en('request-failed')])
-    expect(switchStatus(main).textContent, `${what}: status emptied`).toBe('')
-    expect(modelProfilesReads(bff), `${what}: the row read again`).toBe(2)
-    expect(switchOf(main, 'Qwen3-27B').checked, `${what}: the list value`).toBe(
-      true,
-    )
-    expect(signIns(main), `${what}: no Sign in`).toEqual([])
-    expect(within(main).queryByText(en('session-revoked')), what).toBeNull()
-    expectSignedIn(`${what}: the session lives on`)
-    expect(modelProfileWrites(bff), what).toHaveLength(1)
-    reset()
   }
 })
 
@@ -747,35 +655,6 @@ test('S1.6: a 403 session-not-administrator on the save is 36 row with session-r
   expect(within(nav()).getByRole('link', { name: 'coder' })).toBeTruthy()
   expect(within(main).queryByText(en('signin-required'))).toBeNull()
   expect(bff.to(...PUT)).toHaveLength(1)
-})
-
-test('S1.7: a 403 session-not-administrator on a model profile switch is 2c row with session-revoked: the switch shows its value before, nothing is read again, focus on the switch, Sign in after the alert', async () => {
-  const { bff, main } = await loadedModels({ modelProfileSwitch: REVOKED })
-  press(switchOf(main, 'Qwen3-27B'))
-  await flush()
-  expect(alerts(main)).toEqual([en('session-revoked')])
-  expect(switchStatus(main).textContent, 'status emptied').toBe('')
-  const buttons = signIns(main)
-  expect(buttons, 'one Sign in').toHaveLength(1)
-  const alert = within(main).getByRole('alert')
-  expect(before(alert, buttons[0]!), 'Sign in after the alert').toBe(true)
-  expect(
-    before(buttons[0]!, table(main)),
-    'the region is above the table (17d.5b)',
-  ).toBe(true)
-  expect(switchOf(main, 'Qwen3-27B').checked, 'the value before').toBe(true)
-  expect(modelProfilesReads(bff), 'nothing read again').toBe(1)
-  expect(switchesInactive(main), 'the switches stay active').toEqual([
-    false,
-    false,
-    false,
-  ])
-  expect(document.activeElement, 'focus stays on the switch').toBe(
-    switchOf(main, 'Qwen3-27B'),
-  )
-  expectSignedIn('the page stays signed in')
-  expect(within(main).queryByText(en('signin-required'))).toBeNull()
-  expect(modelProfileWrites(bff), 'one write sent').toHaveLength(1)
 })
 
 // ── S1.8: the Sign in dialog opened from a write ────────────────────────

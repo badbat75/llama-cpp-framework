@@ -44,9 +44,9 @@ export type DeleteAnswer =
     }
 
 /** The refusals that keep the row and disable its −: the read again shows why
- *  (22 D.4, 22 D4.7). */
+ *  (22 D.4, 22 D4.7). IP5.0 took the model profile's switch out, so the manager
+ *  answers the switch-on refusal no more. */
 const IN_USE: Record<string, (args: string[]) => string> = {
-  'model-profile-enabled': (args) => t('api-model-profile-enabled', ...args),
   'client-server-profile-in-use': (args) =>
     t('api-client-server-profile-in-use', ...args),
 }

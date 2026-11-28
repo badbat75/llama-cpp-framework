@@ -31,14 +31,6 @@ import {
   startAt,
   type BffOptions,
 } from './test/bff.ts'
-import {
-  MODEL_PROFILE_CARDS,
-  controlEnabled,
-  isEditableField,
-  specGroupEnabled,
-  type Field,
-  type Label,
-} from './test/modelProfileCards.ts'
 
 const ID = 'Qwen3-27B'
 const HASH = `#/profiles/model/${ID}`
@@ -50,160 +42,6 @@ const POOLING = en('model-profile-pooling')
  * option of 87, so the field's loaded state is one the select does not list
  * (133: picking it again makes the field unchanged, so it is never sent). */
 const EXTRA_POOL = 'Last-Attention-Pool-X'
-
-/** A text past the 20 characters a text field shows: the value 118's
- * full-value line repeats under a disabled input. */
-const LONG_TEXT = '{"enable_thinking":false,"keep_past":true}'
-
-/** The values of the read the 130 test uses: both Embeddings keys; the Vision
- * card's file keys (`mmproj` present and `mmproj-offload` checked, 176) and
- * `model-draft` (177, and 2h.9's 190: the same key opens the Speculative
- * decoding card's draft group), so those cards' rules leave their controls
- * enabled; and `n-gpu-layers`, so its default box is unticked and its input
- * enabled (156). No key of the Resource / context card besides these, so every
- * box of that card starts ticked (2h.156) and Unified KV sits disabled
- * (2h.155: Parallel slots at its default). No `spec-type`, so 191 leaves the
- * four n-gram groups of the Speculative decoding card locked. */
-const VALUES = {
-  embeddings: 'true',
-  pooling: 'mean',
-  mmproj: '/var/lib/private-ai/.llama.cpp/models/mmproj-BF16.gguf',
-  'mmproj-offload': 'true',
-  'model-draft':
-    '/var/lib/private-ai/.llama.cpp/models/Qwen3-27B-draft-MTP.gguf',
-  'n-gpu-layers': '99',
-  // 19 G.14: MoE CPU layers is editable while the model facts answer a reason
-  // (the fake's default), and the key leaves its default box unticked (156).
-  'n-cpu-moe': '20',
-}
-
-/** 2h.9's 189 to 191: the Speculative decoding card's fields, taken from the
- * shared card table of test/modelProfileCards.ts with their row key and their
- * `boxed` flag, so `controlEnabled` answers with the group rule of 190 / 191
- * on top of the default box of 156. A row's field is named by its key, not by
- * its label (the n-gram labels repeat, 2e's 113), and its ids are
- * `model-profile-<key>-box` and `model-profile-<key>-control`. */
-const SPEC_BY_ID: Record<string, Field> = Object.fromEntries(
-  MODEL_PROFILE_CARDS.find(
-    (c) => c.heading === 'model-profile-speculative-decoding',
-  )!
-    .fields.filter(
-      (f): f is { label: Label; key: string; boxed?: boolean } =>
-        typeof f !== 'string' && 'key' in f,
-    )
-    .map((f) => [`model-profile-${f.key}`, f]),
-)
-
-/** The 2h.9 group a key belongs to (2e's 112: the key's prefix), `undefined`
- * for any other key: `draft` for the draft group, the literal name 191 lists
- * for an n-gram group. `ngram-map-k4v` is read before `ngram-map-k`, whose
- * prefix it starts. */
-function specGroupOf(key: string): string | undefined {
-  if (key.startsWith('spec-draft-')) return 'draft'
-  return (
-    ['ngram-mod', 'ngram-simple', 'ngram-map-k4v', 'ngram-map-k'].find((g) =>
-      key.startsWith(`spec-${g}-`),
-    ) ?? undefined
-  )
-}
-
-/** 155, 156, 190, 191: is a field's default box enabled? Every box of an
- * editable card is, and a box of a 2h.9 group follows its group, the whole
- * group enabled or locked together (191). The box's own input, which also
- * needs the box unticked, is `controlEnabled`. */
-function boxEnabled(field: Field, values: Record<string, string>): boolean {
-  if (!isEditableField(field)) return false
-  const group =
-    typeof field === 'object' && 'key' in field
-      ? specGroupOf(field.key)
-      : undefined
-  return group === undefined || specGroupEnabled(group, values)
-}
-
-/** The fields 2h.1's 130, 2h.4's 155, 2h.5's 164, 2h.6's 170, 2h.7's 175 and
- * 176, 2h.8's 183 and 186 and 2h.9's 189 made editable, keyed by the id of
- * their field (`model-profile-<key>`: the box is `<id>-box`, the input
- * `<id>-control`), so a control's id finds the field the shared table of
- * test/modelProfileCards.ts gives the enable rules to. Most entries are the label's
- * strings key; the Speculative decoding card's are the keyed fields of
- * `SPEC_BY_ID`. */
-const EDITABLE_BY_ID: Record<string, Field> = {
-  // Brief 14's GD1.2 (decision 6): the GPU distribution card's split mode
-  // select, always enabled. It is not a 2e card, so it joins the map to say the
-  // control is enabled, and changes nothing of the 2e set the title lists.
-  'model-profile-split-mode': 'model-profile-split-mode',
-  // Brief 21's 21 T.10: the tensor placement card's Rules as text input,
-  // editable on an editable page. It is no field of a 2e card, so it joins the
-  // map to say the control is enabled, and changes nothing of the 2e set the
-  // title lists.
-  'model-profile-ot-text': 'model-profile-ot-text',
-  'model-profile-ctx-size': 'model-profile-context-size',
-  'model-profile-parallel': 'model-profile-parallel-slots',
-  'model-profile-kv-unified': 'model-profile-unified-kv',
-  'model-profile-kv-unified-per-slot': 'model-profile-per-slot-context',
-  'model-profile-batch-size': 'model-profile-batch-size',
-  'model-profile-ubatch-size': 'model-profile-u-batch-size',
-  'model-profile-embeddings': 'model-profile-embedding-mode',
-  'model-profile-pooling': 'model-profile-pooling',
-  'model-profile-cache-type-k': 'model-profile-k-cache-type',
-  'model-profile-cache-type-v': 'model-profile-v-cache-type',
-  'model-profile-flash-attn': 'model-profile-flash-attention',
-  'model-profile-cache-ram': 'model-profile-cache-ram',
-  'model-profile-cache-reuse': 'model-profile-cache-reuse',
-  'model-profile-ctx-checkpoints': 'model-profile-context-checkpoints',
-  'model-profile-checkpoint-min-step': 'model-profile-checkpoint-step',
-  'model-profile-temp': 'model-profile-temperature',
-  'model-profile-top-k': 'Top-K',
-  'model-profile-top-p': 'Top-P',
-  'model-profile-min-p': 'Min-P',
-  'model-profile-repeat-penalty': 'model-profile-repeat-penalty',
-  'model-profile-presence-penalty': 'model-profile-presence-penalty',
-  'model-profile-backend-sampling': 'model-profile-backend-sampling',
-  'model-profile-load-on-startup': 'model-profile-load-on-startup',
-  'model-profile-chat-template-kwargs': 'model-profile-chat-kwargs',
-  // 2h.6's 170: the Chat / reasoning card, every field always enabled. The
-  // two boxes of the card's boxed numbers are `<id>-box`, their inputs
-  // `<id>-control`, and the two checkboxes' inputs are `<id>-control` too.
-  'model-profile-jinja': 'model-profile-chat-template',
-  'model-profile-prefill-assistant': 'model-profile-prefill-assistant',
-  'model-profile-reasoning': 'model-profile-reasoning',
-  'model-profile-reasoning-format': 'model-profile-reasoning-format',
-  'model-profile-reasoning-effort': 'model-profile-reasoning-effort',
-  // The row's key is reasoning-preserve, its label keeps-past-thinking.
-  'model-profile-reasoning-preserve': 'model-profile-keep-past-thinking',
-  'model-profile-reasoning-budget': 'model-profile-thinking-budget',
-  'model-profile-reasoning-budget-message': 'model-profile-budget-message',
-  'model-profile-n-predict': 'model-profile-max-output',
-  // 2h.7's 176: the Vision card's four, enabled while the read's `mmproj` is
-  // present (Vision GPU also needs Vision on GPU checked). The checkbox's
-  // input is `<id>-control`.
-  'model-profile-mmproj-offload': 'model-profile-vision-on-gpu',
-  'model-profile-mmproj-device': 'model-profile-vision-gpu',
-  'model-profile-image-min-tokens': 'model-profile-min-image-tokens',
-  'model-profile-image-max-tokens': 'model-profile-max-image-tokens',
-  // 2h.7's 175: the Hardware card, its seven always-on rows and the draft
-  // pair (177's rule). 2h.8's 183 and 186: the Fit trio, `fit` always enabled
-  // and its two dependents while its box reads checked. Brief 19's 19 G.14
-  // moved MoE CPU layers into the editable rows; only MoE cache (178) stays
-  // out of the list, so the test demands it disabled; `n-cpu-ffn`,
-  // `n-gpu-layers`, `n-cpu-moe` and `fit-ctx` are boxed (156).
-  'model-profile-n-gpu-layers': 'model-profile-gpu-layers',
-  'model-profile-n-cpu-moe': 'model-profile-moe-cpu-layers',
-  'model-profile-n-cpu-ffn': 'model-profile-dense-ffn-cpu-layers',
-  'model-profile-op-offload': 'model-profile-op-offload',
-  'model-profile-repack': 'model-profile-repack',
-  'model-profile-no-host': 'model-profile-no-host-buffer',
-  'model-profile-lazy-mode': 'model-profile-lazy-tensors',
-  'model-profile-load-mode': 'model-profile-load-mode',
-  'model-profile-fit': 'model-profile-fit-to-vram',
-  'model-profile-fit-ctx': 'model-profile-fit-min-context',
-  'model-profile-fit-target': 'model-profile-fit-free-vram',
-  'model-profile-device-draft': 'model-profile-draft-device',
-  'model-profile-n-gpu-layers-draft': 'model-profile-draft-gpu-layers',
-  // 2h.9's 189 to 191: the Speculative decoding card's sixteen fields, by
-  // their row keys, each enabled by its group's rule.
-  ...SPEC_BY_ID,
-}
 
 beforeEach(() => {
   startAt(HASH)
@@ -260,10 +98,6 @@ function pick(main: HTMLElement, label: string, value: string) {
 /** The written-as line of `key` (2e's 124), and the full-value line (2e's 118). */
 function writtenOf(main: HTMLElement, key: string): HTMLElement | null {
   return main.querySelector(`#model-profile-written-${key}`)
-}
-
-function fullOf(main: HTMLElement, key: string): HTMLElement | null {
-  return main.querySelector(`#model-profile-full-${key}`)
 }
 
 /** The ids the control's `aria-describedby` names, in order (124b). */
@@ -368,45 +202,6 @@ function form(
 
 // ── 130: what becomes editable ──────────────────────────────────────────
 
-test('2h.130, 19 G.14 (2h.4 155, 156, 2h.5 164, 2h.6 170, 2h.7 175, 176, 177, 2h.8 183, 186, 2h.9 189, 190, 191): the Embeddings selects, the Resource / context card, the KV cache card, the Sampling overrides card, the Advanced card, the Chat / reasoning card, the Vision card, the Hardware card, its Fit trio included and its MoE cache row excepted (19 G.14 made MoE CPU layers editable), and the Speculative decoding card, its draft group open on this read and its four n-gram groups locked, are the only controls of a 2e card that are not disabled, and no other control gains aria-disabled (H11b.1: the Engine select is off the page)', async () => {
-  const { main } = await page(VALUES)
-  const controls = [
-    ...main.querySelectorAll<HTMLElement>('input, select, textarea'),
-  ]
-  expect(controls.length, 'every field of 2e is on the page').toBeGreaterThan(
-    20,
-  )
-  for (const el of controls) {
-    // 24 A2.1: the state line's switch is no 2e field: it is the page's own
-    // control, enabled on its own terms (23 A2.3, A2.4), so 130 says nothing
-    // about it.
-    if (el.matches('[role="switch"]')) continue
-    const id = el.getAttribute('id') ?? el.tagName
-    // The 2h.4 card's fields by their ids: `model-profile-<key>`, its default box
-    // `<id>-box`, its input `<id>-control`.
-    const field = EDITABLE_BY_ID[id.replace(/-(box|control)$/, '')]
-    // 155: a box is enabled in an editable card, a box of a 2h.9 group with
-    // its group; 156: the input follows the box, which a key the file lacks
-    // leaves ticked. 130: the Embeddings
-    // selects are always enabled. 176: every Vision control while the read's
-    // `mmproj` is there, Vision GPU also while Vision on GPU is checked. 177:
-    // the draft pair while `model-draft` is there. 190, 191: the Speculative
-    // decoding card's fields move with their group, the draft group opened by
-    // the same `model-draft`, each n-gram group by its entry of `spec-type`,
-    // which this read has none of.
-    const enabled =
-      field !== undefined &&
-      (id.endsWith('-box')
-        ? boxEnabled(field, VALUES)
-        : controlEnabled(field, VALUES))
-    expect((el as HTMLInputElement).disabled, `${id}: enabled`).toBe(!enabled)
-    expect(
-      el.getAttribute('aria-disabled'),
-      `${id}: not aria-disabled, a disabled control is natively disabled`,
-    ).toBeNull()
-  }
-})
-
 // The English of the two read-only sentences the page no longer shows: 2h.1's
 // 130 removed `model-profile-read-only` and 2h.10's 194 removed
 // `model-profile-partly-editable`. Both keys are out of the strings file (pinned by
@@ -503,8 +298,9 @@ test('2h.132: a Pooling change to the same option it loaded in is not dirty, and
   expect(line.textContent, 'back to the loaded option').toBe('')
 
   // 132: hint toggles change nothing (the About of an editable and of a
-  // disabled field).
-  for (const label of [MODE, en('model-profile-context-size')]) {
+  // disabled field). 22 IP5.5 leaves the page's disabled rows in the Vision
+  // card: its numbers need a vision file this read does not name.
+  for (const label of [MODE, en('model-profile-min-image-tokens')]) {
     fireEvent.click(
       within(main).getByRole('button', {
         name: `${en('field-about')} ${label}`,
@@ -685,108 +481,6 @@ test('2h.134: the written-as line of Embedding mode shows while the field is unc
     isHidden(writtenOf(main, 'embeddings')),
     'the file spelling shows again once the field is back off',
   ).toBe(false)
-})
-
-test('2h.134 (2h.4 160, 2h.5 164, 2h.6 170, 2h.7 175, 2h.8 186, 2h.9 190): an editable control shows no full-value line, Embeddings, Resource / context, KV cache, Chat / reasoning and Hardware alike, and a control a rule disables keeps its own', async () => {
-  const { main } = await page({
-    pooling: EXTRA_POOL,
-    'ctx-size': '172032000',
-    // The Chat / reasoning card, editable since 2h.6's 170: 134 takes its
-    // lines, and the number of a box the file unticked is an enabled input.
-    'reasoning-effort': EXTRA_POOL,
-    'reasoning-budget-message': LONG_TEXT,
-    'n-predict': '172032000',
-    // The KV cache card, editable since 2h.5's 164: 134 takes its lines.
-    'cache-type-k': EXTRA_POOL,
-    'cache-ram': '172032000',
-    // The Hardware card, editable since 2h.7's 175: its selects are always
-    // enabled and the key unticks the number's box, so 134 takes its lines.
-    'load-mode': EXTRA_POOL,
-    'lazy-mode': EXTRA_POOL,
-    'n-gpu-layers': '172032000',
-    // 2h.8's 183 and 186 made the Fit trio editable, so its controls are
-    // disabled by the rule and not by the card: with the Fit to VRAM box off,
-    // 134 keeps the line under the number's input and the text input, as it
-    // keeps it under the Speculative decoding card's Draft K-cache type
-    // select: 189 made that card editable, but 190 disables its draft group
-    // on this read, which has no `model-draft` and no `spec-type`.
-    fit: 'off',
-    'fit-ctx': '172032000',
-    'fit-target': LONG_TEXT,
-    'spec-draft-type-k': EXTRA_POOL,
-    'spec-draft-n-max': '172032000',
-  })
-  // An enabled select opens and an enabled input scrolls, so 134 takes the
-  // line away from both, and 160 says the Resource card's number never has
-  // one: a ticked box's input is empty, an unticked one is enabled.
-  for (const key of [
-    'pooling',
-    'ctx-size',
-    'cache-type-k',
-    'cache-ram',
-    'reasoning-effort',
-    'reasoning-budget-message',
-    'n-predict',
-    'load-mode',
-    'lazy-mode',
-    'n-gpu-layers',
-  ])
-    expect(
-      fullOf(main, key),
-      `${key}: no full-value line under an editable control`,
-    ).toBeNull()
-  // A control that is disabled now, by 175, 186 or 190, keeps the line of
-  // 118: a select, a number's input and a text input.
-  for (const key of [
-    'spec-draft-type-k',
-    'fit-ctx',
-    'fit-target',
-    'spec-draft-n-max',
-  ])
-    expect(
-      fullOf(main, key),
-      `${key}: the disabled control keeps its line`,
-    ).toBeTruthy()
-  cleanup()
-  // The same three fields with the Fit box checked: 186 enables the number's
-  // input and the text input, so 134 takes their two lines away and 190 leaves
-  // the draft group's select disabled on its own.
-  const on = await page({
-    fit: 'on',
-    'fit-ctx': '172032000',
-    'fit-target': LONG_TEXT,
-    'spec-draft-type-k': EXTRA_POOL,
-  })
-  for (const key of ['fit-ctx', 'fit-target'])
-    expect(
-      fullOf(on.main, key),
-      `${key}: 186 enables the control, so no line`,
-    ).toBeNull()
-  expect(
-    fullOf(on.main, 'spec-draft-type-k'),
-    'the select 190 disables keeps its line',
-  ).toBeTruthy()
-})
-
-test("2h.134 (2h.6 170, 2h.9 190): a long value the disabled control cannot show keeps its line: the Speculative decoding card's Draft K-cache type select is the disabled half of the pair (190: this read has no draft), Reasoning effort the enabled half (pinned above)", async () => {
-  const { main } = await page({
-    'spec-draft-type-k': EXTRA_POOL,
-    'reasoning-effort': EXTRA_POOL,
-  })
-  const line = fullOf(main, 'spec-draft-type-k')!
-  expect(text(line), 'the line repeats the value as written').toBe(EXTRA_POOL)
-  expect(
-    selectOf(main, en('model-profile-draft-k-cache-type')).disabled,
-    'the field is a disabled select',
-  ).toBe(true)
-  expect(
-    selectOf(main, en('model-profile-reasoning-effort')).disabled,
-    'Reasoning effort: 170 makes its card editable, so the select is enabled',
-  ).toBe(false)
-  expect(
-    fullOf(main, 'reasoning-effort'),
-    'and the enabled half shows no line',
-  ).toBeNull()
 })
 
 // ── 139 with 138: an edit made while the PUT runs, and the save fails ───

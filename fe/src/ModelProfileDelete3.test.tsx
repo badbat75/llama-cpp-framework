@@ -30,7 +30,6 @@ import App from './App.tsx'
 import {
   en,
   fakeBff,
-  isHidden,
   modelProfileDoc,
   reply,
   startAt,
@@ -65,31 +64,33 @@ async function flushTasks(n = 2) {
   })
 }
 
-/** The document of a switched-off profile, with the two Embeddings keys set so
- *  its select is editable (the page can hold an edit). */
-function offDoc() {
+/** The document of a profile no instance profile lists, so the page's Delete
+ *  can act (22 IP5.3: the assignment is the one reason it cannot). The two
+ *  Embeddings keys are set so its select is editable: the page can hold an
+ *  edit. */
+function freeDoc() {
   return reply(
     200,
     modelProfileDoc(
       { embeddings: 'true', pooling: 'mean' },
-      { id: ID, enabled: false },
+      { id: ID, usedBy: [] },
     ),
   )
 }
 
-/** The document of a switched-on profile. */
-function onDoc() {
+/** The document of a profile an instance profile lists: the Delete cannot act. */
+function usedDoc() {
   return reply(
     200,
     modelProfileDoc(
       { embeddings: 'true', pooling: 'mean' },
-      { id: ID, enabled: true },
+      { id: ID, usedBy: ['default'] },
     ),
   )
 }
 
 async function loaded(options: BffOptions = {}) {
-  const bff = fakeBff({ modelProfile: () => offDoc(), ...options })
+  const bff = fakeBff({ modelProfile: () => freeDoc(), ...options })
   render(<App />)
   const main = screen.getByRole('main')
   await within(main).findByRole('heading', { level: 1, name: ID })
@@ -112,30 +113,6 @@ function makeDirty(main: HTMLElement) {
     name: en('model-profile-embedding-mode'),
   })
   fireEvent.change(select, { target: { value: 'false' } })
-}
-
-function press(el: HTMLElement) {
-  el.focus()
-  fireEvent.click(el)
-}
-
-function text(el: Element | null): string {
-  return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
-}
-
-/** True when `el` is not shown as the page stands: the hidden attribute and
- *  the class the sheet hides with (test/bff.ts's isHidden, the list rows'
- *  visually hidden reason), or a declaration of a top-level sheet rule that
- *  reaches the element taking it out of the eye (22 L2.B2 b; jsdom lays
- *  nothing out, so the sheet text stands in for the layout). */
-function notShown(el: Element): boolean {
-  if (isHidden(el) || el.classList.contains('visually-hidden')) return true
-  return reaches(el).some(
-    (d) =>
-      /^display:\s*none$/.test(d) ||
-      /^visibility:\s*hidden$/.test(d) ||
-      /^clip-path:\s*inset\(\s*50%\s*\)$/.test(d),
-  )
 }
 
 /** The page's shown tip, once it is there (the tip opens on a queued task, as
@@ -202,109 +179,10 @@ function reaches(el: Element): string[] {
 
 // ── 22 D4.10 with 22 L2.B2: the disabled Delete and its reason ───────────
 
-test('22 D4.10, D4.14 as 22 L2.B2 amends it: a switched-on profile’s bar Delete is aria-disabled and focusable, describes itself with a not-shown #model-profile-delete-reason element, and the words show as the list’s .hint-tip on hover and on focus; Escape closes the tip and leaves the focus on Delete; a press opens nothing and sends nothing, and a Delete that can act names no reason and shows no tip', async () => {
-  const { bff, main } = await loaded({ modelProfile: () => onDoc() })
-  const del = deleteButton(main)
-  expect(
-    del.getAttribute('aria-disabled'),
-    '22 D4.10: switched on, so the Delete cannot act',
-  ).toBe('true')
-  expect(
-    (del as HTMLButtonElement).disabled,
-    '22 D4.2: aria-disabled, not disabled: it stays focusable',
-  ).toBe(false)
-  // 22 L2.B2 b: the Delete describes itself with its reason, and the reason is
-  // an element of the page, not a line the eye reads.
-  const describedBy = del.getAttribute('aria-describedby')
-  expect(describedBy, '22 L2.B2 b: the Delete names its reason').toBe(
-    'model-profile-delete-reason',
-  )
-  const reason = main.querySelector('#model-profile-delete-reason')
-  expect(reason, 'the reason is on the page, unasked').not.toBeNull()
-  expect(reason, 'and it is the element the Delete names').toBe(
-    document.getElementById(describedBy!),
-  )
-  expect(text(reason), '22 D4.14: the list’s reason, shared').toBe(
-    en('model-profiles-delete-needs-off'),
-  )
-  expect(reason!.closest('button'), 'not inside a button').toBeNull()
-  expect(
-    notShown(reason!),
-    '22 L2.B2 b: the reason is visually hidden: no line of the bar, and 22 D4.14’s shown p is gone',
-  ).toBe(true)
-  // The words float: the list rows’ tip, on hover and on focus (22 L2.B2 c).
-  expect(main.querySelector('.hint-tip'), 'no tip at rest').toBeNull()
-  fireEvent.mouseOver(del)
-  const tip = await shownTip(main)
-  expect(text(tip), 'the hover shows the reason').toBe(
-    en('model-profiles-delete-needs-off'),
-  )
-  fireEvent.mouseOut(del, { relatedTarget: document.body })
-  await flushTasks()
-  expect(
-    main.querySelector('.hint-tip'),
-    'the pointer leaving the box closes the tip',
-  ).toBeNull()
-  del.focus()
-  fireEvent.focus(del)
-  const byFocus = await shownTip(main)
-  expect(text(byFocus), 'the focus shows the same reason').toBe(
-    en('model-profiles-delete-needs-off'),
-  )
-  expect(
-    document.activeElement,
-    'showing the tip moves the focus nowhere',
-  ).toBe(del)
-  fireEvent.keyDown(document, { key: 'Escape' })
-  await flushTasks()
-  expect(
-    main.querySelector('.hint-tip'),
-    '22 D4.18 D3: Escape closes the tip',
-  ).toBeNull()
-  expect(
-    document.activeElement,
-    '22 D4.3: the focus stays on Delete: the user is where they were',
-  ).toBe(del)
-  // A press of the disabled Delete sends nothing and opens nothing.
-  press(del)
-  expect(
-    main.querySelector('.save-bar [role="group"]'),
-    'a press opens no confirm',
-  ).toBeNull()
-  expect(
-    bff.to('DELETE', `/api/profiles/model/${ID}`),
-    'and sends nothing',
-  ).toHaveLength(0)
-  cleanup()
-  vi.unstubAllGlobals()
-  // A profile that can be deleted: no reason, no description, no tip.
-  const off = await loaded()
-  const active = deleteButton(off.main)
-  expect(
-    active.getAttribute('aria-disabled'),
-    'a switched-off profile: the Delete can act',
-  ).not.toBe('true')
-  expect(
-    active.getAttribute('aria-describedby'),
-    '22 L2.B2: a verb that can act names no reason',
-  ).toBeNull()
-  expect(
-    off.main.querySelector('#model-profile-delete-reason'),
-    '22 L2.B2: the reason element is gone with the description',
-  ).toBeNull()
-  fireEvent.mouseOver(active)
-  active.focus()
-  await flushTasks()
-  expect(
-    off.main.querySelector('.hint-tip'),
-    '22 D4.3: an active Delete shows no tip',
-  ).toBeNull()
-})
-
 // ── 22 L2.B2: the reason floats, it is not a line of the bar ─────────────
 
 test('22 L2.B2 c (replacing 22 D4.14’s line, 22 D4 review D1): the reason of the bar’s Delete that cannot act floats over the page: the tip is the Delete’s next sibling in the box that owns the hover and the focus, the box stands in the bar, and the sheet takes the tip out of the flow, so no reason adds a line to the bar and the bar’s height never changes', async () => {
-  const { main } = await loaded({ modelProfile: () => onDoc() })
+  const { main } = await loaded({ modelProfile: () => usedDoc() })
   const del = deleteButton(main)
   const bar = main.querySelector('.save-bar')
   expect(bar, 'the Save bar').not.toBeNull()
@@ -342,7 +220,7 @@ test('22 L2.B2 c (replacing 22 D4.14’s line, 22 D4 review D1): the reason of t
 
 // ── 22 D4.10: the state does not follow dirty ────────────────────────────
 
-test('22 D4.10: the Delete’s state does not follow the form’s dirty state: an edit leaves the active Delete active on a switched-off profile, and the disabled one disabled on a switched-on one', async () => {
+test('22 D4.10 (as 22 IP5.3 amends what disables it): the Delete’s state does not follow the form’s dirty state: an edit leaves the active Delete active on a profile no instance profile lists, and the disabled one disabled on a profile one does', async () => {
   const { main } = await loaded()
   const before = deleteButton(main)
   expect(before.getAttribute('aria-disabled'), 'active at rest').not.toBe(
@@ -356,10 +234,10 @@ test('22 D4.10: the Delete’s state does not follow the form’s dirty state: a
   ).not.toBe('true')
   cleanup()
   vi.unstubAllGlobals()
-  const on = await loaded({ modelProfile: () => onDoc() })
+  const on = await loaded({ modelProfile: () => usedDoc() })
   expect(
     deleteButton(on.main).getAttribute('aria-disabled'),
-    'disabled at rest',
+    '22 IP5.3: disabled at rest, an instance profile listing it',
   ).toBe('true')
   makeDirty(on.main)
   expect(

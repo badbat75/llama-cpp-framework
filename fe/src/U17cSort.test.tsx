@@ -95,13 +95,15 @@ const ENGINE_DESC = [QWEN27, SWIFT, QWEN36, CODER]
 /** The three column names, as the strings file writes them. */
 const NAME = en('model-profiles-column-name')
 const ENGINE = en('model-profiles-column-engine')
-const STATUS = en('model-profiles-column-status')
+// 22 IP5.1 took the Status column (the row switch) out; 22 IP5.2 put Used by in
+// its place, and neither the new column nor the Actions one sorts.
+const USEDBY = en('model-profiles-column-used-by')
 
 /** Every column's `aria-sort`, by name: '' where it declares none. */
 const sorted = (states: Record<string, string>) => ({
   [NAME]: '',
   [ENGINE]: '',
-  [STATUS]: '',
+  [USEDBY]: '',
   ...states,
 })
 
@@ -145,7 +147,7 @@ function headerButton(t: HTMLElement, label: string): HTMLElement {
 /** Every column's `aria-sort`, read off the cells. */
 function sortStates(t: HTMLElement): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const label of [NAME, ENGINE, STATUS])
+  for (const label of [NAME, ENGINE, USEDBY])
     out[label] = headerOf(t, label).getAttribute('aria-sort') ?? ''
   return out
 }
@@ -161,18 +163,6 @@ function filterStatus(main: HTMLElement): HTMLElement {
     'status',
   )
   return p as HTMLElement
-}
-
-/** The switch status line, the second one of the page (2c.50). */
-function switchStatus(main: HTMLElement): HTMLElement {
-  const p = main.querySelector('p.model-profiles-switch-status')
-  expect(p, 'the switch status line is on the page').not.toBeNull()
-  return p as HTMLElement
-}
-
-/** The row's on/off switch, by the profile's id (2c: named by the name cell). */
-function switchOf(t: HTMLElement, id: string): HTMLInputElement {
-  return within(t).getByRole('switch', { name: id }) as HTMLInputElement
 }
 
 /** A click where a click really is: focused, then clicked (a keyboard press). */
@@ -333,12 +323,12 @@ test('17c.2: Model profile and Engine each hold one native button named exactly 
     ).toEqual(ARROWS['arrow-up-down'])
   }
 
-  const statusTh = headerOf(t, STATUS)
+  const usedByTh = headerOf(t, USEDBY)
   expect(
-    within(statusTh).queryByRole('button'),
-    'Status is not sortable: switched-on first is already the file order',
+    within(usedByTh).queryByRole('button'),
+    '22 IP5.2: Used by is not sortable: it names instances, and 17c sorts the two columns it named',
   ).toBeNull()
-  expect(text(statusTh), 'Status reads as today').toBe(STATUS)
+  expect(text(usedByTh), 'the column reads as 22 IP5.2 writes it').toBe(USEDBY)
 
   expect(
     t.querySelectorAll('th[aria-sort]').length,
@@ -529,28 +519,6 @@ test('17c rule: with the filter on, a click on Model profile announces the sort 
 })
 
 // ── 17c.7: a switch while sorted ────────────────────────────────────────────
-
-test('17c.7: switching a profile while sorted keeps the row where it is and the focus on its switch', async () => {
-  const { main } = open()
-  const t = await table(main)
-
-  const button = headerButton(t, NAME)
-  press(button)
-  press(button)
-  await waitFor(() => expect(idsIn(t)).toEqual(NAME_DESC))
-
-  const sw = switchOf(t, QWEN36)
-  press(sw)
-  await within(switchStatus(main)).findByText(
-    en('model-profiles-switched-off', QWEN36),
-  )
-  expect(idsIn(t), 'the write did not move the row').toEqual(NAME_DESC)
-  expect(
-    switchOf(t, QWEN36),
-    'the row that was switched is still the one in that place',
-  ).toBe(sw)
-  expect(document.activeElement, 'focus stayed on the switch').toBe(sw)
-})
 
 // ── 17c.8: kept for the tab's life, cleared at sign-out ─────────────────────
 

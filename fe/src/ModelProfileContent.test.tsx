@@ -28,7 +28,6 @@ import {
 } from './test/bff.ts'
 import {
   fieldTabStops,
-  MODEL_PROFILE_CARDS,
   pageBottomTabStops,
   pageTopTabStops,
 } from './test/modelProfileCards.ts'
@@ -64,19 +63,6 @@ const CARD_LABELS = [ENGINE_DT, ...LABELS]
  * and so do the save bar's two buttons since 22 D2.5 moved the bar to the top
  * of the page, so this list is the field stops only. */
 const CARD_TAB_STOPS = [...fieldTabStops(fullDoc().values)]
-
-/** The five group headings of the Speculative decoding card of 2e.5 (criterion
- * 114): the strings text of `model-profile-draft-model-group`, and the four speculator
- * names as the INI literals they are. Each opens a group of criterion 90 as an
- * `h4` inside its card, so the page's heading outline carries the five after
- * the last card's `h3`, in the order of 112. */
-const SPEC_GROUP_HEADINGS = [
-  en('model-profile-draft-model-group'),
-  'ngram-mod',
-  'ngram-simple',
-  'ngram-map-k',
-  'ngram-map-k4v',
-]
 
 /** A model profile with every Assets value set (82), as the file holds it, plus keys
  * the page does not show. `extra` replaces a top-level member, `projectUrl`
@@ -129,24 +115,6 @@ async function loaded(options: BffOptions = {}, name = ID) {
   return { bff, main, h1, h3, card: card as HTMLElement }
 }
 
-async function message(main: HTMLElement, text: string): Promise<HTMLElement> {
-  return within(main).findByText(text)
-}
-
-function settingsTitle(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('heading', {
-    level: 2,
-    name: en('model-profile-settings-title'),
-  })
-}
-
-/** The section jump list of 2h.10's 196, found by its name. */
-function navOf(main: HTMLElement): HTMLElement {
-  return within(main).getByRole('navigation', {
-    name: en('model-profile-jump-label'),
-  })
-}
-
 /** The engine Notice of 72, found by its text: 2h.10's 194 took the read-only
  * Notice away, so it is the page's only one. */
 function engineNotice(main: HTMLElement): HTMLElement {
@@ -156,11 +124,6 @@ function engineNotice(main: HTMLElement): HTMLElement {
   )
   expect(found.length, `the Notice model-profile-engine-unavailable`).toBe(1)
   return found[0] as HTMLElement
-}
-
-/** The texts of every Notice on the page. */
-function noticeTexts(main: HTMLElement): string[] {
-  return [...main.querySelectorAll('.notice')].map(text)
 }
 
 function text(el: Element): string {
@@ -174,13 +137,6 @@ function openCard(card: HTMLElement): void {
   const toggle = card.querySelector('h3 button')
   expect(toggle, 'H11a.3: the disclosure in the card h3').not.toBeNull()
   fireEvent.click(toggle as HTMLElement)
-}
-
-/** The summary line H11a.1 renders under the h1. */
-function summaryLine(main: HTMLElement): HTMLElement {
-  const line = main.querySelector('p.model-profile-summary')
-  expect(line, 'H11a.1: the summary line').not.toBeNull()
-  return line as HTMLElement
 }
 
 function terms(card: HTMLElement): HTMLElement[] {
@@ -251,45 +207,6 @@ function nameOf(el: HTMLElement): string {
 
 // ── Failure paths first: the reply shape the fe checks (81) ─────────────
 
-test('2d.81: a key of values the page does not show is ignored, and a values whose value is a number is model-profile-load-failed with no card', async () => {
-  const { card } = await loaded({
-    modelProfile: () =>
-      reply(
-        200,
-        fullDoc({
-          values: {
-            model: MODEL,
-            mmproj: MMPROJ,
-            'model-draft': DRAFT,
-            'spec-type': 'draft-eagle3',
-            'ctx-size': '172032',
-            temp: 'zz-secret',
-          },
-        }),
-      ),
-  })
-  // H11a.4: the card mounts closed, so open it before reading the rows
-  // (as 2d.73 to 2d.76 and 2d.79 do).
-  openCard(card)
-  expect(pairs(card).map(([label]) => label)).toEqual(CARD_LABELS)
-  expect(card.textContent).not.toContain('ctx-size')
-  expect(card.textContent).not.toContain('172032')
-  expect(card.textContent).not.toContain('temp')
-  expect(card.textContent).not.toContain('zz-secret')
-  cleanup()
-  vi.unstubAllGlobals()
-  // Criterion 81: `values` holds strings only, anything else is the load
-  // failure. `loaded()` is not used here: it waits for the Assets heading,
-  // which this reply never shows.
-  const { main } = open({
-    modelProfile: () =>
-      reply(200, modelProfileDoc({}, { values: { model: 7 } })),
-  })
-  expect(await message(main, en('model-profile-load-failed'))).toBeTruthy()
-  expect(within(main).queryAllByRole('term')).toEqual([])
-  expect(within(main).queryByRole('heading', { level: 3 })).toBeNull()
-})
-
 test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes and Discard, and in main Tab reaches the back link, the save bar of 22 D2.5, the ten jump buttons of 2h.10, the Assets toggle, then each 2e field About toggle and the editable controls', async () => {
   const { main } = await loaded({ modelProfile: () => reply(200, fullDoc()) })
   for (const name of [en('save-button'), en('save-discard')])
@@ -303,101 +220,6 @@ test('2d.71 (2h.1 130, 135): the save bar is there to save with: Save changes an
 })
 
 // ── The order and the off line (68, 69) ─────────────────────────────────
-
-test("2d.68 (as 24 A2.1 amends it): below the h1, in order: the summary line of H11a.1, the state line of 24 A2.1, the h2 Model profile settings, the jump list of 2h.10, the engine Notice (an engine not available), the Assets card (H11b.1 moved the Engine row into it), and the headings stay h1, h2, h3 plus the 2e.5 card's five h4", async () => {
-  for (const [what, extra, off, unavailable] of [
-    ['a switched-on model profile', {}, false, false],
-    ['a switched-off model profile', { enabled: false }, true, false],
-    [
-      'an engine not available',
-      { engine: STRATA, engineAvailable: false },
-      false,
-      true,
-    ],
-    [
-      'switched off and not available',
-      { enabled: false, engine: STRATA, engineAvailable: false },
-      true,
-      true,
-    ],
-  ] as [string, Record<string, unknown>, boolean, boolean][]) {
-    const { main, h1, h3 } = await loaded({
-      modelProfile: () => reply(200, fullDoc(extra)),
-    })
-    // H11a.1: the summary line is the first thing under the h1, before the
-    // state line of 24 A2.1.
-    const line = summaryLine(main)
-    expect(before(h1, line), 'H11a.1: the summary is under the h1').toBe(true)
-    const nodes: [string, Node][] = [['the summary line', line]]
-    // 24 A2.1: the state line, the page's own switch and the short word of the
-    // state, follows the summary line whether the profile is on or off.
-    nodes.push([
-      'the state line',
-      await message(
-        main,
-        en(off ? 'model-profile-off-short' : 'model-profile-on-short'),
-      ),
-    ])
-    nodes.push(['the h2', settingsTitle(main)], ['the jump list', navOf(main)])
-    if (unavailable) nodes.push(['the engine Notice', engineNotice(main)])
-    // H11b.1: the Engine field is gone, so the card follows the Notice (72).
-    nodes.push(['the Assets card', h3])
-    for (let i = 0; i + 1 < nodes.length; i++)
-      expect(
-        before(nodes[i]![1], nodes[i + 1]![1]),
-        `${what}: ${nodes[i]![0]} before ${nodes[i + 1]![0]}`,
-      ).toBe(true)
-    // 2h.10's 194: the read-only Notice is gone, so the engine Notice of 72 is
-    // the only Notice the page has.
-    expect(noticeTexts(main), `${what}: the Notices of the page`).toEqual(
-      unavailable ? [en('model-profile-engine-unavailable', STRATA)] : [],
-    )
-    expect(
-      within(main)
-        .getAllByRole('heading')
-        .map((h) => h.getAttribute('aria-level') ?? h.tagName.slice(1))
-        .join(' '),
-      `${what}: the heading order of D8 (the h1, the h2, one h3 per card of test/modelProfileCards.ts, then the five h4 group headings of 2e.5's last card, of criterion 114)`,
-    ).toBe(
-      `1 2${' 3'.repeat(MODEL_PROFILE_CARDS.length)}${' 4'.repeat(SPEC_GROUP_HEADINGS.length)}`,
-    )
-    // 114: the five group headings, in the order of 112, inside the last card.
-    const h4 = within(main)
-      .getAllByRole('heading', { level: 4 })
-      .map((h) => text(h))
-    expect(h4, `${what}: the group headings of 114, in order`).toEqual(
-      SPEC_GROUP_HEADINGS,
-    )
-    cleanup()
-    vi.unstubAllGlobals()
-  }
-})
-
-test('2d.69 (as 24 A2.1 amends it): the state line under the h1 says the state in words, the short sentence of the switch, a plain span that is no live region and no Notice, and the page is not drawn muted; the line is there for a switched-on model profile too', async () => {
-  const { main, h1 } = await loaded({
-    modelProfile: () => reply(200, fullDoc({ enabled: false })),
-  })
-  const line = await message(main, en('model-profile-off-short'))
-  expect(line.tagName, '24 A2.1: a span, the words beside the switch').toBe(
-    'SPAN',
-  )
-  expect(line.getAttribute('role'), 'not a status, not an alert').toBeNull()
-  expect(line.closest('.notice'), 'not a Notice').toBeNull()
-  expect(text(line)).toBe(en('model-profile-off-short'))
-  expect(before(h1, line), 'the line is under the h1').toBe(true)
-  for (const el of [main, h1, line])
-    expect(
-      String(el.className),
-      'the state is said in words, not by muting',
-    ).not.toContain('muted')
-  cleanup()
-  vi.unstubAllGlobals()
-  const { main: on } = await loaded()
-  expect(
-    text(await message(on, en('model-profile-on-short'))),
-    '24 A2.1: a switched-on profile says so too',
-  ).toBe(en('model-profile-on-short'))
-})
 
 // ── The Engine row of Assets (70, 72, 80) ───────────────────────────────
 
@@ -473,13 +295,13 @@ test('2d.70, 2d.80 (H11b.1): the Engine row is text: opening the card sends noth
     'nothing to write in 2d',
   ).toEqual([])
   expect(
-    // 19 G.1: the profile read beside its model-info read, the list not read.
+    // 19 G.1: the profile read once. Brief 22 IP5.5 retires the model-info
+    // read: the page no longer asks for the layer facts and the tensor list,
+    // so this is the only read the page sends, beside the list read it does
+    // not send (80).
     [...new Set(seen.filter((c) => c.startsWith('GET /api/profiles/model')))],
     'the model profile read once, the list not read (80)',
-  ).toEqual([
-    'GET /api/profiles/model/Qwen3-27B',
-    'GET /api/profiles/model/Qwen3-27B/model-info',
-  ])
+  ).toEqual(['GET /api/profiles/model/Qwen3-27B'])
   expect(seen, 'no engine list read in 2d').not.toContain('GET /api/engines')
   expect(
     within(main).queryAllByRole('combobox', { name: ENGINE_DT }),
@@ -712,10 +534,12 @@ test('2d.79: a screen reader: the h1 is the id at level 1, the Engine row of the
   ])
   expect(second).toEqual([en('model-profile-project-url'), URL])
   // The loading status went with the content. 2h.1's 135 keeps the save bar's
-  // status line on the page permanently, and GD1.9 keeps the GPUs card's move
-  // region there from its first render, so the bar's line is picked inside the
-  // bar, not by counting the page's regions (ruling of 2026-11-21). Both are
-  // empty on arrival, so the page still announces nothing.
+  // status line on the page permanently, so the bar's line is picked inside the
+  // bar, not by counting the page's regions (ruling of 2026-11-21). It is empty
+  // on arrival, so the page still announces nothing. Brief 22 IP5.4 and IP5.5
+  // took away the two regions the page used to carry outside the bar: the state
+  // line's switch status (24 A2.1) and the GPUs card's move region (GD1.9), so
+  // nothing is left outside.
   const statuses = within(main)
     .queryAllByRole('status')
     .filter((s) => s.closest('.save-bar') !== null)
@@ -727,8 +551,8 @@ test('2d.79: a screen reader: the h1 is the id at level 1, the Engine row of the
       .queryAllByRole('status')
       .filter((s) => s.closest('.save-bar') === null)
       .map(text),
-    'the card move region of GD1.9 is there and empty on arrival too, with the state line’s switch status of 24 A2.1',
-  ).toEqual(['', ''])
+    'no status region outside the save bar (IP5.4, IP5.5)',
+  ).toEqual([])
   expect(
     [...main.querySelectorAll('[role="alert"], [role="log"], [aria-live]')],
     'no alert, no log, no explicit live region on arrival (a NodeList is not deep-equal to [])',

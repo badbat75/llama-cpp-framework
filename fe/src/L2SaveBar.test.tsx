@@ -153,11 +153,13 @@ async function open(hash: string, options: BffOptions = {}) {
   return { bff, main }
 }
 
-/** The model profile page, of a profile switched off: the page's Delete can
- * act (22 D4.10: `canDelete = !enabled`). */
-async function modelPage(off: boolean) {
+/** The model profile page of a profile `inUse` names to an instance profile:
+ *  22 IP5.3 makes the assignment the only reason the page's Delete cannot act
+ *  (`canDelete` is `usedBy` empty), the switch of 22 D4.10 being gone. */
+async function modelPage(inUse: boolean) {
   const { main } = await open(MODEL, {
-    modelProfile: () => reply(200, modelProfileDoc({}, { enabled: !off })),
+    modelProfile: () =>
+      reply(200, modelProfileDoc({}, { usedBy: inUse ? ['default'] : [] })),
   })
   // The bar is in the settings section, which the read brings: waiting for the
   // verb is waiting for the page (ModelProfileDelete.test.tsx's `loaded`).
@@ -333,7 +335,7 @@ afterEach(() => {
 // this is the place and the Tab path L2.B1 a asks for.
 
 test('22 L2.B1 a: on the model profile page the Save bar is the settings section’s last child, after the jump list and every card, and its status line and alert place stand before its buttons', async () => {
-  const main = await modelPage(true)
+  const main = await modelPage(false)
   const bar = barOf(main)
   const section = formSection(main, 'model-profile-settings-title')
   expect(
@@ -360,7 +362,7 @@ test('22 L2.B1 a: on the model profile page the Save bar is the settings section
 })
 
 test('22 L2.B1 a: on the model profile page Tab walks the fields first and the bar last: the page’s last three stops are Discard, Save changes and Delete, in that order', async () => {
-  const main = await modelPage(true)
+  const main = await modelPage(false)
   const all = stops(main)
   const tail = all.slice(-3)
   expect(
@@ -377,7 +379,7 @@ test('22 L2.B1 a: on the model profile page Tab walks the fields first and the b
 })
 
 test('22 L2.A2: the model profile page’s bar Delete is pushed to the bar end and drawn in --danger, and keeps its id, its aria-expanded and a description of its reason (22 D4.10 to D4.14)', async () => {
-  const main = await modelPage(false)
+  const main = await modelPage(true)
   const del = within(main).getByRole('button', {
     name: en('model-profile-delete'),
   })
@@ -387,7 +389,10 @@ test('22 L2.A2: the model profile page’s bar Delete is pushed to the bar end a
   expect(del.getAttribute('aria-expanded'), 'the confirm is closed').toBe(
     'false',
   )
-  expect(del.getAttribute('aria-disabled'), 'the profile is on').toBe('true')
+  expect(
+    del.getAttribute('aria-disabled'),
+    'an instance profile lists the profile (22 IP5.3: the one reason left)',
+  ).toBe('true')
   expect(
     del.getAttribute('aria-describedby'),
     '22 L2.B2 b: the verb describes itself with its reason',
@@ -446,93 +451,8 @@ test('22 L2.A2: the server profile page’s bar Delete is pushed to the bar end 
 // the tip on hover and on focus. The visible line 22 D4.14 put under Delete is
 // gone.
 
-test('22 L2.B2 a, b: a Delete that cannot act stays focusable, is described by an element that is not shown, and a click opens no confirm and sends nothing (model page, profile switched on)', async () => {
-  const main = await modelPage(false)
-  const del = within(main).getByRole('button', {
-    name: en('model-profile-delete'),
-  })
-  expect(
-    del.getAttribute('aria-disabled'),
-    '22 D4.2: switched off by aria-disabled, not disabled',
-  ).toBe('true')
-  expect(
-    del.hasAttribute('disabled'),
-    '22 L2.B2 a: it keeps the focus (WCAG 4.1.2: a control the keyboard never reaches)',
-  ).toBe(false)
-  const reason = reasonOf(main, del)
-  expect(
-    reason.textContent?.replace(/\s+/g, ' ').trim(),
-    '22 L2.B2 b: the reason is the key 22 D4.14 gave, unchanged',
-  ).toBe(en('model-profiles-delete-needs-off'))
-  expect(
-    notShown(reason),
-    '22 L2.B2 d: the reason is not a visible line of the bar: it is the element the description names, out of the eye, as a list row’s reason is',
-  ).toBe(true)
-  expect(
-    reason.closest('.save-bar'),
-    '22 L2.B2 b: it belongs to the bar’s Delete, not to the page',
-  ).toBe(barOf(main))
-  fireEvent.click(del)
-  expect(
-    main.querySelector('.confirm-group'),
-    '22 L2.B2 a: the click of a Delete that cannot act opens nothing (22 D4.2)',
-  ).toBeNull()
-})
-
-test('22 L2.B2 c: the model page Delete that cannot act shows its reason as the list’s tip, on hover and on focus, and Escape closes it and keeps the focus on Delete (WCAG 1.4.13)', async () => {
-  const main = await modelPage(false)
-  const del = within(main).getByRole('button', {
-    name: en('model-profile-delete'),
-  })
-  const box = boxOf(del)
-  expect(
-    del.nextElementSibling,
-    '22 D4.13, kept by L2.B2 c: the tip is the button’s next sibling, so the pointer crosses no gap on the way to it',
-  ).toBeNull()
-  // The hover: the box owns the pointer handlers, and the pointer enters it
-  // through the button.
-  fireEvent.mouseOver(del)
-  const tip = await tipOf(box)
-  expect(
-    tip.textContent?.replace(/\s+/g, ' ').trim(),
-    'the tip says the same words as the description',
-  ).toBe(en('model-profiles-delete-needs-off'))
-  expect(
-    tip.previousElementSibling,
-    '22 D4.13: the tip is the Delete’s next sibling inside the box',
-  ).toBe(del)
-  fireEvent.mouseOut(del, { relatedTarget: document.body })
-  await waitFor(() =>
-    expect(
-      box.querySelector('.hint-tip'),
-      'the pointer leaving the box closes the tip',
-    ).toBeNull(),
-  )
-  // The focus: a keyboard user reaches the switched-off verb and hears its
-  // description; the words show too.
-  del.focus()
-  fireEvent.focus(del)
-  const byFocus = await tipOf(box)
-  expect(
-    byFocus.textContent?.replace(/\s+/g, ' ').trim(),
-    'the focus shows the same reason',
-  ).toBe(en('model-profiles-delete-needs-off'))
-  expect(
-    document.activeElement,
-    'showing the tip moves the focus nowhere',
-  ).toBe(del)
-  fireEvent.keyDown(del, { key: 'Escape' })
-  await waitFor(() =>
-    expect(box.querySelector('.hint-tip'), 'Escape closes the tip').toBeNull(),
-  )
-  expect(
-    document.activeElement,
-    '22 D4.3: the focus stays on Delete, the user is where they were',
-  ).toBe(del)
-})
-
 test('22 L2.B2 c: at the viewport’s bottom edge the tip opens above Delete, its right edge at Delete’s right edge, wholly inside a 1280 by 720 viewport (WCAG 2.4.11)', async () => {
-  const main = await modelPage(false)
+  const main = await modelPage(true)
   const del = within(main).getByRole('button', {
     name: en('model-profile-delete'),
   })
@@ -591,7 +511,7 @@ test('22 L2.B2: the server profile page’s Delete that cannot act is described 
 })
 
 test('22 L2.B2: a Delete that can act names no reason, holds no tip, and opens its confirm (both pages)', async () => {
-  const model = await modelPage(true)
+  const model = await modelPage(false)
   const off = within(model).getByRole('button', {
     name: en('model-profile-delete'),
   })
@@ -659,7 +579,7 @@ async function removablePage(): Promise<HTMLElement> {
 }
 
 test('22 CD.1: the model profile page confirm verb has primary and danger', async () => {
-  const main = await modelPage(true)
+  const main = await modelPage(false)
   const verb = await verbOf(main, en('model-profile-delete'))
   expect(verb.id, 'the verb keeps its id (CD.3)').toBe('confirm-delete')
   expect(verb.className, 'the verb is the filled primary verb').toContain(
@@ -716,7 +636,7 @@ test('22 CD.1: the instance page remove verb has primary and danger', async () =
 })
 
 test('22 CD.1: Save changes, the two Create verbs and the display name Save keep primary without danger', async () => {
-  const main = await modelPage(true)
+  const main = await modelPage(false)
   const save = within(main).getByRole('button', { name: en('save-button') })
   expect(save.className).toContain('primary')
   expect(save.className, 'the save is not a danger verb').not.toContain(
@@ -791,7 +711,7 @@ function checkConfirm(main: HTMLElement, verbName: string) {
 }
 
 test('22 CD.3: the four confirms keep their texts, their order of verb then Cancel, and their focus on Cancel', async () => {
-  const model = await modelPage(true)
+  const model = await modelPage(false)
   fireEvent.click(
     within(model).getByRole('button', { name: en('model-profile-delete') }),
   )
@@ -822,7 +742,7 @@ test('22 CD.3: the four confirms keep their texts, their order of verb then Canc
 //    review's D4, which withdraws advice 1 (the short verb) ─────────────────
 
 test('22 L2 D4.30 (the code review’s class item): the page Delete carries a class of its own, and the sheet keys the end-of-row margin and the danger colour on that class, not on the last button of the bar', async () => {
-  const main = await modelPage(true)
+  const main = await modelPage(false)
   const bar = barOf(main)
   const del = within(bar).getByRole('button', {
     name: en('model-profile-delete'),
@@ -887,7 +807,7 @@ test('22 L2 D4.30 (the code review’s class item): the page Delete carries a cl
 
 test('22 L2 D4.30 review A1, its advice 1 withdrawn: the page Delete has ONE visible label, the full verb, on the model page and on the server page (the second review, D4)', async () => {
   const cases = [
-    { open: () => modelPage(true), key: 'model-profile-delete' },
+    { open: () => modelPage(false), key: 'model-profile-delete' },
     { open: () => serverPage(false), key: 'server-profile-delete' },
   ]
   for (const c of cases) {

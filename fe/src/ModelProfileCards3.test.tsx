@@ -27,6 +27,7 @@ import {
   fakeBff,
   isHidden,
   modelProfileDoc,
+  PLACEMENT_KEYS,
   reply,
   startAt,
 } from './test/bff.ts'
@@ -124,7 +125,7 @@ type Row = {
 }
 
 /** The field tables of 101 and 102, in the cards' and the GUI's order. */
-const FIELDS: Row[] = [
+const FIELDS_IP5_ALL: Row[] = [
   {
     card: 'model-profile-chat-reasoning',
     key: 'jinja',
@@ -270,6 +271,13 @@ const FIELDS: Row[] = [
     shown: '2048',
   },
 ]
+/** Slice IP5 (fe/briefs/22-model-sources.md, IP5.5: "Each card keeps only the
+ *  fields and notes whose key is in MODEL_PROFILE_STAY_KEYS"): the rows of the
+ *  keys that moved to the instance profile's entry leave the table, so every
+ *  assertion below reads the page the slice leaves. */
+const FIELDS: Row[] = FIELDS_IP5_ALL.filter(
+  (f) => !PLACEMENT_KEYS.includes(f.key),
+)
 
 /** The two cards of 2e.3. */
 const CARDS = ['model-profile-chat-reasoning', 'model-profile-vision']
@@ -291,7 +299,9 @@ const NOTES = [
   [
     'model-profile-vision',
     'model-profile-image-tokens-note',
-    en('model-profile-vision-gpu'),
+    // Brief 22 IP5.5: the two MMProj rows above it are `PLACEMENT_KEYS`, so
+    // the note is now the card's first row and sits before its first field.
+    null,
     en('model-profile-min-image-tokens'),
   ],
 ] as const
@@ -806,11 +816,11 @@ const CHECKBOX_CASES = CHECKBOXES.flatMap((f) =>
   })),
 )
 
-test('2e.87, 2e.101, 2e.102: the checkbox fields of the 101 and 102 tables are exactly these three', () => {
+test('2e.87, 2e.101, 2e.102: the checkbox fields of the 101 and 102 tables are exactly these two (IP5: the mmproj offload flag is the instance profile’s)', () => {
   expect(
     CHECKBOXES.map((f) => f.key),
     'the checkbox fields of 101 and 102',
-  ).toEqual(['jinja', 'prefill-assistant', 'mmproj-offload'])
+  ).toEqual(['jinja', 'prefill-assistant'])
 })
 
 test.each(CHECKBOX_CASES)(
@@ -848,20 +858,22 @@ test.each(CHECKBOX_CASES)(
   },
 )
 
-test('2e.104: the stub of 104 shows as the tables say, every key set: the three checkboxes unchecked and mmproj-device as the file writes it', async () => {
+test('2e.104: the stub of 104 shows as the tables say, every key set: the two checkboxes unchecked, and IP5 leaves no mmproj-device control on the page', async () => {
   const of_ = (key: string) => FIELDS.find((f) => f.key === key)!
   // Every key set.
   const { main } = await loaded({
     modelProfile: () => reply(200, exactOf(SET)),
   })
-  for (const key of ['jinja', 'prefill-assistant', 'mmproj-offload'])
+  for (const key of ['jinja', 'prefill-assistant'])
     expect(checkBoxOf(main, of_(key)).checked, `${key} false: unchecked`).toBe(
       false,
     )
   expect(
-    selectedTextExact(selectOf(main, en('model-profile-vision-gpu'))),
-    'mmproj-device ROCm1: the device as the file writes it',
-  ).toBe('ROCm1')
+    within(main).queryByRole('combobox', {
+      name: en('model-profile-vision-gpu'),
+    }),
+    'IP5.5: the GPU device the mmproj loads on is the instance profile’s, so the page shows no control for it',
+  ).toBeNull()
 })
 
 test('2e.104: the stub of 104 shows as the tables say, values {}: every checkbox checked', async () => {
@@ -870,7 +882,7 @@ test('2e.104: the stub of 104 shows as the tables say, values {}: every checkbox
   const { main: empty } = await loaded({
     modelProfile: () => reply(200, exactOf({})),
   })
-  for (const key of ['jinja', 'prefill-assistant', 'mmproj-offload'])
+  for (const key of ['jinja', 'prefill-assistant'])
     expect(checkBoxOf(empty, of_(key)).checked, `${key}: absent checked`).toBe(
       true,
     )
@@ -1048,48 +1060,6 @@ test('2e.101, 2e.1.3, 2e.122, 2e.125: Keep past thinking absent shows default', 
   expectAbsentSelect(absent, f)
 })
 
-// ── The device select of 103 ────────────────────────────────────────────
-
-test('2e.103: Vision GPU absent holds only the empty option, whose value is the empty string and whose text is model-profile-device-follows-model, selected; the page lists no device, it has no device list in 2e', async () => {
-  const { main } = await loaded({ modelProfile: () => reply(200, exactOf({})) })
-  const select = selectOf(main, en('model-profile-vision-gpu'))
-  const opts = optionsOf(select)
-  expect(opts.length, 'absent: only the empty option').toBe(1)
-  expect(opts[0]!.value, 'the empty option carries the empty value').toBe('')
-  expect(opts[0]!.textContent, 'and the text of 105').toBe(FOLLOW)
-  expect(select.selectedIndex, 'the empty option is selected').toBe(0)
-  expect(select.disabled, 'the select disabled').toBe(true)
-})
-
-test.each(['ROCm1', 'CUDA0', ' ROCm1 ', 'cpu'])(
-  '2e.103: Vision GPU present keeps the empty option first and adds one option whose value and text are the reply string as written, selected: no device of a list, no (custom) marker: %s',
-  async (value) => {
-    const { main } = await loaded({
-      modelProfile: () => reply(200, exactOf({ 'mmproj-device': value })),
-    })
-    const select = selectOf(main, en('model-profile-vision-gpu'))
-    const opts = optionsOf(select)
-    expect(opts.length, `${value}: the empty option plus one`).toBe(2)
-    expect(opts[0]!.value, `${value}: the empty option stays first`).toBe('')
-    expect(opts[0]!.textContent, `${value}: and its text`).toBe(FOLLOW)
-    expect(
-      opts[1]!.value,
-      `${value}: the option carries the file's value`,
-    ).toBe(value)
-    expect(opts[1]!.textContent, `${value}: and its text, as written`).toBe(
-      value,
-    )
-    expect(
-      selectedTextExact(select),
-      `${value}: the file's device is the selected one`,
-    ).toBe(value)
-    expect(
-      optionTexts(select).join(' '),
-      `${value}: no (custom) marker on the data`,
-    ).not.toContain('(custom)')
-  },
-)
-
 // ── The notes inside the cards (90) ─────────────────────────────────────
 
 test('2e.90: the two notes of 2e.3 are paragraphs of their card between the fields the table names, in the muted note style, and are no field: no About toggle; and the two cards hold no group, so no h4 and no role=group division', async () => {
@@ -1097,15 +1067,10 @@ test('2e.90: the two notes of 2e.3 are paragraphs of their card between the fiel
   for (const [cardKey, noteKey, afterLabel, beforeLabel] of NOTES) {
     const card = cardOf(main, cardKey)
     // 2h.176: the SET stub has no mmproj, so the Vision card opens with its
-    // model-profile-vision-off paragraph right after the h3, before the first field
-    // (the paragraph is pinned by 176 and 181 in ModelProfileSave12.test.tsx). The
-    // notes of 90 sit between fields, so a 90 note is a card paragraph that
-    // starts after the card's first field; the intro is not one of them.
-    const firstField = card.querySelector('.field')
-    const notes = notesOf(card).filter(
-      (p) => firstField !== null && before(firstField, p),
-    )
-    expect(notes.length, `${en(cardKey)}: one note between the fields`).toBe(1)
+    // model-profile-vision-off paragraph right after the h3. The note of 90 is
+    // picked by its own text, so that paragraph is never one of them.
+    const notes = notesOf(card).filter((p) => text(p) === en(noteKey))
+    expect(notes.length, `${en(cardKey)}: one note of 90`).toBe(1)
     const note = notes[0]!
     expect(note.tagName, `${en(cardKey)}: the note is a paragraph`).toBe('P')
     expect(text(note), `${noteKey}: the text of 105, unchanged`).toBe(
@@ -1117,11 +1082,18 @@ test('2e.90: the two notes of 2e.3 are paragraphs of their card between the fiel
       note.closest('.field'),
       `${noteKey}: the note is not inside a field`,
     ).toBeNull()
-    // The GUI place: after the field named, before the field named.
-    expect(
-      before(fieldOf(main, afterLabel), note),
-      `${afterLabel} before ${noteKey}`,
-    ).toBe(true)
+    // The GUI place: after the field named, before the field named. A note the
+    // slice left with no field above it is the card's first row.
+    if (afterLabel === null)
+      expect(
+        before(note, card.querySelector('.field')!),
+        `${noteKey}: the card's first row`,
+      ).toBe(true)
+    else
+      expect(
+        before(fieldOf(main, afterLabel), note),
+        `${afterLabel} before ${noteKey}`,
+      ).toBe(true)
     expect(
       before(note, fieldOf(main, beforeLabel)),
       `${noteKey} before ${beforeLabel}`,
@@ -1148,7 +1120,7 @@ test('2e.90: the two notes of 2e.3 are paragraphs of their card between the fiel
 
 // ── Values shown exactly, the full-value line of 104 (87, 118, 119) ─────
 
-test('2e.87, 2e.104: a value of 2e.3 shows exactly as the reply holds it, with no parsing, no trimming and no case change: a number with spaces and a leading zero, a budget message with spaces and capitals, an unlisted device and effort', async () => {
+test('2e.87, 2e.104: a value of 2e.3 shows exactly as the reply holds it, with no parsing, no trimming and no case change: a number with spaces and a leading zero, a budget message with spaces and capitals, an effort no option lists', async () => {
   for (const [key, value] of [
     ['reasoning-budget', ' -1 '],
     ['reasoning-budget', '08192'],
@@ -1187,16 +1159,12 @@ test('2e.87, 2e.104: a value of 2e.3 shows exactly as the reply holds it, with n
       ),
   })
   expect(
-    selectedTextExact(selectOf(main, en('model-profile-vision-gpu'))),
-    'the device keeps its spaces and its case',
-  ).toBe(' ROCm1 ')
-  expect(
     selectedTextExact(selectOf(main, en('model-profile-reasoning-effort'))),
     'an effort no option lists keeps its case',
   ).toBe('XHigh')
 })
 
-test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no full-value line, and the Vision GPU device shows its line only while the select is disabled by 176's rule", async () => {
+test('2e.118, 2e.104, 2h.134: a long Budget message shows no full-value line (IP5: the Vision GPU device, whose 2h.176 rule paired this line, is the instance profile’s)', async () => {
   // 134: the full-value line is only for a disabled control, because an
   // enabled input can be scrolled and an enabled select opened. The Budget
   // message of 104, past the 20 characters of a text input, sits under an
@@ -1224,56 +1192,6 @@ test("2e.118, 2e.119, 2e.104, 2h.134, 2h.176: a long Budget message shows no ful
     main.querySelector('#model-profile-full-reasoning-budget-message'),
     'an enabled input shows no line (134)',
   ).toBeNull()
-  // 2h.176: with the read's mmproj present and Vision on GPU checked, the
-  // device select is an enabled control: 134 takes its line away, the opened
-  // select shows the whole value.
-  cleanup()
-  vi.unstubAllGlobals()
-  const { main: on } = await loaded({
-    modelProfile: () =>
-      reply(
-        200,
-        exactOf({
-          mmproj: 'Qwen3-VL-mmproj-BF16.gguf',
-          'mmproj-offload': 'true',
-          'mmproj-device': DEVICE_LONG,
-        }),
-      ),
-  })
-  const gpu = within(on).getByRole('combobox', {
-    name: en('model-profile-vision-gpu'),
-  }) as HTMLSelectElement
-  expect(
-    gpu.disabled,
-    'the Vision GPU select is editable with an MMProj (176)',
-  ).toBe(false)
-  expect(gpu.value, 'the enabled select holds the long value').toBe(DEVICE_LONG)
-  expect(
-    on.querySelector('#model-profile-full-mmproj-device'),
-    'an enabled select shows no line (134)',
-  ).toBeNull()
-  // While mmproj is absent the select is disabled (176), and 134 keeps the
-  // line of 118 under it: a disabled select cannot be opened.
-  cleanup()
-  vi.unstubAllGlobals()
-  const { main: off } = await loaded({
-    modelProfile: () => reply(200, exactOf({ 'mmproj-device': DEVICE_LONG })),
-  })
-  const device = within(off).getByRole('combobox', {
-    name: en('model-profile-vision-gpu'),
-  }) as HTMLSelectElement
-  expect(
-    device.disabled,
-    'the Vision GPU select is disabled without an MMProj (176)',
-  ).toBe(true)
-  const line = off.querySelector('#model-profile-full-mmproj-device')
-  expect(
-    line,
-    'the disabled control has its full-value line (134, 118)',
-  ).toBeTruthy()
-  expect(line!.tagName, 'the line is a paragraph').toBe('P')
-  expect(line!.textContent, 'the line holds the value').toBe(DEVICE_LONG)
-  expect(isHidden(line!), 'the line is shown').toBe(false)
 })
 
 // ── The cards: numbers, units, disabled, in their place (83, 85, 87, 89, 91) ──
@@ -1402,7 +1320,7 @@ test("2e.91, 2h.170: Tab in main reaches the back link, the save bar of 22 D2.5,
 
 // ── The strings (105) and what is out of 2e.3 (106) ────────────────────
 
-test('2e.105: the two cards, every label, hint, toggle, option, note and the empty device option of 2e.3 show the English of the 41 new strings of 105', async () => {
+test('2e.105: the two cards, every label, hint, toggle, option and note IP5 leaves of 2e.3 show the English of the 41 new strings of 105', async () => {
   expect(NEW_STRINGS.length, 'the strings of 105').toBe(41)
   expect(new Set(NEW_STRINGS).size, 'each of them named once').toBe(41)
   for (const key of NEW_STRINGS)
@@ -1453,10 +1371,9 @@ test('2e.105: the two cards, every label, hint, toggle, option, note and the emp
         ? [en('model-profile-vision-off'), en(noteKey)]
         : [en(noteKey)],
     )
-  expect(
-    optionsOf(selectOf(main, en('model-profile-vision-gpu')))[0]!.textContent,
-    'the empty device option of 105',
-  ).toBe(en('model-profile-device-follows-model'))
+  // The empty device option of 105 sat on the Vision GPU select, a
+  // `PLACEMENT_KEYS` field: brief 22 IP5.5 leaves no device select on this
+  // page, so the pin moves with the card (brief 26).
 })
 
 test('2e.106, 2e.87: no field of 2e.3 shows a placeholder, and the two cards show no text of 106: the budget message example of toml 337, the KV warning strip, the embedded-MTP note', async () => {

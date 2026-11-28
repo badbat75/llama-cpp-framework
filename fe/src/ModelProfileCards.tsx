@@ -1474,58 +1474,71 @@ export function deviceSend(state: string): string | null {
   return state === '' ? null : state
 }
 
-/** The rows of every card, in the page's order, a group's rows in place of the
- * group: the table nests them, so the page asks this list which keys it owns. */
-function fieldRows(): FieldRow[] {
+/** The rows of a card list, in the cards' order, a group's rows in place of the
+ *  group: the table nests them, so a caller asks a list which keys it owns. */
+function rowsOf(cards: CardFields[]): FieldRow[] {
   const rows: FieldRow[] = []
-  for (const card of CARDS)
+  for (const card of cards)
     for (const row of card.rows)
       for (const one of row.kind === 'group' ? row.rows : [row]) rows.push(one)
   return rows
 }
 
+/** The rows of every card the page draws, in the page's order. */
+function pageFieldRows(): FieldRow[] {
+  // `CARDS` holds every card the form knows, the placement ones included for
+  // the entry page of brief 26. A key that moved to the instance profile has
+  // no card on this page, so no field and no row: the lists a page reads are
+  // the rows of `pageCards` (brief 22, IP5 review A1).
+  return rowsOf(pageCards())
+}
+
 /** The select rows the form edits (130), in the page's order. */
-export function editableRows(): SelectRow[] {
-  return fieldRows().filter(
+export function pageEditableRows(): SelectRow[] {
+  return pageFieldRows().filter(
     (one): one is SelectRow => one.kind === 'select' && one.editable === true,
   )
 }
 
 /** The checkbox rows the form edits (2h.6's 170), in the page's order. */
-export function checkboxRows(): CheckboxRow[] {
-  return fieldRows().filter(
+export function pageCheckboxRows(): CheckboxRow[] {
+  return pageFieldRows().filter(
     (one): one is CheckboxRow =>
       one.kind === 'checkbox' && one.editable === true,
   )
 }
 
 /** The device rows the form edits (2h.7's 175, 179), in the page's order. */
-export function deviceRows(): DeviceRow[] {
-  return fieldRows().filter(
+export function pageDeviceRows(): DeviceRow[] {
+  return pageFieldRows().filter(
     (one): one is DeviceRow => one.kind === 'device' && one.editable === true,
   )
 }
 
 /** The number rows the form edits (2h.4's 155), in the page's order: the order
  * their fields sit in, which is the order a save reports its failures in. */
-export function numberRows(): NumberRow[] {
-  return fieldRows().filter(
+export function pageNumberRows(): NumberRow[] {
+  return pageFieldRows().filter(
     (one): one is NumberRow => one.kind === 'number' && one.editable === true,
   )
 }
 
 /** The text rows the form edits (2h.5's 166), in the page's order. */
-export function textRows(): TextRow[] {
-  return fieldRows().filter(
+export function pageTextRows(): TextRow[] {
+  return pageFieldRows().filter(
     (one): one is TextRow => one.kind === 'text' && one.editable === true,
   )
 }
 
 /** The rows the save checks (157, 166, and 2h.8's 185 for a checkbox whose
  * value the engine refuses), in the order the fields sit on screen, which is
- * the order a save reports its first failure in. */
+ * the order a save reports its first failure in. The cards the page draws, not
+ * every card (brief 22, IP5.5 and IP5.7): a key that moved to the instance
+ * profile has no field on this page, so a value of one that sits in the file is
+ * checked by the entry that shows it, and a failure marks no control the page
+ * does not draw. */
 export function checkRows(): (NumberRow | TextRow | CheckboxRow)[] {
-  return fieldRows().filter(
+  return rowsOf(pageCards()).filter(
     (one): one is NumberRow | TextRow | CheckboxRow =>
       (one.kind === 'number' ||
         one.kind === 'text' ||
@@ -1788,7 +1801,7 @@ export function numberStates(
   values: Record<string, string>,
 ): Record<string, Boxed> {
   const states: Record<string, Boxed> = {}
-  for (const row of numberRows())
+  for (const row of pageNumberRows())
     states[row.key] = boxedFrom(held(values, row.key))
   return states
 }
@@ -2015,7 +2028,7 @@ export function ruleLocked(
   return (row.enabledWhen ?? []).some((one) => {
     if (one.rule === 'unticked') return boxed[one.key]?.ticked === true
     if (one.rule === 'file') return held(loaded, one.key) === undefined
-    const box = checkboxRows().find((r) => r.key === one.key)
+    const box = pageCheckboxRows().find((r) => r.key === one.key)
     return box === undefined || !checkboxState(box, draft)
   })
 }
@@ -2095,7 +2108,10 @@ function ModelProfileField({
   if (row.kind === 'gpu') {
     // Brief 14: the GPUs fieldset. Its state is the page's (the device read,
     // the rows' weights, the last move), and the fieldset composes the `device`
-    // and `tensor-split` keys from it, so it writes no `onEdit`.
+    // and `tensor-split` keys from it, so it writes no `onEdit`. Brief 22,
+    // IP5.5 moved the keys to the instance profile: the model profile page
+    // draws no such card, and the renderer stays for the entry page of brief 26
+    // that draws it.
     return gpu === undefined ? null : (
       <GpuFieldset
         probe={gpu.probe}
@@ -2126,6 +2142,8 @@ function ModelProfileField({
     // Brief 21 (fe/briefs/21-tensor-placement.md), 21 T.2: the rules of
     // `override-tensor`. Its state is the page's (the rows and the device read),
     // and the fieldset composes the key from the rows, so it writes no `onEdit`.
+    // Brief 22, IP5.5 moved the key to the instance profile: the renderer stays
+    // for the entry page of brief 26 that draws the card.
     return tensor === undefined ? null : <TensorPlacement {...tensor} />
   }
   // What every control of a read-only card shares: its id, the texts of its
@@ -2444,10 +2462,115 @@ export function cardHeadingId(id: string): string {
   return `model-profile-card-${id}`
 }
 
+/** The keys a model profile keeps (brief 22, IP5.5): the mirror of
+ * `MODEL_PROFILE_STAY_KEYS` in `crates/core/src/checks.rs`, which says why each
+ * key stays and lists the keys that move. The page filters its cards by this
+ * list; the moved keys are set per model in the instance profile's entry
+ * (brief 26). Keep the two lists in step. */
+const STAY_KEYS = [
+  'model',
+  'hf-repo',
+  'hf-file',
+  'mmproj',
+  'model-draft',
+  'temp',
+  'top-k',
+  'top-p',
+  'min-p',
+  'repeat-penalty',
+  'presence-penalty',
+  'backend-sampling',
+  'n-predict',
+  'jinja',
+  'chat-template-kwargs',
+  'prefill-assistant',
+  'reasoning',
+  'reasoning-format',
+  'reasoning-effort',
+  'reasoning-preserve',
+  'reasoning-budget',
+  'reasoning-budget-message',
+  'embeddings',
+  'pooling',
+  'cache-reuse',
+  'image-min-tokens',
+  'image-max-tokens',
+  'spec-type',
+  'spec-draft-n-max',
+  'spec-draft-n-min',
+  'spec-draft-p-min',
+  'spec-ngram-mod-n-match',
+  'spec-ngram-mod-n-min',
+  'spec-ngram-mod-n-max',
+  'spec-ngram-simple-size-n',
+  'spec-ngram-simple-size-m',
+  'spec-ngram-map-k-size-n',
+  'spec-ngram-map-k-size-m',
+  'spec-ngram-map-k4v-size-n',
+  'spec-ngram-map-k4v-size-m',
+  'spec-ngram-map-k4v-min-hits',
+]
+
+/** The notes the model profile page keeps (IP5.5): a note reads no key, so the
+ * rule above cannot keep it. Each speaks for the fields of its card: the output
+ * budget for the Chat / reasoning card, the image tokens for the Vision card.
+ * The notes of the keys that moved go with them. */
+const STAY_NOTES = ['output-budget-note', 'image-tokens-note']
+
+/** The row the model profile page keeps (IP5.5's one rule): a field whose key
+ * is in `STAY_KEYS`, a note whose key is in `STAY_NOTES`. The GPU fieldset, the
+ * rules of `override-tensor` and the model file's facts line go with the cards
+ * that moved: the first two compose a moved key, the last reads the model file
+ * the page no longer reads. A group is kept while a field of its key is left in
+ * it. */
+function stays(row: Row): boolean {
+  if (row.kind === 'group')
+    return row.rows.some((one) => stays(one) && one.kind !== 'note')
+  if (row.kind === 'note') return STAY_NOTES.includes(row.key)
+  if (row.kind === 'facts') return false
+  return STAY_KEYS.includes(row.key)
+}
+
+/** The rows of one card as the model profile page draws them, in today's order:
+ * the rows of `stays`, a group with its own rows filtered the same way. */
+function stayRows(rows: Row[]): Row[] {
+  return rows
+    .map((row) =>
+      row.kind === 'group' ? { ...row, rows: row.rows.filter(stays) } : row,
+    )
+    .filter(stays)
+}
+
+/** A card the model profile page draws: one with a field left in it (IP5.5). A
+ * card of notes alone says nothing on its own, so it is not drawn. */
+function hasField(card: CardFields): boolean {
+  return card.rows.some((row) => stays(row) && row.kind !== 'note')
+}
+
+/** The cards of the model profile page (brief 22, IP5.5): `CARDS` filtered by
+ * `STAY_KEYS`, in today's order, with a card left with no field dropped. The
+ * four cards of the placement are in `CARDS` and not on this page: they move to
+ * the instance profile's entry (brief 26), which draws them from the same list.
+ * The KV cache card keeps `cache-reuse` alone, so its intro says where the rest
+ * of its rows went. */
+export function pageCards(): CardFields[] {
+  return CARDS.map((card) => {
+    const rows = stayRows(card.rows)
+    if (card.id !== 'kv-cache') return { ...card, rows }
+    return {
+      ...card,
+      rows,
+      introLines: t('model-profile-kv-cache-reuse-intro').split('\n'),
+      about: undefined,
+    }
+  }).filter(hasField)
+}
+
 /** The jump list of 196, in card order: each card's heading id and the title
- * its jump button is named by. */
+ * its jump button is named by. The page's jump list is the list of the cards it
+ * draws (IP5.5: "On this page" names the eight cards of the page). */
 export function cardJumps(): { id: string; title: string }[] {
-  return CARDS.map((card) => ({
+  return pageCards().map((card) => ({
     id: cardHeadingId(card.id),
     title: card.title,
   }))
@@ -2619,7 +2742,7 @@ function ProfileCard({ card, page }: { card: CardFields; page: CardsProps }) {
 export default function ModelProfileCards(page: CardsProps) {
   return (
     <>
-      {CARDS.map((card) => (
+      {pageCards().map((card) => (
         <ProfileCard key={card.title} card={card} page={page} />
       ))}
     </>

@@ -2,13 +2,17 @@
 // the list, the id as the heading, and the model profile read once each time
 // the page opens from GET /api/profiles/model/<id>, or the message saying why
 // it is not there (fe/briefs/02-models.md, sections 2d.1 to 2d.4). Below the
-// heading, the summary line naming the engine and the model file (H11a.1),
-// the Assets card as text behind a disclosure in its own heading (H11a.3), its
-// first row the Engine (H11b.1), and the cards of the settings
-// (fe/briefs/02e-model-profile-cards.md, section 1). The Embeddings card's two
-// controls, the Resource / context card's number fields, the KV cache
-// card's controls, the Vision card's controls and the Hardware card's rows are
-// editable (the two MoE rows of the last stay read-only), and
+// heading, the summary line naming the engine and the model file (H11a.1) and
+// the head's Used by row, the instance profiles that list the model (brief 22,
+// IP5.4), then the Assets card as text behind a disclosure in its own heading
+// (H11a.3), its first row the Engine (H11b.1), and the cards of the settings
+// (fe/briefs/02e-model-profile-cards.md, section 1). The page is hardware-free
+// (brief 22, IP5.5): each card keeps only the fields of
+// checks::MODEL_PROFILE_STAY_KEYS, and the four cards of the placement and the
+// memory are the instance profile entry's (brief 26). The Embeddings card's two
+// controls, the KV cache card's control, the Chat / reasoning and Sampling
+// overrides cards' fields, the Vision card's controls and the Speculative
+// decoding card's controls are editable, and
 // the save bar at the end of the settings writes what changed
 // (fe/briefs/02h-model-profile-save.md, sub-slices 2h.1, 2h.4, 2h.5, 2h.7 and 2h.8,
 // criteria 130 to 149, 155 to 157, 164, 175 to 182 and 183 to 188, read by key in
@@ -19,11 +23,11 @@
 // Assets opening that card (H11a.6), and a save refusal
 // naming a field that takes no focus says what it is and which card it sits on
 // (fe/briefs/02h-model-profile-save.md, sub-slice 2h.10, criteria 194 to 198a).
-// A switched-off model profile is deleted from its own page, the delete asked
-// in a confirm in place (fe/briefs/22-model-sources.md, slice 22D, criteria
-// 22 D.1 to 22 D.7), the way 16 17b has it on a server profile. Under the
-// summary line, the state line carries the page's own on/off switch, the list
-// row's (fe/briefs/24-ux-audit.md, slice A2), and drives the Save bar's Delete.
+// A model profile no instance profile lists is deleted from its own page, the
+// delete asked in a confirm in place (fe/briefs/22-model-sources.md, slice 22D,
+// criteria 22 D.1 to 22 D.7), the way 16 17b has it on a server profile; the
+// bar's Delete is switched off while an instance profile lists the model
+// (brief 22, IP5.6).
 import {
   Fragment,
   useCallback,
@@ -33,15 +37,8 @@ import {
   useState,
 } from 'react'
 import { flushSync } from 'react-dom'
-import {
-  apiError,
-  call,
-  isRecord,
-  readModelInfo,
-  sessionRevoked,
-  type ModelInfoRead,
-} from './api.ts'
-import { boxText, tickBox, type Boxed } from './boxed.ts'
+import { apiError, call, isRecord, sessionRevoked } from './api.ts'
+import { tickBox, type Boxed } from './boxed.ts'
 import { DiscardDialog } from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
 import PageHeading from './PageHeading.tsx'
@@ -51,68 +48,33 @@ import ModelProfileCards, {
   checkRows,
   checkboxDirty,
   checkboxError,
-  checkboxRows,
   checkboxSend,
   checkboxState,
-  deviceRows,
   deviceSend,
   deviceState,
-  editableRows,
   fieldId,
   fieldPlace,
   numberError,
-  numberRows,
   numberSend,
   numberStates,
+  pageCheckboxRows,
+  pageDeviceRows,
+  pageEditableRows,
+  pageNumberRows,
+  pageTextRows,
   ruleLocked,
   selectSend,
   selectState,
   specTypeEntries,
   textError,
-  textRows,
   textSend,
   unlockControl,
 } from './ModelProfileCards.tsx'
+import { factsRead } from './GpuSplit.tsx'
 import {
-  factsRead,
-  gpuComposeDevice,
-  gpuComposeSplit,
-  gpuFileIds,
-  gpuFileWeights,
-  gpuHas,
-  gpuIndexOf,
-  gpuLayout,
-  gpuNewWeight,
-  gpuSplitLoaded,
-  gpuWeightFailures,
-  readGpuProbe,
-  type GpuCardProps,
-  type GpuDirection,
-  type GpuProbe,
-} from './GpuSplit.tsx'
-import { setBlocks, type Layout } from './gpuBlocks.ts'
-import {
-  failureText,
-  switchedText,
-  writeEnabled,
-} from './modelProfileSwitch.ts'
-import {
-  ADD_ID,
-  OT_TEXT,
-  otControlElementId,
-  otControlId,
-  otLayersBad,
-  otNewDevice,
-  otNewRule,
-  otSetLayersText,
-  otTensorId,
-  rowRule,
-  rowsValue,
-  tensorRows,
-  type TensorCardProps,
-  type TensorRow,
-} from './TensorPlacement.tsx'
-import { CUSTOM as OT_CUSTOM } from './tensorRules.ts'
+  modelProfileInUse,
+  modelProfileInUseReason,
+} from './modelProfileDelete.ts'
 import { useFieldErrors, type RefusalTable } from './refusal.ts'
 import { deleteRow } from './RowDelete.tsx'
 import { RestartOffer } from './RestartOffer.tsx'
@@ -125,7 +87,11 @@ import {
   useSaveBarPadding,
   useWarnOnLeave,
 } from './SaveBar.tsx'
-import { modelProfileIdUnreadable } from './route.ts'
+import {
+  instanceProfileHref,
+  instanceProfileModelHref,
+  modelProfileIdUnreadable,
+} from './route.ts'
 import { SignInDialog, useSignInDialog } from './SignIn.tsx'
 import type { Session, SignedOut } from './session.ts'
 import { CardBox, Loading, LoadingText } from './Skeleton.tsx'
@@ -137,7 +103,11 @@ type ModelProfileDoc = {
   id: string
   engine: string
   engineAvailable: boolean
-  enabled: boolean
+  /** The instance profiles that list this model, in the order the read listed
+   *  them (brief 22, IP5.0): who uses the profile, and the reason its Delete
+   *  cannot act. A read that names none, a file of an earlier release, is a
+   *  profile nobody lists (IP5.6, the list's rule too). */
+  usedBy?: string[]
   values: Record<string, string>
   projectUrl: string
   revision: string
@@ -159,7 +129,7 @@ function isModelProfileDoc(value: unknown): value is ModelProfileDoc {
     typeof value.id === 'string' &&
     typeof value.engine === 'string' &&
     typeof value.engineAvailable === 'boolean' &&
-    typeof value.enabled === 'boolean' &&
+    (value.usedBy === undefined || Array.isArray(value.usedBy)) &&
     typeof value.projectUrl === 'string' &&
     typeof value.revision === 'string' &&
     isRecord(value.values) &&
@@ -296,18 +266,6 @@ export default function ModelProfilePage({
   })
   // Whether the form on screen has edits to lose (152).
   const dirty = useRef(false)
-  // Brief 19 (fe/briefs/19-layer-sliders.md), 19 G.1: the model file's layer
-  // facts, read on the same arrival as the model profile and the GPUs, and
-  // never again: a save, a Discard, an edit and a sign-in send nothing, and
-  // nothing polls. The read carries the id it was asked for, so the card shows
-  // it only while that model profile is the one on screen: no answer is the read
-  // running and its pending line, a read that answered nothing (no session, no
-  // manager, a body of no shape, no answer within the GET limit) is the failed
-  // line. The read ends no session and writes no alert (decision 1).
-  const [facts, setFacts] = useState<{
-    id: string
-    read: ModelInfoRead
-  } | null>(null)
   // Brief 22, slice 22D: the model profile this page deleted (22 D.3), and the
   // read again of a delete that found it gone, which lands on the paragraph
   // saying there is no such model profile (22 D.6, 17b review D2).
@@ -334,12 +292,6 @@ export default function ModelProfilePage({
       // message its key gives (145).
       setAnswer(a)
       if (reload) document.getElementById('page-heading')?.focus()
-    })
-    // The model file's layer facts, of the same id, sent beside the profile
-    // read and after it (brief 19, 19 G.1): the arrival's reads are the profile,
-    // the facts and the GPUs, in this order.
-    readModelInfo(id).then((read) => {
-      if (live) setFacts({ id, read })
     })
     return () => {
       live = false
@@ -435,7 +387,6 @@ export default function ModelProfilePage({
         key={signIns.rereads}
         id={id}
         answer={answer}
-        modelInfo={facts?.id === id ? facts.read : undefined}
         dropped={signIns.dropped}
         renewals={signIns.kept}
         onDirty={trackDirty}
@@ -455,7 +406,6 @@ export default function ModelProfilePage({
 function Body({
   id,
   answer,
-  modelInfo,
   dropped,
   renewals,
   onDirty,
@@ -469,8 +419,6 @@ function Body({
 }: {
   id: string
   answer: Answer | undefined
-  /** The model file's layer facts, read on this arrival (brief 19, 19 G.1). */
-  modelInfo: ModelInfoRead | undefined
   /** The edits were dropped by a sign-in as another session (152). */
   dropped: boolean
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
@@ -514,7 +462,6 @@ function Body({
     return (
       <Content
         doc={answer.doc}
-        modelInfo={modelInfo}
         dropped={dropped}
         renewals={renewals}
         onDirty={onDirty}
@@ -619,6 +566,11 @@ const REFUSALS: RefusalTable = {
         return t('api-model-profile-device-outside', ...args)
       case 'tensor-split-format':
         return t('api-tensor-split-format', ...args)
+      // Brief 22, IP5.7: the setting is the instance profile entry's, so the
+      // bff refuses it by name. The name is the 422's `field`, which
+      // `refusalOf` reads beside the args.
+      case 'model-profile-placement-key':
+        return t('api-model-profile-placement-key', args[0] ?? '')
       default:
         return undefined
     }
@@ -652,6 +604,9 @@ const REFUSALS: RefusalTable = {
         return args[2]
       case 'tensor-split-format':
         return 'tensor-split'
+      // Brief 22, IP5.7: the key names the setting, and the reply names it too.
+      case 'model-profile-placement-key':
+        return args[0]
       // Brief 21 TP2, 21 T.12: the card owns the key, so the fallback names it
       // and the page answers on the rule the args point at.
       case 'override-no-pattern':
@@ -786,16 +741,6 @@ function focusField(key: string) {
  *  are keyed as the card keys its Field Errors, and `otControlElementId` gives
  *  the id of the control each one marks. A mark names a control the page
  *  renders, so one of them answers. */
-function focusMarked(marks: Partial<Record<string, string>>) {
-  const ids = new Set(Object.keys(marks).map(otControlElementId))
-  for (const control of document.querySelectorAll<HTMLElement>(
-    'input, select, textarea',
-  ))
-    if (ids.has(control.id)) {
-      control.focus()
-      return
-    }
-}
 
 /** Whether the field of a key can be worked on: its control is enabled, or the
  *  box that ticks it on is. A field the page cannot edit has no control and no
@@ -828,10 +773,6 @@ function focusFailure(row: CheckedRow, locked: boolean) {
  * 19 G.7): a whole number, trimmed; a slider's value is always one, and a typed
  * text that is not (``, `x`, `2.5`, `-1`) applies nothing. The clamp to the
  * places is `setBlocks`'s. */
-function gpuBlockNumber(raw: string): number | null {
-  const text = raw.trim()
-  return /^\d+$/.test(text) ? Number(text) : null
-}
 
 /** The loaded model profile as a form: the settings of 2e, the two Embeddings
  * controls of 2h.1, the number fields of 2h.4 and the KV cache card of 2h.5
@@ -839,7 +780,6 @@ function gpuBlockNumber(raw: string): number | null {
  * (criteria 130 to 141, 155 to 157, 164). */
 function Content({
   doc,
-  modelInfo,
   dropped,
   renewals,
   onDirty,
@@ -852,8 +792,6 @@ function Content({
   onInstances,
 }: {
   doc: ModelProfileDoc
-  /** The model file's layer facts of this arrival, read by the page (19 G.1). */
-  modelInfo: ModelInfoRead | undefined
   /** The edits were dropped by a sign-in as another session (152). */
   dropped: boolean
   /** Raised by every sign-in that kept the page: a session-ended alert goes. */
@@ -878,6 +816,10 @@ function Content({
   const fid = useId()
   // H11a.1: the model file the summary line names, as the read gave it.
   const fileName = modelFileName(doc.values)
+  // The instance profiles that list the model (IP5.0): the head's Used by row,
+  // the placement note's link, and the reason the Delete cannot act (IP5.6). A
+  // read that names none is a profile nobody lists, the list's rule (IP5.3).
+  const usedBy = doc.usedBy ?? []
   const [loaded, setLoaded] = useState<Loaded>({
     revision: doc.revision,
     values: doc.values,
@@ -914,41 +856,6 @@ function Content({
   const [assetsOpen, setAssetsOpen] = useState(false)
   // The field a save refusal marked (142).
   const fields = useFieldErrors<string>()
-  // The GPU distribution card (brief 14): the host's GPUs, read once per
-  // arrival (GD1.3) and never again, the rows' weights (the rows and their
-  // checks are the draft's `device`), the weights a check or a refusal marked
-  // (`null` is every one that shows, what a refusal of the server does), and
-  // what the last move announced (GD1.9).
-  const [probe, setProbe] = useState<GpuProbe | null | undefined>(undefined)
-  const [weights, setWeights] = useState<Record<string, string>>(() =>
-    gpuFileWeights(
-      doc.values['tensor-split'] ?? null,
-      gpuFileIds(doc.values['device'] ?? null),
-    ),
-  )
-  const [marks, setMarks] = useState<string[] | null>(null)
-  const [moved, setMoved] = useState('')
-  // The one read of the GPUs, kept out of the double mount of the development
-  // StrictMode the way the node read is (App.tsx): the read is not cancelled,
-  // so its answer lands.
-  const devicesRead = useRef(false)
-  useEffect(() => {
-    if (devicesRead.current) return
-    devicesRead.current = true
-    readGpuProbe().then(setProbe)
-  }, [])
-  // The Tensor placement card (brief 21): the rules of `override-tensor`, one row
-  // each, the page's state as the GPU list's rows are, because the card composes
-  // the one key out of them.
-  const [otRows, setOtRows] = useState<TensorRow[]>(() =>
-    tensorRows(doc.values['override-tensor'] ?? null),
-  )
-  // Brief 21, 21 T.10: the Rules as text field. Its text is the page's: what is
-  // typed in is shown as it is typed, until Enter or the focus leaving applies
-  // it to the rows. `null` is "nothing typed in": the field shows the loaded
-  // value as the file writes it while the key is unchanged (21 T.8), and
-  // `render` of the rows once they are an edit.
-  const [otText, setOtText] = useState<string | null>(null)
   // A second Save while one runs sends nothing (137).
   const saving = useRef(false)
   const bar = useSaveBarPadding()
@@ -981,34 +888,6 @@ function Content({
     document.getElementById(reloadId)?.focus(),
   )
 
-  // Brief 24, slice A2 (23 A2.1): the page's own switch, in the state line under
-  // the summary line, so a page reached from a search or a link needs no trip
-  // back to the list. Its value is the page's, kept from the write's answer:
-  // the read the switch asks for brings the file and the revision, and the
-  // switch's word is the write's own (2c.47).
-  const [enabled, setEnabled] = useState(doc.enabled)
-  // The switch's feedback, beside the switch (DESIGN.md principle 10).
-  const [switchStatus, setSwitchStatus] = useState('')
-  const [switchAlert, setSwitchAlert] = useState<string | null>(null)
-  // One write at a time (23 A2.4): while the switch writes, the bar's Delete
-  // and Save wait, and so does the switch.
-  const [switching, setSwitching] = useState(false)
-  const sendingSwitch = useRef(false)
-  // 24 A2 review D3: a switch write that failed may have happened, so the page
-  // reads the document again: that read gives the switch its value, and the
-  // revision the next save carries. The marker is raised with the re-read and
-  // spent when a document arrives. A write that answered keeps the switch at
-  // its own word (23 A2.1), so the marker is not raised there.
-  const [adoptEnabled, setAdoptEnabled] = useState(false)
-  const [seenDoc, setSeenDoc] = useState(doc)
-  if (seenDoc !== doc) {
-    setSeenDoc(doc)
-    if (adoptEnabled) {
-      setAdoptEnabled(false)
-      setEnabled(doc.enabled)
-    }
-  }
-
   // Brief 22, slice 22D: the delete, asked in the page (fe/DESIGN.md 5.2), the
   // way 16 17b has it on a server profile.
   const [confirming, setConfirming] = useState(false)
@@ -1027,73 +906,23 @@ function Content({
   const [askingDeleteSignIn, setAskingDeleteSignIn] = useState(false)
   const deleteOpener = useRef<HTMLButtonElement>(null)
   const sendingDelete = useRef(false)
-  // 22 D4.10: the bar's Delete acts only while the profile is switched off. A
-  // switched-on profile keeps it on the bar, switched off, with the list's
-  // reason as its description (22 D4.2): never hidden. 23 A2.2: the switch that
-  // decides is the page's own, in the state line.
-  const canDelete = !enabled
+  // 22 D4.10 keeps the bar's Delete always on the bar, switched off with its
+  // reason as the description (22 D4.2), never hidden. IP5.6: what switches it
+  // off is an instance profile listing the model, the same rule and the same
+  // reason the list's row minus carries (IP5.3, `modelProfileDelete.ts`).
+  const canDelete = !modelProfileInUse(doc.usedBy)
 
   /** The bar's Delete pressed (22 D4.10): it opens the confirm, and is the
    *  place Cancel and Escape bring the focus back to. A pressed Delete that
    *  cannot act opens nothing, and 23 A2.4: a Delete pressed while the switch
    *  writes opens nothing either. */
   function openDelete() {
-    if (!canDelete || switching) return
+    if (!canDelete) return
     deleteOpener.current = document.getElementById(
       'model-profile-delete',
     ) as HTMLButtonElement | null
     setConfirming(true)
   }
-
-  /** The state line's switch pressed (23 A2.1 to A2.4): the list row's write,
-   *  its word and its refusal, then the document read again, so the next save
-   *  carries the revision the write brought (23 A2.3). The switch does not act
-   *  while the page holds edits, while its own write runs, or while a save or a
-   *  delete runs: the settings, the switch and the delete are writes of one
-   *  file. A switch-on takes an open confirm with the Delete that opened it,
-   *  and the focus stays on the switch through every answer. */
-  async function doSwitch(next: boolean) {
-    if (
-      sendingSwitch.current ||
-      sendingDelete.current ||
-      dirty ||
-      deleting ||
-      phase === 'saving'
-    )
-      return
-    const previous = enabled
-    sendingSwitch.current = true
-    setSwitching(true)
-    setEnabled(next)
-    setSwitchStatus('')
-    setSwitchAlert(null)
-    if (next) setConfirming(false)
-    const answer = await writeEnabled(doc.id, next)
-    sendingSwitch.current = false
-    setSwitching(false)
-    if (typeof answer === 'object' && 'running' in answer) {
-      setEnabled(answer.enabled)
-      setSwitchStatus(
-        switchedText(doc.id, doc.engine, answer.enabled, answer.running),
-      )
-      onReread()
-      return
-    }
-    setSwitchAlert(failureText(doc.id, answer))
-    if (answer === 'signed-out' || answer === 'revoked') {
-      setEnabled(previous)
-      return
-    }
-    // The write may have happened: the document is read again beside the form,
-    // and the switch takes its value from that read (2c.48), so the page shows
-    // and saves what the file holds.
-    setAdoptEnabled(true)
-    onReread()
-  }
-
-  /** Every state that keeps the switch from acting (23 A2.3, 23 A2.4). */
-  const switchDisabled =
-    switching || deleting || dirty || phase === 'saving' || undefined
 
   const status = phase === 'saving' ? 'saving' : dirty ? 'unsaved' : phase
 
@@ -1155,387 +984,6 @@ function Content({
     setPhase((p) => (p === 'saving' ? p : 'idle'))
   }
 
-  /** The rows the GPUs fieldset shows checked, in the split order: the ids the
-   * draft's `device` names (GD1.10). */
-  function gpuChecked(): string[] {
-    return gpuFileIds(draft['device'] ?? null)
-  }
-
-  /** Checking or unchecking a row (GD1.8): a checked row joins at the end of
-   * the checked rows at the weight GD2.3 gives a new row, an unchecked row
-   * takes its weight with it. The row's checkbox keeps the focus: the rows are
-   * keyed by id, so nothing is re-created under it. The device error goes, the
-   * bar's alert stays (GD1.11). */
-  function gpuToggle(id: string) {
-    const checked = gpuChecked()
-    const on = gpuHas(checked, id)
-    edit(
-      'device',
-      (on
-        ? checked.filter((one) => !gpuHas([one], id))
-        : [...checked, id]
-      ).join(','),
-    )
-    setWeights((w) => {
-      const next = { ...w }
-      if (on) delete next[id]
-      else next[id] = gpuNewWeight(checked, w)
-      return next
-    })
-    fields.clear('tensor-split')
-    setMarks(null)
-  }
-
-  /** Move up or Move down (GD1.9): the row swaps with its neighbour among the
-   * checked rows, its weight going with it, and the card's visually hidden
-   * status says where it landed. The pressed button keeps the focus. A Move
-   * changes the checked rows, so the weights' error and the marks go with it
-   * (GD2.6), as under a checkbox. */
-  function gpuMove(id: string, dir: GpuDirection) {
-    const checked = gpuChecked()
-    const at = checked.findIndex(
-      (one) => one.toLowerCase() === id.toLowerCase(),
-    )
-    const to = dir === 'up' ? at - 1 : at + 1
-    if (at < 0 || to < 0 || to >= checked.length) return
-    const next = [...checked]
-    next[at] = next[to]!
-    next[to] = checked[at]!
-    edit('device', next.join(','))
-    setMoved(
-      t('model-profile-gpu-moved', id, String(to + 1), String(checked.length)),
-    )
-    fields.clear('tensor-split')
-    setMarks(null)
-  }
-
-  /** What the user typed in a row's weight (GD2.1): the text is kept as typed,
-   * and the weights' error goes with it (GD2.6). */
-  function gpuWeight(id: string, value: string) {
-    setWeights((w) => ({ ...w, [id]: value }))
-    fields.clear('tensor-split')
-    setMarks(null)
-    setPhase((p) => (p === 'saving' ? p : 'idle'))
-  }
-
-  /** Auto and Even (GD2.4): every checked row's weight emptied, or set to 1.
-   * The focus stays on the pressed button, and the weights' error goes. */
-  function gpuWeightsAll(value: string) {
-    setWeights(Object.fromEntries(gpuChecked().map((id) => [id, value])))
-    fields.clear('tensor-split')
-    setMarks(null)
-    setPhase((p) => (p === 'saving' ? p : 'idle'))
-  }
-
-  /** The GPU layers the blocks are cut over (brief 19, 19 G.11): what the
-   * field holds, and nothing while its box is ticked, which is the default and
-   * no value of its own. A change here re-projects the rows and writes nothing:
-   * the counts are the layout's, not a key's. */
-  function gpuLayers(): string {
-    const b = boxed['n-gpu-layers']
-    return b === undefined ? '' : boxText(b)
-  }
-
-  /** The layout the blocks are cut over (brief 19, 19 G.4), read the way the
-   * rows read it: the same GPU layers and the same checked rows, so a count a
-   * row shows and a count a save writes are the same cut. */
-  function gpuBlocksLayout(): Layout | null {
-    return gpuLayout(
-      modelInfo,
-      gpuLayers(),
-      draft['split-mode'] ?? null,
-      gpuChecked().length,
-    )
-  }
-
-  /** The weights a slider's drag started from (19 G.6): the pointer going down
-   * takes them, every move of that drag is measured from them, and the pointer
-   * going up or cancelled lets them go, so a drag back to where it began
-   * leaves the rows as they were, and the arrow keys work from the counts. */
-  const blockBase = useRef<Record<string, string> | null>(null)
-
-  /** A row's block count applied (19 G.6 and 19 G.7): the counts of `base` with
-   * that row asking `blocks`, written back as the weights of GD2.5, so the
-   * counts always sum to the places and `tensor-split` is the counts joined.
-   * `null` is a count that is no whole number: the row's own text puts its
-   * count back, and nothing is written. */
-  function gpuBlocksSet(
-    id: string,
-    blocks: number | null,
-    base: Record<string, string>,
-  ) {
-    const lay = gpuBlocksLayout()
-    const checked = gpuChecked()
-    const at = gpuIndexOf(checked, id)
-    if (lay === null || at < 0 || blocks === null) return
-    setWeights(
-      Object.fromEntries(
-        checked.map((one, i) => [
-          one,
-          `${
-            setBlocks(
-              checked.map((each) => (base[each] ?? '').trim()),
-              at,
-              blocks,
-              lay,
-            )[i]
-          }`,
-        ]),
-      ),
-    )
-    fields.clear('tensor-split')
-    setMarks(null)
-    setPhase((p) => (p === 'saving' ? p : 'idle'))
-  }
-
-  function gpuBlock(id: string, raw: string) {
-    gpuBlocksSet(id, gpuBlockNumber(raw), blockBase.current ?? weights)
-  }
-
-  function gpuBlockCommit(id: string, raw: string) {
-    gpuBlocksSet(id, gpuBlockNumber(raw), weights)
-  }
-
-  /** The two keys the GPUs fieldset composes (GD1.10, GD2.5): the checked rows
-   * and their weights say both, so neither is ever typed. `tensor-split`
-   * counts as changed when the rows moved or a weight differs from what it
-   * loaded with, and the vector composed then differs from the one read. */
-  function gpuChanges(): Record<string, string | null> {
-    const checked = gpuChecked()
-    const loadedIds = gpuFileIds(loaded.values['device'] ?? null)
-    const device = gpuComposeDevice(checked)
-    const deviceWas = gpuComposeDevice(loadedIds)
-    const values: Record<string, string | null> = {}
-    if (device !== deviceWas) values['device'] = device
-    const split = gpuComposeSplit(checked, weights)
-    const splitWas = gpuSplitLoaded(loaded.values['tensor-split'] ?? null)
-    const loadedWeights = gpuFileWeights(
-      loaded.values['tensor-split'] ?? null,
-      loadedIds,
-    )
-    const typed =
-      checked.map((id) => (weights[id] ?? '').trim()).join(',') !==
-      loadedIds.map((id) => (loadedWeights[id] ?? '').trim()).join(',')
-    if ((device !== deviceWas || typed) && split !== splitWas)
-      values['tensor-split'] = split
-    return values
-  }
-
-  /** The Tensor placement card's controls (brief 21, 21 T.6): each one rewrites
-   *  its own row and leaves the others, and moves no focus. The key is sent when
-   *  the rows no longer render the loaded rules (21 T.8), so an edit typed and
-   *  typed back is unchanged, and a Layers text `parseLayers` cannot read is a
-   *  change: the pattern stays as the last readable text composed it, and the
-   *  card's own check at Save answers it (21 T.11). 142's rule: the edit clears
-   *  the Field Error of the control it was made on, and leaves the marks of the
-   *  row's other controls, which speak of what did not move (the TP2 review's
-   *  D3). */
-  function otEdit(
-    id: number,
-    field: string,
-    change: (row: TensorRow) => TensorRow,
-  ) {
-    setOtRows((rows) => rows.map((row) => (row.id === id ? change(row) : row)))
-    fields.clear(otControlId(field, id))
-    setPhase((p) => (p === 'saving' ? p : 'idle'))
-  }
-
-  /** Tensor: the row's kind. A row that comes to Custom shows the Custom text it
-   *  remembers for the visit, else the pattern it stands for now; a row that
-   *  leaves Custom keeps its text to remember (21 T.6). */
-  function otKind(id: number, kind: string) {
-    otEdit(id, 'tensor', (row) => ({
-      ...row,
-      kind,
-      ...(kind === OT_CUSTOM
-        ? { customText: row.customText ?? rowRule(row).pattern }
-        : {}),
-    }))
-  }
-
-  /** Layers: the text as typed. The rule's pattern is the kind composed with the
-   *  layers the row carries (21 T.6), so a half-typed text leaves the pattern as
-   *  the last readable text composed it. */
-  function otLayersText(id: number, text: string) {
-    otEdit(id, 'layers', (row) => otSetLayersText(row, text))
-  }
-
-  /** Pattern: the text as typed. It is the rule's pattern at once (21 T.6), so
-   *  the key follows the text as typed; TP2 checks the text itself at Save. */
-  function otPatternText(id: number, text: string) {
-    otEdit(id, 'pattern', (row) => ({ ...row, customText: text }))
-  }
-
-  /** Goes on: the option's value is the rule's device. */
-  function otDevice(id: number, device: string) {
-    otEdit(id, 'goes-on', (row) => ({ ...row, device }))
-  }
-
-  /** Add rule (21 T.7): the embedding table on the first GPU the read lists, on
-   *  CPU while it has not answered or lists none, appended after the rules, the
-   *  focus on its Tensor. The rows are committed (flushSync) before the focus,
-   *  the way a jump opens a card: the Tensor of a row that mounts in this commit
-   *  exists only after it. */
-  function otAdd() {
-    const id = otRows.reduce((max, row) => Math.max(max, row.id), 0) + 1
-    flushSync(() => {
-      setOtRows([...otRows, otNewRule(id, otNewDevice(probe))])
-    })
-    document.getElementById(otTensorId(id))?.focus()
-  }
-
-  /** Remove (21 T.7): the rule goes, and the focus goes to the rule that moved
-   *  up, else to the one before it, else to Add rule. */
-  function otRemove(id: number) {
-    const at = otRows.findIndex((row) => row.id === id)
-    const rows = otRows.filter((row) => row.id !== id)
-    flushSync(() => {
-      setOtRows(rows)
-    })
-    const next = rows[at] ?? rows[at - 1]
-    document
-      .getElementById(next === undefined ? ADD_ID : otTensorId(next.id))
-      ?.focus()
-  }
-
-  /** The Rules as text field's text (21 T.10): what is typed in; while nothing
-   *  is, the value as the file writes it, and `render` of the rows once they are
-   *  an edit (21 T.8's rule, so the field never shows a text whose rules the
-   *  save would not send). */
-  function otTextShown(): string {
-    if (otText !== null) return otText
-    const shown = otChanged()
-      ? rowsValue(otRows)
-      : (loaded.values['override-tensor'] ?? null)
-    return shown ?? ''
-  }
-
-  /** The rules as the file wrote them, read and rendered again: the text 21 T.8
-   *  compares with the rows' `render`, so a value the file wrote with an alias,
-   *  a space or a hand-written order reads unchanged. */
-  function otLoadedRender(): string | null {
-    return rowsValue(tensorRows(loaded.values['override-tensor'] ?? null))
-  }
-
-  /** Typing in the Rules as text field (21 T.10): only the field's text
-   *  changes, the rows keep what they show. */
-  function otTextType(text: string) {
-    setOtText(text)
-    fields.clear(OT_TEXT)
-    setPhase((p) => (p === 'saving' ? p : 'idle'))
-  }
-
-  /** Enter, or the focus leaving the Rules as text field (21 T.10): the text
-   *  becomes the rows, the way the value's rows are made (21 T.3), so the
-   *  remembered texts and the half-typed fields of the rows it replaces go with
-   *  them. The rows are new rows, with ids no control of the page carries yet
-   *  (21 T.6): a Field Error the page put on a row is never left on another
-   *  one. A text that parses to the rules on screen is the same value, so the
-   *  rows, their ids and the key are left alone. */
-  function otApplyText() {
-    if (otText === null) return
-    const rows = tensorRows(otText)
-    setOtText(null)
-    const value = (one: TensorRow[]) => rowsValue(one) ?? ''
-    if (value(rows) === value(otRows)) return
-    let id = otRows.reduce((max, row) => Math.max(max, row.id), 0)
-    setOtRows(rows.map((row) => ({ ...row, id: (id += 1) })))
-  }
-
-  /** The card's own checks at Save (21 T.11), keyed by the id of the control
-   *  each failure marks, in the order the rules are on screen: a Layers text
-   *  `parseLayers` cannot read, on the row that shows a Layers field (the rule
-   *  the save sends is the one the last readable text composed, and the text on
-   *  screen is in no part of it), a Custom pattern that is empty, and one holding
-   *  a `,` or an `=`, the separators of the value, which would split the rule in
-   *  two on the next read. A rule on no device sends `pattern=`, which reads
-   *  back as a rule with none. The keys of the whole value, a comment marker,
-   *  are the page's text checks, answered on Rules as text (2h.143). */
-  function otChecks(): Partial<Record<string, string>> {
-    const marks: Partial<Record<string, string>> = {}
-    for (const row of otRows) {
-      if (otLayersBad(row))
-        marks[otControlId('layers', row.id)] = t(
-          'model-profile-ot-layers-bad',
-          row.layersText,
-        )
-      if (row.kind === OT_CUSTOM) {
-        const pattern = row.customText ?? ''
-        const bad =
-          pattern === ''
-            ? t('model-profile-ot-pattern-empty')
-            : /[,=]/.test(pattern)
-              ? t('model-profile-ot-pattern-separator')
-              : null
-        if (bad !== null) marks[otControlId('pattern', row.id)] = bad
-      }
-      if (row.device === '')
-        marks[otControlId('goes-on', row.id)] = t(
-          'model-profile-ot-device-missing',
-        )
-    }
-    return marks
-  }
-
-  /** Where a refusal naming `override-tensor` goes on the card (21 T.12): the
-   *  pattern and device keys carry the rule's 1-based position in `args[0]` and
-   *  land on its Pattern input where the row shows one, else on its Tensor
-   *  select; `override-bad-device` lands on its Goes on;
-   *  `model-profile-device-outside` names a device (`args[3]`, the manager
-   *  reading it without case) and lands on the Goes on of every rule that is on
-   *  it. A position with no row, and a device no rule is on, answer on Rules as
-   *  text: the whole value is what the refusal speaks of. */
-  function otRefusal(
-    key: string,
-    args: string[],
-    text: string,
-  ): Partial<Record<string, string>> {
-    if (key === 'model-profile-device-outside') {
-      const device = (args[3] ?? '').toLowerCase()
-      const on = otRows.filter((row) => row.device.toLowerCase() === device)
-      if (on.length === 0) return { [OT_TEXT]: text }
-      return Object.fromEntries(
-        on.map((row) => [otControlId('goes-on', row.id), text]),
-      )
-    }
-    const row = otRows[Number(args[0]) - 1]
-    if (row === undefined) return { [OT_TEXT]: text }
-    return {
-      [key === 'override-bad-device'
-        ? otControlId('goes-on', row.id)
-        : row.kind === OT_CUSTOM
-          ? otControlId('pattern', row.id)
-          : otTensorId(row.id)]: text,
-    }
-  }
-
-  /** Whether the rules on screen are an edit of the loaded ones (21 T.8): the key
-   *  is changed when `render` of the rows differs from `render` of the loaded
-   *  rules, so a value the file wrote with an alias, a space or a hand-written
-   *  order reads unchanged, and an edit typed and typed back is unchanged. A
-   *  Layers text the card cannot read is a change too (21 T.11): what the card
-   *  shows is not in the value, and the Save that answers it has to be
-   *  pressable. */
-  function otChanged() {
-    return rowsValue(otRows) !== otLoadedRender() || otRows.some(otLayersBad)
-  }
-
-  const tensor: TensorCardProps = {
-    rows: otRows,
-    probe,
-    modelInfo,
-    onKind: otKind,
-    onLayersText: otLayersText,
-    onPatternText: otPatternText,
-    onDevice: otDevice,
-    onAdd: otAdd,
-    onRemove: otRemove,
-    text: otTextShown(),
-    onText: otTextType,
-    onApply: otApplyText,
-    errors: fields.errors,
-  }
-
   /** The changed keys as the body of 133 spells them. A number field with its
    * box ticked is a key to remove, and a key the file never had is sent as
    * nothing; with the box unticked, the field sends the number its text holds
@@ -1544,15 +992,17 @@ function Content({
    * text is the typed text trimmed, so spaces typed into a key the file lacks
    * and a trailing space on an unchanged value leave the form clean, and an
    * emptied text is the key's removal when the file had the key (132, 133,
-   * 166). */
+   * 166). The rows are those of the cards the page draws, so a key that moved
+   * to the instance profile has no row and is never part of a save (brief 22,
+   * IP5 review A1). */
   function changed(): Record<string, string | null> {
     const values: Record<string, string | null> = {}
-    for (const row of editableRows()) {
+    for (const row of pageEditableRows()) {
       const state = selectState(row, draft)
       if (state === selectState(row, loaded.values)) continue
       values[row.key] = selectSend(row, state)
     }
-    for (const row of checkboxRows()) {
+    for (const row of pageCheckboxRows()) {
       // 2h.8's 185: an invalid `fit` is a state of its own, so a click off it
       // is a change even when the box ends at the state an `off` value shows.
       const state = checkboxDirty(row, draft)
@@ -1560,13 +1010,13 @@ function Content({
       values[row.key] = checkboxSend(row, checkboxState(row, draft))
     }
     // 2h.7's 179: a device select at the empty option is the key's removal.
-    for (const row of deviceRows()) {
+    for (const row of pageDeviceRows()) {
       const state = deviceState(row, draft)
       if (state === deviceState(row, loaded.values)) continue
       values[row.key] = deviceSend(state)
     }
     const was = numberStates(loaded.values)
-    for (const row of numberRows()) {
+    for (const row of pageNumberRows()) {
       const b = boxed[row.key]
       if (b === undefined) continue
       if (b.ticked) {
@@ -1575,24 +1025,18 @@ function Content({
         values[row.key] = numberSend(row, b)
       }
     }
-    for (const row of textRows()) {
+    for (const row of pageTextRows()) {
       const send = textSend(draft[row.key] ?? '')
       if (send === (loaded.values[row.key] ?? null)) continue
       values[row.key] = send
     }
-    // Brief 14: the GPUs fieldset's two composed keys.
-    Object.assign(values, gpuChanges())
-    // Brief 21 21 T.8: the rules of `override-tensor`, sent when the rows no
-    // longer render the loaded ones; no rule left is the key's removal.
-    if (otChanged()) values['override-tensor'] = rowsValue(otRows)
     return values
   }
 
-  /** Save changes: the bar of 135 to 149. 24 A2 review D1: a switch write of
-   *  this page's own is a write of the same file, so a Save pressed while it
-   *  runs sends nothing. */
+  /** Save changes: the bar of 135 to 149. */
   async function save() {
-    if (saving.current || switching) return
+    // A second Save while one runs sends nothing (137).
+    if (saving.current) return
     // 157, 166, 185: every enabled number field whose box is unticked, every
     // text field with a text that is not empty, and every editable checkbox
     // holding a value the engine refuses, is checked, changed or not (the
@@ -1607,7 +1051,7 @@ function Content({
     const failures = checkRows()
       .filter(
         (row) =>
-          !ruleLocked(row, draft, loaded.values, boxed, factsRead(modelInfo)) ||
+          !ruleLocked(row, draft, loaded.values, boxed, factsRead(undefined)) ||
           row.key in changes,
       )
       .map(
@@ -1622,52 +1066,19 @@ function Content({
           ] as const,
       )
       .filter((one): one is [CheckedRow, string] => one[1] !== undefined)
-    // Brief 14 GD2.6: when `tensor-split` is changed and composes a vector,
-    // every checked row's weight must be a number: one that is not stops the
-    // save, and the fieldset says so after the list, after the device error.
-    const incomplete = gpuWeightFailures(gpuChecked(), weights)
-    const weightsBad =
-      'tensor-split' in changes &&
-      gpuComposeSplit(gpuChecked(), weights) !== null &&
-      incomplete.length > 0
-    // Brief 21, 21 T.11: the Tensor placement card's own checks, on the rules
-    // shown: a failure there stops the save the same way, marking the control
-    // of the rule that fails.
-    const otMarks = otChecks()
-    if (failures.length > 0 || weightsBad || Object.keys(otMarks).length > 0) {
-      const marked: Record<string, string> = Object.fromEntries(
-        failures.map(([row, error]) => [row.key, error]),
-      )
-      if (weightsBad) {
-        marked['tensor-split'] = t('model-profile-gpu-weights-incomplete')
-        // The device error a refusal left stands beside it.
-        const device = fields.errors['device']
-        if (device !== undefined) marked['device'] = device
-      }
-      Object.assign(marked, otMarks)
+    if (failures.length > 0) {
       // Rendered first, so the focused control is announced with its error.
       flushSync(() => {
         alerts.setAlert({ text: t('save-invalid') })
-        fields.set(marked)
-        setMarks(weightsBad ? incomplete : null)
-      })
-      const first = failures[0]
-      if (first === undefined) {
-        // The card's checks alone: the first failing control, in the order the
-        // rules are on screen (21 T.11).
-        if (weightsBad) focusField('tensor-split')
-        else focusMarked(marked)
-      } else
-        focusFailure(
-          first[0],
-          ruleLocked(
-            first[0],
-            draft,
-            loaded.values,
-            boxed,
-            factsRead(modelInfo),
-          ),
+        fields.set(
+          Object.fromEntries(failures.map(([row, error]) => [row.key, error])),
         )
+      })
+      const first = failures[0]!
+      focusFailure(
+        first[0],
+        ruleLocked(first[0], draft, loaded.values, boxed, factsRead(undefined)),
+      )
       return
     }
     if (!dirty) return
@@ -1678,7 +1089,6 @@ function Content({
     setPhase('saving')
     alerts.setAlert(null)
     fields.set({})
-    setMarks(null)
     const answer = await sendModelProfileSave(doc.id, loaded.revision, values)
     saving.current = false
     if (answer.kind === 'saved') {
@@ -1720,25 +1130,13 @@ function Content({
         })
         return
       case 'refused': {
-        // Brief 21, 21 T.12: `override-tensor` is the Tensor placement card's
-        // key, and the card's rules are the value the save sent, so the refusal
-        // marks the control of the rule it names (its position, or the device
-        // for `model-profile-device-outside`), and Rules as text when the refusal
-        // speaks of the whole value.
-        if (answer.field === 'override-tensor') {
-          const marks = otRefusal(
-            answer.key ?? '',
-            answer.args ?? [],
-            answer.text,
-          )
-          // Rendered first, so the focused control is announced with its error.
-          flushSync(() => {
-            alerts.setAlert({ text: t('save-refused', answer.text) })
-            fields.set(marks)
-          })
-          focusMarked(marks)
-          return
-        }
+        // Brief 22, IP5.7: a setting that moved has no field on this page to
+        // mark, and the sentence carries its name, so the bar says the sentence
+        // as it is, with no wrapper.
+        const placement =
+          answer.key === 'model-profile-placement-key'
+            ? t('api-model-profile-placement-key', answer.field ?? '')
+            : null
         // 142 to 144: a 422 whose key the table knows marks its field and is
         // told in the bar; a field this page does not render is only told there.
         const field =
@@ -1750,13 +1148,17 @@ function Content({
         // names the field and the card it sits on, so the user knows where.
         const place = field === undefined ? null : fieldPlace(field)
         const at =
-          place === null || field === undefined || fieldTakesFocus(field)
+          placement !== null ||
+          place === null ||
+          field === undefined ||
+          fieldTakesFocus(field)
             ? null
             : t('save-refused-at', answer.text, place.label, place.card)
         // Rendered first, so the focused control is announced with its error.
+        const text = placement ?? answer.text
         flushSync(() => {
-          alerts.setAlert({ text: at ?? t('save-refused', answer.text) })
-          if (field !== undefined) fields.set({ [field]: answer.text })
+          alerts.setAlert({ text: at ?? placement ?? t('save-refused', text) })
+          if (field !== undefined) fields.set({ [field]: text })
         })
         if (field !== undefined) focusField(field)
         return
@@ -1820,17 +1222,13 @@ function Content({
       return
     }
     if (answer.focus === 'row') {
-      // Switched on while the page was open: the read again shows the switch,
-      // and takes the delete and its group with it, so the words go on living
-      // in the bar's own paragraph (22 D.4, 22 D4.11). The Delete stays,
-      // switched off, and takes the focus (22 D4.11).
+      // The manager refused and the opener stays: the words go on living in the
+      // bar's own paragraph, and the read again shows what it refuses now (22
+      // D.4, 22 D4.7, 22 D4.11). The Delete stays, switched off, and takes the
+      // focus (22 D4.11).
       setRefusal(answer.text)
       setConfirming(false)
       setDeleteAlert(null)
-      // The manager refused because the profile is switched on: the page's
-      // switch says so, over the document the read brings back (23 A2.2, as the
-      // list's row does, 22 D4.7).
-      setEnabled(true)
       onReread()
       deleteOpener.current?.focus()
       return
@@ -1869,48 +1267,8 @@ function Content({
     if (saving.current || !dirty) return
     setDraft(loaded.values)
     setBoxed(numberStates(loaded.values))
-    // Brief 14 GD1.10: the rows, their checks, their order and their weights
-    // go back with the draft.
-    setWeights(
-      gpuFileWeights(
-        loaded.values['tensor-split'] ?? null,
-        gpuFileIds(loaded.values['device'] ?? null),
-      ),
-    )
-    setMarks(null)
-    setMoved('')
-    // Brief 21 21 T.8: the rules go back to the loaded ones, and the rows'
-    // remembered texts and half-typed fields go with them; so does the text
-    // typed into Rules as text, which shows the value again (21 T.10).
-    setOtRows(tensorRows(loaded.values['override-tensor'] ?? null))
-    setOtText(null)
     fields.set({})
     setPhase('idle')
-  }
-
-  /** The GPU distribution card's state, as the cards' table passes it to the
-   * GPUs fieldset (brief 14). */
-  const gpu: GpuCardProps = {
-    probe,
-    modelInfo,
-    weights,
-    weightIds: marks,
-    loadedDevice: loaded.values['device'] ?? null,
-    onToggle: gpuToggle,
-    onMove: gpuMove,
-    layers: gpuLayers(),
-    onWeight: gpuWeight,
-    onBlock: gpuBlock,
-    onBlockCommit: gpuBlockCommit,
-    onBlockBase: () => {
-      blockBase.current = weights
-    },
-    onBlockRelease: () => {
-      blockBase.current = null
-    },
-    onAuto: () => gpuWeightsAll(''),
-    onEven: () => gpuWeightsAll('1'),
-    moved,
   }
 
   return (
@@ -1924,45 +1282,41 @@ function Content({
           ? t('model-profile-summary-no-model', doc.engine)
           : t('model-profile-summary', doc.engine, fileName)}
       </p>
-      {/* 24 A2.1: the state line, under the summary line and outside the
-          settings section, so it spans the page's width: the page's own switch,
-          the list row's (2c.39), the short words of its state, and the
-          switch's own status, reason and alert beside it (DESIGN.md
-          principle 10). The line carries no class of its own: the stylesheet's
-          switch classes carry the look of its parts. The − of 22 D2.1 is gone
-          with the paragraph of 22 D4.9: the delete is the Save bar's first
-          button (22 D4.10), and the list's rows carry their own (22 D4.1). */}
-      <div>
-        <label className="model-profiles-switch">
-          <input
-            type="checkbox"
-            role="switch"
-            checked={enabled}
-            aria-labelledby="page-heading"
-            aria-disabled={switchDisabled}
-            aria-describedby={dirty ? 'model-profile-switch-dirty' : undefined}
-            onChange={(e) => void doSwitch(e.target.checked)}
-          />
-        </label>
-        <span>
-          {enabled ? t('model-profile-on-short') : t('model-profile-off-short')}
-        </span>
-        <p role="status" className="model-profiles-switch-status">
-          {switchStatus}
-        </p>
-        {/* 23 A2.3: why the switch cannot act while the page holds edits, the
-            line the switch describes itself with. */}
-        {dirty && (
-          <p id="model-profile-switch-dirty">
-            {t('model-profile-switch-dirty')}
-          </p>
+      {/* Brief 22 IP5.4: the profile has no on/off state, so the state line of
+          24 A2.1 is gone with its switch. The head says who lists the profile
+          instead: the row the list's Used by column says (IP5.2), each instance
+          profile reaching its entry page, and the words of a profile none
+          lists. It is the shape of 16 17a.5's head list, the one `dl.assets`
+          above the settings. */}
+      <dl className="assets">
+        <dt>{t('model-profiles-column-used-by')}</dt>
+        {usedBy.length === 0 ? (
+          <dd className="muted">{t('model-profiles-unused')}</dd>
+        ) : (
+          <dd>
+            {usedBy.map((one, n) => (
+              <Fragment key={one}>
+                {n > 0 && ', '}
+                <a href={instanceProfileHref(one)}>{one}</a>
+              </Fragment>
+            ))}
+          </dd>
         )}
-        {switchAlert !== null && (
-          <p role="alert" className="model-profiles-switch-alert">
-            {switchAlert}
-          </p>
+      </dl>
+      {/* IP5.5: one note under the head says where the placement lives now.
+          The first instance profile that lists the model is the link to its
+          placement entry; a model none lists leaves it out. */}
+      <p className="intro">
+        {t('model-profile-placement-elsewhere')}
+        {usedBy.length > 0 && (
+          <>
+            {' '}
+            <a href={instanceProfileModelHref(usedBy[0]!, doc.id)}>
+              {t('model-profile-placement-link', usedBy[0]!)}
+            </a>
+          </>
         )}
-      </div>
+      </p>
       <section>
         {/* 22 D4.32: the heading is for the outline, so the page keeps one
             title above the form; the eye sees the cards' own headings. */}
@@ -2085,8 +1439,6 @@ function Content({
           onTick={tickBoxed}
           onBoxText={textBoxed}
           errors={fields.errors}
-          gpu={gpu}
-          tensor={tensor}
         />
         {/* 22 L2.B1 (the user's ruling of 2026-11-26, reversing 22 D2.5 and
             D2.6): the Save bar is the settings section's last child, after
@@ -2110,23 +1462,20 @@ function Content({
             alerts.alert?.action === 'sign-in' ? askSignIn.open : undefined
           }
           saveId={saveId}
-          saveDisabled={switching}
           onDiscard={discard}
           onSave={save}
           deleteId="model-profile-delete"
           deleteLabel={t('model-profile-delete')}
           onDelete={openDelete}
-          deleteDisabled={!canDelete || switching}
+          deleteDisabled={!canDelete}
           deleteExpanded={confirming}
-          deleteHint={
-            canDelete ? undefined : t('model-profiles-delete-needs-off')
-          }
+          deleteHint={modelProfileInUseReason(doc.usedBy) ?? undefined}
           restartNames={restart.map((id) => nameOf(id)).join(', ')}
         >
           {/* 16 17d.4a: the restart the save left to make, a row of the bar
               under its buttons, the bar being sticky so the offer stays in
               reach. An edit answers it, as it answers the status line. */}
-          {phase === 'saved-restart-ids' && !dirty && !switching && (
+          {phase === 'saved-restart-ids' && !dirty && (
             <RestartOffer
               ids={restart}
               nameOf={nameOf}

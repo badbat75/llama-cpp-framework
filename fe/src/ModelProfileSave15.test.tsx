@@ -46,9 +46,6 @@ const MOD = 'ngram-mod'
 const SIMPLE = 'ngram-simple'
 const MAP_K = 'ngram-map-k'
 const MAP_K4V = 'ngram-map-k4v'
-const DRAFT_K = en('model-profile-draft-k-cache-type')
-const DRAFT_V = en('model-profile-draft-v-cache-type')
-const DEFAULT = en('field-default')
 /** 193: the two new strings, the brief's exact English as a literal. 198
  * changed the draft one: the Assets row it names is `model-profile-draft-model`,
  * "Draft model", not a file. */
@@ -63,28 +60,14 @@ const RANGE_1_1024 = en('field-error-number', '1', '1024')
 const RANGE_0_1024 = en('field-error-number', '0', '1024')
 const RANGE_1_65535 = en('field-error-number', '1', '65535')
 const DECIMAL = en('field-error-decimal')
-/** The cache types of 2e's 96, the two draft selects (133: a select of words,
- * `default` sends null). */
-const CACHE_VALUES = [
-  'default',
-  'f32',
-  'f16',
-  'bf16',
-  'f8_e4m3',
-  'q8_0',
-  'q5_1',
-  'q5_0',
-  'q4_1',
-  'q4_0',
-  'iq4_nl',
-]
 /** 2e's 119: a select value past 20 characters needs the full-value line. */
-const SELECT_21 = 'Last-Attention-Pool-X'
 
 /** One field of table 112: its key, and the kind of its control. */
 type SpecField = { key: string; kind: 'int' | 'float' | 'select' }
 
-/** The five groups of 112, in the page's order, each with its fields. */
+/** The five groups of 112, in the page's order, each with its fields. Brief 22
+ * IP5 keeps the card: its draft group is the three number rows (the ubatch and
+ * the two draft cache types are `PLACEMENT_KEYS` and left with them). */
 const GROUPS: { name: string; fields: SpecField[] }[] = [
   {
     name: DRAFT,
@@ -92,9 +75,6 @@ const GROUPS: { name: string; fields: SpecField[] }[] = [
       { key: 'spec-draft-n-max', kind: 'int' },
       { key: 'spec-draft-p-min', kind: 'float' },
       { key: 'spec-draft-n-min', kind: 'int' },
-      { key: 'spec-draft-n-ubatch', kind: 'int' },
-      { key: 'spec-draft-type-k', kind: 'select' },
-      { key: 'spec-draft-type-v', kind: 'select' },
     ],
   },
   {
@@ -138,9 +118,6 @@ const SPEC: Record<string, string> = {
   'spec-draft-n-max': '16',
   'spec-draft-p-min': '0.75',
   'spec-draft-n-min': '2',
-  'spec-draft-n-ubatch': '512',
-  'spec-draft-type-k': 'q8_0',
-  'spec-draft-type-v': 'q8_0',
   'spec-ngram-mod-n-match': '101',
   'spec-ngram-mod-n-min': '102',
   'spec-ngram-mod-n-max': '103',
@@ -430,27 +407,6 @@ test.each(DRAFT_OFF)(
   },
 )
 
-test('2h.190: model-draft and spec-type are never sent, whatever is saved: the draft fields, a cache select and a ticked box go, the two keys do not', async () => {
-  const values = read('ngram-mod,draft-mtp', {
-    'model-draft': 'Qwen3-27B-DFlash-Q8_0.gguf',
-  })
-  const { bff, main } = await form(values)
-  type(control('spec-draft-n-max'), '7')
-  pick(main, DRAFT_K, 'f16')
-  fireEvent.click(boxOf('spec-draft-n-ubatch'))
-  expect(
-    (control('spec-draft-n-ubatch') as HTMLInputElement).disabled,
-    '156: a ticked box disables its input',
-  ).toBe(true)
-  await save(main, bff)
-  const sent = sentValues(bff)
-  expect(sent['spec-draft-n-max'], 'the draft field is sent').toBe('7')
-  expect(sent['spec-draft-type-k'], 'the cache select is sent').toBe('f16')
-  expect(sent['spec-draft-n-ubatch'], 'a ticked box sends null').toBeNull()
-  expect('model-draft' in sent, '190: model-draft is never sent').toBe(false)
-  expect('spec-type' in sent, '190: spec-type is never sent').toBe(false)
-})
-
 // ── 191, 192: the four n-gram groups ──────────────────────────────────
 
 /** The `spec-type` reads, with the groups 191 enables (193's two cases first). */
@@ -560,7 +516,10 @@ test('2h.192: the reason line is a P inside the group role="group", right after 
 })
 
 test('2h.192: the lines are plain paragraphs: no role, no live region, and in no aria-describedby of the page', async () => {
-  const { main } = await form(read(undefined))
+  // `jinja` holds `yes`, a spelling the configurator would not write, so the
+  // page has a written-as line of 124 and the sweep below has a control that
+  // carries a description.
+  const { main } = await form(read(undefined, { jinja: 'yes' }))
   const texts: string[] = []
   for (const group of GROUPS) {
     const line = offLine(main, group.name)
@@ -681,43 +640,6 @@ test('2h.190, 2h.176: a locked card with junk in its fields: no mark, nothing fo
   ).toBeNull()
 })
 
-test('2h.193: values {} - the page is the blank form: all five groups disabled, each with its reason line, every box ticked, every input empty', async () => {
-  // Today a value the form has no control for is kept as hidden data and sent
-  // back unchanged. With no values at all there is nothing to keep, so the page
-  // has to be the blank form of the rule.
-  const { bff, main } = await form({})
-
-  for (const group of GROUPS) {
-    // The switch is off, and the group says so in the strings file's words.
-    offLine(main, group.name)
-    // Every control of the group is natively disabled, and none of them is a
-    // required field: a disabled group cannot make the page invalid.
-    for (const el of controlsOf(group)) {
-      expect(el.disabled, `${group.name} ${el.id}`).toBe(true)
-      expect(el.required, `${group.name} ${el.id}`).toBe(false)
-    }
-  }
-
-  // Every box is ticked (176: an empty value means the box is on, so a ticked
-  // box means its input is empty), and every input is empty.
-  for (const group of GROUPS)
-    for (const f of group.fields)
-      if (f.kind !== 'select') {
-        expect(boxOf(f.key).checked, f.key).toBe(true)
-        expect(control(f.key).value, f.key).toBe('')
-      }
-  // The card's two selects, which have no box, are at their default. The two
-  // keys of 190 that rule the card, `spec-type` and `model-draft`, are not
-  // here: the card has no control for them (read, never sent, and their editor
-  // is the Assets card of 2i), so the blank form has nothing of them to show.
-  for (const key of ['spec-draft-type-k', 'spec-draft-type-v'])
-    expect(control(key).value, key).toBe('default')
-
-  // Nothing is inert, and nothing was sent.
-  expectInert(main, '193: the blank form is clean')
-  expect(bff.to('PUT', PUT), '193: nothing was sent').toHaveLength(0)
-})
-
 // ── 193: the checks of 157 and 165 on the card fields ─────────────────
 
 test('2h.193, 2h.165: spec-draft-p-min typed 0,5 sends 0.5; typed hot is refused with field-error-decimal, marked, focused, save-invalid, nothing sent', async () => {
@@ -776,14 +698,6 @@ const RANGES: {
   },
   {
     key: 'spec-draft-n-min',
-    specType: 'draft-mtp',
-    bad: '-1',
-    text: MIN_ZERO,
-    good: '0',
-  },
-  {
-    // 157's "0 or more" row, second key of it on this card.
-    key: 'spec-draft-n-ubatch',
     specType: 'draft-mtp',
     bad: '-1',
     text: MIN_ZERO,
@@ -868,94 +782,7 @@ test.each(RANGES)(
   },
 )
 
-test('2h.133, 2h.157, 2h.165: every field of table 112 sends per its kind: each number its own text, a ticked box null, +0016 as 16, a cache select its type and default null', async () => {
-  const { bff, main } = await form(
-    read(`draft-mtp,${MOD},${SIMPLE},${MAP_K},${MAP_K4V}`),
-  )
-  const typed: Record<string, string> = {
-    'spec-draft-n-max': '7',
-    'spec-draft-p-min': '0,25',
-    'spec-draft-n-min': '3',
-    'spec-ngram-mod-n-match': '+0016',
-    'spec-ngram-mod-n-min': '8',
-    'spec-ngram-mod-n-max': '64',
-    'spec-ngram-simple-size-n': '5',
-    'spec-ngram-simple-size-m': '6',
-    'spec-ngram-map-k-size-n': '7',
-    'spec-ngram-map-k-size-m': '8',
-    'spec-ngram-map-k4v-size-n': '9',
-    'spec-ngram-map-k4v-size-m': '10',
-    'spec-ngram-map-k4v-min-hits': '3',
-  }
-  for (const key of Object.keys(typed)) {
-    const el = control(key) as HTMLInputElement
-    expect(el.disabled, `${key}: enabled on this read`).toBe(false)
-    type(el, typed[key]!)
-  }
-  fireEvent.click(boxOf('spec-draft-n-ubatch'))
-  pick(main, DRAFT_K, 'f16')
-  pick(main, DRAFT_V, 'default')
-  // 133: the cache types are a select of words, the option list of 2e's 96, and
-  // its first option is the default that sends null. Guarded here so the two
-  // picks above cannot pass on a select that lists nothing.
-  for (const label of [DRAFT_K, DRAFT_V]) {
-    const el = within(main).getByRole('combobox', {
-      name: label,
-    }) as HTMLSelectElement
-    expect(
-      [...el.options].map((o) => o.value),
-      `133: ${label} lists the cache types of 96`,
-    ).toEqual(CACHE_VALUES)
-    expect(
-      el.options[0]?.textContent,
-      `133: ${label}'s first option is the default`,
-    ).toBe(DEFAULT)
-  }
-  await save(main, bff)
-  expect(sentValues(bff)).toEqual({
-    'spec-draft-n-max': '7',
-    'spec-draft-p-min': '0.25',
-    'spec-draft-n-min': '3',
-    'spec-draft-n-ubatch': null,
-    'spec-draft-type-k': 'f16',
-    'spec-draft-type-v': null,
-    'spec-ngram-mod-n-match': '16',
-    'spec-ngram-mod-n-min': '8',
-    'spec-ngram-mod-n-max': '64',
-    'spec-ngram-simple-size-n': '5',
-    'spec-ngram-simple-size-m': '6',
-    'spec-ngram-map-k-size-n': '7',
-    'spec-ngram-map-k-size-m': '8',
-    'spec-ngram-map-k4v-size-n': '9',
-    'spec-ngram-map-k4v-size-m': '10',
-    'spec-ngram-map-k4v-min-hits': '3',
-  })
-})
-
 // ── 134: the full-value line stays only under a disabled control ──────
-
-test('2h.134, 2h.118: the draft group disabled, a long Draft K-cache type keeps its full-value line; the group enabled, the line is gone', async () => {
-  await form(read(MOD, { 'spec-draft-type-k': SELECT_21 }))
-  const el = control('spec-draft-type-k') as HTMLSelectElement
-  expect(el.disabled, '190: no draft, the select is locked').toBe(true)
-  const line = document.getElementById('model-profile-full-spec-draft-type-k')
-  expect(
-    line,
-    '118: the long value is repeated in full under the control',
-  ).not.toBeNull()
-  expect(line!.textContent, '118: the line is the whole value').toBe(SELECT_21)
-  expect(isHidden(line!), '118: the line is shown').toBe(false)
-  cleanup()
-  await form(read('draft-mtp', { 'spec-draft-type-k': SELECT_21 }))
-  expect(
-    (control('spec-draft-type-k') as HTMLSelectElement).disabled,
-    '190: a drafter named, the select is open',
-  ).toBe(false)
-  expect(
-    document.getElementById('model-profile-full-spec-draft-type-k'),
-    '134: an open select shows no full-value line',
-  ).toBeNull()
-})
 
 // ── 193: the two new strings ──────────────────────────────────────────
 

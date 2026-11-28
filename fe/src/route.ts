@@ -70,6 +70,18 @@ export function instanceHref(id: string): string {
   return `#/instances/${encodeURIComponent(id)}`
 }
 
+/** The link to an instance profile's page (brief 22, IP5.2; the page is
+ * brief 26's). */
+export function instanceProfileHref(id: string): string {
+  return `#/profiles/instance/${encodeURIComponent(id)}`
+}
+
+/** The link to one model's placement entry of an instance profile (brief 22,
+ * IP5.5). */
+export function instanceProfileModelHref(id: string, model: string): string {
+  return `${instanceProfileHref(id)}/models/${encodeURIComponent(model)}`
+}
+
 /** The link to a model profile's page. */
 export function modelProfileHref(id: string): string {
   return `#/profiles/model/${encodeURIComponent(id)}`

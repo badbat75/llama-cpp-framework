@@ -116,17 +116,18 @@ function modelProfileCalls(bff: ReturnType<typeof fakeBff>) {
 }
 
 /** `method path` for every call under /api/profiles/model, sorted: an arrival
- * sends the profile read and the model-info read beside it (19 G.1), and the
- * brief does not pin which one goes first. */
+ * sends the profile read alone (brief 22 IP5.5 took the model-info read out
+ * with the cards that used it), and the brief does not pin the order of what
+ * is sent. */
 function modelProfileTexts(bff: ReturnType<typeof fakeBff>): string[] {
   return modelProfileCalls(bff)
     .map((c) => `${c.method} ${c.path}`)
     .sort()
 }
 
-/** The two reads an arrival at `path` sends (19 G.1). */
+/** The reads an arrival at `path` sends: the profile alone (22 IP5.5). */
 function arrivalReads(path: string): string[] {
-  return [`GET ${path}`, `GET ${path}/model-info`].sort()
+  return [`GET ${path}`]
 }
 
 // List-page helpers (criteria 60, 62).
@@ -316,18 +317,10 @@ heavyTest(
         () => reply(200, modelProfileDoc({}, { engineAvailable: undefined })),
       ],
       [
-        '200 no enabled',
-        () => reply(200, modelProfileDoc({}, { enabled: undefined })),
-      ],
-      [
         '200 no projectUrl',
         () => reply(200, modelProfileDoc({}, { projectUrl: undefined })),
       ],
       ['200 id a number', () => reply(200, modelProfileDoc({}, { id: 7 }))],
-      [
-        '200 enabled a string',
-        () => reply(200, modelProfileDoc({}, { enabled: 'true' })),
-      ],
       [
         '200 engineAvailable a number',
         () => reply(200, modelProfileDoc({}, { engineAvailable: 1 })),
@@ -654,7 +647,10 @@ test('2d.57: #/profiles/model/, #/profiles/model/a/b and a segment that does not
 
 // ── From the list and back (60, 61, 62) ─────────────────────────────────
 
-test('2d.60: in the list each row name is a link to the model profile page, its text the id, inside the element that names the row switch, in the switched-off row too; clicking it opens the page, focus on its h1', async () => {
+test('2d.60, 22 IP5.1: in the list each row name is a link to the model profile page, its text the id, in the row’s first cell, in the row no instance profile lists too; clicking it opens the page, focus on its h1', async () => {
+  // 2d.60 pinned the link inside the element that named the row's switch:
+  // brief 22 IP5.1 takes the switch out, so what is left of the pin is the
+  // place, the row's first cell.
   startAt('#/profiles/model')
   const { main } = open()
   const t = await table(main)
@@ -670,16 +666,15 @@ test('2d.60: in the list each row name is a link to the model profile page, its 
   for (const row of dataRows(t)) {
     const nameCell = row.querySelector('td, th') as HTMLElement
     const id = rowName(nameCell)
-    const input = row.querySelector('input')!
-    const by = input.getAttribute('aria-labelledby') ?? ''
-    const target = document.getElementById(by)
-    expect(target, `${id}: the switch is named by an element`).not.toBeNull()
     const link = within(nameCell).getByRole('link')
     expect(
-      target!.contains(link),
-      `${id}: the link stays inside the element that names the switch`,
-    ).toBe(true)
-    expect(within(t).getByRole('switch', { name: id }), id).toBe(input)
+      link.getAttribute('href'),
+      `${id}: the row's link is the page of its id`,
+    ).toBe(`#/profiles/model/${id}`)
+    expect(
+      (link.textContent ?? '').trim(),
+      `${id}: the link's text is the id`,
+    ).toBe(id)
   }
   // The way in: the row link opens the page (criterion 63: focus on the h1).
   await clickLink(within(t).getByRole('link', { name: OFF_ID }))
@@ -688,7 +683,7 @@ test('2d.60: in the list each row name is a link to the model profile page, its 
   await waitFor(() => expect(document.activeElement).toBe(h1))
 })
 
-test('2d.59a: in the list, a row whose id is . or .. shows its id as plain text, not a link, still inside the element that names its switch; the other rows stay links', async () => {
+test('2d.59a, 22 IP5.1: in the list, a row whose id is . or .. shows its id as plain text, not a link, in its first cell; the other rows stay links', async () => {
   startAt('#/profiles/model')
   const { main } = open({
     modelProfiles: [
@@ -720,37 +715,30 @@ test('2d.59a: in the list, a row whose id is . or .. shows its id as plain text,
     'no link for . or ..',
   ).toEqual([LIST_ID, OFF_ID])
   for (const id of ['..', '.']) {
-    const row = rows.find((r) => rowName(r.querySelector('td, th')!) === id)!
+    const nameCell = rows
+      .map((r) => r.querySelector('td, th')!)
+      .find((c) => rowName(c) === id)! as HTMLElement
     expect(
-      within(row).queryByRole('link'),
+      within(nameCell).queryByRole('link'),
       `${id}: the row holds no link`,
     ).toBe(null)
-    const input = row.querySelector('input')!
-    const target = document.getElementById(
-      input.getAttribute('aria-labelledby') ?? '',
-    )
-    expect(target, `${id}: the switch is named by an element`).not.toBeNull()
     expect(
-      (target!.textContent ?? '').trim(),
-      `${id}: the element naming the switch holds the id as text`,
-    ).toBe(id)
+      (nameCell.textContent ?? '').includes(id),
+      `${id}: the cell shows the id as text`,
+    ).toBe(true)
     expect(
-      within(t).getByRole('switch', { name: id }),
-      `${id}: the switch is still named by the id`,
-    ).toBe(input)
+      within(nameCell.closest('tr')!).getByRole('button'),
+      `${id}: the row keeps its minus of 22 D4.1`,
+    ).toBeTruthy()
   }
   for (const id of [LIST_ID, OFF_ID]) {
     const link = within(t).getByRole('link', { name: id })
     expect(link.getAttribute('href'), id).toBe(`#/profiles/model/${id}`)
     const row = link.closest('tr') as HTMLElement
-    const input = row.querySelector('input')!
-    const target = document.getElementById(
-      input.getAttribute('aria-labelledby') ?? '',
-    )!
     expect(
-      target.contains(link),
-      `${id}: the link stays inside the element that names the switch`,
-    ).toBe(true)
+      link.closest('td, th'),
+      `${id}: the link sits in the row's first cell`,
+    ).toBe(row.querySelector('td, th'))
   }
 })
 

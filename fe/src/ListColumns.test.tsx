@@ -35,7 +35,6 @@ import {
   en,
   fakeBff,
   reply,
-  rowName,
   serverProfileDoc,
   shownText,
   startAt,
@@ -47,14 +46,27 @@ import {
 
 // ── The two lists ───────────────────────────────────────────────────────
 
-function modelProfile(id: string, enabled: boolean): ModelProfile {
-  return { id, engine: 'llama.cpp', engineAvailable: true, enabled, model: '' }
+function modelProfile(id: string, usedBy: string[]): ModelProfile {
+  // `enabled` is the key the page reads today, and a row without it is a row
+  // the page reads as malformed; slice IP5 takes the key out of the read, so
+  // the rows carry it beside `usedBy`. It is set to "an instance profile lists
+  // this model", which is the row today's page blocks (its profile is on) and
+  // the row IP5 blocks (IP5.3): the same row under both readings.
+  return {
+    id,
+    engine: 'llama.cpp',
+    engineAvailable: true,
+    enabled: usedBy.length > 0,
+    usedBy,
+    model: '',
+  }
 }
 
-/** One row switched on, one switched off: only the off row's delete can act. */
+/** One row an instance profile lists, one it does not: only the second row's
+ *  delete can act (22 IP5.3). */
 const MODEL_LIST: ModelProfile[] = [
-  modelProfile('Qwen3-27B', true),
-  modelProfile('Old-Coder', false),
+  modelProfile('Qwen3-27B', ['default']),
+  modelProfile('Old-Coder', []),
 ]
 
 function serverRow(id: string, instance: string | null): ServerProfile {
@@ -111,11 +123,11 @@ const MODELS: List = {
     return main
   },
   deleteKey: 'model-profiles-delete-row',
-  valueKey: 'model-profiles-column-status',
+  valueKey: 'model-profiles-column-used-by',
   columns: [
     'model-profiles-column-name',
     'model-profiles-column-engine',
-    'model-profiles-column-status',
+    'model-profiles-column-used-by',
     'profiles-column-actions',
   ],
   blocked: 'Qwen3-27B',
@@ -412,66 +424,6 @@ test('22 D4.23: both lists end with one column more, a th scope="col" holding on
   }
 })
 
-test('22 D4.23: every row of both lists has its trash can in the Actions cell, the Status cell (Models) and the Used by cell (Server profiles) hold no button and keep their value, and every row has one cell under every header', async () => {
-  for (const list of LISTS) {
-    const main = await list.open()
-    const t = tableOf(main, list)
-    const headers = headersOf(t)
-    const value = columnOf(t, list.valueKey)
-    for (const row of dataRows(t)) {
-      const cells = cellsOf(row)
-      expect(cells, `${list.label}: one cell under every header`).toHaveLength(
-        headers.length,
-      )
-      // The id alone (22 D4.35): the Models row's first cell shows the engine
-      // under the name, and the row's delete is named by the id.
-      const id = rowName(cells[0]!)
-      const del = deleteOf(row, list, id)
-      expect(
-        del.closest('td'),
-        `${list.label}: the row's delete is in the last cell`,
-      ).toBe(cells[cells.length - 1])
-      expect(
-        cells[value]!.querySelectorAll('button').length,
-        `${list.label}: the ${en(list.valueKey)} cell holds no delete`,
-      ).toBe(0)
-    }
-    if (list === MODELS) {
-      // The Status cell keeps the switch and its word (22 D4.23).
-      for (const row of dataRows(t)) {
-        const cell = cellsOf(row)[columnOf(t, list.valueKey)]!
-        expect(
-          cell.querySelectorAll('input'),
-          'the Status cell keeps the switch',
-        ).toHaveLength(1)
-        const p = MODEL_LIST.find(
-          (m) => m.id === rowName(cellsOf(row)[0]!),
-        )!.enabled
-        expect(text(cell), 'and the word that says the state').toBe(
-          en(p ? 'model-profiles-status-on' : 'model-profiles-status-off'),
-        )
-      }
-    } else {
-      // The Used by cell keeps the instance link, or the word for a free
-      // profile (22 D4.23).
-      const used = cellsOf(rowOf(main, list, list.blocked))[
-        columnOf(t, list.valueKey)
-      ]!
-      expect(
-        within(used).getByRole('link').getAttribute('href'),
-        'the in-use row keeps the link to its instance',
-      ).toBe('#/instances/default')
-      const free = cellsOf(rowOf(main, list, list.free))[
-        columnOf(t, list.valueKey)
-      ]!
-      expect(text(free), 'the free row keeps the word').toBe(
-        en('server-profiles-unused'),
-      )
-    }
-    cleanup()
-  }
-})
-
 test('22 D4.23: the confirm row of both lists spans the new column count (a day-one guard: today three and four equal the three and four headers)', async () => {
   for (const list of LISTS) {
     const main = await list.open()
@@ -577,7 +529,7 @@ test('22 D4.8 (L1 review D2): the scroll box is an inline-size container and the
 
 // ── 22 D4.24: shrink to the content, aligned to the end ─────────────────
 
-test('22 D4.24: the Actions column is as narrow as its button and its cell ends the row, the model Status column shrinks too, and the hint box is as wide as the button', async () => {
+test('22 D4.24 (as 22 IP5.2 amends the model list): the Actions column is as narrow as its button and its cell ends the row, the model list\u2019s Used by column keeps the spare width, and the hint box is as wide as the button', async () => {
   for (const list of LISTS) {
     const main = await list.open()
     const t = tableOf(main, list)
@@ -605,16 +557,20 @@ test('22 D4.24: the Actions column is as narrow as its button and its cell ends 
     ).toBe('end')
     cleanup()
   }
-  // The model Status column shrinks with it, so the spare width goes to the
-  // name and the engine.
+  // The model list's Used by column keeps the spare width and keeps wrapping
+  // (22 IP5.2): the cell lists the instance profiles that use the model, so it
+  // is never squeezed to its content the way the Actions column is.
   const main = await MODELS.open()
   const t = tableOf(main, MODELS)
-  const status = cellsOf(dataRows(t)[0]!)[columnOf(t, MODELS.valueKey)]!
-  expect(cascade(status)['width'], 'the Status column shrinks').toBe('1%')
+  const used = cellsOf(dataRows(t)[0]!)[columnOf(t, MODELS.valueKey)]!
   expect(
-    cascade(status)['white-space'],
-    'the Status column keeps one line',
-  ).toBe('nowrap')
+    cascade(used)['width'],
+    'the Used by column declares no width, so the spare width is its own',
+  ).toBeUndefined()
+  expect(
+    cascade(used)['white-space'],
+    'the Used by cell is left to wrap',
+  ).toBeUndefined()
   cleanup()
   // The box of the delete and its reason is as wide as the button: no
   // min-width, and an inline box (22 D4.24 drops 22 D8's 7rem).
@@ -631,76 +587,63 @@ test('22 D4.24: the Actions column is as narrow as its button and its cell ends 
 
 // ── 22 D4.25: every control centred in its row ──────────────────────────
 
-test('22 D4.25: the model Status cell wraps its switch and its word in a span inside a plain td, every list cell centres its content, and the row delete carries no top margin while the add after a list keeps its own', async () => {
-  const main = await MODELS.open()
-  const t = tableOf(main, MODELS)
-  const cell = cellsOf(dataRows(t)[0]!)[columnOf(t, MODELS.valueKey)]!
-  const input = cell.querySelector('input')!
-  expect(input, 'the Status cell holds the switch').not.toBeNull()
-  const wrap = input.closest('span')
-  expect(
-    wrap,
-    'the switch and its word are wrapped in a span, not laid out by the cell',
-  ).not.toBeNull()
-  expect(
-    wrap!.parentElement,
-    "the span is the cell's own child: the td is a plain table cell",
-  ).toBe(cell)
-  expect(
-    text(wrap!),
-    'the span holds the word too, so the two are one line',
-  ).toBe(en('model-profiles-status-on'))
-  cleanup()
-  // Every list cell centres its content: the cell is a table cell again, so
-  // vertical-align is what centres it (22 D4.25).
-  for (const list of LISTS) {
-    const m = await list.open()
-    const table = tableOf(m, list)
-    for (const row of dataRows(table))
-      for (const td of cellsOf(row))
-        expect(
-          cascade(td)['vertical-align'],
-          `${list.label}: ${text(td)}: the cell centres its content`,
-        ).toBe('middle')
-    cleanup()
-  }
-  // The row delete has no top margin; the add after a list keeps its room.
-  expect(
-    values(declsOf('.ot-add.ot-delete'), 'margin-top'),
-    'the row delete sits where the cell puts it',
-  ).toContain('0')
-  expect(
-    values(declsOf('.ot-add'), 'margin-top'),
-    'the add after a list keeps its --space-3',
-  ).toContain('var(--space-3)')
-})
+// ── 22 D4.25, as 22 IP5.1 retires it, and item 8's wrap ─────────────────
 
-// ── 22 D4.25, the L1 review: the switch's line is on the row's middle ────
-
-test('22 D4.25 (L1 review D1): the span that carries the switch and its word is a flex box, not an inline-flex one, so the cell centres it in the row (measured: 1.70 to 1.78 px off the row centre as an inline box, 0.50 to 0.67 px as flex)', () => {
-  // The rule the review names (index.css, `.status-cell > span`), read by its
-  // exact selector part: an inline box sits on the cell's line box and follows
-  // its baseline, so `vertical-align: middle` on the td never brings it to the
-  // row's middle. The sheet's rule is the fix, so the sheet text is the pin.
-  const box = declsOf('.status-cell > span')
+test('22 D4.25 (as 22 IP5.1 retires it): no rule lays out a status cell or a row switch inside the Models list, the sheet lays out no off row, and the Models list\u2019s Used by cell keeps the break every table cell inherits (IP5.1, IP5.2, 1.4.10)', () => {
+  // The L1 review's rule centred the row's switch and its word in the Status
+  // cell. IP5.1 takes the Status column, the switch, its status region, its
+  // alert, its note and the off row away from the Models list. The
+  // `.status-cell` and `.model-profiles-switch` rules stay in the sheet for
+  // the instance page's Served here cell (17e.4a), which keeps both until
+  // brief 26 (IP6) removes that section, so the pin is scoped to the list:
+  // no rule styles these classes inside `.model-profiles`, and
+  // ModelProfilesIP5 pins that the list renders no element of either.
+  const named = (needle: string): string[] =>
+    TOP.filter((r) =>
+      r.selector.split(',').some((p) => norm(p).includes(needle)),
+    ).map((r) => norm(r.selector))
+  const inList = (sels: string[]): string[] =>
+    sels.filter((s) => /\.model-profiles(?=$|[\s>])/.test(s))
   expect(
-    box.length,
-    'the sheet has a rule whose selector is .status-cell > span',
-  ).toBeGreaterThan(0)
-  const display = values(box, 'display')
+    inList(named('.status-cell')),
+    'rules that style a status cell inside the Models list, the column IP5.1 retires: the class stays for the instance page, scoped never to the list',
+  ).toEqual([])
   expect(
-    display,
-    'the rule declares display: flex, the shape measured within 1 px',
-  ).toContain('flex')
+    inList(named('.model-profiles-switch')),
+    'rules that style a row switch inside the Models list, IP5.1 retires both: the class stays for the instance page, scoped never to the list',
+  ).toEqual([])
   expect(
-    display,
-    'nothing inline-flex left in that rule: an inline box is what sits on the text line',
-  ).not.toContain('inline-flex')
+    named('.model-profiles-note'),
+    'rules that style the note under the table: the note is `model-profiles-off-note`, which IP5.1 takes away',
+  ).toEqual([])
+  expect(
+    named('tr.off'),
+    'rules that style a switched-off row: `models.ini.disabled` goes with the switch (IP5.1)',
+  ).toEqual([])
+  // Item 8: the Used by cell wraps at the cell's width. The break is the one
+  // every table cell inherits (the `td` of the `th, td` rule, 22 D4.27), and
+  // the pin is that nothing takes the new column off it: the Engine column
+  // keeps its words unbroken (`td:nth-child(2)`), the Used by column does not.
+  expect(
+    values(declsOf('td'), 'overflow-wrap'),
+    'every table cell breaks anywhere, so the Used by cell wraps at the cell\u2019s width',
+  ).toContain('anywhere')
+  expect(
+    TOP.filter((r) =>
+      r.selector.includes('.model-profiles td:nth-child(3)'),
+    ).flatMap((r) =>
+      values(
+        r.body.split(';').map((d) => norm(d)),
+        'overflow-wrap',
+      ),
+    ),
+    'no rule takes the Models list\u2019s third column, Used by, off the inherited break',
+  ).toEqual([])
 })
 
 // ── 22 D4.26: no dead space ─────────────────────────────────────────────
 
-test('22 D4.26: the table fills the card and the spare width goes to the text columns: no width on the name, the engine, the tags or the Used by cell, a 1% width on the status and the actions cell', async () => {
+test('22 D4.26 (as 22 IP5.2 amends the model list): the table fills the card and the spare width goes to the text columns: no width on the name, the engine, the tags, the status successor or the Used by cell, a 1% width on the actions cell', async () => {
   expect(
     values(declsOf('table'), 'width'),
     'the table fills the card',
@@ -709,7 +652,7 @@ test('22 D4.26: the table fills the card and the spare width goes to the text co
     const main = await list.open()
     const t = tableOf(main, list)
     const headers = headersOf(t)
-    const shrink = [MODELS.valueKey, 'profiles-column-actions']
+    const shrink = ['profiles-column-actions']
     for (const td of cellsOf(dataRows(t)[0]!)) {
       const i = cellsOf(dataRows(t)[0]!).indexOf(td)
       const key = list.columns[i]!
@@ -732,7 +675,7 @@ test('22 D4.26: the table fills the card and the spare width goes to the text co
 
 // ── 22 D4.27: at 320 px ─────────────────────────────────────────────────
 
-test('22 D4.27: nothing stacks: the Actions cell holds its button alone with no text of its own, the switch and its word are one flex line, and the table scrolls inside its box with the name free to wrap', async () => {
+test('22 D4.27 (as 22 IP5.1 amends the model list): nothing stacks: the Actions cell holds its button alone with no text of its own, and the table scrolls inside its box with the name free to wrap', async () => {
   for (const list of LISTS) {
     const main = await list.open()
     const t = tableOf(main, list)
@@ -751,20 +694,6 @@ test('22 D4.27: nothing stacks: the Actions cell holds its button alone with no 
     ).toBe('')
     cleanup()
   }
-  // The switch and its word stay on one line: the wrapper is a flex line with
-  // the token gap (22 D4.25's shape, read here for 320 px). The value was
-  // `inline-flex` until the L1 review D1 took it off the text line, so this
-  // reads the same box the sheet pin above pins.
-  const main = await MODELS.open()
-  const t = tableOf(main, MODELS)
-  const cell = cellsOf(dataRows(t)[0]!)[columnOf(t, MODELS.valueKey)]!
-  const wrap = cell.querySelector('input')!.closest('span')!
-  expect(wrap, 'the switch and its word are wrapped').not.toBeNull()
-  const look = cascade(wrap)
-  expect(look['display'], 'one flex line').toBe('flex')
-  expect(look['align-items'], 'centred on the line').toBe('center')
-  expect(look['gap'], 'the token gap between them').toBe('var(--space-2)')
-  cleanup()
   // The box of 10 R1.5 scrolls what is left over, and the base break wraps a
   // long name inside the column: both are here today, guards for the change.
   expect(
@@ -782,7 +711,7 @@ test('22 D4.27: nothing stacks: the Actions cell holds its button alone with no 
 
 // ── 22 D4.28: what is pinned, the sheet's absence ───────────────────────
 
-test('22 D4.28: no rule makes a table cell, or the status cell, a flex box (the sheet, and the cascade of the model Status cell)', async () => {
+test('22 D4.28 (as 22 IP5.2 amends the model list): no rule makes a table cell, or the status cell, a flex box (the sheet, and the cascade of the model list\u2019s Used by cell)', async () => {
   const flexed = cellRules()
     .filter((r) =>
       r.body
@@ -799,7 +728,7 @@ test('22 D4.28: no rule makes a table cell, or the status cell, a flex box (the 
   const cell = cellsOf(dataRows(t)[0]!)[columnOf(t, MODELS.valueKey)]!
   expect(
     cascade(cell)['display'],
-    'the model Status cell is a table cell',
+    'the model list\u2019s Used by cell is a table cell',
   ).not.toBe('flex')
 })
 
