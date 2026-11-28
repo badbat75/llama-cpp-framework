@@ -170,6 +170,67 @@ export const EN: Record<string, string> = {
     'The instance profile {0} is already there.',
   'api-invalid-instance-profile-id':
     "{0} cannot be an instance profile name: use letters, digits, '.', '_' and '-', starting with a letter or a digit.",
+  // Brief 26 slice IP6b (26.6, 26.7, 26.8, the brief's item 15): the sections
+  // of one instance profile's page. Every English here is the brief's own
+  // sentence, so `1a strings` in App.test.tsx pins it against
+  // strings/en_US.json. The keys the brief names with no words of its own
+  // (`instance-profile-server-switching`, `instance-profile-model-removed`) and
+  // the refusal reasons of 26.6 and 26.8: the IP6b review's R11 writes the
+  // sentences of `no-server-profile-named`, `no-instance-profile-named`,
+  // `instance-profile-model-listed` and `no-instance-profile-model` in brief 26
+  // section 3, so their English is the brief's and `1a strings` pins it.
+  // `no-model-profile-named` stays out: the brief keeps the key and the text the
+  // strings file had before IP6b, so the file is its source.
+  'instance-profile-server-title': 'Server profile',
+  'instance-profile-server-switch-label': 'Switch to',
+  'instance-profile-server-switch': 'Use this server profile',
+  'instance-profile-server-switch-hint':
+    "Every instance running this instance profile uses it from its next start. The models' devices are checked against its devices.",
+  'instance-profile-server-switching': 'Switching the server profile…',
+  'instance-profile-server-switched':
+    'This instance profile now uses the server profile {0}.',
+  // R9 (26.6): the device rule of this page names the model, the key and the
+  // device, not an instance, so its own key says the chosen server profile.
+  'api-instance-profile-device-outside':
+    "Model profile {0} sets {1} = {2}, a GPU outside the Devices of the chosen server profile. Change that setting on the model's entry, or choose another server profile.",
+  'api-no-server-profile-named':
+    'There is no server profile {0}: it was deleted elsewhere.',
+  'api-no-instance-profile-named':
+    'There is no instance profile {0}: it was deleted elsewhere.',
+  'api-instance-profile-model-listed':
+    'This instance profile already lists {0}.',
+  'api-no-instance-profile-model':
+    'This instance profile no longer lists {0}: it was removed elsewhere.',
+  'instance-profile-models-title': 'Model profiles',
+  'instance-profile-models-intro':
+    'The models every instance running this profile serves, in this order. Open one to set where it runs and its memory.',
+  'instance-profile-models-column-name': 'Model profile',
+  'instance-profile-models-column-placement': 'Placement',
+  'instance-profile-placement-default': "llama.cpp's defaults",
+  'instance-profile-placement-count': '{0} settings',
+  'instance-profile-placement-count-one': '1 setting',
+  'instance-profile-models-empty':
+    'This instance profile serves no model yet. An instance running it cannot start until it serves one.',
+  'instance-profile-models-add': 'Add a model profile',
+  'instance-profile-models-add-title': 'Add a model profile',
+  'instance-profile-models-add-label': 'Model profile',
+  'instance-profile-models-add-button': 'Add',
+  'instance-profile-models-add-none':
+    'Every model profile is already listed. Create one on the Model profiles page.',
+  'instance-profile-model-added':
+    "{0} added. It runs with llama.cpp's defaults until you set its placement.",
+  'instance-profile-models-remove-row': 'Remove {0} from this instance profile',
+  'instance-profile-models-remove-question':
+    'Remove {0} from this instance profile? Its placement settings here are removed; the model profile stays.',
+  'instance-profile-models-remove': 'Remove',
+  // R10 (26.8): a remove is not a delete, so the confirm's status while the
+  // DELETE runs is this, not `confirm-deleting` ("Deleting…").
+  'instance-profile-model-removing': 'Removing…',
+  'instance-profile-model-removed': '{0} removed.',
+  // The refusal reasons of 26.8 whose sentence section 3 does not give stay out
+  // of this mirror: their words are the coder's to write, and
+  // InstanceProfiles2.test.tsx reads them from strings/en_US.json with `words`
+  // and fails on a key that is not there.
   // 22 D4.12: the page's status row and its two sentences leave with 22 D4.9
   // (`server-profile-unused` and `server-profile-used-by` are gone); the list's
   // Used by cell keeps `server-profiles-unused` and gains the row's −.
@@ -2388,12 +2449,45 @@ export type BffOptions = {
     init?: RequestInit,
   ) => Response | Promise<Response>
   /**
-   * GET /api/profiles/instance/{p} (brief 26, section 0): the reply. Where a
-   * test names none, the route answers 404 `no-instance-profile-named`, the
-   * manager's refusal of an id the pool has not got: the list page never reads
-   * it, and the page's own tests name their answers.
+   * GET /api/profiles/instance/{p} (brief 26, section 0): the reply, per read.
+   * Where a test names none, the route answers 404 `no-instance-profile-named`,
+   * the manager's refusal of an id the pool has not got: the list page never
+   * reads it, and the page's own tests name their answers.
    */
-  instanceProfile?: Answer
+  instanceProfile?:
+    Answer | ((init?: RequestInit) => Response | Promise<Response>)
+  /**
+   * PUT /api/profiles/instance/{p}/server (brief 26, 26.6;
+   * fe/briefs/api-contract.md IP4): the reply to the n-th switch (from 1),
+   * given the parsed body `{"server"}`. Default 200 with the affected answer,
+   * nothing running: `{"running": [], "notConverged": []}`.
+   */
+  instanceProfileServerSet?: (
+    body: unknown,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * POST /api/profiles/instance/{p}/models (brief 26, 26.8; IP4): the reply to
+   * the n-th add (from 1), given the parsed body `{"model"}`. Default 201 with
+   * the affected answer, nothing running.
+   */
+  instanceProfileModelAdd?: (
+    body: unknown,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * DELETE /api/profiles/instance/{p}/models/{m} (brief 26, 26.8; IP4): the
+   * reply to the n-th remove (from 1) of the decoded profile and model. Default
+   * 200 with the affected answer, nothing running.
+   */
+  instanceProfileModelRemove?: (
+    profile: string,
+    model: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
   /**
    * POST /api/instances (brief 16, 16 17c.4): the reply to the n-th create
    * (from 1), given the parsed body `{"engine","id","serverProfile"}`.
@@ -2630,6 +2724,49 @@ export function fakeBff(options: BffOptions = {}) {
         options.instanceProfileCreate
           ? options.instanceProfileCreate(body, n, init)
           : reply(201, { id: (body as { id?: string })?.id ?? '' }),
+      )
+    }
+    // The writes of the profile's page (brief 26, 26.6 and 26.8;
+    // fe/briefs/api-contract.md IP4): each answers the affected answer, with
+    // nothing running, so a test that says nothing sees a write that worked and
+    // no restart offer. They come before the profile's own DELETE, whose path
+    // is a prefix of the model remove's.
+    const instanceProfileServerPut =
+      /^PUT \/api\/profiles\/instance\/([^/]+)\/server$/.exec(route)
+    if (instanceProfileServerPut) {
+      const n = calls.filter(
+        (c) => c.method === 'PUT' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.instanceProfileServerSet
+          ? options.instanceProfileServerSet(body, n, init)
+          : reply(200, { running: [], notConverged: [] }),
+      )
+    }
+    const instanceProfileModelPost =
+      /^POST \/api\/profiles\/instance\/([^/]+)\/models$/.exec(route)
+    if (instanceProfileModelPost) {
+      const n = calls.filter(
+        (c) => c.method === 'POST' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.instanceProfileModelAdd
+          ? options.instanceProfileModelAdd(body, n, init)
+          : reply(201, { running: [], notConverged: [] }),
+      )
+    }
+    const instanceProfileModelDelete =
+      /^DELETE \/api\/profiles\/instance\/([^/]+)\/models\/(.+)$/.exec(route)
+    if (instanceProfileModelDelete) {
+      const profile = decodeURIComponent(instanceProfileModelDelete[1]!)
+      const model = decodeURIComponent(instanceProfileModelDelete[2]!)
+      const n = calls.filter(
+        (c) => c.method === 'DELETE' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.instanceProfileModelRemove
+          ? options.instanceProfileModelRemove(profile, model, n, init)
+          : reply(200, { running: [], notConverged: [] }),
       )
     }
     // The profile's own page (brief 26 section 3) is a later slice: the

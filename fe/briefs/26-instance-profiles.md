@@ -71,6 +71,29 @@ Measured on the IP6a build (`build/ux-review/ip6a/shots.js`, `nav.js`), Chromium
 - **R4** (26.4) `api-invalid-instance-profile-id` takes the text above (sentence case, a full stop,
   no backticks).
 
+## IP6b review: fixes for the next round (designer, 2026-11-28)
+
+Measured on the IP6b build (`build/ux-review/ip6b/shots.js`), Chromium 1280 and 320 px, both themes.
+
+- **R6** (26.8) The entry row's control is a **minus** (`Icon` `minus`, the list-remove sign of
+  DESIGN.md 5.2), not the trash can: the trash can reads as deleting the model profile itself, which
+  stays.
+- **R7** (26.7) At 320 px no cell of the models table breaks inside a word ("Placemen t", "llama.cp
+  p's" today): R3 and R5's rules (heads and cells wrap between whole words only, the table no wider
+  than its box); an id still breaks at its own `-`, `.` or `_`.
+- **R8** (26.6) The switch's options are the server profile ids alone, not `instance-server-option`
+  ("{0} (port {1})"): the port belongs to the instance since IP6 (26.16).
+- **R9** (26.6) `model-profile-device-outside` on this page cannot use today's
+  `api-model-profile-device-outside`: that text takes four args (profile, instance, key, device) and
+  names "instance {1}'s server profile", so with the three args of section 0 it shows a raw `{3}`.
+  New key `api-instance-profile-device-outside`, args (model, key, device): "Model profile {0} sets
+  {1} = {2}, a GPU outside the Devices of the chosen server profile. Change that setting on the
+  model's entry, or choose another server profile." The coordinator settles the args with IP4.
+- **R10** (26.8) `confirm-deleting` ("Deleting…") is the wrong word while a remove runs: the
+  ConfirmRow's status during a remove is `instance-profile-model-removing` ("Removing…").
+- **R11** (strings) `en_US.json` holds `api-no-model-profile-named` twice (lines 211 and 450); keep
+  the existing entry (line 450, there before IP6b) and drop the new one at 211. Apply section 3's "Texts the first draft left out".
+
 ## 1. The nav and the map
 
 **26.1** The Profiles group lists, in this order:
@@ -138,10 +161,22 @@ are as for the other two. `fe/DESIGN.md` 2.1 gains the row.
 
 ## 3. One instance profile (`#/profiles/instance/<p>`)
 
-This page writes each change at once, like the instance page, so it has **no Save bar**. Every
-write sends the read's `revision`. A 409 `stale-revision` reads the page again and shows
-`api-stale-revision-reread` ("This instance profile changed elsewhere; it has been read again.") in
-that section's alert.
+This page writes each change at once, like the instance page, so it has **no Save bar**. The
+switch, the add and the remove send **no** `revision` (coordinator's ruling, IP6b, after
+`fe/briefs/api-contract.md` IP4): each names one thing (the server profile, one model) and the
+manager refuses one that is no longer there. Only the entry page's save (26.11) sends the read's
+`revision`; its 409 `stale-revision` reads the page again and shows `api-stale-revision-reread`
+("This instance profile changed elsewhere; it has been read again.") in the Save bar's alert.
+
+Texts the first draft left out (IP6b review):
+- `instance-profile-server-switching`: "Switching the server profile…";
+- `instance-profile-model-removed`: "{0} removed.";
+- `api-no-server-profile-named`: "There is no server profile {0}: it was deleted elsewhere.";
+- `api-no-instance-profile-named`: "There is no instance profile {0}: it was deleted elsewhere.";
+- `api-no-model-profile-named`: the existing key and text (`en_US.json`), not a second entry;
+- `api-instance-profile-model-listed`: "This instance profile already lists {0}.";
+- `api-no-instance-profile-model`: "This instance profile no longer lists {0}: it was removed
+  elsewhere."
 
 **26.5 The head.**
 - The back link `instance-profile-back` ("All instance profiles"), the `h1` (the id), then a

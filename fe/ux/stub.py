@@ -122,6 +122,9 @@ OWN_TAGS = {
 # pill of the instance page reads once at each opening, for the suggestions
 # under the box. One row, carrying the instance's own tags and labels it does
 # not carry, so the pill has suggestions to show at 320 px and at 200 % text.
+# Brief 26 slice IP6b (26.6, the state `instance-profile` of check.js): a second
+# row, so an instance profile that runs one of them has another to switch to and
+# the section's field is on screen.
 SERVER_PROFILES = [
     {
         "id": "default",
@@ -140,6 +143,7 @@ SERVER_PROFILES = [
         ],
         "instance": "default",
     },
+    {"id": "fast", "engine": "llama.cpp", "port": 8081, "tags": [], "instance": None},
 ]
 
 # Brief 16, slice 17a: the pool list's page (`pool=long`, the state
@@ -158,12 +162,29 @@ LONG_POOL_ROW = {
 # GET /api/profiles/instance (brief 26 section 0, the states
 # `instance-profiles` and `instance-profiles-new` of check.js): three profiles,
 # one of them used by the `default` instance so its row's trash can is switched
-# off, one with two models and one with none.
+# off, one with two models and one with none. Brief 26 slice IP6b (26.7, the
+# states `instance-profile`, `instance-profile-add` and `instance-profile-remove`
+# of check.js): `coder` carries a third model, and the writes below change this
+# list in place, so a check that presses a verb sees the row move.
 INSTANCE_PROFILES = [
     {"id": "default", "server": "default", "models": ["Qwen3-27B"], "usedBy": ["default"]},
-    {"id": "coder", "server": "coder", "models": ["Qwen3.6-35B-A3B-UD-Q4_K_XL", "Qwen3-27B"], "usedBy": []},
+    {"id": "coder", "server": "coder", "models": ["Qwen3.6-35B-A3B-UD-Q4_K_XL", "Qwen3-27B", "Swift-Flash-Next-Draft"], "usedBy": []},
     {"id": "office", "server": "default", "models": [], "usedBy": []},
 ]
+
+# The placement keys of each entry of each profile (brief 26, 26.7): the page's
+# read counts an entry's keys, so the Placement column says
+# `instance-profile-placement-default` for 0 and `instance-profile-placement-count`
+# for the rest. `coder` carries all three shapes.
+PROFILE_ENTRIES = {
+    "default": {"Qwen3-27B": 4},
+    "coder": {
+        "Qwen3.6-35B-A3B-UD-Q4_K_XL": 0,
+        "Qwen3-27B": 3,
+        "Swift-Flash-Next-Draft": 1,
+    },
+    "office": {},
+}
 
 # GET /api/profiles/model: rows with every engine shape the list shows. Brief 22
 # slice IP5 (IP5.0): a row carries no `enabled` and no `assignments`, and carries
@@ -173,7 +194,7 @@ INSTANCE_PROFILES = [
 MODEL_PROFILES = [
     {"id": "Qwen3.6-35B-A3B-UD-Q4_K_XL", "engine": "llama.cpp", "engineAvailable": True, "usedBy": ["default"], "model": ""},
     {"id": "Qwen3-27B", "engine": "llama.cpp", "engineAvailable": True, "usedBy": ["default", "coder"], "model": "/m/qwen/Qwen3-27B-Q8_0.gguf"},
-    {"id": "Swift-Flash-Next-Draft", "engine": "Strata", "engineAvailable": False, "usedBy": ["default"], "model": ""},
+    {"id": "Swift-Flash-Next-Draft", "engine": "Strata", "engineAvailable": False, "usedBy": ["default", "coder"], "model": ""},
     {"id": "Old-Coder", "engine": "llama.cpp", "engineAvailable": True, "usedBy": [], "model": ""},
 ]
 
@@ -595,6 +616,33 @@ class Handler(SimpleHTTPRequestHandler):
         # presses Create, so the pool never changes.
         if p == "/api/profiles/instance":
             return self.json(200, {"rows": INSTANCE_PROFILES})
+        # Brief 26 slice IP6b (fe/briefs/api-contract.md IP4, the states
+        # `instance-profile`, `instance-profile-add` and `instance-profile-remove`
+        # of check.js): one profile's page. The body is `{id, server, models:
+        # [{id, keys}], usedBy, revision}`, read off the pool above and
+        # PROFILE_ENTRIES; `revision` is a constant, as only the entry's save
+        # sends one (IP4's "Revisions"). `/api/profiles/instance/<id>` has four
+        # slashes; the model routes below have six.
+        if p.startswith("/api/profiles/instance/") and p.count("/") == 4:
+            pid = unquote(p.split("/")[4])
+            row = next((r for r in INSTANCE_PROFILES if r["id"] == pid), None)
+            if row is None:
+                return self.json(
+                    404, {"key": "no-instance-profile-named", "args": [pid]}
+                )
+            keys = PROFILE_ENTRIES.get(pid, {})
+            return self.json(
+                200,
+                {
+                    "id": row["id"],
+                    "server": row["server"],
+                    "models": [
+                        {"id": m, "keys": keys.get(m, 0)} for m in row["models"]
+                    ],
+                    "usedBy": row["usedBy"],
+                    "revision": "rev-" + row["id"],
+                },
+            )
         # Brief 16 slice 17a: a server profile's own page. The document is
         # today's server document plus `instance`, the instance that runs it.
         # `/api/profiles/server/<id>` has four slashes (the model profile route
@@ -673,8 +721,7 @@ class Handler(SimpleHTTPRequestHandler):
         # The body is drained even where the route is not served, so a write
         # never sits in a socket nobody reads.
         length = int(self.headers.get("Content-Length") or 0)
-        if length:
-            self.rfile.read(length)
+        body = self.rfile.read(length) if length else b""
         # Brief 16 slice 17f, as its 17f2 moves the form to the heading (17f2.10,
         # the state `instance-name-edit` of check.js): the display name form
         # saves the label here, and the bff's reply is 204. The check opens the
@@ -718,6 +765,32 @@ class Handler(SimpleHTTPRequestHandler):
         # on or off, it is used by an instance profile or not.
         if p.startswith("/api/profiles/model/") and p.endswith("/enabled"):
             return self.json(404, {"key": "client-no-route", "args": [p]})
+        # Brief 26 slice IP6b (26.6, fe/briefs/api-contract.md IP4, the state
+        # `instance-profile` of check.js): the section's switch. The body is
+        # `{"server"}`, with no revision, and the answer is the affected answer.
+        # The profile an id does not name is the manager's 404, and a server
+        # profile the pool has not got is 422 with `field` server (IP4's table).
+        # The check opens the field and reads it; it never presses the verb, so
+        # the pool stays: `running` is empty, as the stub starts nothing.
+        if p.startswith("/api/profiles/instance/") and p.endswith("/server"):
+            parts = p.split("/")
+            pid = unquote(parts[4])
+            row = next((r for r in INSTANCE_PROFILES if r["id"] == pid), None)
+            if row is None:
+                return self.json(
+                    404, {"key": "no-instance-profile-named", "args": [pid]}
+                )
+            try:
+                server = json.loads(body)["server"]
+            except (ValueError, KeyError):
+                return self.json(400, {"key": "invalid-request", "args": []})
+            if not any(s["id"] == server for s in SERVER_PROFILES):
+                return self.json(
+                    422,
+                    {"key": "no-server-profile-named", "args": [server], "field": "server"},
+                )
+            row["server"] = server
+            return self.json(200, {"running": [], "notConverged": []})
         return self.send_error(404, "no PUT of " + p)
 
     def do_POST(self):
@@ -766,6 +839,35 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, KeyError):
                 return self.json(400, {"key": "model-profiles-malformed", "args": []})
             return self.json(201, {"id": new_id})
+        # Brief 26 slice IP6b (26.8, fe/briefs/api-contract.md IP4, the state
+        # `instance-profile-add` of check.js): the section's add. The body is
+        # `{"model"}`, the answer is 201 with the affected answer. The model
+        # the pool has not got is the manager's 422 with `field` model, one
+        # already listed is its 409. The check opens the form and reads it, and
+        # the states list no running instance for `office`, so `running` is
+        # empty: the stub starts nothing.
+        if p.startswith("/api/profiles/instance/") and p.endswith("/models"):
+            pid = unquote(p.split("/")[4])
+            row = next((r for r in INSTANCE_PROFILES if r["id"] == pid), None)
+            if row is None:
+                return self.json(
+                    404, {"key": "no-instance-profile-named", "args": [pid]}
+                )
+            try:
+                model = json.loads(body)["model"]
+            except (ValueError, KeyError):
+                return self.json(400, {"key": "invalid-request", "args": []})
+            if not any(m["id"] == model for m in MODEL_PROFILES):
+                return self.json(
+                    422,
+                    {"key": "no-model-profile-named", "args": [model], "field": "model"},
+                )
+            if model in row["models"]:
+                return self.json(
+                    409, {"key": "instance-profile-model-listed", "args": []}
+                )
+            row["models"].append(model)
+            return self.json(201, {"running": [], "notConverged": []})
         return self.send_error(404, "no POST of " + p)
 
     def do_DELETE(self):
@@ -781,6 +883,31 @@ class Handler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
             return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
+        # Brief 26 slice IP6b (26.8, fe/briefs/api-contract.md IP4, the state
+        # `instance-profile-remove` of check.js): a row's minus removes the
+        # entry here. `/api/profiles/instance/<p>/models/<m>` has six slashes,
+        # so it is read before the profile's own delete below. The entry the
+        # profile does not list is the manager's 404 `no-instance-profile-model`.
+        # The check opens the confirm and reads it; it never presses the verb,
+        # so the pool stays.
+        if (
+            p.startswith("/api/profiles/instance/")
+            and p.count("/") == 6
+            and p.split("/")[5] == "models"
+        ):
+            pid = unquote(p.split("/")[4])
+            model = unquote(p.split("/")[6])
+            row = next((r for r in INSTANCE_PROFILES if r["id"] == pid), None)
+            if row is None:
+                return self.json(
+                    404, {"key": "no-instance-profile-named", "args": [pid]}
+                )
+            if model not in row["models"]:
+                return self.json(
+                    404, {"key": "no-instance-profile-model", "args": []}
+                )
+            row["models"].remove(model)
+            return self.json(200, {"running": [], "notConverged": []})
         # Brief 26 section 0 (the state `instance-profiles` of check.js): the
         # list page's trash can deletes a profile here, and the bff's reply is
         # 204. The check opens the confirm and reads it; it never presses the

@@ -53,6 +53,13 @@ const TRASH = [
 ]
 /** `plus`, which the lists' add keeps (22 D4.21). */
 const PLUS = ['M5 12h14', 'M12 5v14']
+/** `minus`, the list-remove sign of DESIGN.md 5.2, of lucide-static 1.74.0
+ *  (icons/minus.svg): the plus's horizontal stroke alone. 22 D4.21 took it out
+ *  of the list when every row's − became a can; brief 26's IP6b review R6
+ *  (26.8, 2026-11-28) brings it back for the row that removes one entry of a
+ *  record, the model entries of one instance profile, the model profile itself
+ *  staying. */
+const MINUS = ['M5 12h14']
 
 /** The eight attributes of brief 08 section 0 every icon carries (the copy of
  *  U17c.1: the shape is data, and a copy of it here reds the case that compares
@@ -598,7 +605,7 @@ test('22 D4.20: on both lists the tip stays hidden from readers (aria-hidden, no
 
 // ── 22 D4.21: the icons ────────────────────────────────────────────────
 
-test('22 D4.21: Icon.tsx draws trash-2 with lucide-static 1.74.0\u2019s five paths in order, decorative as every other icon, and minus is gone from the list (nothing uses it once the rows\u2019 − is a trash can)', async () => {
+test('22 D4.21 (as brief 26\u2019s IP6b review R6 amends it): Icon.tsx draws trash-2 with lucide-static 1.74.0\u2019s five paths in order, decorative as every other icon, and minus is back in the list: the row that removes one entry of a record keeps the minus (26.8) (IP6b review R6)', async () => {
   const { Icon } = await iconModule()
   const { container } = render(createElement(Icon, { name: 'trash-2' }))
   const svg = container.querySelector('svg')
@@ -611,11 +618,26 @@ test('22 D4.21: Icon.tsx draws trash-2 with lucide-static 1.74.0\u2019s five pat
     '22 D4.21: the path data of the package, in order',
   ).toEqual(TRASH)
   expect(text(svg!), 'an icon holds no text').toBe('')
-  const gone = render(createElement(Icon, { name: 'minus' }))
+  // The IP6b review R6 (brief 26, 26.8) supersedes the same decision's removal
+  // of `minus`: a row that deletes a record takes the can, a row that only
+  // removes one of its entries keeps the minus, so the list draws it again. The
+  // shape is pinned as data, as the can's above: the component's copy, not a
+  // reading of itself.
+  const back = render(createElement(Icon, { name: 'minus' }))
+  const minus = back.container.querySelector('svg')
   expect(
-    gone.container.querySelector('svg')!.querySelectorAll('path').length,
-    '22 D4.21: minus leaves the list: it draws no shape',
-  ).toBe(0)
+    minus,
+    'IP6b review R6: minus is back in the list: the entry row of an instance profile draws it',
+  ).not.toBeNull()
+  expect(
+    minus!.getAttribute('class'),
+    'IP6b review R6: the same class the sheet sizes',
+  ).toBe('icon')
+  expect(
+    [...minus!.querySelectorAll('path')].map((p) => p.getAttribute('d')),
+    'IP6b review R6: the horizontal stroke of the plus alone, the path data of the package, and no can path',
+  ).toEqual(MINUS)
+  expect(text(minus!), 'an icon holds no text').toBe('')
 })
 
 test('22 D4.21: the row delete of both lists is the trash can in a button carrying ot-add and ot-delete; the Server profiles list\u2019s + keeps the plus and carries no ot-delete; the Save bar\u2019s Delete on both profile pages stays a text button with no icon', async () => {

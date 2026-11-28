@@ -819,6 +819,19 @@ main > * {
     line-height: 0;
     clip-path: inset(50%);
   }
+
+  /* The Model profiles table of one instance profile: the narrow padding of the
+     Model profiles list above, for the same reason (the note there). An
+     auto-layout table is clamped to its scroll box in Chromium and WebKit and
+     not in Firefox, whose floor is the sum of the cells' own widths, and at
+     320 px the three columns at the base padding come past the box there, so
+     the box would scroll and the section be wider than the page (brief 26, the
+     IP6b review R5 and R7). The pair of widths is the probe
+     `instanceProfileModelsNarrow` of `fe/ux/check.js`. */
+  .instance-profile-models th,
+  .instance-profile-models td {
+    padding: var(--space-2);
+  }
 }
 
 /* Wide: the nav is a fixed column; no Menu button, and no divider between it
@@ -964,7 +977,8 @@ tr:last-child td {
   display: none;
 }
 
-/* The Actions column of the three profile lists (22 D4.23, D4.24, D4.26): the
+/* The Actions column of the profile lists, the model entries of one instance
+   profile included (22 D4.23, D4.24, D4.26, brief 26, 26.7): the
    last, holding the row's trash can alone. `width: 1%` shrinks it to the
    button, so the spare width of the table goes to the text columns;
    `white-space: nowrap` keeps the cell one line, and `text-align: end` puts the
@@ -974,23 +988,28 @@ tr:last-child td {
 .server-profiles th:last-child,
 .server-profiles td:last-child,
 .instance-profiles th:last-child,
-.instance-profiles td:last-child {
+.instance-profiles td:last-child,
+.instance-profile-models th:last-child,
+.instance-profile-models td:last-child {
   width: 1%;
   white-space: nowrap;
 }
 
 .model-profiles td:last-child,
 .server-profiles td:last-child,
-.instance-profiles td:last-child {
+.instance-profiles td:last-child,
+.instance-profile-models td:last-child {
   text-align: end;
 }
 
-/* Every cell of the three lists centres its content (22 D4.25): the cells are
+/* Every cell of the three lists centres its content (22 D4.25), the model
+   entries of one instance profile included (brief 26, 26.7): the cells are
    table cells, not flex boxes, so `vertical-align` is what centres a switch, a
    link or a trash can in a row taller than it. */
 .model-profiles td,
 .server-profiles td,
-.instance-profiles td {
+.instance-profiles td,
+.instance-profile-models td {
   vertical-align: middle;
 }
 
@@ -1040,6 +1059,25 @@ tr:last-child td {
    between them, and each stands whole. The name cell keeps the base break,
    which is what wraps a long profile id inside the column. */
 .instance-profiles td:nth-child(4) {
+  overflow-wrap: normal;
+}
+
+/* The Model profiles table of one instance profile (brief 26, 26.7, as the
+   IP6b review R7 reads it at 320 px): the base break of `th, td` cut the head
+   "Placement" into "Placemen t" and the cell "llama.cpp's defaults" into
+   "llama.cp p's", because `overflow-wrap: anywhere` breaks a word at any letter.
+   R7 asks R3's rule here: every head and cell keeps `overflow-wrap: normal`, so
+   a line ends only at a space, and an id keeps its own break points, after its
+   `-` (CSS Text 3, the Unicode line breaking algorithm). A word with no break
+   point, "Placement" and "llama.cpp's", is short enough for the box at 320 px,
+   so nothing is cut mid-word (R5). The Actions column joins the profile lists'
+   rule above, the button taking its own width and the spare going to the two
+   text columns, and the cells join their rule below, so the minus sits centred
+   in the row. The cells also take the narrow padding of the Model profiles
+   list, in the very narrow block above, where that list's padding lives. */
+.instance-profile-models th,
+.instance-profile-models td {
+  white-space: normal;
   overflow-wrap: normal;
 }
 

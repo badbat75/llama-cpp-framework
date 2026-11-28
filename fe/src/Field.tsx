@@ -603,11 +603,25 @@ export function SelectField({
 }
 
 /** A field's error: under its control, an icon with no text of its own first.
- * The icon is the shared one (08-hearth-h8-icons.md H8b.6), so the error is
- * drawn like every other icon and takes the error's colour from the text. */
-export function FieldError({ id, text }: { id: string; text: string }) {
+ *  The icon is the shared one (08-hearth-h8-icons.md H8b.6), so the error is
+ *  drawn like every other icon and takes the error's colour from the text.
+ *  `alert` makes it the page's alert too, for a refusal the control names: the
+ *  words are read once, by the control that they describe. */
+export function FieldError({
+  id,
+  text,
+  alert,
+}: {
+  id: string
+  text: string
+  alert?: boolean
+}) {
   return (
-    <p id={id} className="field-error">
+    <p
+      id={id}
+      className="field-error"
+      role={alert === true ? 'alert' : undefined}
+    >
       <Icon name="circle-alert" />
       {text}
     </p>

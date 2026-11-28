@@ -37,9 +37,15 @@ export type IconName =
   | 'circle-alert'
   | 'plus'
   // 22 D4.21 (fe/briefs/22-model-sources.md, "22D4 amendment"): the delete of a
-  // list row. It takes the place of 22 D2.2's `minus`, which nothing uses once
-  // the rows' − is a can.
+  // list row. It takes the place of 22 D2.2's `minus` on the rows that delete a
+  // record; the rows that only remove one of its entries keep the minus (brief
+  // 26, the IP6b review R6).
   | 'trash-2'
+  // The IP6b review R6 (brief 26, 26.8, 2026-11-28): the remove of a model
+  // entry of an instance profile, where the model profile stays. The can reads
+  // as deleting the model profile, so this row takes DESIGN.md 5.2's minus: the
+  // horizontal stroke of the plus above it.
+  | 'minus'
   | 'x'
   | 'check'
   // U17c (fe/briefs/17-ux-pass.md): the arrows of the sortable table's headers,
@@ -184,6 +190,9 @@ const SHAPES: Record<IconName, ReactNode> = {
       <path d="M12 5v14" />
     </>
   ),
+  // The IP6b review R6: the minus of DESIGN.md 5.2, the plus's horizontal
+  // stroke alone. The path data is lucide-static's minus.svg (ISC).
+  minus: <path d="M5 12h14" />,
   // 22 D4.21: the delete of a list row. The path data is lucide-static 1.74.0
   // icons/trash-2.svg (ISC), the five paths in the order the package writes
   // them: the two strokes inside the can, the can, the lid's line, the handle.

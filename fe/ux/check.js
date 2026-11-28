@@ -123,6 +123,11 @@ const DELETE_QUESTION = S['model-profile-delete-question']?.split('{0}')[0]
 const IN_USE = (id) =>
   (S['api-instance-profile-in-use'] ?? '{0}').replace('{0}', id)
 
+// Brief 26, slice IP6b (26.8): the add of the Model profiles section, named by
+// the key the slice adds. Absent from the strings file it names a button of the
+// text "undefined", so the state fails until the slice lands, as it asks.
+const IP_ADD = `main button:has-text("${S['instance-profile-models-add']}")`
+
 // The states to look at: the stub's /__set query, the route, the expect: the
 // selectors (with the text they carry) only that state shows, the optional
 // click: selectors clicked in order once the state is rendered (each one only
@@ -603,6 +608,84 @@ const STATES = [
       {
         click: 'main #confirm-delete',
         then: `main [role="alert"]:has-text("${IN_USE('coder')}")`,
+      },
+    ],
+  },
+  {
+    // Brief 26, slice IP6b (26.6 and 26.7, the brief's item 15): one instance
+    // profile's page with the two sections under its head, on the stub's `coder`
+    // profile: the Server profile section, whose field is on screen because
+    // stub.py's pool has a server profile besides the one it runs, and the
+    // Model profiles section with its three entries, one of them the widest id
+    // of the pool. The check reads the page at 1280 px and at 320 px, and at
+    // 200 % text: the two sections, the switch's field and the table box.
+    name: 'instance-profile',
+    set: 'session=admin',
+    hash: '#/profiles/instance/coder',
+    // The IP6b review R7: the Model profiles table at 320 px, read by
+    // `instanceProfileModelsNarrow` (no cell breaks inside a word, the table no
+    // wider than its box).
+    probe: 'instance-profile-models-narrow',
+    expect: [
+      { selector: '#page-heading', text: 'coder' },
+      { selector: `main h2:has-text("${S['instance-profile-server-title']}")` },
+      { selector: `main h2:has-text("${S['instance-profile-models-title']}")` },
+      {
+        selector: 'main section select',
+        count: 1,
+        message: 'the Server profile section has its one field (26.6)',
+      },
+      {
+        selector: 'main table tbody tr',
+        count: 3,
+        message: 'one row per model entry of the profile (26.7)',
+      },
+    ],
+  },
+  {
+    // Brief 26, slice IP6b (26.8, the brief's item 15): the add form of the
+    // Model profiles section, opened in place. The chain is the section's `+`,
+    // then the form's primary verb with nothing chosen: the page check says
+    // `field-error-choose` under the select and sends nothing, so the rows
+    // stay. `office` is the profile with no entry, so the select lists the
+    // whole pool and the form has room to show its words at 320 px.
+    name: 'instance-profile-add',
+    set: 'session=admin',
+    hash: '#/profiles/instance/office',
+    expect: [
+      { selector: '#page-heading', text: 'office' },
+      { selector: `main h2:has-text("${S['instance-profile-models-title']}")` },
+      { selector: IP_ADD, message: 'the section has its add (26.8)' },
+    ],
+    opens: [
+      { click: IP_ADD, then: 'main form select' },
+      {
+        click: 'main form button.primary',
+        then: `main form:has-text("${S['field-error-choose']}")`,
+      },
+    ],
+  },
+  {
+    // Brief 26, slice IP6b (26.8, the brief's item 15): the confirm of a row's
+    // minus, opened in place under the row of the widest model id of the pool.
+    // The chain stops at the red verb: the check never removes an entry, so the
+    // rows stay for every pass. The words name the row, so the group has a name
+    // of its own and the question wraps at 320 px.
+    name: 'instance-profile-remove',
+    set: 'session=admin',
+    hash: '#/profiles/instance/coder',
+    expect: [
+      { selector: '#page-heading', text: 'coder' },
+      {
+        selector: 'main table tbody tr',
+        count: 3,
+        message: 'the rows are there before the minus is pressed',
+      },
+    ],
+    opens: [
+      {
+        click: 'main tbody .ot-add:not([aria-disabled="true"])',
+        then: 'main [role="group"] button.danger',
       },
     ],
   },
@@ -1447,11 +1530,105 @@ async function instanceListNarrow(page, width) {
   })
 }
 
+/** The Model profiles section of one instance profile, in the narrow layout
+ *  (brief 26, the IP6b review R7, 2026-11-28): the table of 26.7 is the widest
+ *  thing on that page, and at 320 px it broke the head "Placement" into
+ *  "Placemen t" and the head "Model profile" into "pro file". R7 asks for R3 and
+ *  R5's rules on this section:
+ *  - nothing in the section breaks inside a word. A line may start after a
+ *    space, a hyphen, a dot or an underscore: an id breaks at its own
+ *    punctuation (D4.37), nowhere inside a word;
+ *  - the table is no wider than the box it scrolls inside, and nothing is wider
+ *    than the section, so the box has nothing to scroll and the heads have room
+ *    to wrap between words.
+ *  The section is read as it stands, so a layout that folds the columns into
+ *  stacked rows (what R3 did to the list) passes on the same words. */
+async function instanceProfileModelsNarrow(page, width) {
+  if (width > NARROW_MAX) return []
+  return page.evaluate((title) => {
+    const found = []
+    const head = [...document.querySelectorAll('main h2')].find(
+      (h) => (h.textContent ?? '').trim() === title,
+    )
+    if (head === undefined) {
+      return [`models of a profile: no "${title}" heading on the page`]
+    }
+    const section = head.closest('section')
+    if (section === null || section === undefined) {
+      return [`models of a profile: "${title}" is not in a section`]
+    }
+    const taken = (el) => {
+      const s = getComputedStyle(el)
+      const r = el.getBoundingClientRect()
+      return s.display === 'none' || r.width < 2 || r.height < 2
+    }
+    const word = (el) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
+    // R5: the width the eye has, and the width the table takes. The box's
+    // clientWidth is its content less its border and its scrollbar.
+    const table = section.querySelector('table')
+    if (table !== null) {
+      const box = table.parentElement
+      if (box === null) {
+        found.push('models of a profile: the table has no scroll box (R5)')
+      } else if (table.scrollWidth > box.clientWidth) {
+        found.push(
+          `models of a profile: the table is ${table.scrollWidth} px, its scroll box ${box.clientWidth} px (R5)`,
+        )
+      }
+    }
+    // R5: nothing of the section reaches past the section's own box.
+    const room = section.clientWidth
+    for (const el of section.querySelectorAll('*')) {
+      if (taken(el)) continue
+      const w = Math.round(el.getBoundingClientRect().width)
+      if (w > room + 1) {
+        found.push(
+          `models of a profile: a ${el.tagName.toLowerCase()} is ${w} px, the section ${room} px (R5)`,
+        )
+        break
+      }
+    }
+    const hidden = (el) => el?.closest('.visually-hidden') !== null
+    // R7: every word of a visible piece of text ends on the line it starts on.
+    // A break after one of these is the id's own (D4.37), so it is allowed: an
+    // id keeps breaking at its hyphen, its dot and its underscore.
+    const BREAKS = [' ', '-', '.', '_']
+    const doc = section.ownerDocument
+    const walker = doc.createTreeWalker(section, NodeFilter.SHOW_TEXT)
+    for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+      const text = n.textContent ?? ''
+      const host = n.parentElement
+      if (text.trim() === '' || host === null || hidden(host) || taken(host)) {
+        continue
+      }
+      const tops = []
+      for (let i = 0; i < text.length; i++) {
+        const r = doc.createRange()
+        r.setStart(n, i)
+        r.setEnd(n, i + 1)
+        tops.push(r.getBoundingClientRect().top)
+      }
+      for (let i = 1; i < text.length; i++) {
+        if (tops[i] !== tops[i - 1] && !BREAKS.includes(text[i - 1])) {
+          const cell = host.closest('th, td, li, p')
+          const rest = text.slice(i)
+          found.push(
+            `models of a profile: ${word(cell).slice(0, 24) || 'text'}: breaks inside a word, "${rest}" starts a line (R7)`,
+          )
+          break
+        }
+      }
+    }
+    return found
+  }, S['instance-profile-models-title'])
+}
+
 /** The probes, by the name a state's `probe` gives. */
 const PROBES = {
   'model-profiles-narrow': modelsListNarrow,
   'nav-column': navColumn,
   'instance-profiles-narrow': instanceListNarrow,
+  'instance-profile-models-narrow': instanceProfileModelsNarrow,
 }
 
 /** What the state's `probe` measures, on the page at rest, at this width. Each

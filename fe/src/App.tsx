@@ -831,12 +831,14 @@ function Page({
     )
   }
   if (route.page === 'instance-profile') {
-    // One profile's head (brief 26, 26.5): where a create of 26.4 lands.
+    // One profile: its head of 26.5, where a create of 26.4 lands, and the two
+    // sections of 26.6 and 26.7 that read and write the profile.
     return (
       <InstanceProfilePage
         id={route.id}
         nameOf={nameOf}
         onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
       />
     )
   }

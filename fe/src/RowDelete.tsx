@@ -21,7 +21,7 @@ import {
   type Reply,
 } from './api.ts'
 import { HintTip, useHint } from './Hint.tsx'
-import { Icon } from './Icon.tsx'
+import { Icon, type IconName } from './Icon.tsx'
 import { t } from './strings.ts'
 
 /** Where the answer of a DELETE goes:
@@ -123,8 +123,9 @@ export async function deleteRow(path: string): Promise<DeleteAnswer> {
 }
 
 /** The − of a row (22 D4.1): the shared 40 px round square of a list's add, the
- *  trash can, and the row's own words in a visually hidden span, so every row's
- *  − has a name of its own (2.4.6). A row that cannot be deleted keeps it
+ *  trash can (a minus where the row removes an entry and its record stays, R6),
+ *  and the row's own words in a visually hidden span, so every row's − has a
+ *  name of its own (2.4.6). A row that cannot be deleted keeps it
  *  focusable and `aria-disabled`, described by the reason (22 D4.2), drawn
  *  inactive (22 D4 review D2), and shows that reason as a box floating over the
  *  table on hover and on focus (22 D4.3, 22 D4.13, 22 D4.16). The box holds the
@@ -139,6 +140,7 @@ export function RowDelete({
   busy,
   open,
   onPress,
+  icon = 'trash-2',
 }: {
   /** The id of the button: the list focuses a row's − by it. */
   domId: string
@@ -151,6 +153,10 @@ export function RowDelete({
   /** Its confirm row is open. */
   open: boolean
   onPress: () => void
+  /** The sign it draws. The can is a row that deletes the record the list
+   *  names; a row that removes one entry of a record, the record staying, draws
+   *  DESIGN.md 5.2's minus (brief 26, the IP6b review R6). */
+  icon?: IconName
 }) {
   const box = useRef<HTMLSpanElement>(null)
   const anchor = useRef<HTMLButtonElement>(null)
@@ -185,7 +191,7 @@ export function RowDelete({
           else onPress()
         }}
       >
-        <Icon name="trash-2" />
+        <Icon name={icon} />
         <span className="visually-hidden">{name}</span>
       </button>
       {reason !== null && hint.shown && (
@@ -220,6 +226,7 @@ export function DeleteReasons({
  *  while the delete is asked, so its words are its own. */
 export function RowConfirm({
   question,
+  verb = t('confirm-delete'),
   status,
   alert,
   running,
@@ -228,6 +235,9 @@ export function RowConfirm({
   onSignIn,
 }: {
   question: string
+  /** The verb's word: Delete, or the one a list gives this row (brief 26 26.8
+   *  removes a model entry from an instance profile, the profile staying). */
+  verb?: string
   status: string
   alert: { text: string; signIn: boolean } | null
   /** The delete runs: both buttons go inactive, Escape is inert (22 D4.5). */
@@ -262,7 +272,7 @@ export function RowConfirm({
           aria-disabled={running || undefined}
           onClick={onConfirm}
         >
-          {t('confirm-delete')}
+          {verb}
         </button>
         <button
           type="button"
