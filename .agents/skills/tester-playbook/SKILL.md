@@ -14,7 +14,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Check a reported red against the checkout (`git cat-file -t <commit>`, `ls`, `git worktree list`) before
   working on it: a report naming a file or commit that is not here is not this session's red. Report the
   mismatch, write no test for a file that is not there, and finish the brief you were given.
-- Set `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` before the first cargo run on Linux (the generated
+- Check `echo $CARGO_TARGET_DIR` first and never override a set value, not even in a one-off command line; keep the `CARGO_TARGET_DIR` your environment already has (the coordinator exports an ext4 path; `/mnt/data` is
+  ntfs3, slow to write); only when it is unset set `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` before the first cargo run on Linux (the generated
   `.cargo/config.toml` pins `build/windows/cargo-target`, so a Linux run lands in the Windows tree), say
   which dir a run used, and count a cold dir as ~8 min of compiles, not a hung test.
 - Name a test by the brief's criteria number, carried with the brief's own prefix: a page of brief 16
@@ -153,6 +154,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   principal it delegates to `authorize` (polkit), so a mutant that drops that line unhooks the PLAIN
   caller's refusal too, and the plain pins red beside the `As` ones (IP4a review, 2026-11-28). The
   transport arm adds nothing (`requester_as` only builds the `Requester`).
+- In a bff test, land the fake manager's writes in the MANAGER's shape, not in the helper the bff calls:
+  the manager's `write_entry_section` rewrites `[<p>/<m>]` IN PLACE, while `instance_profiles::set_entry_keys`
+  moves it to the END of the file. A fake that lands the bff's own computed text makes every revision-hash
+  pin green by the fake (the bff hashes the text it computed, not the text the write leaves): IP4c's hash
+  pins went green over the defect until the fake was given the manager's shape.
 - Prove a test exists with `-- --list | grep -c "^<name>:"`, never by running it.
 - Judge red from the OUTPUT (`FAILED`, `panicked at`), never the exit code.
 
@@ -257,9 +263,22 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Prove a GREEN rerun with no `Compiling` is a replay of the coder's fresh build: each test binary's mtime
   (the `Running` lines) post-dates the newest `*.rs` of the crate, and report that beside the totals.
   Compare each binary to the newest of its OWN inputs (its own test file + the crate's non-test `*.rs` +
-  `Cargo.toml`): the check answers 0 only per target.
+  `Cargo.toml`): the check answers 0 only per target. After a test-module move the newest `*.rs` of the
+  crate is a `*_tests.rs`, an input of the LIB target alone, so a `tests/*.rs` binary reads STALE
+  against it: exclude `*_tests.rs` and `src/tests/` from that target's newest input and it goes FRESH.
   Here the test binaries sit under `debug/build/<crate>/<hash>/out/` (`debug/deps/` is absent):
   take the paths from the `Running` lines, never glob `deps`.
+- A HEAD worktree carries no `build/`: point `PRIVATE_AI_LLAMA_CPP_DIR` at the MAIN tree's
+  `build/linux/llama.cpp` clone, and give the worktree its own `CARGO_TARGET_DIR` in `/tmp/opencode`
+  (sccache makes the cold core+app+cli list run ~2 min, not 8). `-- --list | grep -c ': test'` of the
+  two trees is the count check of a test-module move: the moved module is `mod tests;` + `#[path = ...]`,
+  so every test is listed in both trees, and the run's totals split by target back to the same number.
+- Audit such a move by TOKEN multiset (`re.findall(r"\S+")`, `Counter(HEAD) - Counter(now) - Counter(new)`):
+  indentation and rustfmt re-flow (3 statements joined onto one line after a dedent) hide under
+  whitespace, so a line diff flags hundreds of false moves. Expect the only leftovers to be the module
+  bookkeeping (`mod`, `tests`, `{`, `}`, the `=` of `#[path = ...]`) and, per prod file, the words of a
+  doc comment reworded about the move; name those. Check the new module keeps `#[cfg(test)]`
+  (a `#[path]` decl alone ships the tests in the release build).
 - Use `--no-fail-fast` for the slice's map (a target that fails to compile, or a test that fails, stops
   the run), written BEFORE the filter separator (`cargo test -p <crate> --lib --no-fail-fast`): after `--`
   it reaches the test harness, which dies with `Unrecognized option: 'no-fail-fast'` and prints no
@@ -274,6 +293,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   reads as a missing test): exact compares the FULL path, so `-- --exact manager::service::the_probe`.
   Say which invocation covers a `#[test] #[serial]` in a lib (not
   `--test <name>`). `--lib` of a binary crate runs unit tests, `--bins` the built binary.
+- Before `cargo fmt -p <crate>` (which rewrites every unformatted file of the crate), run
+  `cargo fmt -p <crate> --check` and read the `Diff in` list: when it names only your file, format it
+  that way; when it names another agent's file, format yours alone with `rustfmt --edition 2021 <file>`.
 - Write a long cargo log to a file, grep `test result|Running|^error`, then `sed -n` each block.
 - Read a copy handed over as "green there" with `diff -rq crates <copy>`: it usually carries edits beyond
   the quoted diffs. Judge every hunk and name the incomplete list.
@@ -516,7 +538,33 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the pin's comment and prove the channel with the two split-stream runs.
 - Pin `isolated`'s failure cases so an `unimplemented!()` stub cannot pass them green: assert the caught
   payload carries the child's marker, and that a 0-test path's payload names the path. A bare
-  `is_err()` is green on the stub.
+  `is_err()` is green on the stub. Pin the "the child said 0 passed" half as the WORDS of the child's own
+  summary line (`0 passed; 0 failed;`, libtest's), which the helper forwards, not as a phrasing of the
+  helper's own: the helper writes `{passed} passed and {failed} failed`, so a loose `0 passed` search is
+  answered by that sentence with no child output in sight.
+- The body that runs in the child is the one written in the test `--exact` NAMES, never the one the pin's
+  call passes (the child re-runs that function and takes the child branch): a hanging body (a `sleep`)
+  goes in the `#[ignore]`d inner test and the pin's own closure stays `unreachable!`. A sleep in the pin's
+  closure runs in nobody and the child exits at once.
+- A bound the helper does not have: pin it red through an env var only the tests set (no signature change,
+  no stub), and call the helper on a thread with `recv_timeout`, so the missing bound reads "did not come
+  back within Ns" at N seconds instead of hanging the suite for the child's sleep. Pin the elapsed BOTH
+  ways (`>= bound`, `< the child's sleep`): the green then says killed at the bound, not waited out. Prove
+  that green is satisfiable with a standalone `rustc` probe of `try_wait` + `kill` (a cold scratch build
+  of the crate is ~8 min for nothing); `{bound:?}` prints `2s`, a `Duration` has no `Display`.
+- That env var is read by EVERY isolated parent running in parallel, so name the bound far above a healthy
+  child run (measured 2026-11-28: this file's parents with their children, two of them sleeping 200 ms,
+  finish in well under a second together). Two tests that SET it are a race the short window does not
+  close: the hanging child's parent reads the sibling's roomier bound, waits its child out, and the
+  watchdog then says "no bound is enforced" while a bound was in force. Serialise them with a
+  `static Mutex<()>` taken at the top of each test and held across the set, the run and the remove, opened
+  `unwrap_or_else(|p| p.into_inner())` (the watchdog panics by design, so every red poisons a lock that
+  guards no data). Prove such a race under CPU load (16 `while :; do :; done` spinners per run beside
+  `--test-threads=8`): an idle box runs the pair green 20/20, the loaded one fails ~1 in 20 (2026-11-28,
+  the red's run finishing in the watchdog's 6.01 s). A test-only enum field no match arm reads is a
+  `dead_code` warning, hence a `-D warnings` red: drop the field.
+- The summary-line parse reads the number before each word in ANY order, so `0 failed; 1 passed;` reads as
+  (1,0): pin the reversed shape as no-count when the rule is "the `N passed; M failed` line".
 - A body that writes under the data root asserts `data_root().starts_with(std::env::temp_dir())` BEFORE
   the write: a body running with no redirect writes into the user's real tree.
 - "Distinct roots" across two isolated tests is a RACE pin: each body writes its marker, sleeps
@@ -528,6 +576,29 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `dep:tempfile`. The coder's `Cargo.toml` job, not the tester's.
 - rustfmt's `reorder_modules` sorts `pub mod` lines: a comment-attached `pub mod isolated;` lands where
   the sort puts it, so place the comment with it and let `fmt --check` (read-only) say where.
+- A bound's red must face a REAL grandchild: `Child::kill()` ends the direct child only, and a helper that
+  drains the child's piped stdout and stderr stays blocked in its readers for the whole life of a grandchild
+  that inherited those pipes, so a fixture that just sleeps is GREEN with the leak in place. Pin it with a
+  child that spawns `sleep` with the DEFAULT stdio (inheriting the pipes) and then sleeps itself, and assert
+  three: `elapsed >= bound`, `elapsed < bound + margin` (margin ~2 s for kill + reap + the pipes closing),
+  and the reported grandchild PID is gone. The red lands on the "did not come back within Ns" watchdog arm.
+  The red run leaves the grandchild alive for its sleep: name that in the report.
+- Ask whether a PID lives with no new dependency: `/proc/<pid>` exists on Linux, `/bin/kill -0 <pid>` answers
+  0 while a signal can be sent, on the other unixes. That is a `cfg(target_os = "linux")` split of one helper.
+- A `spawn()` bound to a variable the code never waits is a clippy `zombie_processes` red under
+  `-D warnings` (its `suspicious` group is on by default, and clippy reads the whole test module). The lint's
+  own fix is `wait()`; where the process MUST outlive the spawner (a grandchild the kill under test is meant
+  to end), take `#[allow(clippy::zombie_processes)]` with the reason in the doc, since the current std docs
+  offer no `mem::forget` recipe (std 1.100.1 says only that dropping without waiting is not recommended).
+- A killed child runs no destructor, so "a child killed at the bound leaves no root behind" is a DAY-ONE
+  GREEN guard: the BASE tempdir the parent made takes the child's dir with it when the guard drops on the
+  panic unwind. Learn the killed child's root path from a file the child wrote WHILE IT LIVED, into the
+  parent's report dir: add that report step to the body and skip it when the env var is unset, so the plain
+  bound test that shares the body is untouched.
+- Pin the bound in the helper's OWN sentence in ONE spelling, the milliseconds the test set (`2000`), not a
+  list of spellings (`2s`, `2 s`): the alternates let the coder answer with a duration of its own choosing.
+  Cut the child's forwarded output out first (`text.split("\nrunning ")`), else a line of the child's like
+  `finished in 2.00s` satisfies the search by accident.
 
 ### The bff (Rust)
 
@@ -558,8 +629,25 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   real `checks::server_file` refusal of that text into the fake's `Outcome::Invalid` (its `key` is
   `&'static str`, so it needs no leak) and assert `field`; pin the wrong-type case in the file's
   existing malformed-bodies list.
+- A manager key the bff MAPS (the IP4 table in `fe/briefs/api-contract.md`) answers its own args and a
+  `field` beside a non-422 status: `InstanceProfileExists` is 409 `instance-profile-name-taken` `["<id>"]`
+  with `field` `id`, so a pin of `args: []` and no field is a TEST-side red (its output prints the real
+  body). Pin the whole body with the status-parameterized `assert_error_field`, `assert_refused` being
+  422-only. The tell a pin is short: the web strings key `api-<key>` carries a `{0}` placeholder
+  (`fe/src/strings/en_US.json`), so `args` is not empty, and the contract's row names a `field`.
 - Write a list criterion that keeps an item with defaulted fields, and an expected-rows array that omits
   it, as one fixture with opposite rows.
+- A new suite whose routes do not exist yet: every verb of the new fake is overridable (the trait gives
+  them default bodies), so the file compiles and each test reddens on the router's BARE 404 with an EMPTY
+  body. A test that expects 404 must therefore assert the keyed BODY, else it is green on the unrouted 404
+  (`not JSON (EOF while parsing a value at line 1 column 0): ""` is the red you want).
+- Give the fixture's seams `Arc<Mutex<..>>` (the pool's text the fake writes, the last write verb handed):
+  a `move` connect closure OWNS its fixture, so the `App` keeps the ORIGINAL fixture clone and reads the
+  same Arcs, and build the router in a helper returning a `Built {router, log, connects}` the caller
+  folds into its `App`.
+- A fake reads `&self`: a by-value `if let Err(fail) = self.fixture.X` is `E0507` (a `ClientError` is not
+  `Copy`) and `self.fixture.X.clone()` needs the whole `Ok` type `Clone` too; pattern on the reference,
+  `if let Err(fail) = &self.fixture.X { return Err(fail.clone()); }`.
 
 ### Fakes, source lints and renames
 
@@ -1489,6 +1577,18 @@ frozen list.
 - A route that wraps `spawn_blocking` in `tokio::time::timeout` holds the semaphore permit until the
   abandoned task ends, so a slot-comes-back pin must keep the fetch hung across the follow-up calls: a
   released fetch puts the slots back by itself and the pin passes on the bug.
+- A fixture builder whose argument is nested tuples (`&[(&str, &str, &[(&str, &str)])]`) reddens
+  `clippy::type_complexity` under `-D warnings`: put `#[allow(clippy::type_complexity)]` on the fn, the
+  idiom `crates/core/src/checks_tests.rs` and `server_cfg_tests.rs` use.
+- The bff's wire keys (`no-instance-profile-named`, `stale-revision`, `address-in-use`, `*-malformed`) are
+  literals the web UI matches, NOT keys of `en_US.toml`: a key absent from the strings file is not a gap,
+  and a test that greps the strings file for them looks for the wrong thing.
+- The rows handler swallows the row read (`client.instances().unwrap_or_default()`, `lib.rs instances`), so
+  a fake that fails only `instances` answers 200 with `null` fields. A pin of the rows read's refusal
+  fails `list_instances` as well, so the read fails whichever verb the bff asks first.
+- A route the router does not carry answers 404 with an EMPTY body: an asserter that parses the body
+  reports `not JSON (EOF while parsing a value at line 1 column 0): ""`. That IS the expected red of an
+  unrouted slice, not a broken harness: say so in the report.
 
 ### xtask
 

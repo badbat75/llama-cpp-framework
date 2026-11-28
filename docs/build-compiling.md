@@ -406,7 +406,8 @@ gitignored, so a `cargo build` or `cargo test` from a shell or IDE obeys it too.
 Windows, cargo reads the Windows file on Linux too. Its linker settings are scoped to the msvc
 target and do nothing there. Its `target-dir`, jobs and test threads do apply, so a bare `cargo`
 lands in `build/windows/cargo-target`. Set `CARGO_TARGET_DIR=build/linux/cargo-target` to avoid
-that. The wrappers already do.
+that. The wrappers already do. Any other `CARGO_TARGET_DIR` already set, an ext4 path when the
+repo sits on a slow disk for instance, works the same for cargo's tests.
 
 **Never reconfigure or run ninja in the build directory while a build runs there.** Ninja holds
 `.ninja_deps` open, so on Windows the generate step fails with

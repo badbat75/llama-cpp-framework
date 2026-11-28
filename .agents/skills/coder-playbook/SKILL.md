@@ -72,6 +72,16 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   phase test is `#[ignore]`d so it fails nothing in the suite alone, and `--exact` without
   `--include-ignored` runs 0 tests and exits 0, which the helper's "exactly 1 passed" rule reads as a
   failure.
+- To time the manager's phases one by one (a bound's measure, TS2a2): in a copy, wrap every
+  `crate::…::phase();` of `crates/manager/src/tests/mod.rs` in a `timed!` macro (`Instant` +
+  `eprintln!` of `stringify!($e)` and the millis; the regex needs the parens kept, `$e;` on a bare
+  path is no call), build once, then run the binary direct with
+  `--exact tests::data_root_e2e --nocapture --test-threads=1`. Load shapes: `nproc` spinners; N runs at
+  once (the TS2b pool); a real compile beside them (`touch` a lib.rs of the copy, then
+  `cargo check -p <crate> --all-targets` in the copy's target dir). The manager's phases on this 24 vCPU
+  box, 2026-11-28: slowest 1.1 s solo idle, 4.2 s with spinners + 3 runs, 4.0 s beside a compile, 1.6 s
+  with 24 runs at once, and **10.5 s with 24 runs at once beside `nproc` spinners** (the TS2b pool, load
+  avg 52): the pool + spinners shape is the one a bound of `isolated` must clear, so its default is 120 s.
 - Judge the manager's phase sequence (`tests::data_root_e2e`) ONLY with `-- --test-threads=1`: the phases
   share the process-wide `PRIVATE_AI_DATA_ROOT`, so the default parallel run of the same test stops at a
   DIFFERENT pin (measured 2026-11-27: single-threaded it stops where the rule bites, the full crate run
@@ -79,7 +89,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   2 s and 10 s bounds: on a loaded machine the parallel run reddens it with a timeout (`bob's write: no
   answer within 2s`, `SetInstanceProfile: ... TimedOut`) at an UNCHANGED HEAD too (measured 2026-11-28),
   so a parallel red is no evidence at all; the solo test passes, slowly.
-- On Linux export `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` for every cargo command: the checked-in
+- On Linux check `echo $CARGO_TARGET_DIR` first and never override a set value, not even in a one-off command line; keep the `CARGO_TARGET_DIR` your environment already has (the coordinator exports an ext4 path,
+  `~/.cache/private-ai/cargo-target`: `/mnt/data` is ntfs3, whose bulk writes stall at 1 s and more); only when it
+  is unset export `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` for every cargo command: the checked-in
   `.cargo/config.toml` pins `target-dir = "build/windows/cargo-target"`, so a bare `cargo test` rebuilds the
   whole workspace there.
 - The configurator's e2e phases (`gui::server_tab_e2e`, `settings_tab_e2e`, `log_window_e2e`) run inside the
@@ -137,6 +149,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   copies FROM the pool: seed the pool with the id in the case the pin expects.
 - Arithmetic with a ceiling: "saturating, divide last" is `checked_mul(..).and_then(..).map_or(MAX, |x|
   x / d)`, not a `saturating_mul` chain.
+- Ending a child test process that owns two piped streams (`crates/core/src/isolated.rs`): spawn it
+  with `process_group(0)` and kill the GROUP (`nix::sys::signal::killpg(pid, SIGKILL)`, the nix
+  `signal` feature; the child's pid is its group's id), and hand the two pipe readers to the parent
+  over an `mpsc` channel taken with `recv_timeout`, never `join`: one process outside the group
+  holding a pipe blocks a join forever. Report the kill off the REAPED status (`!status.success()`),
+  so a child that exits between `try_wait` and the signal is not reported as killed.
 - A clean check over a `#[path = "x_tests.rs"] mod tests;` sibling proves nothing until you show the file
   is in that target's graph: `cargo rustc -p <crate> --profile test -- --emit dep-info` writes a `.d` under
   `$CARGO_TARGET_DIR/[<triple>/]debug/build/<crate>/<hash>/out/`, grep it for the file names (the linux
@@ -190,7 +208,7 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   after, the production lines byte-identical to the `git show HEAD:<file>` prefix, and the region's
   string literals in order. Every text lint keyed on a FILE path gains the sibling: `src/tests/graph.rs`'s
   `#[cfg(windows)]` exclusion, `windows_gnu_check_skips_the_linux_hwmon_module`, and the whitelists of
-  `crates/config/src/tests/names_lint.rs` (`WINDOWS_SERVICE_MODULES`, `MIGRATION_MODULE`,
+  `crates/config/src/tests/names_lint.rs` (`WINDOWS_SERVICE_MODULES`, `MIGRATION_MODULES`,
   `ENGINE_KEY_MODULES`, a list the sibling joins as its own entry) and `control_lint.rs`
   (`SYSTEM_DIR_ALLOWED`, matched on the exact relative path). Keep `#[allow(clippy::items_after_test_module)]`
   on the declaration when the file's `#[cfg(test)]` phases stay inline after it (`cli.rs`), and re-point at
@@ -410,6 +428,29 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A refusal with no control to mark (a state: 409 with key and args, no `field`) needs no arm in a
   422-with-field mapper: `control::action_failure`'s `Invalid` arm IS the keyed 409, so the mapper guards
   `key != "<that key>"` and falls through to it.
+- The 422 field map of a keyed refusal: fixed names for the keys that mark a form field (`instance-profile-bad-id`
+  → `id`, `no-model-profile-named` → `model`), then an EXPLICIT list of the value-rule keys whose first value
+  IS the entry key the form marks (`model-profile-stay-key`, `not-whole-number-in-range`, `not-a-number`,
+  `not-one-of`, `not-json-object`, `device-bad-name`, `min-above-max`), the field being that first value. Never
+  take `values.first()` unguarded: `tensor-split-format` values the text, the `override-tensor` rules a 1-based
+  position, `bind-all-with-others` nothing (IP4c review).
+- The bff's entry-save revision (IP4c): SHA-256 lowercase hex (`sha2`, 0.10 in the lock) over the profile's OWN
+  parsed sections. The save reads the pool text, looks the profile and its entry up in it FIRST (the 404 rides
+  the text, whatever revision is sent), compares the hash against that text, hands the manager the same text as
+  its `revision`, and answers the hash of the text the WRITE LEFT, read back: `set_entry_keys` APPENDS the entry
+  at the end of the file while the manager rewrites it in place, so a hash computed from the bff's own text is
+  not the hash the page's next read answers. A fake manager's delete succeeds for a profile the pool has not
+  got, so the profile delete reads the pool text first and answers the 404 itself, before any write.
+- A page built from two manager calls answers a missing subject's 404 from the FIRST text read, before the
+  second call: `page` looks the profile up in `GetInstanceProfile`'s text before `Instances()`, so a record
+  failure is 502 only for a profile that IS there (IP4c review N2).
+- A shared per-route write helper stays under clippy's 7-argument limit: fold the success status into the
+  `success(T, landed)` closure and take `landed` from the one captured `state.timed_out()` (calling
+  `timed_out()` twice is idempotent but reads twice; capture once).
+- A bff suite's copied `assert_error(status, key, args)` asserts the body EQUALS `{"key","args"}`: a test
+  calling it with `&[]` and then asserting `doc["args"] == [..]` and a `field` is a self-contradictory
+  pair no response satisfies (IP4c: `instance_profile_routes.rs` 1387 against 1389-1390). Report it,
+  change nothing.
 - A write on a path a read already owns is added beside the existing handler. One `Host` rule serves both
   address families (strip the brackets and parse `IpAddr`). An axum handler takes `Path` first and
   `Bytes` last.
@@ -812,6 +853,17 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 ### A cargo run
 
+- `isolated`'s child dir: a killed child runs no destructor, so the PARENT owns a base dir and the child
+  makes its data root inside it (`tempfile::tempdir_in(base)`); the parent's guard dropping covers a
+  kill. `crates/core/src/tests/redirect_lint.rs` reddens a `redirect_for_tests(` with no guard-binding
+  line (`tempdir()`, `tempdir_in(`, `TempDir`…) in the FOUR lines above it, and strips `//` comments, so
+  a doc comment never answers it. Prove no leak: run the set with `TMPDIR=<fresh dir>` and count entries
+  left (the lint's own documented check).
+- The bound seam `PAI_TEST_ISOLATED_BOUND_MS` is one process-wide name, so the two tests that set it
+  (2000 and 10000) are a race: the hanging parent can read the quick test's 10000 and miss the test's own
+  6 s watchdog, which then says "the parent enforces no bound" while a 10 s bound was in force (measured
+  2026-11-28: 2 of 20 runs of the pair, 1 of 12 of the whole `isolated` filter, green run solo). No
+  production shape separates them: the fix is test-side (a mutex, `--test-threads=1`, a per-test name).
 - `isolated(test_path, body)` (core `isolated.rs`, TS2) re-runs the CALLING test in the child, so a
   test-side shape that wraps the call breaks: a `catch_unwind` around it swallows the child's body
   panic (the child's libtest reports 1 passed, exit 0), and a preamble that `set_var`s an env var the
@@ -841,6 +893,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   tree's `cargo test`: the run names probe tests that exist in no real file (and the fixture the sandbox
   patched). The check is that the run names only tests you can open; the fix is `touch` a source file of
   the crate in the real tree, or give the sandbox its own target dir.
+- A libtest summary parse keys on the PAIR in libtest's own order and adjacent (`N passed; M failed;`):
+  a token walk that finds each word with its number before it passes `0 failed; 1 passed;` as `(1, 0)`.
+- `( time { for p in "${runs[@]}"; do wait "$p"; done; } )` prints `real 0m0.000s`: a subshell cannot
+  `wait` the jobs of its parent, so a loop timed that way measures nothing. Time it in the same shell.
+- The test binary from `ls build/…/out/pai_core-*` is often a `.d`: filter `grep -v '\.d$'`, else every
+  run of the loop is red for the wrong reason.
 - `fakes::FakeService::new()` answers `UnitState::Active` for EVERY unit, so a manager phase that pins
   "the running instances" through `FakeService { running: &[..] }` needs `state: UnitState::Inactive` on
   the same fake. A running-list red naming an instance the fixture never listed is the fixture's, prove
@@ -886,6 +944,15 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   carry no path: reuse an existing key (`not-one-of` names the offending key as its first value). It
   also needs the key in `checks::KEYS` (core's `every_refusal_key_is_known_and_in_both_strings_files`).
   `binding_lint` is a `pai-config` test, so a `-p pai-core` run never shows it.
+- TS1 moved each module's tests to `<module>_tests.rs` beside it, a path the `pai-config` source lints
+  did not know: `names_lint`'s whitelists are path keys (the list gains the sibling, as
+  `ENGINE_KEY_MODULES` already does) and `binding_lint`'s `rust_sources` must skip the `*_tests.rs`
+  suffix as it skips the `tests/` dir and `rust_fns` cuts at `mod tests;`. So a key spelled only in a
+  moved test file reads as text the window shows: `manager-invalid-id` and `manager-service-sync-failed`
+  came in as "used in ui/ or src/ but not in en_US.toml", while their only production calls sit in the
+  `CLI_ONLY_FNS` functions `run` and `sync_failure_message`, and the test's own `alone` assertion keeps
+  such a cli.toml-alone key OUT of the language file. Fix the lint's path key, never add the key to
+  en_US.toml.
 - `pai-config`'s `names_lint::no_code_names_the_old_project` scans `crates/{app,bff,cli,config,core,manager}`
   and `OLD_NAMES` holds `join("llama.cpp")`, so a manager test fixture that writes the engine's version
   file reddens `cargo test -p pai-config`, naming a `crates/manager` line in a crate you did not touch.
