@@ -35,11 +35,12 @@ const OLD_NAMES: [&str; 10] = [
 const MIGRATION_MODULE: &str = "core/src/migrate.rs";
 const MIGRATION_NAMES: [&str; 2] = ["llama-cpp-config", r#"join("llama.cpp")"#];
 
-/// The one file allowed to name `HKLM\Software\llama.cpp`, relative to
-/// `crates/`: since the Windows split it is llama.cpp's own MSI's
+/// The files allowed to name `HKLM\Software\llama.cpp`, relative to `crates/`:
+/// since the Windows split it is llama.cpp's own MSI's
 /// registration, where pai-manager finds llama-server
-/// (`paths::engine_install_dir`), no longer the old product's key.
-const ENGINE_KEY_MODULE: &str = "core/src/paths.rs";
+/// (`paths::engine_install_dir`), no longer the old product's key, and the test
+/// file moved out of it, which reads that registration back.
+const ENGINE_KEY_MODULES: [&str; 2] = ["core/src/paths.rs", "core/src/paths_tests.rs"];
 const ENGINE_KEY_NAMES: [&str; 1] = [r"Software\llama.cpp"];
 
 /// The old manager executable; the manager's service keeps the name
@@ -78,7 +79,7 @@ fn hits(path: &Path) -> Vec<String> {
     let toml = path.extension().is_some_and(|e| e == "toml");
     let exempt: &[&str] = if path.ends_with(MIGRATION_MODULE) {
         &MIGRATION_NAMES
-    } else if path.ends_with(ENGINE_KEY_MODULE) {
+    } else if ENGINE_KEY_MODULES.iter().any(|m| path.ends_with(m)) {
         &ENGINE_KEY_NAMES
     } else {
         &[]
@@ -238,9 +239,9 @@ fn only_the_migration_module_may_name_the_old_tree_and_entry() {
     assert!(real.is_file(), "{real:?}");
 }
 
-// The engine's registration key is named in paths.rs alone (where the engine's
-// folder is read); anywhere else it is still refused, and paths.rs still
-// refuses every other old name.
+// The engine's registration key is named in paths.rs and the test file moved
+// out of it (where the engine's folder is read); anywhere else it is still
+// refused, and both files still refuse every other old name.
 #[test]
 fn only_paths_may_name_the_engine_registration_key() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -258,8 +259,11 @@ fn only_paths_may_name_the_engine_registration_key() {
     assert_eq!(paths.len(), 1, "{paths:?}");
     assert!(paths[0].contains("_FW_GPU_LOCK"), "{paths:?}");
     assert_eq!(hits(&src.join("startup.rs")).len(), 2);
-    let real = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(ENGINE_KEY_MODULE);
-    assert!(real.is_file(), "{real:?}");
+    // The exempt files are real ones, not names left behind by a move.
+    for module in ENGINE_KEY_MODULES {
+        let real = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(module);
+        assert!(real.is_file(), "{real:?}");
+    }
 }

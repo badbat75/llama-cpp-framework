@@ -719,8 +719,11 @@ fn the_gate_ask_scan_needs_the_backend_the_gate_asks() {
 // `bff.ini` for the service and for the manager. Test code may name it.
 
 /// The files allowed to name `system_config_dir`, relative to `crates/`.
-const SYSTEM_DIR_ALLOWED: [&str; 3] = [
+const SYSTEM_DIR_ALLOWED: [&str; 4] = [
     "core/src/paths.rs",
+    // The test file moved out of it: its rows name the directories the module
+    // returns, to check which one each path lands in.
+    "core/src/paths_tests.rs",
     // The one place the service's file is read, so the manager that judges a
     // server address against it asks the same question the service answers.
     "core/src/bff_cfg.rs",

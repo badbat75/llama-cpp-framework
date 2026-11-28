@@ -189,9 +189,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   Prove the move: the count and the sorted names of `cargo test -p <crate> --lib -- --list` before and
   after, the production lines byte-identical to the `git show HEAD:<file>` prefix, and the region's
   string literals in order. Every text lint keyed on a FILE path gains the sibling: `src/tests/graph.rs`'s
-  `#[cfg(windows)]` exclusion, `windows_gnu_check_skips_the_linux_hwmon_module`, and the whitelist of
+  `#[cfg(windows)]` exclusion, `windows_gnu_check_skips_the_linux_hwmon_module`, and the whitelists of
   `crates/config/src/tests/names_lint.rs` (`WINDOWS_SERVICE_MODULES`, `MIGRATION_MODULE`,
-  `ENGINE_KEY_MODULE`).
+  `ENGINE_KEY_MODULES`, a list the sibling joins as its own entry) and `control_lint.rs`
+  (`SYSTEM_DIR_ALLOWED`, matched on the exact relative path). Keep `#[allow(clippy::items_after_test_module)]`
+  on the declaration when the file's `#[cfg(test)]` phases stay inline after it (`cli.rs`), and re-point at
+  the declaration any comment that tells a reader where a lint cuts the file.
 - A strings-file VALUE is pinned by its callers' tests (and is a region's accessible name in the web UI).
   A refusal a client decodes must be a key of `checks::KEYS` with a `text()` arm; a `checks` refusal text
   is pinned by core tests over BOTH strings files. Prose in a constant whose bytes are DATA is data.
@@ -870,6 +873,10 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
 
 ### Source lints and strings
 
+- `binding_lint`'s `rust_fns` and `shown_literals` end their scan of a source at its test module: the
+  declaration `mod tests;` of a module moved out must cut like the inline `mod tests {`, else the
+  `#[cfg(test)]` phases left in the parent read as production and
+  `cli_print_paths_hold_no_language` reddens on their test data (`cli.rs: "write_file server@default.ini {}"`).
 - A word-internal rename map breaks `mod` file names, multi-item `use` lists, names interpolated in
   format strings, raw or multi-line strings and WiX component Ids (MSI identity, not prose); rewrapped
   prose defeats exact pairs.

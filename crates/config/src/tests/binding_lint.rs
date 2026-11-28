@@ -680,7 +680,11 @@ fn split_cli_only(path: &Path, source: &str) -> (String, String) {
 fn rust_fns(source: &str) -> Vec<(String, bool, String)> {
     let mut fns = Vec::new();
     let mut outside = String::new();
-    let mut lines = source.lines().take_while(|l| l.trim() != "mod tests {");
+    // The test module is not the module's code, inline or declared beside it.
+    let mut lines = source.lines().take_while(|l| {
+        let line = l.trim();
+        line != "mod tests {" && line != "mod tests;"
+    });
     while let Some(raw) = lines.next() {
         let line = strip_line_comment(raw);
         let code = line.trim_start();
@@ -1031,7 +1035,11 @@ const SHOWN_LITERALS: [(&str, &str); 5] = [
 fn shown_literals(source: &str, all: bool) -> Vec<String> {
     let code: String = source
         .lines()
-        .take_while(|l| !l.trim_end().ends_with("mod tests {"))
+        // The test module is not the module's code, inline or declared beside it.
+        .take_while(|l| {
+            let line = l.trim_end();
+            !line.ends_with("mod tests {") && !line.ends_with("mod tests;")
+        })
         .map(|l| format!("{l}\n"))
         .collect();
     let starts_call = |before: &str| {
@@ -1182,6 +1190,13 @@ fn cli_print_paths_hold_no_language() {
 #[test]
 fn shown_literal_scan_reads_macros_and_leaves_the_rest() {
     let source = "// println!(\"comment\");\nprintln!(\"one {x}\");\neprintln!(\n    \"two \\\n     lines\",\n    a(b),\n);\nanyhow::bail!(\"three\");\nlet c = '\"';\nprintln!(\"{}\", strings::fill(\"a-key\", &[&\"four\"]));\nlet s = \"five\";\nlet f = format!(\"six\");\nx.context(\"seven\");\n#[cfg(test)]\nmod tests {\n    println!(\"eight\");\n}\n";
+    // A test module moved out beside the module: its declaration cuts the same.
+    let moved = "println!(\"nine\");\n#[cfg(test)]\n#[path = \"x_tests.rs\"]\nmod tests;\nprintln!(\"ten\");\n";
+    assert_eq!(
+        shown_literals(moved, true),
+        ["nine"],
+        "the code after the declaration is the test's"
+    );
     assert_eq!(
         shown_literals(source, false),
         ["one {x}", "two       lines", "three", "{}", "four"]
