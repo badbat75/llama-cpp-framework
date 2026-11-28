@@ -1363,6 +1363,27 @@ session's, following the coordinator's shape; the fe is built against mocks), ea
 
 Later slices (not yet written): the benchmark portal.
 
+### 16. A configurable cargo target dir for xtask
+
+Asked by the user on 2026-11-28. The checkout is shared by Windows and Linux on an ntfs3 disk, and
+Windows' generated `.cargo/config.toml` pinned `target-dir = build/windows/cargo-target`, so Linux's
+bare cargo builds spilled 36 GB there (the file was removed the same day; Windows regenerates it with
+`xtask configure`). Design (architect, 2026-11-28; Cargo cannot vary `target-dir` per OS in a shared
+config file: https://doc.rust-lang.org/cargo/reference/config.html): the dir stays inside xtask
+(user: "can't it stay in xtask for the build too?"); bare cargo is not xtask's business, and
+agents get it from the gitignored `.claude/settings.local.json` env.
+- **BD1** (xtask): `xtask configure --cargo-target-dir <path>`, recorded as `cargo_target_dir` in
+  `build/linux/config-build.toml` and `CargoTargetDir` in `build\windows\config-build.psd1` (blank:
+  unset; relative: from the repo root); one helper `util::cargo_target_dir()`, an exported
+  `CARGO_TARGET_DIR` first, then the configured value, then `build/<os>/cargo-target`; `xtask build`
+  (configurator.rs:96, today unconditional) and every reader of `cargo-target/release`
+  (linux/install.rs, linux/package.rs, windows/package.rs) use it; staging and `dist/` stay where they
+  are. Done when unit tests pin the order and a package test takes the binaries from a configured dir.
+- **BD2** (xtask, Windows): the generated `.cargo/config.toml` no longer carries `target-dir`. Done
+  when a test of the generated text shows none.
+- **BD3** (docs): docs/build-compiling.md (target dir, about lines 401 to 409) and AGENTS.md's
+  build-artifacts convention.
+
 ### 15. A minimal install image with the manager (last)
 
 Covers: R14. Asked by the user on 2026-11-22, to come at the very end of the order: a minimal
