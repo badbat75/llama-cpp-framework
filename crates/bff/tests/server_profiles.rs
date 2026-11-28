@@ -54,7 +54,7 @@ use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::client::{
     Affected, ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
-    ServerProfileInfo,
+    NotConvergedRow, ServerProfileInfo,
 };
 use pai_core::{checks, paths, server_cfg};
 use serde_json::{json, Value};
@@ -168,6 +168,10 @@ struct Fixture {
     states: HashMap<String, InstanceState>,
     /// What every `status` answers, ahead of `states`: the state read that fails.
     status_fail: Option<ClientError>,
+    /// What every verb that answers affected instances answers (IP4e: the save's
+    /// 200 is `{revision, running, notConverged}` with this in it). The empty
+    /// answer is the default: no instance runs, nothing failed to converge.
+    affected: Affected,
     /// How long `server_profiles` takes.
     delay: Duration,
     /// Where the writes that landed are left for the test to read.
@@ -186,6 +190,7 @@ impl Default for Fixture {
             rows: Ok(Vec::new()),
             states: HashMap::new(),
             status_fail: None,
+            affected: Affected::default(),
             delay: Duration::ZERO,
             written: None,
         }
@@ -232,6 +237,23 @@ impl Fixture {
         self
     }
 
+    /// What every verb that answers affected instances answers: `running` the
+    /// ids, `not_converged` rows of `(instance, key, args)`.
+    fn affected(mut self, running: &[&str], not_converged: &[(&str, &str, &[&str])]) -> Fixture {
+        self.affected = Affected {
+            running: running.iter().map(|i| i.to_string()).collect(),
+            not_converged: not_converged
+                .iter()
+                .map(|(instance, key, args)| NotConvergedRow {
+                    instance: (*instance).to_string(),
+                    key: (*key).to_string(),
+                    args: args.iter().map(|a| a.to_string()).collect(),
+                })
+                .collect(),
+        };
+        self
+    }
+
     /// The state of `id` is `state`.
     fn state(mut self, id: &str, state: InstanceState) -> Fixture {
         self.states.insert(id.to_string(), state);
@@ -266,6 +288,7 @@ impl FakeManager {
                 rows: fixture.rows.clone(),
                 states: fixture.states.clone(),
                 status_fail: fixture.status_fail.clone(),
+                affected: fixture.affected.clone(),
                 delay: fixture.delay,
                 written: fixture.written.clone(),
             },
@@ -350,7 +373,10 @@ impl ManagerClient for FakeManager {
             return Err(ClientError::Changed);
         }
         self.push(name, contents);
-        self.fixture.write.clone().map(|_| Affected::default())
+        self.fixture
+            .write
+            .clone()
+            .map(|_| self.fixture.affected.clone())
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         self.record(format!("boot {id}"));
@@ -727,8 +753,11 @@ impl App {
     }
 
     /// Reads the document of `id` and saves it back with `Port` set to `port`,
-    /// as the form does: 200 answers `{"revision", "running"}`.
-    async fn save_with_port(&self, id: &str, port: i64) -> (Reply, String) {
+    /// as the form does: 200 answers `{"revision", "running", "notConverged"}`.
+    /// The third element is how many manager calls the log held when the save
+    /// was sent: the document read is the form's load and reads the record, so
+    /// a pin of the save's own calls slices the call log from it.
+    async fn save_with_port(&self, id: &str, port: i64) -> (Reply, String, usize) {
         let (doc, _) = self.document(id).await;
         assert_eq!(doc.status, StatusCode::OK, "{}", doc.body);
         let mut values = doc.json()["values"].clone();
@@ -736,11 +765,14 @@ impl App {
             .as_object_mut()
             .expect("the document's values")
             .insert("Port".to_string(), json!(port));
-        self.save(
-            id,
-            json!({ "revision": doc.json()["revision"], "values": values }),
-        )
-        .await
+        let base = self.calls().len();
+        let (reply, cookie) = self
+            .save(
+                id,
+                json!({ "revision": doc.json()["revision"], "values": values }),
+            )
+            .await;
+        (reply, cookie, base)
     }
 }
 
@@ -1335,9 +1367,12 @@ async fn the_document_of_an_unused_profile_has_no_instance() {
     );
 }
 
-/// The save of a profile writes that profile's file, at `server@<id>.ini`,
-/// with the text the body renders, and 200 answers the new revision and the
-/// state of the instance that uses it.
+/// The save of a profile writes that profile's file, at `server@<id>.ini`, with
+/// the text the body renders, and 200 answers the new revision and the
+/// manager's own answer of its write (IP4e): `running` the ids it says are up,
+/// `notConverged` the rows of `{instance, key, args}` it could not bring round.
+/// The bff lists no instance and asks no state of its own: the state is the
+/// manager's read, the same answer the instance writes give (`ip4_instance_routes.rs`).
 #[tokio::test]
 async fn the_save_writes_the_profile_s_own_file() {
     let written: Written = Arc::default();
@@ -1345,9 +1380,10 @@ async fn the_save_writes_the_profile_s_own_file() {
         Fixture::pool(&[("big", 8123)])
             .used(&[("default", "big")])
             .state("default", InstanceState::Active)
+            .affected(&["default"], &[])
             .writing(written.clone()),
     );
-    let (reply, _) = app.save_with_port("big", 9000).await;
+    let (reply, _, _) = app.save_with_port("big", 9000).await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
     let answer = reply.json();
     let got = written_of(&written);
@@ -1363,16 +1399,17 @@ async fn the_save_writes_the_profile_s_own_file() {
         text.contains("Port = 9000"),
         "the body's port is in the text: {text}"
     );
+    let mut keys: Vec<&String> = answer.as_object().expect("an object").keys().collect();
+    keys.sort();
     assert_eq!(
-        answer
-            .as_object()
-            .expect("an object")
-            .keys()
-            .collect::<Vec<_>>(),
-        vec!["revision", "running"],
-        "the save answers the revision and the state"
+        keys,
+        ["notConverged", "revision", "running"],
+        "the save answers the revision and the affected lists, and nothing \
+         else: a JSON object's key order is no behaviour, so the keys are \
+         compared sorted"
     );
-    assert_eq!(answer["running"], json!(true), "{}", reply.body);
+    assert_eq!(answer["running"], json!(["default"]), "{}", reply.body);
+    assert_eq!(answer["notConverged"], json!([]), "{}", reply.body);
     assert_eq!(
         answer["revision"],
         json!(revision_of(text, &REVISION_KEY)),
@@ -1387,21 +1424,35 @@ async fn the_save_writes_the_profile_s_own_file() {
         !calls.iter().any(|c| c == "read server@default.ini"),
         "the instance's own file is not touched: {calls:?}"
     );
+    assert!(
+        !calls.iter().any(|c| c.starts_with("status")),
+        "the state is the manager's read, not the bff's: {calls:?}"
+    );
 }
 
-/// The save of an unused profile answers `running: false`: no instance runs it,
-/// and the bff asks no state.
+/// The save of a profile no instance runs answers an empty `running` and an
+/// empty `notConverged`: the manager's write answered nothing, and the bff asks
+/// no instance list and no state on the way to saying so.
 #[tokio::test]
-async fn the_save_of_an_unused_profile_answers_running_false() {
+async fn the_save_of_an_unused_profile_answers_no_running() {
     let written: Written = Arc::default();
     let app = app_for(
         Fixture::pool(&[("spare", 8124)])
             .used(&[("default", "big")])
             .writing(written.clone()),
     );
-    let (reply, _) = app.save_with_port("spare", 9000).await;
+    let (reply, _, base) = app.save_with_port("spare", 9000).await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
-    assert_eq!(reply.json()["running"], json!(false), "{}", reply.body);
+    assert_eq!(
+        reply.json(),
+        json!({
+            "revision": revision_of(&written_of(&written)[0].1, &REVISION_KEY),
+            "running": [],
+            "notConverged": []
+        }),
+        "{}",
+        reply.body
+    );
     assert_eq!(
         written_of(&written)
             .iter()
@@ -1410,48 +1461,102 @@ async fn the_save_of_an_unused_profile_answers_running_false() {
         vec!["server@spare.ini"],
         "the unused profile's own file"
     );
+    // Scoped to the save's own calls: the helper's document read is the
+    // form's load, and the document reads the record to answer `instance`.
+    let calls = app.calls();
+    let save_calls = &calls[base..];
     assert!(
-        !app.calls().iter().any(|c| c.starts_with("status")),
-        "no instance runs it, so no state is asked: {:?}",
-        app.calls()
+        !save_calls.iter().any(|c| c.starts_with("status")),
+        "no instance runs it, so no state is asked: {save_calls:?}"
+    );
+    assert!(
+        !save_calls.iter().any(|c| c == "instances"),
+        "the save lists no instance in order to answer: {save_calls:?}"
     );
 }
 
-/// The record read that fails once the write landed leaves the state unknown, so
-/// the save answers 200 with `running: true`: `false` claims the instance is
-/// stopped, a claim the bff cannot make, and it hides that a restart may be
-/// needed. The write itself is a success, so the save is a 200, not a refusal.
+/// An instance the manager could not bring round is answered in
+/// `notConverged`, named with the manager's key and its args, and is not
+/// `running`. The save is still a 200: the write landed.
 #[tokio::test]
-async fn the_save_answers_running_true_when_the_record_read_after_the_write_fails() {
+async fn the_save_answers_the_not_converged_rows_of_the_write() {
     let written: Written = Arc::default();
-    let app = app_for(Fixture {
-        rows: Err(ClientError::Unavailable),
-        ..Fixture::pool(&[("big", 8123)])
+    let app = app_for(
+        Fixture::pool(&[("big", 8123)])
             .used(&[("default", "big")])
-            .state("default", InstanceState::Active)
-            .writing(written.clone())
-    });
-    // The record is the fake's, so the page's read fails too: the body is built
-    // from the text the fake holds, at that text's own revision. `Tags` is an
-    // array in a body the read's shape, so the values carry it.
-    let cookie = app.sign_in().await;
-    let reply = app
-        .ask_json(
-            Method::PUT,
-            "/api/profiles/server/big",
-            Some(&cookie),
-            &json!({
-                "revision": revision_of(&profile_text(8123), &REVISION_KEY),
-                "values": { "Port": 9000, "Tags": [] }
-            })
-            .to_string(),
-        )
-        .await;
+            .affected(
+                &[],
+                &[("default", "server-not-responding", &["ctx-size", "8192"])],
+            )
+            .writing(written.clone()),
+    );
+    let (reply, _, _) = app.save_with_port("big", 9000).await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
     assert_eq!(
         reply.json()["running"],
-        json!(true),
-        "a state the bff cannot read answers running: {}",
+        json!([]),
+        "an instance the manager cannot read is not running: {}",
+        reply.body
+    );
+    assert_eq!(
+        reply.json()["notConverged"],
+        json!([{
+            "instance": "default",
+            "key": "server-not-responding",
+            "args": ["ctx-size", "8192"]
+        }]),
+        "{}",
+        reply.body
+    );
+}
+
+/// The state of the instances is the manager's knowledge, carried by its answer
+/// of the write: the bff reads no record of where the profile is served and asks
+/// no state, so a record it cannot read is no news for the save. The write
+/// landed, the save is a 200, and the lists are the manager's.
+#[tokio::test]
+async fn the_save_asks_no_record_and_no_state_of_its_own() {
+    let written: Written = Arc::default();
+    let pool = || {
+        Fixture::pool(&[("big", 8123)])
+            .used(&[("default", "big")])
+            .state("default", InstanceState::Active)
+            .affected(&["default"], &[])
+            .writing(written.clone())
+    };
+    // The document the form loads, on an app whose record read works: the
+    // save sends back that document's revision and values, port changed.
+    let loader = app_for(pool());
+    let (doc, _) = loader.document("big").await;
+    assert_eq!(doc.status, StatusCode::OK, "{}", doc.body);
+    let mut values = doc.json()["values"].clone();
+    values
+        .as_object_mut()
+        .expect("the document's values")
+        .insert("Port".to_string(), json!(9000));
+    // The save, on an app whose record and state reads fail: the save asks
+    // neither, so the write lands and the lists are the manager's.
+    let app = app_for(Fixture {
+        rows: Err(ClientError::Unavailable),
+        status_fail: Some(ClientError::Unavailable),
+        ..pool()
+    });
+    let (reply, _) = app
+        .save(
+            "big",
+            json!({ "revision": doc.json()["revision"], "values": values }),
+        )
+        .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::OK,
+        "the write landed: {}",
+        reply.body
+    );
+    assert_eq!(
+        reply.json()["running"],
+        json!(["default"]),
+        "{}",
         reply.body
     );
     assert_eq!(
@@ -1460,55 +1565,17 @@ async fn the_save_answers_running_true_when_the_record_read_after_the_write_fail
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>(),
         vec!["server@big.ini"],
-        "the record's failure did not stop the write"
+        "the record read's failure did not stop the write"
     );
     assert_eq!(
         app.calls(),
         vec![
             "read server@big.ini".to_string(),
-            "write-if server@big.ini".to_string(),
-            "instances".to_string()
+            "write-if server@big.ini".to_string()
         ],
-        "the record is asked once, after the write, and no state is asked of an \
-         instance the record cannot name"
-    );
-}
-
-/// The state read that fails once the write landed is unknown as well: the save
-/// answers 200 with `running: true`, as the instance's own save does
-/// (`server.rs`'s `running_is_true_when_the_status_read_after_the_write_fails`).
-/// Guard: the route answers true today, and this pins the same rule for the
-/// status, beside the record's case above.
-#[tokio::test]
-async fn the_save_answers_running_true_when_the_state_read_after_the_write_fails() {
-    let written: Written = Arc::default();
-    let app = app_for(Fixture {
-        status_fail: Some(ClientError::Unavailable),
-        ..Fixture::pool(&[("big", 8123)])
-            .used(&[("default", "big")])
-            .state("default", InstanceState::Active)
-            .writing(written.clone())
-    });
-    let (reply, _) = app.save_with_port("big", 9000).await;
-    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
-    assert_eq!(
-        reply.json()["running"],
-        json!(true),
-        "the state read failed, so the state is unknown: {}",
-        reply.body
-    );
-    assert_eq!(
-        written_of(&written)
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["server@big.ini"],
-        "the state's failure did not stop the write"
-    );
-    assert!(
-        app.calls().iter().any(|c| c == "status default"),
-        "the instance using the profile is the one asked: {:?}",
-        app.calls()
+        "one read and one compare and swap: the save asks nothing else to \
+         answer; the document read is the loader app's form load, not this \
+         app's"
     );
 }
 

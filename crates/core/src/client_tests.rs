@@ -99,6 +99,82 @@ fn the_instance_verbs_are_on_the_trait_with_the_default_body() {
     }
 }
 
+/// A client that speaks only the instance profile list, of the verbs
+/// read through it: the shape of a transport whose `used_by` is the
+/// trait's default body.
+struct PoolOnly;
+
+fn pool_profile(id: &str, entries: &[&str]) -> InstanceProfileInfo {
+    InstanceProfileInfo {
+        id: id.to_string(),
+        server_profile: "default".to_string(),
+        entries: entries.iter().map(|e| e.to_string()).collect(),
+        revision: String::new(),
+    }
+}
+
+impl ManagerClient for PoolOnly {
+    fn list_instances(&self) -> Result<Vec<String>, ClientError> {
+        Ok(Vec::new())
+    }
+    fn status(&self, _id: &str) -> Result<InstanceState, ClientError> {
+        Ok(InstanceState::Inactive)
+    }
+    fn start(&self, _id: &str) -> Result<(), ClientError> {
+        Ok(())
+    }
+    fn stop(&self, _id: &str) -> Result<(), ClientError> {
+        Ok(())
+    }
+    fn restart(&self, _id: &str) -> Result<(), ClientError> {
+        Ok(())
+    }
+    fn read_file(&self, _name: &str) -> Result<Option<ManagerFile>, ClientError> {
+        Ok(None)
+    }
+    fn write_file(
+        &self,
+        _name: &str,
+        _contents: &str,
+        _keep_api_key: bool,
+    ) -> Result<(), ClientError> {
+        Ok(())
+    }
+    fn boot_enabled(&self, _id: &str) -> Result<bool, ClientError> {
+        Ok(false)
+    }
+    fn set_boot_enabled(&self, _id: &str, _enabled: bool) -> Result<(), ClientError> {
+        Ok(())
+    }
+    fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
+        Ok((true, true))
+    }
+    fn instance_profiles(&self) -> Result<Vec<InstanceProfileInfo>, ClientError> {
+        Ok(vec![
+            pool_profile("lab", &["Qwen3-27B", "DeepSeek-V3"]),
+            pool_profile("edge", &[]),
+            pool_profile("big", &["qwen3-27b", "QWEN3-27B"]),
+        ])
+    }
+}
+
+/// The default body of `used_by`, over a fake that speaks only
+/// `instance_profiles`: the query `Qwen3-27B` answers `lab`, whose entry
+/// is mixed case, and `big`, whose two entries are lower and upper case,
+/// so the entry's model id is compared without case; `big` lists the
+/// model twice and its id appears once; `edge`, which lists no model, is
+/// skipped, and the ids keep the pool's order (`lab` before `big`).
+/// (IP4e, review's must-fix 1: no test read the default body, every bff
+/// fake overrode it.)
+#[test]
+fn used_by_default_body_matches_the_pool_ignoring_case_once_in_order() {
+    assert_eq!(
+        PoolOnly.used_by("Qwen3-27B").expect("the pool answers"),
+        ["lab", "big"],
+        "case-insensitive, one id once, pool order"
+    );
+}
+
 // ── States ──────────────────────────────────────────────────────────
 
 #[test]

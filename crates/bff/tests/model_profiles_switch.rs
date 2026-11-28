@@ -100,7 +100,8 @@ use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
 use pai_core::checks::Refusal;
 use pai_core::client::{
-    Affected, ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile,
+    Affected, ClientError, InstanceInfo, InstanceProfileInfo, InstanceState, ManagerClient,
+    ManagerFile,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -524,6 +525,29 @@ impl FakeManager {
 }
 
 impl ManagerClient for FakeManager {
+    /// The node's instance profiles, answered from the pool file the test
+    /// holds, as the manager's verb reads it. These tests' manager holds no
+    /// `instance-profiles.ini`, so the pool is empty and the model profile
+    /// routes' `usedBy` names no instance profile.
+    fn instance_profiles(&self) -> Result<Vec<InstanceProfileInfo>, ClientError> {
+        let text = self
+            .live
+            .files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get("instance-profiles.ini")
+            .cloned()
+            .unwrap_or_default();
+        Ok(pai_core::instance_profiles::parse(&text)
+            .into_iter()
+            .map(|profile| InstanceProfileInfo {
+                id: profile.id,
+                server_profile: profile.server_profile.unwrap_or_default(),
+                entries: profile.entries.into_iter().map(|e| e.model).collect(),
+                revision: text.clone(),
+            })
+            .collect())
+    }
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
         if self.read_refused() {

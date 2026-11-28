@@ -355,11 +355,13 @@ async fn set_address(
 
 /// One of the two writes that carry no revision of their own, as the signed-in
 /// user under `write_timeout`: the record of the instances answers the id first,
-/// an id it does not name being 404 `client-no-instance` with nothing written;
-/// then `text` reads the text the manager compares, and `write` hands it over
-/// with the write, the manager's compare closing the window between this read
-/// and the write. The answer is the affected answer. The shared [`WriteState`]
-/// settles with the task whether the call was ever sent: a limit that runs out
+/// matched without case, an id it does not name being 404 `client-no-instance`
+/// with nothing written, and the record's own spelling of the id is what the
+/// manager is handed; then `text` reads the text the manager compares, and
+/// `write` hands it over with the write, the manager's compare closing the
+/// window between this read and the write. The answer is the affected answer.
+/// The shared [`WriteState`] settles with the task whether the call was ever
+/// sent: a limit that runs out
 /// first leaves the task sending nothing and answers 503, and a limit that runs
 /// out once the call is sent answers 504, its outcome unknown, as on the create.
 #[allow(clippy::too_many_arguments)]
@@ -377,17 +379,23 @@ async fn write_affected(
     let mine = state.clone();
     let ask = tokio::task::spawn_blocking(move || -> Result<Value, ClientError> {
         let client = connect(Some(user.as_str()))?;
-        let known = client.list_instances()?;
-        if !known.iter().any(|known| known.eq_ignore_ascii_case(&id)) {
+        // The record's spelling of the id, not the path's: the manager's verbs
+        // read `instances.ini` by the name it wrote, and a call carrying the
+        // path's spelling acts on no instance.
+        let Some(known) = client
+            .list_instances()?
+            .into_iter()
+            .find(|known| known.eq_ignore_ascii_case(&id))
+        else {
             return Err(ClientError::NoInstance);
-        }
+        };
         let text = text(client.as_ref())?;
         // Lost to a handler that already ran out of time, no call is sent: the
         // 503 it answered stands and nothing is written.
         if !mine.may_write() {
             return Ok(affected_of(&Affected::default()));
         }
-        let touched = write(client.as_ref(), &id, &text)?;
+        let touched = write(client.as_ref(), &known, &text)?;
         mine.landed();
         Ok(affected_of(&touched))
     });

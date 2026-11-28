@@ -112,8 +112,9 @@ n-gpu-layers = 4\r\n\
 ";
 
 /// The six fields of a row, `engine` and `engineAvailable` fixed to the only
-/// engine there is today, and `assignments` empty: these tests' manager lists
-/// no instance, so no profile is served anywhere.
+/// engine there is today, and `assignments` and `usedBy` empty: these tests'
+/// manager lists no instance and no instance profile, so no profile is served
+/// and none is named.
 fn row(id: &str, enabled: bool, model: &str) -> Value {
     json!({
         "id": id,
@@ -122,6 +123,7 @@ fn row(id: &str, enabled: bool, model: &str) -> Value {
         "enabled": enabled,
         "model": model,
         "assignments": [],
+        "usedBy": [],
     })
 }
 
@@ -191,6 +193,10 @@ struct Shared {
     /// a test makes `assignments.ini` unreadable and leaves the pool files
     /// readable, which is the case that tempts a bff to answer empty lists.
     fail_read_of: Arc<Mutex<Option<String>>>,
+    /// The instance profile pool, as `instance-profiles.ini` holds it: the
+    /// source of a row's `usedBy`. Empty by default: no instance profile, so
+    /// every `usedBy` is empty.
+    pool: Arc<Mutex<String>>,
 }
 
 /// A manager that answers `read_file` from the files it holds, logs every
@@ -221,6 +227,37 @@ impl FakeManager {
 }
 
 impl ManagerClient for FakeManager {
+    /// The ids of the instance profiles that list the model profile `model`:
+    /// the way the IP4e list answers a row's `usedBy` with them (the design's
+    /// IP4, "Model profiles"). Mirrors the manager's own rule for those ids
+    /// (its `model-profile-assigned`): the pool's order, each id once, the
+    /// entry's model id compared without case. A machine with no pool at all
+    /// answers no owner and asks for nothing: that is the manager these tests'
+    /// call pins are written for.
+    fn used_by(&self, model: &str) -> Result<Vec<String>, ClientError> {
+        let pool = self
+            .shared
+            .pool
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if pool.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.record(format!("used-by {model}"));
+        let mut owners: Vec<String> = Vec::new();
+        for profile in pai_core::instance_profiles::parse(&pool) {
+            if !owners.contains(&profile.id)
+                && profile
+                    .entries
+                    .iter()
+                    .any(|entry| entry.model.eq_ignore_ascii_case(model))
+            {
+                owners.push(profile.id);
+            }
+        }
+        Ok(owners)
+    }
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
         if self.refused() {
@@ -353,12 +390,14 @@ struct App {
     shared: Shared,
 }
 
-/// The app: a manager holding `files`, refusing the reads of `refuse`, and
-/// answering every connect with `connect_result`.
+/// The app: a manager holding `files`, refusing the reads of `refuse`,
+/// answering every connect with `connect_result`, and holding `pool` as its
+/// instance profile pool.
 fn app_for(
     files: &[(&str, &str)],
     refuse: &[&str],
     connect_result: Result<(), ClientError>,
+    pool: &str,
 ) -> App {
     let shared = Shared::default();
     {
@@ -367,6 +406,7 @@ fn app_for(
             held.insert((*name).to_string(), (*text).to_string());
         }
     }
+    *shared.pool.lock().unwrap_or_else(|e| e.into_inner()) = pool.to_string();
     let log = Log::default();
     let connects = Arc::new(AtomicUsize::new(0));
     let principals = Principals::default();
@@ -403,9 +443,15 @@ fn app_for(
     }
 }
 
-/// A manager holding `on` as `models.ini` and `off` as `models.ini.disabled`.
+/// A manager holding `on` as `models.ini` and `off` as `models.ini.disabled`,
+/// and no instance profile at all.
 fn app_holding(on: &str, off: &str) -> App {
-    app_for(&[(ON, on), (OFF, off)], &[], Ok(()))
+    app_for(&[(ON, on), (OFF, off)], &[], Ok(()), "")
+}
+
+/// The same, with the instance profile pool `pool`.
+fn app_holding_pool(on: &str, off: &str, pool: &str) -> App {
+    app_for(&[(ON, on), (OFF, off)], &[], Ok(()), pool)
 }
 
 /// The manager holding the pool `POOL_ON` / `POOL_OFF` and `assignments` as
@@ -416,6 +462,7 @@ fn app_pool(assignments: &str) -> App {
         &[(ON, POOL_ON), (OFF, POOL_OFF), (ASSIGNS, assignments)],
         &[],
         Ok(()),
+        "",
     )
 }
 
@@ -443,18 +490,57 @@ fn info(id: &str) -> InstanceInfo {
 const POOL_ON: &str = "[alpha]\r\nmodel = /models/alpha.gguf\r\n\r\n";
 const POOL_OFF: &str = "[mistral-7b]\r\nmodel = /models/mistral.gguf\r\n\r\n";
 
+/// The instance profile pool a row's `usedBy` is built from, as
+/// `instance-profiles.ini` holds it: one `[<profile>]` section per profile with
+/// its server profile, one `[<profile>/<model>]` section per model profile the
+/// profile lists (the model is the entry section's own id, its keys are
+/// placement keys). Written for the matching: `beta` lists `alpha` and
+/// `zz-zama-70b` (so the cell names `beta` for both), `Zeta` lists `QWEN3.8-27B`
+/// and `mistral-7b` in spellings whose case the match must meet, `alpha` lists
+/// `ALPHA` and `alpha`, one entry the reader folds. The pool's order is `beta`,
+/// `Zeta`, `alpha`: not sorted, so the ids a row answers come out as the pool
+/// spells and orders them.
+const IP_POOL: &str = "\
+[beta]
+serverProfile = default
+
+[beta/alpha]
+n-gpu-layers = 99
+
+[beta/zz-zama-70b]
+n-gpu-layers = 99
+
+[Zeta]
+serverProfile = big
+
+[Zeta/QWEN3.8-27B]
+tensor-split = 1,0
+
+[Zeta/mistral-7b]
+n-gpu-layers = 4
+
+[alpha]
+serverProfile = default
+
+[alpha/ALPHA]
+n-gpu-layers = 99
+
+[alpha/alpha]
+ctx-size = 4096
+";
+
 /// The name the manager knows the assignment records by.
 const ASSIGNS: &str = "assignments.ini";
 
 /// A manager holding `on` as `models.ini` and no `models.ini.disabled`.
 fn app_holding_no_disabled(on: &str) -> App {
-    app_for(&[(ON, on)], &[], Ok(()))
+    app_for(&[(ON, on)], &[], Ok(()), "")
 }
 
 /// A manager holding `on`, refusing the reads of the named principals: the
 /// member of `pai` removed after the sign-in.
 fn app_refusing(refuse: &[&str], on: &str, off: &str) -> App {
-    app_for(&[(ON, on), (OFF, off)], refuse, Ok(()))
+    app_for(&[(ON, on), (OFF, off)], refuse, Ok(()), "")
 }
 
 /// A manager that answers every read with `failure`, holding both files.
@@ -466,7 +552,7 @@ fn app_read_failing(failure: Failure) -> App {
 
 /// The manager of no model profile file at all: neither file exists.
 fn app_no_files() -> App {
-    app_for(&[], &[], Ok(()))
+    app_for(&[], &[], Ok(()), "")
 }
 
 /// The app that cannot reach the manager at all.
@@ -475,6 +561,7 @@ fn app_no_manager() -> App {
         &[(ON, FILE_ON), (OFF, FILE_OFF)],
         &[],
         Err(ClientError::Unavailable),
+        "",
     )
 }
 
@@ -482,6 +569,19 @@ impl App {
     /// The manager's calls, in order.
     fn calls(&self) -> Vec<String> {
         self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The ids of the instance profiles that list `model`, read off the fake
+    /// manager as the IP4e list answers a row's `usedBy` with them.
+    fn used_by(&self, model: &str) -> Vec<String> {
+        FakeManager {
+            shared: self.shared.clone(),
+            log: self.log.clone(),
+            as_user: None,
+            refuse: Vec::new(),
+        }
+        .used_by(model)
+        .unwrap_or_else(|e| panic!("used_by {model}: {e:?}"))
     }
 
     /// The manager's calls, sorted and joined by a space: what the read asks
@@ -991,12 +1091,92 @@ async fn both_files_answer_the_list_in_the_guis_order() {
     );
 }
 
-/// A row carries exactly the six fields of the contract, with the types the
+/// IP4e: a row's `usedBy` names the instance profiles that list that model, in
+/// the pool's order, none twice, the model's id compared without case (the
+/// design's IP4, contract `The model profile list`): the Models page's Used by
+/// cell and the delete minus read it.
+#[tokio::test]
+async fn a_row_names_the_instance_profiles_that_list_its_model() {
+    let app = app_holding_pool(FILE_ON, FILE_OFF, IP_POOL);
+    let rows = app.list().await.rows();
+    let named = |id: &str| -> Vec<String> {
+        rows.iter()
+            .find(|row| row["id"] == json!(id))
+            .unwrap_or_else(|| panic!("no row {id}: {rows:?}"))["usedBy"]
+            .as_array()
+            .unwrap_or_else(|| panic!("usedBy is no list: {rows:?}"))
+            .iter()
+            .map(|v| v.as_str().expect("an id").to_string())
+            .collect()
+    };
+    assert_eq!(
+        named("alpha"),
+        ["beta", "alpha"],
+        "the pool's order and spelling, the profile's own entry listing it \
+         named, its two sections for one entry naming the profile once"
+    );
+    assert_eq!(
+        named("Qwen3.8-27B"),
+        ["Zeta"],
+        "the entry spelling the model's id in upper case meets it"
+    );
+    assert_eq!(
+        named("mistral-7b"),
+        ["Zeta"],
+        "the entry spelling the model's id in lower case meets it"
+    );
+    assert_eq!(
+        named("zz-zama-70b"),
+        ["beta"],
+        "beta lists that id too, so its cell names beta"
+    );
+    assert_eq!(
+        named("Bigger"),
+        Vec::<String>::new(),
+        "no profile lists Bigger"
+    );
+    let asked: Vec<String> = app
+        .calls()
+        .iter()
+        .filter(|call| call.starts_with("used-by"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            "used-by zz-zama-70b",
+            "used-by Qwen3.8-27B",
+            "used-by alpha",
+            "used-by mistral-7b",
+            "used-by Bigger"
+        ],
+        "one pool read per row, in the list's order, each naming the profile"
+    );
+}
+
+/// Every row's `usedBy` is the pool's ids that list that model, for every row
+/// of both files: the list builds each cell from the manager's pool, so a cell
+/// is never left out of a row, and never invented for one.
+#[tokio::test]
+async fn every_rows_cell_is_the_pool_ids_that_list_its_model() {
+    let app = app_holding_pool(FILE_ON, FILE_OFF, IP_POOL);
+    for row in app.list().await.rows() {
+        let id = row["id"].as_str().expect("an id").to_string();
+        assert_eq!(
+            row["usedBy"],
+            json!(app.used_by(&id)),
+            "the cell of {id} names the profiles that list it: {row}"
+        );
+    }
+}
+
+/// A row carries exactly the seven fields of the contract, with the types the
 /// web UI reads: `engine` and `engineAvailable` for every row of both files
 /// (llama.cpp is the only engine, and it is available), `model` a string even
-/// for a section that has none, and `assignments` an array.
+/// for a section that has none, `assignments` an array, and `usedBy` an array
+/// of ids (IP4e: the instance profiles that list the model).
 #[tokio::test]
-async fn every_row_carries_exactly_the_six_fields() {
+async fn every_row_carries_exactly_the_seven_fields() {
     let app = app_holding(FILE_ON, FILE_OFF);
     let rows = app.list().await.rows();
     assert!(!rows.is_empty(), "{rows:?}");
@@ -1012,7 +1192,8 @@ async fn every_row_carries_exactly_the_six_fields() {
                 "engine",
                 "engineAvailable",
                 "id",
-                "model"
+                "model",
+                "usedBy"
             ],
             "{row}"
         );
@@ -1027,6 +1208,10 @@ async fn every_row_carries_exactly_the_six_fields() {
         assert!(
             row["assignments"].is_array(),
             "a list the web UI can read: {row}"
+        );
+        assert!(
+            row["usedBy"].is_array(),
+            "a list of ids the web UI can read: {row}"
         );
     }
 }

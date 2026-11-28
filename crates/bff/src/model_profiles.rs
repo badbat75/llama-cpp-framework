@@ -16,13 +16,15 @@
 //! nothing for it ([`switch`]): moved to the disabled file it would stop
 //! applying to every model with no row left in the list to bring it back.
 //!
-//! Every row carries the six fields the web UI reads: `{"id", "engine",
-//! "engineAvailable", "enabled", "model", "assignments"}`. `id` is the section as the file
+//! Every row carries the seven fields the web UI reads: `{"id", "engine",
+//! "engineAvailable", "enabled", "model", "assignments", "usedBy"}`. `id` is the section as the file
 //! spells it, `model` the section's `model` key as the file holds it (the
 //! inline comment ended by the file's parser, `""` when the section has no
 //! such key), `engine` the engine whose model profile file holds the section and
 //! `engineAvailable` that engine in `GET /api/instances`: llama.cpp, the only
-//! engine there is.
+//! engine there is. `usedBy` is the ids of the instance profiles whose entries
+//! list that model, in the pool's order (the design's IP4, "Model profiles"):
+//! the Models page's Used by cell and its delete minus read it.
 //!
 //! `assignments` is the same answer as
 //! `GET /api/instances/{id}/profiles/model` (`instance_profiles.rs`), read from
@@ -65,7 +67,7 @@ use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use pai_core::client::{ClientError, ManagerFile, ModelInfoReply, ModelProfileSource};
+use pai_core::client::{Affected, ClientError, ManagerFile, ModelInfoReply, ModelProfileSource};
 use pai_core::{assign, checks, ini};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -112,7 +114,8 @@ pub(crate) async fn list(
         let on = client.read_file(MODELS)?;
         let off = client.read_file(MODELS_DISABLED)?;
         let assignments = client.read_file(ASSIGNMENTS)?;
-        Ok(rows(&on, &off, &given(&client, &on, &off, &assignments)?))
+        let given = given(&client, &on, &off, &assignments)?;
+        rows(&client, &on, &off, &given)
     });
     read_answer(
         &sessions,
@@ -280,21 +283,24 @@ fn given(
 }
 
 /// The rows of the two files, in [`pool`]'s order, each with the instances
-/// [`given`] lists it under it.
+/// [`given`] lists it under it and the instance profiles whose entries list it
+/// ([`Client::used_by`], read per row in the list's order).
 fn rows(
+    client: &Client,
     on: &Option<ManagerFile>,
     off: &Option<ManagerFile>,
     given: &BTreeMap<String, Vec<Given>>,
-) -> Vec<Value> {
+) -> Result<Vec<Value>, ClientError> {
     pool(on, off)
         .into_iter()
         .map(|row| {
-            json!({
+            Ok(json!({
                 "id": row.id,
                 "engine": crate::ENGINE_LLAMA_CPP,
                 "engineAvailable": true,
                 "enabled": row.enabled,
                 "model": row.model,
+                "usedBy": client.used_by(&row.id)?,
                 "assignments": given
                     .get(&row.id.to_lowercase())
                     .map(|rows| {
@@ -310,7 +316,7 @@ fn rows(
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default(),
-            })
+            }))
         })
         .collect()
 }
@@ -861,14 +867,15 @@ pub(crate) async fn create(
 /// the section. The session is read first, so with no session the manager is not
 /// even connected to, as on every route behind the sign-in page. The manager
 /// judges the delete on the state under its own lock, and its refusal is the
-/// answer ([`delete_failure`]): a model profile of `models.ini` is 409
-/// `model-profile-enabled`, one a key of `assignments.ini` names is 409
-/// `model-profile-assigned` naming the instances, and a name neither pool file
-/// holds is 404 `no-model-profile-named`. A page that lists a model profile the
-/// pool no longer holds is that 404; the rule is the manager's, so a stale row
-/// cannot delete what it does not see. A limit that runs out is 503
-/// `client-unavailable` while the call was never handed over the manager, and
-/// 504 `client-timeout` once it was, as on the create.
+/// answer ([`delete_failure`]): a name no section of the pool holds is 404
+/// `no-model-profile-named`, and one an instance profile's entry lists is 409
+/// `model-profile-assigned` naming the instance profiles. IP4 dropped the 409
+/// of a switched-on profile: the page has no switch, so the guard is the
+/// assignment alone. A page that lists a model profile the pool no longer
+/// holds is that 404; the rule is the manager's, so a stale row cannot delete
+/// what it does not see. A limit that runs out is 503 `client-unavailable`
+/// while the call was never handed over the manager, and 504
+/// `client-timeout` once it was, as on the create.
 pub(crate) async fn remove(
     connect: Connect,
     write_timeout: Duration,
@@ -1024,9 +1031,12 @@ fn create_failure(
 
 /// The answer to a delete the manager refused. Every refusal of the delete names
 /// the model profile it is about and has no field to mark: a name neither pool
-/// file holds is 404, a model profile of `models.ini` and one an
-/// `assignments.ini` key names are 409, the last naming the instances in its
-/// values. Any other check the manager runs is 422 with its key and its values,
+/// file holds is 404, and one a key of `assignments.ini` names is 409, naming
+/// the instances in its values. IP4 dropped the 409 of a switched-on profile:
+/// the page has no switch, so a profile of either file is deleted, and a
+/// manager that answers that key is answered like any other check it runs on
+/// the way there, 422 with its key and its values. Any other check the manager
+/// runs is 422 with its key and its values,
 /// as a model info refusal is ([`model_info_refused`]). The refusal of the
 /// signed-in user ends that session; the other answers keep it. `Unavailable` is
 /// 504 `client-timeout` when `write_asked` says the delete was sent, its outcome
@@ -1047,7 +1057,7 @@ fn delete_failure(
             keyed(
                 match refusal.key {
                     "no-model-profile-named" => StatusCode::NOT_FOUND,
-                    "model-profile-enabled" | "model-profile-assigned" => StatusCode::CONFLICT,
+                    "model-profile-assigned" => StatusCode::CONFLICT,
                     _ => StatusCode::UNPROCESSABLE_ENTITY,
                 },
                 refusal.key,
@@ -1113,7 +1123,13 @@ pub(crate) async fn read(
         let client = connect(Some(user.as_str()))?;
         let on = client.read_file(MODELS)?;
         let off = client.read_file(MODELS_DISABLED)?;
-        Ok(document(&on, &off, &name, &key))
+        let Some(mut document) = document(&on, &off, &name, &key) else {
+            // No section: the answer comes from the 404, and the pool is never
+            // read for it.
+            return Ok(None);
+        };
+        document["usedBy"] = json!(client.used_by(&name)?);
+        Ok(Some(document))
     });
     read_answer(
         &sessions,
@@ -1135,7 +1151,10 @@ pub(crate) async fn read(
 /// and no check, so a model profile the manager would refuse today is one the page can
 /// still show), `projectUrl` the section's `; url = ` comment, read by the
 /// configurator's reader in `pai-core` (`ini::project_url_of`), empty when the
-/// section has none, and `revision` ([`section_revision`]).
+/// section has none, and `revision` ([`section_revision`]). The eighth,
+/// `usedBy`, is empty here: the route fills it with the instance profiles that
+/// list the model ([`Client::used_by`]), asking the pool only for a section it
+/// found.
 fn document(
     on: &Option<ManagerFile>,
     off: &Option<ManagerFile>,
@@ -1158,6 +1177,7 @@ fn document(
                 "values": section.keys,
                 "projectUrl": ini::project_url_of(&section.comments),
                 "revision": section_revision(name, text, &section.id, key),
+                "usedBy": Vec::<Value>::new(),
             }));
         }
     }
@@ -1308,17 +1328,15 @@ fn section_revision(file: &str, text: &str, id: &str, key: &[u8; 16]) -> String 
 }
 
 /// The section a save starts from: the file that holds it, the text of that
-/// file as the manager read it (the compare and swap expects it), and the text
-/// of the other pool file, with the connect made for the signed-in user, reused
-/// for the write and for the model file listing the save checks a `model`
-/// against. `NotFound` when neither model profile file has a section of
-/// that name.
+/// file as the manager read it (the compare and swap expects it), with the
+/// connect made for the signed-in user, reused for the write and for the model
+/// file listing the save checks a `model` against. `NotFound` when neither
+/// model profile file has a section of that name.
 enum Read {
     Found {
         client: Arc<Client>,
         file: String,
         text: String,
-        other: String,
     },
     NotFound,
 }
@@ -1332,10 +1350,10 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
     let on = client.read_file(MODELS)?.map(|file| file.text);
     let found_on =
         !is_global(id) && ini::text::section_text(on.as_deref().unwrap_or(""), id).is_some();
-    let (file, text, other) = if found_on {
+    let (file, text) = if found_on {
         // The section is in the file llama-server reads: that is the one the
         // save edits, and the disabled file is never opened for it.
-        (MODELS.to_string(), on.unwrap_or_default(), String::new())
+        (MODELS.to_string(), on.unwrap_or_default())
     } else {
         let off = client.read_file(MODELS_DISABLED)?.map(|file| file.text);
         let Some(off) = off else {
@@ -1344,13 +1362,12 @@ fn read_section(connect: &Connect, user: &str, id: &str) -> Result<Read, ClientE
         if is_global(id) || ini::text::section_text(&off, id).is_none() {
             return Ok(Read::NotFound);
         }
-        (MODELS_DISABLED.to_string(), off, on.unwrap_or_default())
+        (MODELS_DISABLED.to_string(), off)
     };
     Ok(Read::Found {
         client: Arc::new(client),
         file,
         text,
-        other,
     })
 }
 
@@ -1411,15 +1428,15 @@ async fn list_models(
 
 /// `PUT /api/profiles/model/{id}`: the save of one model profile, as the signed-in user. The
 /// body is the object [`parse_body`] reads, the answer is exactly `{"revision",
-/// "running", "restart"}`: `revision` the revision of the section as it now
-/// stands in the file, so the card can go on editing, and `restart` the
-/// instances the page offers to restart, the ones the record of
-/// `assignments.ini` gives this model profile to and that are up
-/// ([`served_states`]), `running` being that list not being empty. The record
-/// is read once the write stands, and a machine with no record at all has no
-/// word about who serves the profile: a save that wrote nothing asks the states
-/// of every instance, a save that wrote names none, and no state is asked. The
-/// session is read first, so with no session the manager is not
+/// "running", "notConverged"}`: `revision` the revision of the section as it now
+/// stands in the file, so the card can go on editing, and the manager's own
+/// answer of its write, the affected answer the instance's writes answer too
+/// ([`crate::instance_pool::save_answer`]): `running` the instances the write
+/// left running, `notConverged` the instances it did not leave fitted, each with
+/// the manager's key. The bff lists no instance and asks no state of its own;
+/// the record of `assignments.ini` is still read once the write stands, and
+/// answers nothing.
+/// The session is read first, so with no session the manager is not
 /// even connected to (401), and only a signed-in request sees a body over
 /// `origin::MAX_BODY` refused by the extractor with a 413 (as the boot write).
 ///
@@ -1465,9 +1482,8 @@ async fn list_models(
 /// `client-timeout`, within `write_timeout`. A write only starts while the
 /// answer is still wanted, so a task left behind by a deadline writes nothing.
 /// Once the write landed the model profile is the one the body asked for, so a limit
-/// that runs out on the states that follow, and a state read that fails, are the
-/// 200 with `running` true and no instance named: the safe answer for a state
-/// the bff cannot read. A
+/// that runs out on the answer that follows is the 200 with the manager's
+/// answer empty: the safe answer for an answer the bff never got. A
 /// body that changes nothing has no write to ask, so the state is settled as
 /// done before the instances' state is asked, and a limit that runs out there
 /// is that same 200, never the 503 that tells the page an edit was lost while
@@ -1514,13 +1530,7 @@ pub(crate) async fn save(
         Ok(Ok(Err(failure))) => return switch_failure(&sessions, &session, failure, false),
         Ok(Ok(Ok(found))) => found,
     };
-    let Read::Found {
-        client,
-        file,
-        text,
-        other,
-    } = found
-    else {
+    let Read::Found { client, file, text } = found else {
         return not_found(&id);
     };
     if section_revision(&file, &text, &id, &key) != sent {
@@ -1591,65 +1601,50 @@ pub(crate) async fn save(
     }
     let written = section_revision(&file, &new_text, &id, &key);
     let changed = new_text != text;
-    // The pool as the save leaves it, for the record's rows: the file the
-    // section lives in carries the new text, the other file what it has.
-    let (on, off) = if file == MODELS {
-        (new_text.clone(), other.clone())
-    } else {
-        (other.clone(), new_text.clone())
-    };
     let state = Arc::new(WriteState::new());
     let mine = state.clone();
-    let ask = tokio::task::spawn_blocking(move || -> Result<(bool, Vec<String>), ClientError> {
-        if changed {
+    let ask = tokio::task::spawn_blocking(move || -> Result<Affected, ClientError> {
+        let touched = if changed {
             if !mine.may_write() {
-                return Ok((false, Vec::new()));
+                return Ok(Affected::default());
             }
-            client.write_file_if(&file, &new_text, &text)?;
+            let touched = client.write_file_if(&file, &new_text, &text)?;
             mine.landed();
+            touched
         } else {
             // Nothing to write, the text the body asked for is the text the
-            // file holds: the save is settled before the instances' state is
-            // asked, so a limit that runs out there finds it done, as a write
-            // that landed does.
+            // file holds: the save is settled there, so a limit that runs out
+            // on what follows finds it done, as a write that landed does. The
+            // manager answered no write, so it names no instance.
             mine.nothing_to_write();
-        }
-        // The record of which instance is given which model profile, read once
-        // the write stands: the instances the save offers to restart are the
-        // ones it gives the model profile to, effective in the pool as the save
-        // leaves it. A machine with no record at all has no word about who
-        // serves a profile, so the save names none, and no state is asked.
-        let candidates = match client.read_file(ASSIGNMENTS)? {
-            Some(record) => served(&record.text, &id, &on, &off),
-            None => BTreeSet::new(),
+            Affected::default()
         };
-        Ok(served_states(&client, &candidates))
+        // The write's own answer is all the save reports: the instances the
+        // write left running, and the ones it could not bring round, are the
+        // manager's knowledge, carried by its answer of the write (IP4e).
+        Ok(touched)
     });
     let left = write_timeout.saturating_sub(started.elapsed());
     match tokio::time::timeout(left, ask).await {
-        Ok(Ok(Ok((running, restart)))) => saved(&written, running, restart),
+        Ok(Ok(Ok(touched))) => saved(&written, &touched),
         Ok(Ok(Err(failure))) => switch_failure(&sessions, &session, failure, state.sent()),
         Ok(Err(_join)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
         // A write never asked leaves the file the one that was read (503); a
         // write asked has an unknown outcome (504). A write that landed, or a
         // body that asked for the text the file already holds, leaves the model
-        // profile the one the body asked for: only the instances' state stayed
-        // unknown, so `running` is true and no instance is named.
-        Err(_elapsed) => timeout_answer(state.timed_out(), saved(&written, true, Vec::new())),
+        // profile the one the body asked for: only the manager's answer stayed
+        // unknown, so the save names no instance.
+        Err(_elapsed) => timeout_answer(state.timed_out(), saved(&written, &Affected::default())),
     }
 }
 
-/// The 200 of a save: exactly `{"revision", "running", "restart"}`, the
-/// section's revision as the file now holds it, and the instances the page
-/// offers to restart (`running` is that list not being empty).
-fn saved(revision: &str, running: bool, restart: Vec<String>) -> Response {
+/// The 200 of a save: exactly `{"revision", "running", "notConverged"}`, the
+/// section's revision as the file now holds it, beside the manager's own answer
+/// of its write (the affected answer, as the instance's writes answer it).
+fn saved(revision: &str, touched: &Affected) -> Response {
     (
         StatusCode::OK,
-        axum::Json(json!({
-            "revision": revision,
-            "running": running,
-            "restart": restart,
-        })),
+        axum::Json(crate::instance_pool::save_answer(revision, touched)),
     )
         .into_response()
 }

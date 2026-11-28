@@ -64,7 +64,9 @@ use axum::Router;
 use http_body_util::BodyExt;
 use pai_bff::session::{AuthError, Authenticator, Identity};
 use pai_bff::{Client, Connect};
-use pai_core::client::{ClientError, InstanceState, ManagerClient, ManagerFile};
+use pai_core::client::{
+    ClientError, InstanceProfileInfo, InstanceState, ManagerClient, ManagerFile,
+};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -109,6 +111,44 @@ const ALPHA: &str = "[alpha]\r\nmodel = C:\\Models\\alpha.gguf\r\nn-gpu-layers =
 /// touch, and the blank line is cut from the section's text.
 const FILE_ALPHA: &str =
     "[alpha]\r\nmodel = C:\\Models\\alpha.gguf\r\nn-gpu-layers = 99\r\n\r\n[Bigger]\r\nmodel = /models/b.gguf\r\n";
+
+/// The instance profile pool the read builds `usedBy` from, as
+/// `instance-profiles.ini` holds it: one `[<profile>]` section per profile with
+/// its server profile, one `[<profile>/<model>]` section per model profile the
+/// profile lists (the entry's keys are placement keys, the model is named by the
+/// section's own id). Written for the matching the design states: `alpha` lists
+/// `alpha` (its own entry), `beta` lists the id twice over, in `ALPHA`'s and
+/// `alpha`'s spelling, and `zz-nama-70b` (an id of its own), `gamma` lists
+/// `bigger`, `delta` lists nothing. The order is `alpha`, `beta`, `gamma`,
+/// `delta`: not sorted, so the ids a read answers come out as the pool spells
+/// and orders them.
+const POOL: &str = "\
+[alpha]
+serverProfile = default
+
+[alpha/alpha]
+n-gpu-layers = 99
+
+[beta]
+serverProfile = big
+
+[beta/ALPHA]
+tensor-split = 1,0
+
+[beta/alpha]
+n-gpu-layers = 99
+
+[beta/zz-nama-70b]
+n-gpu-layers = 99
+
+[gamma]
+
+[gamma/bigger]
+ctx-size = 8192
+
+[delta]
+serverProfile = default
+";
 
 /// `ALPHA` with one key added: the section text changed, so its revision is
 /// the pinned one below.
@@ -312,6 +352,7 @@ fn alpha_document(file: &str, enabled: bool) -> Value {
         "values": { "model": "C:\\Models\\alpha.gguf", "n-gpu-layers": "99" },
         "projectUrl": "",
         "revision": revision_of(&KEY_A, file, ALPHA),
+        "usedBy": [],
     })
 }
 
@@ -340,14 +381,15 @@ impl Failure {
 /// file that does not exist, and `read_file` answers `None` for it.
 type Files = Arc<Mutex<Vec<(String, String)>>>;
 
-/// What every connect of one app shares: the files, the read's failure and
-/// how long a read takes. Shared cells, so a test can change them after it
-/// signed in.
+/// What every connect of one app shares: the files, the read's failure, how
+/// long a read takes, and the instance profile pool. Shared cells, so a test
+/// can change them after it signed in.
 #[derive(Clone, Default)]
 struct Shared {
     files: Files,
     read_failure: Arc<Mutex<Option<Failure>>>,
     read_pause_ms: Arc<AtomicU64>,
+    pool: Arc<Mutex<String>>,
 }
 
 /// A manager that answers `read_file` from the files it holds, logs every
@@ -375,9 +417,61 @@ impl FakeManager {
             .iter()
             .any(|u| Some(u.as_str()) == self.as_user.as_deref())
     }
+
+    /// The pool's profiles, as `instance_profiles` answers them, read from the
+    /// pool text the test put in.
+    fn pool_profiles(&self) -> Vec<InstanceProfileInfo> {
+        let text = self
+            .shared
+            .pool
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        pai_core::instance_profiles::parse(&text)
+            .into_iter()
+            .map(|profile| InstanceProfileInfo {
+                id: profile.id,
+                server_profile: profile.server_profile.unwrap_or_default(),
+                entries: profile.entries.into_iter().map(|e| e.model).collect(),
+                revision: text.clone(),
+            })
+            .collect()
+    }
 }
 
 impl ManagerClient for FakeManager {
+    /// The ids of the instance profiles that list the model profile `model`:
+    /// the list's rows and the page's document answer `usedBy` with these,
+    /// computed by the bff from the manager's pool (the design's IP4, "Model
+    /// profiles"). Mirrors the manager's own rule for the ids of the profiles
+    /// that list a model (its `model-profile-assigned`): the pool's order, each
+    /// id once, the entry's model id compared without case. A machine with no
+    /// pool at all answers no owner and asks for nothing: that is the manager
+    /// these tests' call pins are written for.
+    fn used_by(&self, model: &str) -> Result<Vec<String>, ClientError> {
+        let text = self
+            .shared
+            .pool
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.record(format!("used-by {model}"));
+        let mut owners: Vec<String> = Vec::new();
+        for profile in self.pool_profiles() {
+            if !owners.contains(&profile.id)
+                && profile
+                    .entries
+                    .iter()
+                    .any(|entry| entry.eq_ignore_ascii_case(model))
+            {
+                owners.push(profile.id);
+            }
+        }
+        Ok(owners)
+    }
     fn read_file(&self, name: &str) -> Result<Option<ManagerFile>, ClientError> {
         self.record(format!("read {name}"));
         if self.refused() {
@@ -488,6 +582,7 @@ fn app_for(
     refuse: &[&str],
     connect_result: Result<(), ClientError>,
     key: [u8; 16],
+    pool: &str,
 ) -> App {
     let shared = Shared::default();
     {
@@ -496,6 +591,7 @@ fn app_for(
             held.push((name.to_string(), text.to_string()));
         }
     }
+    *shared.pool.lock().unwrap_or_else(|e| e.into_inner()) = pool.to_string();
     let log = Arc::new(Mutex::new(Vec::new()));
     let connects = Arc::new(AtomicUsize::new(0));
     let principals = Arc::new(Mutex::new(Vec::new()));
@@ -532,25 +628,31 @@ fn app_for(
     }
 }
 
-/// A manager holding `on` as `models.ini` and `off` as `models.ini.disabled`.
+/// A manager holding `on` as `models.ini` and `off` as `models.ini.disabled`,
+/// and no instance profile at all.
 fn app_holding(on: &str, off: &str) -> App {
-    app_for(&[(ON, on), (OFF, off)], &[], Ok(()), KEY_A)
+    app_for(&[(ON, on), (OFF, off)], &[], Ok(()), KEY_A, "")
+}
+
+/// The same, with the instance profile pool `pool`.
+fn app_holding_pool(on: &str, off: &str, pool: &str) -> App {
+    app_for(&[(ON, on), (OFF, off)], &[], Ok(()), KEY_A, pool)
 }
 
 /// The same, under the other revision secret.
 fn app_holding_key_b(on: &str, off: &str) -> App {
-    app_for(&[(ON, on), (OFF, off)], &[], Ok(()), KEY_B)
+    app_for(&[(ON, on), (OFF, off)], &[], Ok(()), KEY_B, "")
 }
 
 /// A manager holding `on`, refusing the reads of the named principals: the
 /// member of `pai` removed after the sign-in.
 fn app_refusing(refuse: &[&str], on: &str, off: &str) -> App {
-    app_for(&[(ON, on), (OFF, off)], refuse, Ok(()), KEY_A)
+    app_for(&[(ON, on), (OFF, off)], refuse, Ok(()), KEY_A, "")
 }
 
 /// The manager of no model profile file at all: neither file exists.
 fn app_no_files() -> App {
-    app_for(&[], &[], Ok(()), KEY_A)
+    app_for(&[], &[], Ok(()), KEY_A, "")
 }
 
 /// The app that cannot reach the manager at all.
@@ -560,6 +662,7 @@ fn app_no_manager() -> App {
         &[],
         Err(ClientError::Unavailable),
         KEY_A,
+        "",
     )
 }
 
@@ -567,6 +670,19 @@ impl App {
     /// The manager's calls, in order.
     fn calls(&self) -> Vec<String> {
         self.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The ids of the instance profiles that list `model`, read off the fake
+    /// manager as the IP4e read answers `usedBy` with them.
+    fn used_by(&self, model: &str) -> Vec<String> {
+        FakeManager {
+            shared: self.shared.clone(),
+            log: self.log.clone(),
+            as_user: None,
+            refuse: Vec::new(),
+        }
+        .used_by(model)
+        .unwrap_or_else(|e| panic!("used_by {model}: {e:?}"))
     }
 
     /// The principal of every connect, in order: `None` is a call the bff
@@ -808,7 +924,7 @@ async fn a_section_of_the_enabled_file_answers_the_document() {
 /// and the engine pair is not spelled another way.
 #[tokio::test]
 async fn the_document_has_the_pinned_fields() {
-    let app = app_holding(FILE_ALPHA, "");
+    let app = app_holding_pool(FILE_ALPHA, "", POOL);
     let doc = app.read("alpha").await.document();
     let mut names: Vec<&String> = doc.as_object().expect("an object").keys().collect();
     names.sort();
@@ -821,10 +937,16 @@ async fn the_document_has_the_pinned_fields() {
             "id",
             "projectUrl",
             "revision",
+            "usedBy",
             "values"
         ],
         "{}",
         doc
+    );
+    assert_eq!(
+        doc["usedBy"],
+        json!(app.used_by("alpha")),
+        "usedBy is the ids naming the model"
     );
 }
 
@@ -839,6 +961,72 @@ async fn the_id_is_matched_without_case_and_answered_as_the_file_spells_it() {
     assert_eq!(doc["values"], json!({ "model": "/models/a.gguf" }));
     let same = app.read("ALPHA").await.document();
     assert_eq!(same, doc, "the same section, any case in the path");
+}
+
+/// IP4e: the read answers `usedBy` with the ids of the instance profiles that
+/// list this model (the design's IP4, "Model profiles"): in the pool's order as
+/// the pool spells them, each once, the entry's model id compared without case,
+/// the profile's own entry listing it included, a profile listing nothing left
+/// out. The pool is read from the manager over the read's own connect, after the
+/// two preset files.
+#[tokio::test]
+async fn the_read_answers_which_instance_profiles_name_the_model() {
+    for (id, used) in [
+        // `alpha` is listed by `alpha`'s own entry and by `beta`, which lists
+        // the id twice over, in `ALPHA`'s and in `alpha`'s spelling.
+        ("alpha", json!(["alpha", "beta"])),
+        ("ALPHA", json!(["alpha", "beta"])),
+        // `gamma` lists `bigger`; `delta` lists nothing.
+        ("bigger", json!(["gamma"])),
+        ("BIGGER", json!(["gamma"])),
+        // The model profile `delta`, a section of the file, is listed by no
+        // entry of the pool anywhere.
+        ("delta", json!([])),
+    ] {
+        // The file every row reads: `FILE_ALPHA` plus a `[delta]` section.
+        // `delta` must be a model profile the read finds: one that is not
+        // there is the 404 answered before `usedBy` is built, pinned by
+        // `a_read_of_no_such_section_asks_the_pool_nothing`.
+        let file = format!("{FILE_ALPHA}[delta]\r\nmodel = /models/d.gguf\r\n");
+        let app = app_holding_pool(&file, "", POOL);
+        assert_eq!(
+            app.read(id).await.document()["usedBy"],
+            used,
+            "{id}: the pool order and spelling, each profile once, the case \
+             met, the profile's own entry included"
+        );
+        assert_eq!(
+            app.calls(),
+            [
+                format!("read {ON}"),
+                format!("read {OFF}"),
+                format!("used-by {id}")
+            ],
+            "{id}: the two preset files, then the pool, nothing else"
+        );
+    }
+}
+
+/// A model profile the records do not have is the 404 it is today, and asks
+/// the pool nothing: `usedBy` is built only for a section that was found.
+#[tokio::test]
+async fn a_read_of_no_such_section_asks_the_pool_nothing() {
+    let app = app_holding_pool(FILE_ALPHA, "", POOL);
+    let args = app
+        .read("zeta")
+        .await
+        .assert_key(StatusCode::NOT_FOUND, "no-model-profile-named");
+    assert_eq!(args, vec![json!("zeta")]);
+    assert_eq!(
+        app.calls(),
+        [format!("read {ON}"), format!("read {OFF}")],
+        "the 404 answers from the section list, the pool never read"
+    );
+    assert_eq!(
+        app.used_by("zeta"),
+        Vec::<String>::new(),
+        "no instance profile names zeta"
+    );
 }
 
 /// A section in both files is the enabled one: the values and the revision of

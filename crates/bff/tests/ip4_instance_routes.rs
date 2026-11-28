@@ -1139,6 +1139,37 @@ async fn the_profile_switch_answers_the_affected_list() {
     );
 }
 
+/// The id on the path is matched against the record's ids without case (the
+/// contract's `client-no-instance` rule), and the manager is handed **the
+/// record's spelling**, not the bytes of the path: the manager's own verbs read
+/// `instances.ini` by that name, and a call carrying the path's spelling acts on
+/// no instance.
+#[tokio::test]
+async fn a_profile_switch_takes_the_path_id_without_case_and_passes_the_records_spelling() {
+    let app = app_for(
+        Fixture::default()
+            .with_pool()
+            .used(&[("Coder", Some("beta"))]),
+    );
+    let (reply, _) = app
+        .set_profile("CODER", r#"{"instanceProfile": "alpha"}"#)
+        .await;
+    reply.assert_json(StatusCode::OK, &affected_json());
+    let (instance, profile, _) = app.last_set_profile();
+    assert_eq!(
+        (instance.as_str(), profile.as_str()),
+        ("Coder", "alpha"),
+        "the record spells the id `Coder`: {:?}, {:?}",
+        app.calls(),
+        app.last_set_profile()
+    );
+    assert!(
+        app.calls().contains(&"set-profile Coder alpha".to_string()),
+        "the manager is asked with the id it knows: {:?}",
+        app.calls()
+    );
+}
+
 /// A profile switch body nothing can be made of: 400, the manager not connected
 /// to. The contract names no key, so any `<what>-malformed` is accepted.
 #[tokio::test]
@@ -1301,6 +1332,28 @@ async fn the_address_write_answers_the_affected_list() {
         revision,
         RECORD,
         "the manager is handed the instances.ini text the bff read, so its compare closes the window"
+    );
+}
+
+/// The address write, as the profile switch: the path's id is matched without
+/// case, and the manager is handed the record's spelling of it.
+#[tokio::test]
+async fn an_address_write_takes_the_path_id_without_case_and_passes_the_records_spelling() {
+    let app = app_for(
+        Fixture::default()
+            .with_pool()
+            .used(&[("Coder", Some("alpha"))]),
+    );
+    let (reply, _) = app
+        .set_address("coder", r#"{"hostname": "127.0.0.1", "port": "8582"}"#)
+        .await;
+    reply.assert_json(StatusCode::OK, &affected_json());
+    let (instance, host, port, _) = app.last_set_address();
+    assert_eq!(
+        (instance.as_str(), host.as_str(), port.as_str()),
+        ("Coder", "127.0.0.1", "8582"),
+        "the record spells the id `Coder`: {:?}",
+        app.calls()
     );
 }
 

@@ -655,8 +655,8 @@ async fn save_entry(
 }
 
 /// The entry save's answer: the revision it answers with, beside the affected
-/// answer.
-fn save_answer(revision: &str, touched: &Affected) -> Value {
+/// answer. The model and server profile saves answer the same shape (IP4e).
+pub(crate) fn save_answer(revision: &str, touched: &Affected) -> Value {
     json!({
         "revision": revision,
         "running": touched.running,

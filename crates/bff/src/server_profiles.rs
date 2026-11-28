@@ -22,8 +22,8 @@
 //! profile: `instance` names the instance whose record names the profile, and
 //! `defaults.StateDir` is that instance's folder, `null` for a profile no
 //! instance runs (the folder belongs to whichever instance runs it). The save
-//! answers `running` for that instance, `false` for a profile none runs, and
-//! asks no state then.
+//! answers the manager's affected answer of its write, `running` and
+//! `notConverged`, and asks no state of its own.
 //!
 //! Every failure is `{"key": <strings key>, "args": [...]}`, never the
 //! manager's detail: 503 `client-unavailable` when there is no manager or it is
@@ -32,6 +32,7 @@
 //! `client-no-server-profile` for a name the manager refuses or a file it does
 //! not have, and 409 for the two refusals of a write.
 
+use crate::instance_pool::save_answer;
 use crate::origin::body_refusal;
 use crate::server::{self, timeout_answer, BodyAnswer, Owner, WriteState};
 use crate::session::{error, json_body, Sessions};
@@ -41,7 +42,7 @@ use axum::extract::Path;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use pai_core::checks;
-use pai_core::client::{ClientError, ManagerClient, ManagerFile, ServerProfileInfo};
+use pai_core::client::{Affected, ClientError, ManagerClient, ManagerFile, ServerProfileInfo};
 use pai_core::paths;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -385,19 +386,20 @@ fn user_of(client: &dyn ManagerClient, id: &str) -> Result<Option<String>, Clien
 }
 
 /// `PUT /api/profiles/server/{id}` `{"revision", "values"}`: the form's save of
-/// the whole profile file. The answer is `{"revision", "running"}`, the
-/// revision of the text the file holds now and whether the instance that uses
-/// the profile runs, `false` for a profile none runs, with no state asked. The
+/// the whole profile file. The answer is `{"revision", "running",
+/// "notConverged"}`: the revision of the text the file holds now, beside the
+/// manager's own answer of its write, the affected answer the instance's writes
+/// answer too ([`crate::instance_pool::save_answer`]). The bff lists no instance
+/// and asks no state of its own: the state is the manager's read. The
 /// session and the body's shape answer first, as on the instance's save
-/// (`server.rs`); the file, the values, the compare-and-swap write and the
-/// state are calls of one connect made for the session's user, in that order:
+/// (`server.rs`); the file, the values and the compare-and-swap write are calls
+/// of one connect made for the session's user, in that order:
 /// a profile that is not there is 404 before its values are judged. While the
 /// write was never asked, a time limit that runs out is 503
 /// `client-unavailable`, the manager not reached; from the moment it was sent
 /// its outcome is unknown and the answer is 504 `client-timeout`. A limit that
-/// ran out once the write landed is the save's own 200 with `running` true, the
-/// safe answer for a state the bff cannot read. So is a record read that fails
-/// after the write: it names no instance, so no state is asked.
+/// ran out once the write landed is the save's own 200 with the two lists empty,
+/// the manager's answer never having arrived.
 async fn save(
     connect: Connect,
     write_timeout: Duration,
@@ -449,21 +451,17 @@ async fn save(
         // Idle -> Asked is the only way to the write. Lost, the handler ran out
         // of time and answered, so this save is over; the value is never read.
         if !mine.may_write() {
-            return Ok(Outcome::Saved(true));
+            return Ok(Outcome::Saved(Affected::default()));
         }
-        client.write_file_if(&file_name(&id), &text, &current)?;
+        // The write's answer names the instances: the ones that run, and the
+        // ones the write did not leave fitted.
+        let touched = client.write_file_if(&file_name(&id), &text, &current)?;
         mine.landed();
-        // A record that cannot be read names no instance, so its state is
-        // unknown, as a status read that failed is: `running` true.
-        Ok(Outcome::Saved(match user_of(&*client, &id) {
-            Ok(None) => false,
-            Ok(Some(instance)) => client.status(&instance).map(server::runs).unwrap_or(true),
-            Err(_) => true,
-        }))
+        Ok(Outcome::Saved(touched))
     });
     match tokio::time::timeout(write_timeout, ask).await {
-        Ok(Ok(Ok(Outcome::Saved(running)))) => {
-            axum::Json(json!({ "revision": written, "running": running })).into_response()
+        Ok(Ok(Ok(Outcome::Saved(touched)))) => {
+            json_response(save_answer(&written.unwrap_or_default(), &touched))
         }
         Ok(Ok(Ok(Outcome::Body(answer)))) => match answer {
             BodyAnswer::Malformed => error(StatusCode::BAD_REQUEST, "server-malformed", &[]),
@@ -475,17 +473,25 @@ async fn save(
         Ok(Ok(Err(failure))) => save_failure(&sessions, &session, failure, state.sent()),
         Err(_) => timeout_answer(
             state.timed_out(),
-            axum::Json(json!({ "revision": written, "running": true })).into_response(),
+            json_response(save_answer(
+                &written.unwrap_or_default(),
+                &Affected::default(),
+            )),
         ),
         Ok(Err(_)) => error(StatusCode::BAD_GATEWAY, "client-other", &[]),
     }
 }
 
-/// What the save's task answers: the write landed, with the state to answer, or
-/// the body's own refusal, met after the profile's file was read.
+/// What the save's task answers: the write landed, with the manager's answer of
+/// it, or the body's own refusal, met after the profile's file was read.
 enum Outcome {
-    Saved(bool),
+    Saved(Affected),
     Body(BodyAnswer),
+}
+
+/// 200 with `doc`.
+fn json_response(doc: Value) -> Response {
+    (StatusCode::OK, axum::Json(doc)).into_response()
 }
 
 /// The answer to a create or a delete the manager could not do. The name is

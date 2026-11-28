@@ -32,10 +32,12 @@
 //!   rule allows, travels to the manager and answers the manager's 422 on `id`,
 //!   never a 400 of the bff's own.
 //! - `DELETE /api/profiles/model/{id}` answers 204; 404
-//!   `no-model-profile-named` `[id]`; 409 `model-profile-enabled` `[id]`; 409
-//!   `model-profile-assigned` `[id, instances]`; any other check the manager
+//!   `no-model-profile-named` `[id]`; 409 `model-profile-assigned`
+//!   `[id, instance profiles]`; any other check the manager
 //!   runs on the way is 422 `{"key", "args"}` with the refusal's own key, its
-//!   values and no field (a delete has no form field to mark).
+//!   values and no field (a delete has no form field to mark). IP4 drops the
+//!   409 `model-profile-enabled`: the page has no switch, so a profile of
+//!   either file is deleted.
 //! - A refusal of the signed-in user is 403 `session-not-administrator` and
 //!   ends that session on both routes; a manager that took the call and is
 //!   gone when it answers is 504 `client-timeout` (slice W2: the write crossed
@@ -900,8 +902,7 @@ async fn create_a_taken_name_is_409_with_the_id() {
 }
 
 /// The delete's refusals, relayed with their args: no such profile 404
-/// `no-model-profile-named` `[id]`; a switched-on profile 409
-/// `model-profile-enabled` `[id]`; an assigned one 409
+/// `no-model-profile-named` `[id]`; an assigned one 409
 /// `model-profile-assigned` naming the profile and the instances. Any other
 /// check the manager runs on the way there is 422 with its own key and its
 /// values and no field: a delete has no form field to mark. The session
@@ -914,13 +915,12 @@ async fn delete_refusals_answer_404_and_409_with_their_args() {
             &["beta"][..],
             StatusCode::NOT_FOUND,
         ),
-        ("model-profile-enabled", &["beta"], StatusCode::CONFLICT),
         (
             "model-profile-assigned",
-            &["beta", "default,issac"],
+            &["beta", "office, lab"],
             StatusCode::CONFLICT,
         ),
-        // A check that is none of the delete's own three: the refusal's key and
+        // A check that is none of the delete's own: the refusal's key and
         // values travel, with no field to mark.
         (
             "model-profile-bad-text",
@@ -941,6 +941,33 @@ async fn delete_refusals_answer_404_and_409_with_their_args() {
         );
         app.session_of(&cookie).await.assert_signed_in_as("alice");
     }
+}
+
+/// IP4: the page has no on/off switch, so a model profile is deleted whatever
+/// file holds it. The delete answers no `model-profile-enabled`: the bff asks
+/// no state of the pool and hands the delete to the manager, and a manager
+/// that answers that key anyway is answered like any other check it runs on
+/// the way there, 422 with its key and its values, never a 409 the page would
+/// read as "switch it off first". The session lives.
+#[tokio::test]
+async fn a_delete_answered_model_profile_enabled_is_no_409() {
+    let app = app_for(Fixture {
+        delete: Err(refusal("model-profile-enabled", &["beta"])),
+        ..Fixture::default()
+    });
+    let (reply, cookie) = app.delete("beta").await;
+    assert_ne!(
+        reply.status,
+        StatusCode::CONFLICT,
+        "a 409 tells the page to switch the profile off first: {}",
+        reply.body
+    );
+    reply.assert_error(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "model-profile-enabled",
+        &["beta"],
+    );
+    app.session_of(&cookie).await.assert_signed_in_as("alice");
 }
 
 // ── The manager refuses the user, and the answers that are the bff's news ─
