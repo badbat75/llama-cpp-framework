@@ -666,8 +666,10 @@ fn save_answer(revision: &str, touched: &Affected) -> Value {
 
 /// The affected answer, read off the manager's `Affected`: `running` the
 /// running instances the write left drifting, `notConverged` the instances it
-/// leaves not yet fitted, each with the manager's key and args.
-fn affected_of(touched: &Affected) -> Value {
+/// leaves not yet fitted, each with the manager's key and args. Every
+/// re-rendering write answers this shape, the instance's own writes included
+/// (`instances.rs`).
+pub(crate) fn affected_of(touched: &Affected) -> Value {
     json!({
         "running": touched.running,
         "notConverged": rows_of(touched),

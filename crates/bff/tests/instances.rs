@@ -7,12 +7,17 @@
 //!
 //! The answer (fe/briefs/api-contract.md): 200 and
 //! `[{"id": ..., "label": ..., "engine": "llama.cpp", "serverProfile": ..., "state": ..., "port": ..., "tags":
-//! [...], "instanceTags": [...]}]` in the manager's order, the state as the
+//! [...], "instanceTags": [...], "instanceProfile": ..., "hostname": ...,
+//! "converged": ..., "reason": ..., "pendingRestart": ...}]` in the
+//! manager's order, the state as the
 //! manager names it, `port` the configured one (0 when the manager answers
 //! no row for the instance), `tags` the union the bff builds of the two
 //! lists the manager answers for the instance (the server profile's first,
 //! then its own, none twice), `instanceTags` the instance's own list only
-//! (saving it back must not copy the profile's tags into the instance);
+//! (saving it back must not copy the profile's tags into the instance), and
+//! the five keys IP4d added (the row's `instanceProfile` and `hostname`, each
+//! `null` when the record names none, and the row's three states: `converged`,
+//! its `reason` as `{"key", "args"}` or `null`, and `pendingRestart`);
 //! errors in the common
 //! shape `{"key": <strings key>, "args": [...]}`: 503 `client-unavailable`
 //! when no manager answers (none, gone, or too slow), 502
@@ -827,7 +832,7 @@ async fn an_instance_removed_meanwhile_is_left_out() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
+        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false }]),
         "no rows: port 0, no tags"
     );
 }
@@ -866,12 +871,12 @@ async fn each_instance_with_its_state_in_the_manager_s_order() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
-            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "big-model", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "a", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "z", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "odd", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "failed", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "big-model", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "a", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "activating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "z", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "deactivating", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "odd", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "maintenance", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
         ])
     );
 }
@@ -899,8 +904,8 @@ async fn each_instance_carries_its_own_boot_flag() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false },
-            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": true, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
         ])
     );
     assert_eq!(
@@ -943,8 +948,8 @@ async fn a_boot_flag_that_cannot_be_read_is_null_and_the_list_answers() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
-            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null, "removable": true },
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": null, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
         ]),
         "the instance whose flag is unanswerable is listed, its flag null"
     );
@@ -1016,7 +1021,7 @@ async fn a_manager_started_later_is_seen_at_the_next_request() {
     assert_eq!(second.status, StatusCode::OK, "{}", second.body);
     assert_eq!(
         second.json(),
-        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }])
+        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false }])
     );
     assert_eq!(asked.load(Ordering::SeqCst), 2, "asked anew each time");
     assert_eq!(app.connects.load(Ordering::SeqCst), 2);
@@ -1097,7 +1102,7 @@ async fn a_session_read_only_through_the_gated_reads_still_expires() {
     let r = app.get("/api/instances", Some(&cookie)).await;
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
+        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false }]),
         "{}",
         r.body
     );
@@ -1157,8 +1162,8 @@ async fn the_row_carries_the_server_profile_the_manager_names() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "big", "label": null, "engine": "llama.cpp", "serverProfile": "big-model", "state": "active", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true },
-            { "id": "plain", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true },
+            { "id": "big", "label": null, "engine": "llama.cpp", "serverProfile": "big-model", "state": "active", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "plain", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 8080, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
         ]),
         "the profile the row names, and `null` where the row names none"
     );
@@ -1188,8 +1193,8 @@ async fn the_rows_carry_the_tags_of_the_profile_then_their_own_none_twice() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": "default", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false, "removable": false },
-            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": "coder", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false, "removable": true },
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": "default", "state": "active", "port": 8080, "tags": ["edge", "v2", "gpu"], "instanceTags": ["v2", "gpu"], "boot": false, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "coder", "label": null, "engine": "llama.cpp", "serverProfile": "coder", "state": "inactive", "port": 18123, "tags": ["bench"], "instanceTags": ["bench"], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
         ]),
         "the union, the profile's tags first, `v2` once, in the list's order; the port the row carries, not a constant"
     );
@@ -1224,6 +1229,11 @@ async fn the_shown_tags_are_the_union_the_editable_ones_the_instance_s_own() {
             "instanceTags": ["v2", "lab"],
             "boot": false,
             "removable": false,
+            "instanceProfile": null,
+            "hostname": null,
+            "converged": true,
+            "reason": null,
+            "pendingRestart": false,
         }]),
         "the union, then the instance's own list: `edge` and `gpu` are the profile's, they stay out of `instanceTags`"
     );
@@ -1243,7 +1253,7 @@ async fn a_manager_that_answers_no_rows_shows_no_tags() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.body);
     assert_eq!(
         r.json(),
-        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false }]),
+        json!([{ "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false }]),
         "no rows: port 0, no tags"
     );
     assert!(
@@ -1471,9 +1481,10 @@ async fn the_tags_route_answers_only_the_write() {
     }
 }
 
-// ── Creating and removing an instance (slice 16) ─────────────────────────
-// `POST /api/instances` `{"engine", "id", "serverProfile"}` answers 201
-// `{"id": ...}` once the manager created it, `DELETE /api/instances/{id}`
+// ── Creating and removing an instance (slice 16, the body IP4d) ──────────
+// `POST /api/instances` `{"engine", "id", "instanceProfile"}` answers 201
+// `{"id", "port"}` once the manager created it, the port the manager picked,
+// `DELETE /api/instances/{id}`
 // answers 204. Both sit behind the session gate like every other write: with
 // no session 401 `session-required` and the manager is asked nothing; a
 // refusal of the signed-in user 403 `session-not-administrator` ending the
@@ -1484,12 +1495,16 @@ async fn the_tags_route_answers_only_the_write() {
 // refusal of the manager keeps its key and its args in the body, the
 // manager's own message staying out of it: 409 `instance-exists`,
 // `instance-protected` and `instance-running` naming the id, 404
-// `client-no-instance`, 404 `client-no-server-profile`, 409
-// `client-server-profile-in-use`, 422 `client-address-in-use` and
-// `client-unresolvable-host` with `field` `serverProfile`. The id and the
-// engine the bff itself refuses are 422 with the check's key and the form's
-// field, and a body it cannot read is 400 `instance-malformed` with the
-// manager not asked. `GET /api/instances` items carry `removable` besides
+// `client-no-instance`, 422 `no-instance-profile-named` naming the bind the
+// body asks for, 404 `client-no-server-profile` and 409
+// `client-server-profile-in-use` naming the server profile the instance
+// profile names one step behind, 409 `address-in-use` naming the instance
+// holding the address, 422 `invalid-hostname` for a host that does not
+// resolve, and 503 `no-free-port` when the node has no address left. The id
+// and the engine the bff itself refuses are 422 with the check's key and the
+// form's field, and a body it cannot read, the retired `serverProfile` key
+// among them, is 400 `instance-malformed` with the manager not asked.
+// `GET /api/instances` items carry `removable` besides
 // `boot`: true for every id that is not the protected `default`.
 
 /// The app whose manager answers `create_instance` with `create` and
@@ -1524,19 +1539,27 @@ fn args_doc(key: &str, args: &[&str], field: Option<&str>) -> Value {
     doc
 }
 
-/// The body a create sends: the engine, the id, the server profile to bind.
-const CREATE_BODY: &str = r#"{"engine": "llama.cpp", "id": "lan-2", "serverProfile": "free"}"#;
+/// The body a create sends: the engine, the id, the instance profile to bind
+/// (IP4d: the server profile the body named before is retired, a body carrying
+/// it at all is refused).
+const CREATE_BODY: &str = r#"{"engine": "llama.cpp", "id": "lan-2", "instanceProfile": "free"}"#;
 
 /// The whole call of a create: the route calls `create_instance` as the
 /// signed-in user, once, with the three words of the body, and answers 201
-/// with the id it created.
+/// with the id it created and the port the manager picked (the fake answers
+/// 8581).
 #[tokio::test]
 async fn an_instance_is_created_through_the_manager() {
     let app = app_crud(Ok(()), Ok(()));
     let cookie = app.sign_in().await;
     let r = create(&app, Some(&cookie), CREATE_BODY).await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.body);
-    assert_eq!(r.json(), json!({ "id": "lan-2" }), "{}", r.body);
+    assert_eq!(
+        r.json(),
+        json!({ "id": "lan-2", "port": 8581 }),
+        "{}",
+        r.body
+    );
     assert_eq!(
         app.calls(),
         ["create llama.cpp lan-2 free"],
@@ -1637,17 +1660,17 @@ async fn the_instance_create_answers_the_refusals() {
         ),
         (
             ClientError::AddressInUse("lan-2".into()),
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "client-address-in-use",
+            StatusCode::CONFLICT,
+            "address-in-use",
             &["lan-2"][..],
-            Some("serverProfile"),
+            None,
         ),
         (
             ClientError::UnresolvableHost("ns.example".into()),
             StatusCode::UNPROCESSABLE_ENTITY,
-            "client-unresolvable-host",
+            "invalid-hostname",
             &["ns.example"][..],
-            Some("serverProfile"),
+            None,
         ),
         (
             ClientError::Unavailable,
@@ -1783,24 +1806,27 @@ async fn a_refusal_of_the_signed_in_user_ends_the_session_on_the_instance_crud()
 }
 
 /// A body the bff cannot read is its own 400 `instance-malformed`, before the
-/// manager is connected to: no id is created on a body that names none, and
-/// the words of a body the route does not read (`null`, a list, a number) are
-/// no id.
+/// manager is connected to: the create reads three words (the engine, the id,
+/// the instance profile, IP4d), and a body naming none of them, or a word of
+/// the wrong type (`null`, a list, a number), is one it cannot read. The last
+/// body is the retired key: a body naming `serverProfile` at all is refused,
+/// never read as the instance profile that supersedes it.
 #[tokio::test]
 async fn a_create_body_the_bff_cannot_read_is_refused_before_the_manager() {
     for body in [
         "not json",
         "[]",
         "{}",
-        r#"{"id": "lan-2", "serverProfile": "free"}"#,
-        r#"{"engine": "llama.cpp", "serverProfile": "free"}"#,
+        r#"{"id": "lan-2", "instanceProfile": "free"}"#,
+        r#"{"engine": "llama.cpp", "instanceProfile": "free"}"#,
         r#"{"engine": "llama.cpp", "id": "lan-2"}"#,
-        r#"{"engine": "llama.cpp", "id": null, "serverProfile": "free"}"#,
-        r#"{"engine": "llama.cpp", "id": 5, "serverProfile": "free"}"#,
-        r#"{"engine": 5, "id": "lan-2", "serverProfile": "free"}"#,
-        r#"{"engine": "llama.cpp", "id": "lan-2", "serverProfile": null}"#,
-        r#"{"engine": "llama.cpp", "id": "lan-2", "serverProfile": 5}"#,
-        r#"{"engine": "llama.cpp", "id": "lan-2", "serverProfile": ["free"]}"#,
+        r#"{"engine": "llama.cpp", "id": null, "instanceProfile": "free"}"#,
+        r#"{"engine": "llama.cpp", "id": 5, "instanceProfile": "free"}"#,
+        r#"{"engine": 5, "id": "lan-2", "instanceProfile": "free"}"#,
+        r#"{"engine": "llama.cpp", "id": "lan-2", "instanceProfile": null}"#,
+        r#"{"engine": "llama.cpp", "id": "lan-2", "instanceProfile": 5}"#,
+        r#"{"engine": "llama.cpp", "id": "lan-2", "instanceProfile": ["free"]}"#,
+        r#"{"engine": "llama.cpp", "id": "lan-2", "instanceProfile": "free", "serverProfile": "free"}"#,
     ] {
         let app = app_crud(Ok(()), Ok(()));
         let cookie = app.sign_in().await;
@@ -1824,8 +1850,8 @@ async fn the_instance_list_carries_removable() {
     assert_eq!(
         r.json(),
         json!([
-            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false },
-            { "id": "lan-2", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true }
+            { "id": "default", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "active", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": false, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false },
+            { "id": "lan-2", "label": null, "engine": "llama.cpp", "serverProfile": null, "state": "inactive", "port": 0, "tags": [], "instanceTags": [], "boot": false, "removable": true, "instanceProfile": null, "hostname": null, "converged": true, "reason": null, "pendingRestart": false }
         ]),
         "{}",
         r.body

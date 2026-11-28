@@ -167,7 +167,7 @@ const SERVER_REMOVE: Route = Route {
 const INSTANCE_CREATE: Route = Route {
     method: Method::POST,
     uri: "/api/instances",
-    body: Some(r#"{"engine": "llama.cpp", "id": "edge", "serverProfile": "default"}"#),
+    body: Some(r#"{"engine": "llama.cpp", "id": "edge", "instanceProfile": "default"}"#),
     call: "create-instance edge",
 };
 

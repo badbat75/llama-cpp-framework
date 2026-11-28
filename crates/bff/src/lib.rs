@@ -74,7 +74,9 @@ pub const HF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 /// `GET`/`PUT /api/instances/{id}/boot`, the instance's tags at
 /// `PUT /api/instances/{id}/tags`, the instance's label
 /// `PUT /api/instances/{id}/label`, the instance writes `POST /api/instances`
-/// and `DELETE /api/instances/{id}` (`instances::routes`), the web UI's page at
+/// and `DELETE /api/instances/{id}`, its profile `PUT /api/instances/{id}/profile`
+/// and its address `PUT /api/instances/{id}/address` (`instances::routes`), the
+/// web UI's page at
 /// `/` and its
 /// files under `/assets/`, the model-profile list at `GET /api/profiles/model`, and the
 /// model profile switch at `PUT /api/profiles/model/{id}/enabled`. The revision secret is
@@ -183,7 +185,9 @@ pub(crate) fn router_with(
 /// `PUT /api/instances/{id}/boot`, the instance's tags
 /// `PUT /api/instances/{id}/tags`, the instance's label
 /// `PUT /api/instances/{id}/label`, the instance create
-/// `POST /api/instances` and the removal `DELETE /api/instances/{id}`
+/// `POST /api/instances` and the removal `DELETE /api/instances/{id}`, its
+/// profile `PUT /api/instances/{id}/profile` and its address
+/// `PUT /api/instances/{id}/address`
 /// (`instances::routes`), the model-profile list
 /// `GET /api/profiles/model`, the model profile create `POST /api/profiles/model`,
 /// the model profile save `PUT /api/profiles/model/{id}`, the model profile
@@ -673,7 +677,8 @@ async fn version(
 }
 
 /// `GET /api/instances`: `[{"id", "label", "engine", "serverProfile", "state",
-/// "port", "tags", "instanceTags", "boot", "removable"}]` in the manager's order, to a
+/// "port", "tags", "instanceTags", "boot", "removable", "instanceProfile",
+/// "hostname", "converged", "reason", "pendingRestart"}]` in the manager's order, to a
 /// signed-in reader, or
 /// `{"key": <strings key>, "args": []}`, never the manager's detail. The
 /// manager's row of the instance carries the server profile it runs, named as
@@ -689,9 +694,15 @@ async fn version(
 /// instance's own start-at-boot flag (`BootEnabled`); one the service manager
 /// cannot answer is `null`. `removable` says the page may offer a remove of the
 /// row: true of every id, false of the one protected id alone
-/// (`instances::removable`, the id the removal refuses). With no live session
-/// the answer is 401 `session-required`, the manager is not connected to, and
-/// no `Set-Cookie` goes out. The session gates the read and is not its
+/// (`instances::removable`, the id the removal refuses). `instanceProfile` is
+/// the instance profile the record binds and `hostname` the host of its
+/// section, each `null` when the record carries neither: the instance then takes
+/// its bind from its server profile. `converged`, `reason` and `pendingRestart`
+/// are the manager's states of the row: `converged` false goes with a `reason`
+/// of `{"key", "args"}` naming the check the row fails, and `pendingRestart` is
+/// true when the running instance is not what the render says. With no live
+/// session the answer is 401 `session-required`, the manager is not connected
+/// to, and no `Set-Cookie` goes out. The session gates the read and is not its
 /// principal: the list, the rows and the states are what the manager answers
 /// of the bff's own account, so `connect` is handed `None`, and the idle
 /// deadline stays where it was (the page polls this read). A manager with no
@@ -729,6 +740,13 @@ async fn instances(
                     "instanceTags": row.map_or_else(Vec::new, |row| row.instance_tags.clone()),
                     "boot": client.boot_enabled(&id).ok(),
                     "removable": instances::removable(&id),
+                    "instanceProfile": row.and_then(|row| row.instance_profile.clone()),
+                    "hostname": row.and_then(|row| row.hostname.clone()),
+                    "converged": row.is_none_or(|row| row.converged),
+                    "reason": row
+                        .and_then(|row| row.reason.clone())
+                        .map(|reason| serde_json::json!({ "key": reason.key, "args": reason.args })),
+                    "pendingRestart": row.is_some_and(|row| row.pending_restart),
                 })),
                 Err(ClientError::NoInstance) => {}
                 Err(e) => return Err(e),
