@@ -5243,7 +5243,7 @@ A placeholder for later, nothing scheduled:
 - **Unverified until a macOS CI run**: every launchctl flag, PAM and Metal on the runner. A real Mac
   is needed for a model on Metal.
 
-## Isolated data-root tests (TS2, decided 2026-11-28, test-only)
+## Isolated data-root tests (TS2, decided 2026-11-28, test-only): built 2026-11-28
 
 **The problem.** The data root is the process-wide environment variable `PRIVATE_AI_DATA_ROOT`, set
 by `paths::redirect_for_tests` (`crates/core/src/paths.rs` 800). Every path function reads it on
@@ -5285,6 +5285,11 @@ failure, and take minutes.
    runs alone (`cargo test -p pai-manager <phase>`); the wall time of the crate's tests is measured
    before and after.
 3. **TS2c**: the same for pai-core's, pai-app's and pai-cli's `data_root_e2e`.
+
+**Built (2026-11-28).** TS2a, then TS2a2 (ba5311ca: a 120 s bound on the child, its whole process
+group killed when it runs over); TS2b (0d890104: the manager's 93 phases, not 82, as tests, its lib
+suite from 7 min 39 s to 4.1 s); TS2c (2c064a52: pai-core, pai-app and pai-cli, one pai-cli phase
+body moved to its own file because it overflowed the child's stack).
 
 A phase that still fails intermittently alone (the `Err(Unavailable)` seen near `dbus_client.rs`
 774) is a timing defect of that phase, to be fixed in its own right. Isolation removes only the
