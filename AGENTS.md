@@ -95,6 +95,8 @@ The user runs the full suite, once, on the main branch after the merge and befor
 
 **Test first, always.** Write a failing test, run it and see it fail, then write the code. A change without a test that failed first is not done. Tests never touch real systems or real data: the configurator's tests redirect the whole data tree with `PRIVATE_AI_DATA_ROOT`.
 
+**Keep the tests lean** (user, 2026-11-28). One behaviour per test, the cheapest test that pins it: a unit test before a bus or e2e test, and a new isolated data-root phase only when the behaviour needs the process-wide data root. No fixed sleeps: wait for the condition with a bound. Each crate's suite stays fast: pai-manager --lib ran in 4.1 s and pai-core in 6.1 s after TS2 (2026-11-28). A slice that makes a suite clearly slower says so in its report, with the reason.
+
 **Ask the coordinator before touching the shared tree's state.** Several agents work in the same checkout at once, so `git checkout`, `git restore`, `git stash`, `git reset` or any other command that rewrites tracked files you did not edit can wipe another agent's uncommitted work. Before running one, stop and ask the coordinator in your report, naming the files and why (user, 2026-11-28). Undo your own edit by editing it back. To compare with HEAD, use a `git worktree add` of your own, never the shared tree.
 
 **Keep it simple.** Minimum that solves the problem, no speculative options or abstractions.
