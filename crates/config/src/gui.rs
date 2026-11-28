@@ -756,7 +756,7 @@ fn load_server_into_ui(app: &AppWindow) {
         models: paths::instance_models_dir(),
         state: paths::instance_state_dir(),
     });
-    let cfg = server_cfg::load();
+    let cfg = server_cfg::load().unwrap_or_default();
     s.set_api_key_withheld(crate::server_control::backend().api_key_withheld());
     let form = server_form::config_to_form_for(&cfg, instance_dirs.as_ref());
     populate_bind_options(app, form.hostname.as_str());
@@ -781,7 +781,7 @@ fn refresh_server_snapshot(app: &AppWindow) {
     let s = app.global::<AppState>();
     let cmdline = runstate::command_line().unwrap_or_default();
     s.set_server_command_line(SharedString::from(cmdline));
-    let cfg = server_cfg::load();
+    let cfg = server_cfg::load().unwrap_or_default();
     s.set_chat_url(SharedString::from(cfg.opencode_base_url_or_default()));
     s.set_chat_ui_saved(cfg.webui_or_default());
 }
@@ -1757,7 +1757,7 @@ fn stop_server_async_with(
         // the whole stop path already lives off the UI thread.
         let server = &crate::server_control::backend();
         let saves = crate::server_control::client_saves_snapshots(server);
-        let cfg = server_cfg::load();
+        let cfg = server_cfg::load().unwrap_or_default();
         let snapshot = if saves && cfg.save_state_on_shutdown_or_default() {
             post_status(&app_weak, strings::t("snapshot-saving"), false);
             let (saved, errors) = crate::slot_state::save_all(&cfg);
@@ -1974,7 +1974,7 @@ fn opencode_api_key(cfg: &server_cfg::ServerConfig) -> integrations::ApiKey<'_> 
 /// line names a change as soon as it is made.
 pub(super) fn refresh_integrations(app: &AppWindow) {
     let s = app.global::<AppState>();
-    let cfg = server_cfg::load();
+    let cfg = server_cfg::load().unwrap_or_default();
     let base_url = cfg.opencode_base_url_or_default();
     let api_key = opencode_api_key(&cfg);
 

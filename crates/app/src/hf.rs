@@ -1842,7 +1842,7 @@ pub fn local_extras(d: &Downloaded) -> hf_fit::Extras {
 /// Tests); `derive_model_profile` is the tested part.
 pub fn save_model_profile(p: &ModelProfile, models_dir: &Path) -> std::io::Result<()> {
     model_profiles::validate_for_save(p)?;
-    let cfg = crate::server_cfg::load();
+    let cfg = crate::server_cfg::load().unwrap_or_default();
     let kind = crate::server_control::backend().kind();
     if crate::server_cfg::seeds_models_dir(&cfg, kind, crate::server_control::Os::current()) {
         model_profiles::set_server_key("ModelsDir", &models_dir.to_string_lossy())?;

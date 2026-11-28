@@ -187,7 +187,7 @@ pub fn start() -> io::Result<Option<crate::server_cfg::ServerConfig>> {
         )
     })?;
 
-    let cfg = crate::server_cfg::load();
+    let cfg = crate::server_cfg::load().unwrap_or_default();
     let models_path = crate::paths::models_ini();
 
     let log_path = crate::paths::server_log();
@@ -482,7 +482,7 @@ const LINE_CONTINUATION: char = '\\';
 /// with the shell's line-continuation character (`` ` `` on Windows, `\` on
 /// POSIX) so the whole block can be pasted straight into a terminal.
 pub fn command_line() -> Option<String> {
-    let cfg = crate::server_cfg::load();
+    let cfg = crate::server_cfg::load().unwrap_or_default();
     let exe = crate::paths::llama_server_exe()?;
     let models_path = crate::paths::models_ini();
     Some(render_command_line(

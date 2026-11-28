@@ -868,7 +868,7 @@ pub fn run(opts: &Opts) -> Result<String, String> {
     };
     let was_running = server_control::backend().is_running();
     super::interrupt::note_server(was_running);
-    let port = u16::try_from(server_cfg::load().port_or_default())
+    let port = u16::try_from(server_cfg::load().unwrap_or_default().port_or_default())
         .map_err(|_| strings::t("invalid-port"))?;
 
     // BEFORE this sweep's own marker exists, and that ordering is the whole

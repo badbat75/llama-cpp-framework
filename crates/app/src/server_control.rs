@@ -1232,7 +1232,7 @@ pub(crate) fn api_key_kept_e2e() {
             .unwrap_or_default()
     };
     fake::scoped(fake::backend(c), || {
-        let cfg = server_cfg::load();
+        let cfg = server_cfg::load().expect("the read answers");
         assert_eq!(cfg.port, Some(8099));
         assert_eq!(cfg.opencode_api_key, None, "the manager blanked it");
         assert!(backend().api_key_withheld(), "load read it withheld");
@@ -1534,7 +1534,13 @@ pub(crate) fn config_seam_e2e() {
             )
     };
     fake::scoped(fake::backend(seeded()), || {
-        assert_eq!(server_cfg::load().port_or_default(), 8099, "server.ini");
+        assert_eq!(
+            server_cfg::load()
+                .expect("the read answers")
+                .port_or_default(),
+            8099,
+            "server.ini"
+        );
         let enabled: Vec<String> = model_profiles::load_all()
             .into_iter()
             .map(|p| p.id)

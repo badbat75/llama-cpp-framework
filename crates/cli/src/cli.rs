@@ -988,7 +988,7 @@ fn config_path(file: ConfigFile) -> std::path::PathBuf {
 fn run_server(c: ServerCmd) -> Result<()> {
     match c {
         ServerCmd::Show => {
-            let cfg = server_cfg::load();
+            let cfg = server_cfg::load().map_err(anyhow::Error::msg)?;
             println!("server.ini: {}", config_path(ConfigFile::Server).display());
             // The StateDir shown as the default is the folder of the instance
             // this command drives: the engine's state root joined with its id,
@@ -1008,7 +1008,7 @@ fn run_server(c: ServerCmd) -> Result<()> {
             Ok(())
         }
         ServerCmd::Set(s) => {
-            let mut cfg = server_cfg::load();
+            let mut cfg = server_cfg::load().map_err(anyhow::Error::msg)?;
             s.apply(&mut cfg);
             server_cfg::save(&cfg).with_context(|| strings::t("save-server-settings-failed"))?;
             println!(
@@ -1138,6 +1138,25 @@ fn run_model_profile_delete(id: &str, which: &[FileKind], even_if_shared: bool) 
             anyhow::bail!(refusal);
         }
     }
+    // The picked files sit under the ModelsDir of the server profile the
+    // instance's record names, so that profile is read before the section
+    // goes: a refused read ends the command with the manager's own words,
+    // leaving the section in `models.ini` and the files on disk (IP7a). The
+    // folder is resolved from THAT read: `server_cfg::models_dir()` reads the
+    // profile again and swallows a refusal there into the defaults, so the
+    // folders pruned would be the instance default's, not this profile's. No
+    // file picked: no folder to resolve.
+    let models_dir = if chosen.is_empty() {
+        None
+    } else {
+        let cfg = server_cfg::load().map_err(anyhow::Error::msg)?;
+        Some(server_cfg::effective_models_dir(
+            &cfg,
+            server_control::backend().kind(),
+            server_control::Os::current(),
+            &crate::paths::instance_models_dir(),
+        ))
+    };
     model_profiles::delete(&real_id).with_context(|| strings::t("delete-model-profile-failed"))?;
     let file = if l.enabled {
         config_path(ConfigFile::Models)
@@ -1155,8 +1174,11 @@ fn run_model_profile_delete(id: &str, which: &[FileKind], even_if_shared: bool) 
             println!("{}", strings::fill("kept-files", &[&names.join(", ")]));
         }
     } else {
-        let models_dir = server_cfg::models_dir();
-        let out = linked_files::delete(&chosen, &models_dir, even_if_shared);
+        let out = linked_files::delete(
+            &chosen,
+            models_dir.as_deref().unwrap_or_default(),
+            even_if_shared,
+        );
         for (f, size) in &out.removed {
             println!(
                 "{}",
@@ -1203,6 +1225,22 @@ fn check_download_id(id: &str, existing: &[String]) -> Result<()> {
 fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
     use crate::hf;
     let token = hf::token_from_env();
+    // The instance's server profile, read through the instance's record, is
+    // checked before anything is fetched: reading it needs `control`, which
+    // polkit grants without a password only in the active session, so a shell
+    // outside one is refused and the refusal ends the command with the
+    // manager's own words, fetching nothing (IP7a). The folder the files land
+    // in follows that profile, resolved from THAT read:
+    // `server_cfg::models_dir()` reads the profile a second time and swallows
+    // a refusal there into the defaults, so the files would land in the
+    // instance default folder, not the one the profile names.
+    let cfg = server_cfg::load().map_err(anyhow::Error::msg)?;
+    let models_dir = std::path::PathBuf::from(server_cfg::effective_models_dir(
+        &cfg,
+        server_control::backend().kind(),
+        server_control::Os::current(),
+        &crate::paths::instance_models_dir(),
+    ));
     // The dialog's rule (`hf::classify_input`): a spec lists, words search.
     let input = if a.search {
         hf::Input::Query(hf::parse_query(&a.spec)?)
@@ -1326,7 +1364,6 @@ fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
         println!("{line}");
     }
 
-    let models_dir = std::path::PathBuf::from(server_cfg::models_dir());
     let job = hf::DownloadJob::new(
         &listing,
         listing.default,
@@ -1634,7 +1671,7 @@ fn snapshot_before_stop(server: &crate::server_control::Backend) {
     if !crate::server_control::client_saves_snapshots(server) {
         return;
     }
-    let cfg = crate::server_cfg::load();
+    let cfg = crate::server_cfg::load().unwrap_or_default();
     if !cfg.save_state_on_shutdown_or_default() {
         return;
     }
@@ -2431,9 +2468,11 @@ pub(crate) fn cli_server_profile_e2e() {
         );
     });
 
-    // The record that cannot be read fails the command with its own text: no
-    // server file is read, because the record is what names it, and nothing is
-    // written. The only read is the save's own of the model profile pool
+    // The record that cannot be read fails the command with the manager's own
+    // text, and the command stops there (IP7a: a read that cannot be answered
+    // is an error, never the defaults), so the save never runs. Nothing is
+    // read at all: not a server file (the record is what names it), and not
+    // even the save's own read of the model profile pool
     // (`server_cfg::save` checks the startup count before it writes).
     let log = fake::log();
     let mut c = FakeClient::new(&log, InstanceState::Inactive)
@@ -2451,16 +2490,17 @@ pub(crate) fn cli_server_profile_e2e() {
             "{err:#} carries the manager's news"
         ),
     }
-    assert_eq!(
-        reads(&log),
-        ["read_file models.ini"],
-        "no server file is read, the save's pool read is all: {log:?}"
+    assert!(
+        reads(&log).is_empty(),
+        "the refused record read stops the command before the save: nothing read at all: {log:?}"
     );
     assert!(fake::writes(&log).is_empty(), "nothing written");
     assert_eq!(*files.lock().unwrap(), before, "the files as they were");
 
     // A row whose section names no profile is no instance: the command fails,
-    // and `server@<id>.ini` is never read.
+    // and nothing is read at all (IP7a): the record names no file to read, so
+    // `server_cfg::load` fails and the save, with its read of the model
+    // profile pool, is never reached.
     let log = fake::log();
     let mut c =
         FakeClient::new(&log, InstanceState::Inactive).with_file("server@default.ini", SEED);
@@ -2488,10 +2528,9 @@ pub(crate) fn cli_server_profile_e2e() {
             "{err:#} names no instance"
         ),
     }
-    assert_eq!(
-        reads(&log),
-        ["read_file models.ini"],
-        "no server file is read, the save's pool read is all: {log:?}"
+    assert!(
+        reads(&log).is_empty(),
+        "the row naming no profile stops the command before the save: nothing read at all: {log:?}"
     );
     assert!(fake::writes(&log).is_empty(), "nothing written");
 

@@ -1420,7 +1420,11 @@ pub fn save(model_profile: &ModelProfile) -> io::Result<()> {
         &ini::text::replace_section(&text, &model_profile.id, &body),
     )?;
     // Never where the instance default is in force (`seeds_models_dir`).
-    if server_cfg::seeds_models_dir(&server_cfg::load(), files.kind(), Os::current()) {
+    if server_cfg::seeds_models_dir(
+        &server_cfg::load().unwrap_or_default(),
+        files.kind(),
+        Os::current(),
+    ) {
         if let Some(models_dir) = infer_models_dir(&model_profile.model) {
             let _ = set_server_key("ModelsDir", &models_dir);
         }
@@ -1560,7 +1564,7 @@ fn check_startup_for(model_profile: &ModelProfile) -> io::Result<()> {
     }
     check_startup_count(
         startup_count_with(&load_all(), &model_profile.id, true),
-        server_cfg::load().models_max,
+        server_cfg::load().unwrap_or_default().models_max,
     )
 }
 

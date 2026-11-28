@@ -68,7 +68,7 @@ pub(crate) fn model_profile_delete_files_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
     paths::redirect_for_tests(dir.path());
     let models_dir = dir.path().join("models-root");
-    let mut cfg = pai_app::server_cfg::load();
+    let mut cfg = pai_app::server_cfg::load().expect("read server.ini");
     cfg.models_dir = Some(models_dir.to_string_lossy().into_owned());
     pai_app::server_cfg::save(&cfg).expect("save server.ini");
 

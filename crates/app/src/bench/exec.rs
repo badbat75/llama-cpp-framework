@@ -124,7 +124,7 @@ fn run_steps(
     cancel: &Arc<AtomicBool>,
     emit: &impl Fn(Event),
 ) -> Result<String, String> {
-    let port = u16::try_from(server_cfg::load().port_or_default())
+    let port = u16::try_from(server_cfg::load().unwrap_or_default().port_or_default())
         .map_err(|_| strings::t("invalid-port"))?;
     let was_running = crate::server_control::backend().is_running();
     // models.ini differs from what the running router read.
@@ -367,7 +367,7 @@ fn run(plan: &Plan, cancel: &Arc<AtomicBool>, emit: &impl Fn(Event)) -> Result<S
     } else {
         plan
     };
-    let cfg = server_cfg::load();
+    let cfg = server_cfg::load().unwrap_or_default();
     let running = crate::server_control::backend().is_running();
     match plan.mode {
         Mode::Live if !running => {

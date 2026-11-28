@@ -251,7 +251,7 @@ pub(super) fn run(app: &AppWindow) {
     std::fs::write(&model_path, b"").expect("model file");
     // The scans read the SAVED server.ini (not the live form), so point the
     // saved ModelsDir at the temp tree. Writes under the redirect (see above).
-    let mut cfg = crate::server_cfg::load();
+    let mut cfg = crate::server_cfg::load().expect("read server.ini");
     cfg.models_dir = Some(dir.path().to_string_lossy().into_owned());
     crate::server_cfg::save(&cfg).expect("save server.ini");
     for _ in 0..2 {
@@ -984,7 +984,7 @@ pub(super) fn run(app: &AppWindow) {
     // parked id (switching it back on would then overwrite one of the two), and a
     // rename onto it is refused. (The server-table phase above saved a server.ini
     // without a ModelsDir, so point the picker's scan back at the temp tree.)
-    let mut cfg = crate::server_cfg::load();
+    let mut cfg = crate::server_cfg::load().expect("read server.ini");
     cfg.models_dir = Some(dir.path().to_string_lossy().into_owned());
     crate::server_cfg::save(&cfg).expect("save server.ini");
     assert!(
@@ -1873,7 +1873,7 @@ pub(super) fn run(app: &AppWindow) {
     assert!(!st.get_show_hf_dialog());
     let models_dir = dir.path().to_path_buf();
     {
-        let mut cfg = crate::server_cfg::load();
+        let mut cfg = crate::server_cfg::load().expect("read server.ini");
         cfg.models_dir = Some(models_dir.to_string_lossy().into_owned());
         crate::server_cfg::save(&cfg).expect("save server.ini");
     }
@@ -2277,7 +2277,7 @@ pub(super) fn run(app: &AppWindow) {
 /// under the same redirected data root; leaves both files as it found them.
 fn load_on_startup_phase() {
     use crate::{model_profiles, server_cfg};
-    let saved_cfg = server_cfg::load();
+    let saved_cfg = server_cfg::load().expect("read server.ini");
     let mut cfg = saved_cfg.clone();
     cfg.models_max = Some(1);
     server_cfg::save(&cfg).expect("ModelsMax = 1");
@@ -2317,7 +2317,7 @@ fn load_on_startup_phase() {
         "ModelsMax = 0 with one startup preset"
     );
     assert_eq!(
-        server_cfg::load().models_max,
+        server_cfg::load().expect("read server.ini").models_max,
         Some(1),
         "server.ini unchanged"
     );
@@ -2344,7 +2344,7 @@ fn delete_with_files_phase(
 ) {
     use crate::model_profiles::ModelProfile;
     let st = app.global::<AppState>();
-    let mut cfg = crate::server_cfg::load();
+    let mut cfg = crate::server_cfg::load().expect("read server.ini");
     cfg.models_dir = Some(models_dir.to_string_lossy().into_owned());
     crate::server_cfg::save(&cfg).expect("save server.ini");
     let path = |p: &std::path::Path| p.to_string_lossy().into_owned();

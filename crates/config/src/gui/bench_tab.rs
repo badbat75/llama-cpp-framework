@@ -541,7 +541,7 @@ pub(super) fn refresh_preview(app: &AppWindow, state: &Rc<RefCell<State>>) {
         return;
     }
 
-    let cfg = server_cfg::load();
+    let cfg = server_cfg::load().unwrap_or_default();
     let all = model_profiles::load_all();
     let chosen: Vec<model_profiles::ModelProfile> = plan
         .model_profiles

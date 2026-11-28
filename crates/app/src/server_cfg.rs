@@ -9,15 +9,18 @@ use std::io;
 use crate::server_control::{self, ConfigFile, Os};
 pub use pai_core::server_cfg::*;
 
-/// The instance's server config, read through the seam: defaults when the
-/// file is missing or cannot be read, as the core's `load` reads a file.
-/// Shadows the core's re-exported `load`, which reads the per-user file.
-pub fn load() -> ServerConfig {
-    let text = server_control::backend()
-        .read_config(ConfigFile::Server)
-        .ok()
-        .flatten();
-    from_text(&text.unwrap_or_default())
+/// The instance's server config, read through the seam: the defaults when the
+/// file is missing, `Err` with the text to show when the read fails. A read
+/// that cannot be answered is never the defaults: under the manager the
+/// instance's server profile is the file its record names
+/// (`server@<profile>.ini`) and reading it needs `control`, which polkit
+/// grants without a password only in the active session, so a shell outside
+/// one is refused and the defaults would answer a folder of the machine's own
+/// (ARCHITECTURE.md IP7a). Shadows the core's re-exported `load`, which reads
+/// the per-user file.
+pub fn load() -> Result<ServerConfig, String> {
+    let text = server_control::backend().read_config(ConfigFile::Server)?;
+    Ok(from_text(text.as_deref().unwrap_or("")))
 }
 
 pub fn save(cfg: &ServerConfig) -> io::Result<()> {
@@ -104,10 +107,14 @@ fn configured_models_dir(cfg: &ServerConfig) -> Option<&str> {
         .filter(|s| !s.is_empty())
 }
 
-/// `effective_models_dir` for the saved config, the real backend and OS.
+/// `effective_models_dir` for the saved config, the real backend and OS. A
+/// refused read answers the defaults, as the core's `load` reads a missing
+/// file: the folder a panel shows and scans. A command that writes into the
+/// folder reads the profile first (`load()`), so the manager's refusal ends it
+/// before anything is written.
 pub fn models_dir() -> String {
     effective_models_dir(
-        &load(),
+        &load().unwrap_or_default(),
         server_control::backend().kind(),
         Os::current(),
         &crate::paths::instance_models_dir(),

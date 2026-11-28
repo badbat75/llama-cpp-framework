@@ -137,6 +137,59 @@ fn an_absent_default_is_no_instance() {
     );
 }
 
+// ── IP7a: the download bug. Under the manager the server profile is read
+// through the instance's record, and a failed read is an error, never the
+// defaults (`server_cfg::load` swallows every refusal today).
+
+/// IP7a 1 (day-one guard): the ModelsDir of the server profile the instance's
+/// record names is what pai-app's resolver answers, the target the download
+/// and the file delete follow (the CLI resolves both through it, pinned in
+/// cli_tests' `the_cli_resolves_models_dir_for_the_backend_and_os`).
+#[test]
+fn ip7a1_the_models_dir_of_the_instance_server_file_is_the_target() {
+    let (_log, c) = manager_with_big();
+    let c = c.with_file("server@big.ini", "[Server]\nModelsDir = /x\n");
+    let got = fake::scoped(fake::backend(c), crate::server_cfg::models_dir);
+    assert_eq!(
+        got, "/x",
+        "the ModelsDir set in the profile the record names is the target"
+    );
+}
+
+/// IP7a 3 (day-one guard): an unset ModelsDir under the manager answers the
+/// instance default, unchanged from today. `models_dir()` and
+/// `paths::instance_models_dir()` are read in the same process (no redirect:
+/// the phase children redirect in their own processes), so the pair is
+/// machine free.
+#[test]
+fn ip7a3_an_unset_models_dir_answers_the_instance_folder() {
+    let (_log, c) = manager_with_big(); // server@big.ini sets no ModelsDir
+    let want = crate::paths::instance_models_dir();
+    let got = fake::scoped(fake::backend(c), crate::server_cfg::models_dir);
+    assert_eq!(
+        got,
+        want.to_string_lossy(),
+        "an unset ModelsDir is the instance's folder, not the user's"
+    );
+}
+
+/// IP7a 2: a refused read of the instance's server file is an error that
+/// names the refusal, never the defaults. The refusal's end-to-end
+/// behaviour (exit non-zero, nothing fetched, nothing written) is pinned in
+/// the CLI, where the exit code is decided.
+#[test]
+fn ip7a2_a_a_refused_server_profile_read_is_an_error_naming_the_refusal() {
+    let (_log, c) = manager_with_big();
+    let mut c = c.with_file("server@big.ini", "[Server]\nModelsDir = /x\n");
+    c.fail_read = Some(ClientError::NotAuthorized);
+    let got = fake::scoped(fake::backend(c), crate::server_cfg::load);
+    let e = got.expect_err("a refused read is an error, not the defaults");
+    assert!(
+        e.contains(&ClientError::NotAuthorized.text()),
+        "the error names the manager's refusal: {e}"
+    );
+}
+
 /// The model profiles files keep their names: the profile of an instance
 /// says where the server file is, nothing else.
 #[test]

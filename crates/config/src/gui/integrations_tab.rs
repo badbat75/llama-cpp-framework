@@ -26,7 +26,7 @@ pub(super) fn wire(app: &AppWindow) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let cfg = server_cfg::load();
+            let cfg = server_cfg::load().unwrap_or_default();
             let plan = match integrations::opencode_plan(
                 &cfg.opencode_base_url_or_default(),
                 opencode_api_key(&cfg),
@@ -81,7 +81,7 @@ pub(super) fn wire(app: &AppWindow) {
                 .filter(|(_, ticked)| !ticked)
                 .map(|(c, _)| c.id)
                 .collect();
-            let cfg = server_cfg::load();
+            let cfg = server_cfg::load().unwrap_or_default();
             match integrations::save_opencode_models(
                 &cfg.opencode_base_url_or_default(),
                 opencode_api_key(&cfg),

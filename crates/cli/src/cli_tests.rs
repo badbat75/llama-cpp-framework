@@ -6,22 +6,63 @@ use crate::tests::gate_lint;
 // spot (server_cfg load/save, the form conversions) has a round-trip test,
 // but `apply` is the CLI-only copy; an omitted field here is silent.
 
-/// `pai model-profile download` and `pai model-profile delete --delete-files` resolve
-/// ModelsDir through pai-app's resolver (`models_dir` in its server_cfg),
-/// so under the Windows manager an unset one is the instance's folder (and the
-/// download writes no `~\.llama.cpp` into the manager's file). Checked on
-/// the text: the Windows branch only type-checks on Linux.
+/// `pai model-profile download` and `pai model-profile delete --delete-files`
+/// resolve ModelsDir through pai-app's resolver (`effective_models_dir` in
+/// its server_cfg), from the server profile the command already read: under
+/// the Windows manager an unset one is the instance's folder (and the
+/// download writes no `~\.llama.cpp` into the manager's file). The single
+/// wire read and the folder it names are pinned by the `ip7a2_c` and
+/// `ip7a2_d` runs; this text pin covers what a Linux run cannot reach: the
+/// Windows branch, which only type-checks on Linux, and the choice of the
+/// resolver over the CLI reading `cfg.models_dir` itself (the two differ
+/// where ModelsDir is unset). No code line calls `server_cfg::models_dir()`:
+/// it reads the profile a second time and swallows a refusal into the
+/// defaults. Checked on the text, comments stripped: a comment naming the
+/// call must not satisfy the pin.
 #[test]
 fn the_cli_resolves_models_dir_for_the_backend_and_os() {
-    let code = include_str!("cli.rs");
+    let code = gate_lint::strip_comments(
+        include_str!("cli.rs")
+            .split("\n#[cfg(test)]\n")
+            .next()
+            .unwrap_or_default(),
+    );
     let old = concat!("models_dir_or", "_default()");
     assert!(!code.contains(old), "cli.rs still calls {old}");
     assert!(
-        code.matches(concat!("server_cfg::", "models_dir()"))
-            .count()
-            >= 2,
-        "cli.rs does not resolve both the download and the delete through pai-app's resolver"
+        !code.contains(concat!("server_cfg::", "models_dir(")),
+        "cli.rs still calls server_cfg::models_dir(): it reads the profile a second time"
     );
+    let resolver = concat!("server_cfg::", "effective_models_dir(");
+    assert_eq!(
+        code.matches(resolver).count(),
+        2,
+        "the download and the delete must each resolve the folder through the resolver"
+    );
+    for f in ["run_model_profile_delete", "run_model_profile_download"] {
+        let body = gate_lint::fn_body(&code, f);
+        assert_eq!(
+            body.matches(concat!("server_cfg::", "load(")).count(),
+            1,
+            "{f} must read the server profile once, the read it checks"
+        );
+        let at = body
+            .find(resolver)
+            .unwrap_or_else(|| panic!("{f} does not call the resolver"));
+        let args = body[at + resolver.len()..].trim_start();
+        let name = args
+            .strip_prefix('&')
+            .unwrap_or_else(|| panic!("{f}: the resolver's first argument is not a borrow: {args}"))
+            .split(',')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        assert!(
+            body.contains(&format!("let {name} = server_cfg::load(")),
+            "{f}: the resolver resolves from {name}, which is not the loaded profile"
+        );
+    }
 }
 
 /// Under the manager the instance saves the slot snapshots at its own
@@ -1239,4 +1280,456 @@ fn server_set_apply_clears_overrides_on_nonpositive_and_blank() {
     assert_eq!(cfg.threads, None);
     assert_eq!(cfg.threads_batch, None);
     assert_eq!(cfg.models_dir, None);
+}
+
+// ── IP7a: the download bug, where the exit code is decided. Under the
+// manager the instance's server profile is read through the instance's
+// record; a refused read (polkit: the instance file needs `control`/
+// `configure`, not granted outside the active session) is an error, never
+// the defaults. `server_cfg::load` swallows every refusal today, so the
+// download and `delete --delete-files` run on the instance default as if
+// the file had said so. The `ip7a2` pins below are red on today's code;
+// the app-side resolver rules (IP7a 1 and 3) are pinned in
+// pai-app's `instance_profile_tests.rs`.
+
+/// The manager's files as a map a test reads after the command ran.
+type Ip7aFiles = std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, String>>>;
+
+/// A manager that answers the model profile files and refuses the
+/// instance's server file (`server@<profile>.ini`) with the polkit
+/// refusal, the way an SSH shell is refused outside the active session.
+/// `refuse_after` refuses only the reads AFTER the first `n`, so a command
+/// that reads the profile twice is seen: the first read answers, the second
+/// is refused.
+struct Ip7aServerRefused {
+    files: Ip7aFiles,
+    /// The reads of `server@*` so far, counted on every one, refused or not.
+    server_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    refuse_after: Option<usize>,
+}
+
+impl Ip7aServerRefused {
+    /// The fake refusing every server-file read.
+    fn new(files: Ip7aFiles) -> Self {
+        Self {
+            files,
+            server_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            refuse_after: None,
+        }
+    }
+}
+
+impl pai_core::client::ManagerClient for Ip7aServerRefused {
+    fn list_instances(&self) -> Result<Vec<String>, pai_core::client::ClientError> {
+        Ok(vec!["default".into()])
+    }
+    fn status(
+        &self,
+        _id: &str,
+    ) -> Result<pai_core::client::InstanceState, pai_core::client::ClientError> {
+        Ok(pai_core::client::InstanceState::Inactive)
+    }
+    fn start(&self, _id: &str) -> Result<(), pai_core::client::ClientError> {
+        Err(pai_core::client::ClientError::Unavailable)
+    }
+    fn stop(&self, _id: &str) -> Result<(), pai_core::client::ClientError> {
+        Err(pai_core::client::ClientError::Unavailable)
+    }
+    fn restart(&self, _id: &str) -> Result<(), pai_core::client::ClientError> {
+        Err(pai_core::client::ClientError::Unavailable)
+    }
+    fn read_file(
+        &self,
+        name: &str,
+    ) -> Result<Option<pai_core::client::ManagerFile>, pai_core::client::ClientError> {
+        use pai_core::client::ClientError;
+        if name.starts_with("server@") {
+            let seen = self
+                .server_reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.refuse_after.is_none_or(|n| seen >= n) {
+                return Err(ClientError::NotAuthorized);
+            }
+        }
+        Ok(self
+            .files
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|text| pai_core::client::ManagerFile {
+                text: text.clone(),
+                withheld: false,
+            }))
+    }
+    fn write_file(
+        &self,
+        name: &str,
+        contents: &str,
+        _keep_api_key: bool,
+    ) -> Result<(), pai_core::client::ClientError> {
+        self.files
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), contents.to_string());
+        Ok(())
+    }
+    fn boot_enabled(&self, _id: &str) -> Result<bool, pai_core::client::ClientError> {
+        Err(pai_core::client::ClientError::Unavailable)
+    }
+    fn set_boot_enabled(
+        &self,
+        _id: &str,
+        _enabled: bool,
+    ) -> Result<(), pai_core::client::ClientError> {
+        Err(pai_core::client::ClientError::Unavailable)
+    }
+    fn authenticate(
+        &self,
+        _user: &str,
+        _password: &str,
+    ) -> Result<(bool, bool), pai_core::client::ClientError> {
+        Err(pai_core::client::ClientError::Unavailable)
+    }
+    fn instances(
+        &self,
+    ) -> Result<Vec<pai_core::client::InstanceInfo>, pai_core::client::ClientError> {
+        Ok(vec![pai_core::client::InstanceInfo {
+            id: "default".into(),
+            engine: "llama.cpp".into(),
+            server_profile: Some("big".into()),
+            port: 0,
+            profile_tags: vec![],
+            instance_tags: vec![],
+            label: None,
+            converged: true,
+            reason: None,
+            pending_restart: false,
+            instance_profile: None,
+            hostname: None,
+        }])
+    }
+}
+
+/// The fixture: model profile `ip7a` with its file under a temp dir, and
+/// a server profile the instance record names (`big`) that sets
+/// `ModelsDir` to that temp dir: read, it is the target; refused, the
+/// swallow answers the machine's instance default, so every write of a
+/// run that keeps going lands away from the fixture, never in it.
+fn ip7a_delete_fixture() -> (tempfile::TempDir, Ip7aFiles, std::path::PathBuf, String) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let model = dir
+        .path()
+        .join("models")
+        .join("org")
+        .join("Ip7a-GGUF")
+        .join("ip7a.gguf");
+    std::fs::create_dir_all(model.parent().expect("folder")).expect("folder");
+    std::fs::write(&model, b"gguf").expect("file");
+    let ini = format!("[ip7a]\nmodel = {}\n", model.display());
+    let files = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    {
+        let mut map = files.lock().unwrap();
+        map.insert(
+            "server@big.ini".to_string(),
+            format!(
+                "[Server]\nModelsDir = {}\n",
+                dir.path().join("models").display()
+            ),
+        );
+        map.insert("models.ini".to_string(), ini.clone());
+    }
+    (dir, files, model, ini)
+}
+
+/// Run `args` (the words after `pai`) on `client`, on this thread's backend.
+fn ip7a_run(client: Ip7aServerRefused, args: &[&str]) -> anyhow::Result<()> {
+    use crate::server_control::{Backend, Client, ManagerBackend};
+    let client = std::sync::Mutex::new(Some(client));
+    let b = Backend::Manager(ManagerBackend::new(Box::new(move || {
+        let c = client.lock().unwrap().take().expect("connected twice");
+        Ok(Box::new(c) as Client)
+    })));
+    crate::server_control::fake::scoped(b, || {
+        let mut argv = vec!["pai"];
+        argv.extend_from_slice(args);
+        let cli = Cli::try_parse_from(argv).expect("parses");
+        crate::cli::run(cli)
+    })
+}
+
+/// `pai model-profile delete ip7a --delete-files all` on the refusing
+/// manager, on this thread's backend.
+fn ip7a_run_delete(files: Ip7aFiles) -> anyhow::Result<()> {
+    ip7a_run(
+        Ip7aServerRefused::new(files),
+        &["model-profile", "delete", "ip7a", "--delete-files", "all"],
+    )
+}
+
+/// IP7a 2 (red): with the instance's server profile read refused,
+/// `model-profile delete --delete-files` exits with an error. Today the
+/// refusal is swallowed, the command resolves the instance default and
+/// reports success: `Ok`.
+#[test]
+fn ip7a2_delete_files_with_the_server_read_refused_exits_with_an_error() {
+    let (_dir, files, _model, _ini) = ip7a_delete_fixture();
+    ip7a_run_delete(files).expect_err("a refused server-profile read must end the command");
+}
+
+/// IP7a 2 (red): the error names the manager's refusal. Today the
+/// command does not fail at all.
+#[test]
+fn ip7a2_delete_files_with_the_server_read_refused_names_the_refusal() {
+    use pai_core::client::ClientError;
+    let (_dir, files, _model, _ini) = ip7a_delete_fixture();
+    let e = ip7a_run_delete(files).expect_err("a refused server-profile read must end the command");
+    assert!(
+        format!("{e:#}").contains(&ClientError::NotAuthorized.text()),
+        "the error must name the refusal: {e:#}"
+    );
+}
+
+/// IP7a 2 (red): the refusal writes nothing: the model profile section
+/// stays in `models.ini` and its file on disk. Today the command deletes
+/// the section and the file before ever asking for the target.
+#[test]
+fn ip7a2_delete_files_with_the_server_read_refused_changes_nothing() {
+    let (_dir, files, model, ini) = ip7a_delete_fixture();
+    let _ = ip7a_run_delete(files.clone());
+    let map = files.lock().unwrap();
+    assert_eq!(
+        map.get("models.ini").map(String::as_str),
+        Some(ini.as_str()),
+        "a refusal leaves the model profile in models.ini"
+    );
+    assert!(model.exists(), "a refusal leaves the file on disk");
+}
+
+/// IP7a 2: the download resolves the target through the checked read BEFORE
+/// fetching anything, so the refusal ends the command with the manager's own
+/// words: no byte is asked for (the endpoint's log stays empty), no model
+/// profile is written, nothing lands under any models folder.
+///
+/// An isolated phase: the download's endpoint is chosen by `HF_ENDPOINT`,
+/// read from the process environment, and its files go under the process-wide
+/// data root, so the phase runs alone in a child of its own, with the endpoint
+/// pointed at a loopback stand-in that answers 404 to anything.
+#[test]
+fn ip7a2_b_a_refused_server_read_ends_the_download_naming_it_and_fetching_nothing() {
+    pai_core::isolated::isolated(
+        "cli::tests::ip7a2_b_a_refused_server_read_ends_the_download_naming_it_and_fetching_nothing",
+        ip7a2_download_refused_phase,
+    );
+}
+
+fn ip7a2_download_refused_phase() {
+    use pai_core::client::ClientError;
+    let asked = crate::server_control::fake::log();
+    let port = ip7a2_hf_stub(&asked);
+    std::env::set_var("HF_ENDPOINT", format!("http://127.0.0.1:{port}/"));
+    let (_dir, files, model, ini) = ip7a_delete_fixture();
+    let e = ip7a_run_download(files.clone(), "org/Ip7a-GGUF")
+        .expect_err("a refused server-profile read must end the download");
+    assert!(
+        format!("{e:#}").contains(&ClientError::NotAuthorized.text()),
+        "the error must name the refusal: {e:#}"
+    );
+    let asked = asked.lock().unwrap().clone();
+    assert!(
+        asked.is_empty(),
+        "the refusal must end the download before a byte is asked for: {asked:?}"
+    );
+    let map = files.lock().unwrap();
+    assert_eq!(
+        map.get("models.ini").map(String::as_str),
+        Some(ini.as_str()),
+        "the download wrote no model profile"
+    );
+    drop(map);
+    assert!(
+        model.exists(),
+        "the download wrote no file under the profile's ModelsDir"
+    );
+    let mut landed: Vec<std::path::PathBuf> = Vec::new();
+    ip7a2_ggufs(&crate::paths::instance_models_dir(), &mut landed);
+    assert!(
+        landed.is_empty(),
+        "the download wrote nothing under the instance default: {landed:?}"
+    );
+}
+
+/// Every `.gguf` under `dir`, for the "wrote nothing" assertions.
+fn ip7a2_ggufs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            ip7a2_ggufs(&p, out);
+        } else if p.extension().is_some_and(|e| e == "gguf") {
+            out.push(p);
+        }
+    }
+}
+
+/// A Hugging Face stand-in on a free loopback port: records every request as
+/// `"<METHOD> <path>"` in `log` (the download must never reach it) and
+/// answers 404, so a request that did happen fails as a listing error and
+/// never as a success. Its thread lives as long as the test binary.
+fn ip7a2_hf_stub(log: &crate::server_control::fake::Log) -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let log = log.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut s) = stream else { continue };
+            let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            let head_end = loop {
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => break None,
+                    Ok(n) => raw.extend_from_slice(&buf[..n]),
+                }
+                if let Some(i) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break Some(i + 4);
+                }
+            };
+            if head_end.is_none() {
+                continue;
+            }
+            let head = String::from_utf8_lossy(&raw).to_string();
+            let line = head.lines().next().unwrap_or("").to_string();
+            let mut parts = line.split(' ');
+            log.lock().unwrap().push(format!(
+                "{} {}",
+                parts.next().unwrap_or(""),
+                parts.next().unwrap_or("")
+            ));
+            let _ = write!(
+                s,
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\
+                 Connection: close\r\n\r\n"
+            );
+        }
+    });
+    port
+}
+
+/// `pai model-profile download <spec>` on the refusing manager, in the
+/// isolated child.
+fn ip7a_run_download(files: Ip7aFiles, spec: &str) -> anyhow::Result<()> {
+    ip7a_run(
+        Ip7aServerRefused::new(files),
+        &["model-profile", "download", spec],
+    )
+}
+
+/// IP7a 4 (red): the delete reads the instance's server profile ONCE, and
+/// the folder it acts on is the one that profile names. The command already
+/// read the profile to check the refusal: `models_dir()` reads it a SECOND
+/// time, and a manager that refuses that read is swallowed into the defaults,
+/// so the folders pruned are the instance default's, not the profile's (the
+/// download's bug, the same swallow at `server_cfg::models_dir`). The
+/// fixture's profile names `<temp>/models`, the file sits in
+/// `<temp>/models/models/org/Ip7a-GGUF`, and the second server-file read is
+/// refused.
+#[test]
+fn ip7a2_c_the_delete_resolves_the_folder_from_the_read_it_already_made() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let models = dir.path().join("models");
+    let repo = models.join("models").join("org").join("Ip7a-GGUF");
+    let model = repo.join("ip7a.gguf");
+    std::fs::create_dir_all(&repo).expect("folder");
+    std::fs::write(&model, b"gguf").expect("file");
+    let files = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    files.lock().unwrap().insert(
+        "server@big.ini".to_string(),
+        format!("[Server]\nModelsDir = {}\n", models.display()),
+    );
+    files.lock().unwrap().insert(
+        "models.ini".to_string(),
+        format!("[ip7a]\nmodel = {}\n", model.display()),
+    );
+    let reads = std::sync::Arc::new(AtomicUsize::new(0));
+    let client = Ip7aServerRefused {
+        files,
+        server_reads: reads.clone(),
+        refuse_after: Some(1),
+    };
+    ip7a_run(
+        client,
+        &["model-profile", "delete", "ip7a", "--delete-files", "all"],
+    )
+    .expect("the delete needs no second read of the server profile");
+    assert!(!model.exists(), "the picked file is gone");
+    assert!(
+        !models.join("models").join("org").exists(),
+        "the folders pruned are the profile's ModelsDir's: {models:?}"
+    );
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        1,
+        "the delete reads the instance's server profile once, the read it checks"
+    );
+}
+
+/// IP7a 4 (red): the download, like the delete, reads the instance's server
+/// profile ONCE, the read it checks. `models_dir()` reads it a SECOND time,
+/// and a manager that refuses that read is swallowed into the defaults, so
+/// the folder the files would land in is the instance default, not the one
+/// the profile names. The second read refused here must change nothing: the
+/// download runs on the folder of the read that answered, and reaches the
+/// endpoint.
+#[test]
+fn ip7a2_d_the_download_reads_the_instance_server_profile_once() {
+    pai_core::isolated::isolated(
+        "cli::tests::ip7a2_d_the_download_reads_the_instance_server_profile_once",
+        ip7a2_download_once_phase,
+    );
+}
+
+fn ip7a2_download_once_phase() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let asked = crate::server_control::fake::log();
+    let port = ip7a2_hf_stub(&asked);
+    std::env::set_var("HF_ENDPOINT", format!("http://127.0.0.1:{port}/"));
+    let (_dir, files, model, _ini) = ip7a_delete_fixture();
+    let reads = std::sync::Arc::new(AtomicUsize::new(0));
+    let client = Ip7aServerRefused {
+        files: files.clone(),
+        server_reads: reads.clone(),
+        refuse_after: Some(1),
+    };
+    let r = ip7a_run(client, &["model-profile", "download", "org/Ip7a-GGUF"]);
+    assert!(
+        !asked.lock().unwrap().is_empty(),
+        "a download whose server-profile read answered fetches the listing: {r:?}"
+    );
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        1,
+        "the download reads the instance's server profile once, the read it checks"
+    );
+    let mut landed: Vec<std::path::PathBuf> = Vec::new();
+    ip7a2_ggufs(&crate::paths::instance_models_dir(), &mut landed);
+    assert!(
+        landed.is_empty(),
+        "the download wrote nothing under the instance default: {landed:?}"
+    );
+    assert!(model.exists(), "the download wrote nothing in the fixture");
+}
+
+/// IP7a 2 (day-one guard): an error out of `run` exits the command
+/// non-zero.
+#[test]
+fn ip7a2_a_run_error_exits_the_command_nonzero() {
+    let main = include_str!("main.rs");
+    assert!(
+        main.contains("std::process::exit(1)"),
+        "a failed run must exit non-zero: {main}"
+    );
 }

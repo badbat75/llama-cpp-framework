@@ -135,6 +135,7 @@ Rules are in `AGENTS.md` and `PLAN.md`. Format of this file: `AGENTS.md`, under 
 
 ## Pitfalls
 
+- A growing log is not progress. Every 30 minutes also check that the agent's Write and Edit calls land in the repository (`grep -oE "(Write|Edit) [^ ]+" <log>` plus `git status`). IP6c's coder made 91 reads in 85 minutes, wrote nothing but a package.json in a private /tmp copy, and its log kept growing. For a front-end coder on a large module, brief it to work in the repository, start writing within 10 tool calls, and read only the line ranges it needs (2026-11-28).
 - An agent's `python3 - <<EOF` rewrite script can outlive its opencode run, spinning at 100% CPU with no reader (regex backtracking): the liveness check lists `ps -eo pid,etime,pcpu,cmd | grep 'python3 -$'` too, and kills such orphans by PID once their run has ended.
 
 - `xtask build framework` runs `npm ci` and `npm run build` in `fe/`, so a deploy while the designer's UX check or a Vitest run is going pulls `fe/node_modules` and `fe/dist` from under it: deploy only when no web UI agent is running (2026-11-26).
