@@ -33,9 +33,10 @@ zbus = "5.19"
 
 # `O_NONBLOCK` on the open of a model file (gguf_shape.rs): the `fs` feature
 # for its `fcntl::OFlag`. The kernel's release (host.rs): the `feature` feature
-# for `sys::utsname::uname`.
+# for `sys::utsname::uname`. The kill of a hung test child's whole process
+# group (isolated.rs): the `signal` feature for `sys::signal::killpg`.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", features = ["fs", "feature"] }
+nix = { version = "0.31", features = ["fs", "feature", "signal"] }
 
 # The Win32 calls of proc.rs (the std handles a child must not inherit) and
 # of the manager's pipe client (client/pipe.rs: `WaitNamedPipeW`), the
