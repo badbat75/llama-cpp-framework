@@ -694,6 +694,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `InstancePage.test.tsx`. A new FOCUSABLE field moves every tab-order list by TWO stops (the field's
   About button, then its control): `ServerSave.test.tsx` `1b 6` and `InstancePage.test.tsx`
   `TAB_PATH_FORM`. Amend each in the same pass and name them in the report.
+- When the brief gives the English of some new keys and NAMES others with no words (the refusal reasons
+  `api-*`, a status like `instance-profile-server-switching`), put only the brief's sentences in `EN`, so
+  `1a strings` pins exactly what the brief dictates; read the wording-free keys from `strings/en_US.json`
+  itself (an `en_US.json` import plus a `words(key, …)` that substitutes `{0}`), and keep a `KEYS` list of
+  every key the suite reads in a final test that names the ones the file lacks. Then a missing key reddens
+  one named test, and any words the coder chose are green.
 - Register a new route of the fake BEFORE an existing block that matches with `path.endsWith(...)`: the
   older block answers the new path first, and its call counter counts it too (the server-profile PUT
   counter ending `/server` took `PUT /api/instances/{id}/profiles/server`), so the red is a missing answer
@@ -1468,6 +1474,9 @@ frozen list.
 
 ### The web UI (fe/)
 
+- `fe/ux/` is in `.prettierignore` (`npm --prefix fe run format:check` never reads it): running
+  `prettier --write` on `fe/ux/check.js` reflows lines the check does not care about, and the coder's diff
+  then carries a tester's reflow of lines outside the slice. Edit those files by hand.
 - `fe/ux/stub.py` answers at module level (`SERVER.serve_forever()`, no `__main__` guard): a
   `python3 -c "import stub"` written to read its fixture dicts binds a port and never returns, and the
   shell jobs queued behind it in the same session print nothing at all, which reads as a broken script.

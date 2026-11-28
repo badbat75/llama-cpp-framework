@@ -75,7 +75,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Judge the manager's phase sequence (`tests::data_root_e2e`) ONLY with `-- --test-threads=1`: the phases
   share the process-wide `PRIVATE_AI_DATA_ROOT`, so the default parallel run of the same test stops at a
   DIFFERENT pin (measured 2026-11-27: single-threaded it stops where the rule bites, the full crate run
-  stopped two phases later at a D-Bus signature pin).
+  stopped two phases later at a D-Bus signature pin). Its phases also call over a peer-to-peer bus with
+  2 s and 10 s bounds: on a loaded machine the parallel run reddens it with a timeout (`bob's write: no
+  answer within 2s`, `SetInstanceProfile: ... TimedOut`) at an UNCHANGED HEAD too (measured 2026-11-28),
+  so a parallel red is no evidence at all; the solo test passes, slowly.
 - On Linux export `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` for every cargo command: the checked-in
   `.cargo/config.toml` pins `target-dir = "build/windows/cargo-target"`, so a bare `cargo test` rebuilds the
   whole workspace there.
@@ -169,6 +172,22 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   line's indent are stripped), and count the RENDERED line widths, not the source's, when the file is a
   wrapped text (the `readme()` of `xtask/src/common/licenses.rs`, a staged README.txt at ~79 columns).
   Case matters: a pin of an ALL-CAPS licence title is not met by the mixed-case name in prose.
+- Moving a test block out of its production file (PLAN.md TS1): the file keeps `#[cfg(test)]`,
+  `#[path = "<name>_tests.rs"]`, `mod tests;`; the sibling starts with `use super::*;` and the
+  `mod tests { ... }` wrapper is UNWRAPPED with its 4 spaces taken off, so every test keeps its name (a
+  nested `tests::tests` renames every one). When the region also declared items at the file's top level,
+  they stay at the sibling's top level, the production file adds `#[cfg(test)] pub(crate) use tests::*;`
+  under the declaration for the callers in `src/tests/`, and those flat items' `super::x` become
+  `super::super::x` (`crate::` paths and the unwrapped block's own `super::` stay). The sibling needs no
+  second `use super::*;` when the unwrapped block already carries one (module-wide, so it covers the
+  flat items too; a duplicate is an unused import). Dedent no line whose leading spaces are string data;
+  a line after a string's trailing `\` IS safe, the indent is stripped (`rustc` says the two texts equal).
+  Prove the move: the count and the sorted names of `cargo test -p <crate> --lib -- --list` before and
+  after, the production lines byte-identical to the `git show HEAD:<file>` prefix, and the region's
+  string literals in order. Every text lint keyed on a FILE path gains the sibling: `src/tests/graph.rs`'s
+  `#[cfg(windows)]` exclusion, `windows_gnu_check_skips_the_linux_hwmon_module`, and the whitelist of
+  `crates/config/src/tests/names_lint.rs` (`WINDOWS_SERVICE_MODULES`, `MIGRATION_MODULE`,
+  `ENGINE_KEY_MODULE`).
 - A strings-file VALUE is pinned by its callers' tests (and is a region's accessible name in the web UI).
   A refusal a client decodes must be a key of `checks::KEYS` with a `text()` arm; a `checks` refusal text
   is pinned by core tests over BOTH strings files. Prose in a constant whose bytes are DATA is data.
@@ -445,6 +464,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (`font-family`) are exhaustive per property; a CSS test pins the SELECTOR as a string and a rule's
   "declares nothing else" list. Append (sorted) and say the title or comment is stale rather than
   rewriting it. A test-side CSS helper must start counting braces after the opening `{` at depth 1.
+  The text reader `RULES.filter((r) => r.sel === sel)` (a local copy in `InstanceProfiles1.test.tsx`,
+  `L2ModelsList.test.tsx`) compares the rule's WHOLE selector string, so merging two rules that differ
+  only in `:nth-child(n)` into one selector list reddens the pin that reads each selector on its own
+  ("the cell of column 2 is out of the layout: expected [] to include 'none'", proven in a copy: 1 red):
+  report the pair, widening the reader is the tester's.
   `declares` compares the property ORDER as well, so a declaration added to a rule it pins sits where
   the tester's list carries it (22 D6: `position: relative` last).
   A pin of the form `decls.filter((d) => d.startsWith('x:')).toEqual(['x: v'])`

@@ -10,7 +10,7 @@
 //! llama.cpp itself; so does the manager's
 //! service name: the systemd unit `private-ai-manager.service`, the named
 //! pipe `\\.\pipe\private-ai-manager` and the Windows service
-//! `"private-ai-manager"` in `WINDOWS_SERVICE_MODULE`.
+//! `"private-ai-manager"` in `WINDOWS_SERVICE_MODULES`.
 
 use std::path::{Path, PathBuf};
 
@@ -51,9 +51,14 @@ const OLD_MANAGER: &str = "private-ai-manager";
 const MANAGER_SERVICE_NAMES: [&str; 2] =
     ["private-ai-manager.service", r"\pipe\private-ai-manager"];
 
-/// The one file allowed to spell the Windows service name as a bare string,
-/// relative to `crates/`; `"private-ai-manager.exe"` stays refused there.
-const WINDOWS_SERVICE_MODULE: &str = "manager/src/manager/windows.rs";
+/// The files allowed to spell the Windows service name as a bare string,
+/// relative to `crates/`: the Windows service module and the test file moved
+/// out of it, which tests that name; `"private-ai-manager.exe"` stays refused
+/// in both.
+const WINDOWS_SERVICE_MODULES: [&str; 2] = [
+    "manager/src/manager/windows.rs",
+    "manager/src/manager/windows_tests.rs",
+];
 const WINDOWS_SERVICE_NAME: &str = "\"private-ai-manager\"";
 
 fn files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -101,7 +106,7 @@ fn manager_names_left(path: &Path, line: &str) -> String {
     for name in MANAGER_SERVICE_NAMES {
         left = left.replace(name, "");
     }
-    if path.ends_with(WINDOWS_SERVICE_MODULE) {
+    if WINDOWS_SERVICE_MODULES.iter().any(|m| path.ends_with(m)) {
         left = left.replace(WINDOWS_SERVICE_NAME, "");
     }
     left
@@ -166,7 +171,7 @@ fn the_scan_keeps_the_pipe_and_the_windows_service_name() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].contains("MANAGER_SERVICE"), "{found:?}");
 
-    let module = dir.path().join(WINDOWS_SERVICE_MODULE);
+    let module = dir.path().join(WINDOWS_SERVICE_MODULES[0]);
     std::fs::create_dir_all(module.parent().expect("parent")).expect("dirs");
     std::fs::write(
         &module,

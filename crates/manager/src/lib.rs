@@ -9,6 +9,6 @@ use pai_core::slot_save;
 
 pub mod manager;
 // The end-to-end test that runs every phase redirecting the data root
-// (src/tests/mod.rs); per-module unit tests stay inline in their own files.
+// (src/tests/mod.rs); each module's unit tests are in the file beside it.
 #[cfg(test)]
 mod tests;
