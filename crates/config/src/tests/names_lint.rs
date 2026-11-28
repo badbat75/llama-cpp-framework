@@ -3,7 +3,7 @@
 //! user and system trees `private-ai`, the registry key `Software\private-ai`
 //! and the test redirect `PRIVATE_AI_DATA_ROOT`, with no fallback to the old
 //! names (no `LLAMA_FW_` build variable either). Only the migration module
-//! (`MIGRATION_MODULE`) may name the old tree and login entry it moves. A plain text scan of every `.rs` and `.slint` file, `build.rs` and
+//! (`MIGRATION_MODULES`) may name the old tree and login entry it moves. A plain text scan of every `.rs` and `.slint` file, `build.rs` and
 //! `Cargo.toml`, whole-line comments left out (the docs say the old names
 //! where they tell the history). The engine's own names stay: `llama-server`,
 //! the unit `llama.cpp@<id>`, the engine's config directory `/etc/llama.cpp`,
@@ -29,10 +29,11 @@ const OLD_NAMES: [&str; 10] = [
     r#"join("llama.cpp")"#,
 ];
 
-/// The one file allowed to name the old user tree and login entry, relative
-/// to `crates/`: the migration must find them. Only `MIGRATION_NAMES` are
-/// accepted there, every other old name is still refused.
-const MIGRATION_MODULE: &str = "core/src/migrate.rs";
+/// The files allowed to name the old user tree and login entry, relative to
+/// `crates/`: the migration must find them, and the test file moved out of it
+/// (TS1) builds that tree to move it. Only `MIGRATION_NAMES` are accepted
+/// there, every other old name is still refused.
+const MIGRATION_MODULES: [&str; 2] = ["core/src/migrate.rs", "core/src/migrate_tests.rs"];
 const MIGRATION_NAMES: [&str; 2] = ["llama-cpp-config", r#"join("llama.cpp")"#];
 
 /// The files allowed to name `HKLM\Software\llama.cpp`, relative to `crates/`:
@@ -77,7 +78,7 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn hits(path: &Path) -> Vec<String> {
     let text = std::fs::read_to_string(path).expect("read source");
     let toml = path.extension().is_some_and(|e| e == "toml");
-    let exempt: &[&str] = if path.ends_with(MIGRATION_MODULE) {
+    let exempt: &[&str] = if MIGRATION_MODULES.iter().any(|m| path.ends_with(m)) {
         &MIGRATION_NAMES
     } else if ENGINE_KEY_MODULES.iter().any(|m| path.ends_with(m)) {
         &ENGINE_KEY_NAMES
@@ -232,11 +233,13 @@ fn only_the_migration_module_may_name_the_old_tree_and_entry() {
     assert_eq!(migrate.len(), 1, "{migrate:?}");
     assert!(migrate[0].contains("_FW_GPU_LOCK"), "{migrate:?}");
     assert_eq!(hits(&src.join("paths.rs")).len(), 3);
-    // The exempt file is a real one, not a name left behind by a move.
-    let real = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(MIGRATION_MODULE);
-    assert!(real.is_file(), "{real:?}");
+    // The exempt files are real ones, not names left behind by a move.
+    for module in MIGRATION_MODULES {
+        let real = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(module);
+        assert!(real.is_file(), "{real:?}");
+    }
 }
 
 // The engine's registration key is named in paths.rs and the test file moved

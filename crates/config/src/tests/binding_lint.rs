@@ -801,7 +801,9 @@ fn marked_key_calls(source: &str) -> Vec<(Option<usize>, String)> {
     calls
 }
 
-/// Every `.rs` under `dir`, the lint's own tests and the loader left out.
+/// Every `.rs` under `dir`, the lint's own tests, the loader and the test files
+/// moved out beside the modules (`#[path = "<name>_tests.rs"] mod tests;`) left
+/// out: a key a test spells is not text the window shows.
 fn rust_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("src/ dir") {
         let path = entry.expect("dir entry").path();
@@ -810,7 +812,10 @@ fn rust_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
             if name != "tests" {
                 rust_sources(&path, out);
             }
-        } else if path.extension().is_some_and(|e| e == "rs") && name != "strings.rs" {
+        } else if path.extension().is_some_and(|e| e == "rs")
+            && name != "strings.rs"
+            && !name.to_string_lossy().ends_with("_tests.rs")
+        {
             out.push(path);
         }
     }
