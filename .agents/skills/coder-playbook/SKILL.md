@@ -68,6 +68,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Capture a loop's output before judging it: `out=$(eval "$c" 2>&1); code=$?`, then print `exit=$code`
   and the warning count. Judge from `FAILED`/`panicked`/`error`.
 - Enumerate a crate's test targets with `--no-fail-fast`.
+- `isolated` (core's `isolated.rs`) re-runs the child test with `--exact <path> --include-ignored`: a TS2
+  phase test is `#[ignore]`d so it fails nothing in the suite alone, and `--exact` without
+  `--include-ignored` runs 0 tests and exits 0, which the helper's "exactly 1 passed" rule reads as a
+  failure.
 - Judge the manager's phase sequence (`tests::data_root_e2e`) ONLY with `-- --test-threads=1`: the phases
   share the process-wide `PRIVATE_AI_DATA_ROOT`, so the default parallel run of the same test stops at a
   DIFFERENT pin (measured 2026-11-27: single-threaded it stops where the rule bites, the full crate run
@@ -118,6 +122,13 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   copies FROM the pool: seed the pool with the id in the case the pin expects.
 - Arithmetic with a ceiling: "saturating, divide last" is `checked_mul(..).and_then(..).map_or(MAX, |x|
   x / d)`, not a `saturating_mul` chain.
+- A clean check over a `#[path = "x_tests.rs"] mod tests;` sibling proves nothing until you show the file
+  is in that target's graph: `cargo rustc -p <crate> --profile test -- --emit dep-info` writes a `.d` under
+  `$CARGO_TARGET_DIR/[<triple>/]debug/build/<crate>/<hash>/out/`, grep it for the file names (the linux
+  graph names no `hwmon/windows_tests.rs`, the windows-gnu one no `linux_tests.rs`: that is the module's
+  own gate, not a wiring gap). `--print dep-info` is no print request, and a `-- --out-dir` collides with
+  cargo's. `cargo fmt -p <crate> --check` DOES read the `#[path]` siblings: prove it in a copy with one
+  unformatted `fn  probe( )` appended, then a clean real-tree run means clean.
 
 ### Refreshing the llama.cpp patches
 
@@ -409,6 +420,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A picked quant writes its tagged value (`<repo>:TAG`) into the repo field (22 P.9), so a test that
   reads that field after a pick expects the row's `hf-repo`, never the bare `HF_REPO` (22 C.7 line 526
   against C.6 line 463, one witness pair, the pick's own pin wins).
+- A media query adds NO specificity, so a narrow rule that fights a top-level rule of the same
+  specificity is read first and loses: the sheet's idiom is to raise its own specificity with an element
+  (`@media` `.model-profiles tbody td:first-child .muted` beats the top-level `.model-profiles
+  td:first-child .muted` written further down), never `!important`, and to say so in the comment.
+- A table column folded below 480 px whose head must still stand over its cells: keep the cell in flow
+  and empty it, `display: table-cell; visibility: hidden; width: 0; max-width: 0; padding: 0; border:
+  0; overflow: hidden; line-height: 0`. `max-width: 0` is what collapses the auto-layout column; a
+  hidden cell with no cap sizes its column to its text's min-content (72 px for `llama.cpp`), and
+  `font-size: 0`, the obvious collapse, is a literal that H1a.7 (`HearthTokens.test.ts:446`) refuses:
+  every `font-size` outside `:root` names a `var(--fs-*)`. A row that drops the cell from the layout
+  instead fills its later cells one column left of their heads, which the ux check's narrow-list probe
+  reports as `head 219..287, body cell 125..219`.
 - New CSS is a test edit: `Reflow.test.ts` (`CLASSES`, `overflow-wrap`, `box-shadow`),
   `HearthTokens.test.ts` (`min-height`/`min-width` per rule, an exact ordered list), `HearthFonts.test.ts`
   (`font-family`) are exhaustive per property; a CSS test pins the SELECTOR as a string and a rule's
@@ -533,7 +556,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - Shared logic lives in ONE exported function both pages import (default-box mechanics in
   `fe/src/boxed.ts`; a rule that spans a group is data on the row; the send rule of a checkbox row is
-  data `onSend`/`offSend`); a helper shared by two pages takes each caller's rule as a named parameter.
+  data `onSend`/`offSend`; one page's rule in a module of its own when two pages share it, as
+  `fe/src/modelProfileDelete.ts` is the `usedBy` delete rule of the Models list and the model profile
+  page, IP5.3/IP5.6 review D2); a helper shared by two pages takes each caller's rule as a named parameter.
   Per-field checks of a save run BEFORE the `!dirty` guard. A new 422 refusal key needs a `case` in each
   of the two tables (`REFUSALS.text` and its sibling), and the tables are PER PAGE: the Server
   form's carried no `not-one-of` while the model profile page's does, so a manager bool refusal
@@ -586,12 +611,19 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   (`pageCards()`) and derive the page's cards, the jump list and the About read from that one filter.
   A `GroupRow` is dropped when every non-note field of its key left, a card when no field row is left,
   and a row reading the model file (`facts`, the GGUF header) goes with the read the slice stops
-  making. The rows stay in `CARDS` while other pages render them (brief 26's per-instance card). The
-  CHECKS the page owned for a filtered card strand their texts: `strings.test.ts` reds "values no code
-  uses" (IP5: the four `ot-*` rule checks and the two GPU weights/Move lines). The brief keeps a moving
-  card's texts and `fe/src/test/bff.ts`'s `EN` mirror pins them, so the fix is to MOVE the check into
-  the card's own module (`TensorPlacement.tsx`'s `otChecks(rows)`, `GpuSplit.tsx`'s
-  `gpuWeightsFailureText` / `gpuMovedText`), never to prune the keys (that reddens `1a strings`).
+  making. The rows stay in `CARDS` while other pages render them (brief 26's per-instance card). EVERY
+  page-scoped reader of that list must take the filter too, not `CARDS`: `checkRows()` (the save's
+  checks, IP5.7 review D1), `numberStates()` (it seeds the save body, so a filtered `n-gpu-layers`
+  rode the PUT and the page's own check refused it: "the save of a shown field" never reached the
+  fake), `fieldId` / `fieldNames` / `writtenAs` (a mark, a name and a "written as" line for a control
+  that is not on screen). The card module keeps the list's own walk as a helper over a card list
+  (`rowsOf(cards)`) so both scopes share it.
+- Deleting the last caller of a strings key reddens `strings.test.ts` "values no code uses", and the
+  key's text is pinned a second time by `fe/src/test/bff.ts`'s `EN` (`App.test.tsx` `1a strings`):
+  prune `en_US.json` AND `EN` in the same breath, at the SAME index (the key ORDER of the two is
+  pinned), and rewrite any comment naming the key. IP5 review D1 left six: the four `model-profile-ot-*`
+  rule checks and the two GPU weights/Move lines, gone with `otChecks`, `otLayersBad`,
+  `gpuWeightsFailureText` and `gpuMovedText`.
 - `strings.test.ts`'s "every value is used" scans the code for `t(` IMMEDIATELY followed by a `'literal'`:
   a key picked by a ternary INSIDE the call (`t(on ? 'a' : 'b', id)`) is invisible to it, so the key is a
   "value no code uses" and the test is red. Write `on ? t('a', id) : t('b', id)`, the repo's style
@@ -682,7 +714,9 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 ### The web UI (fe/): the UX check
 
 - Run `npm --prefix fe/ux run check` (all three browsers on the BUILT `fe/dist`, build first, against
-  `fe/ux/stub.py`, about 12 minutes): it proves wrap and sideways-scroll criteria. Carry in the stub's
+  `fe/ux/stub.py`, about 12 minutes): it proves wrap and sideways-scroll criteria. Build IMMEDIATELY
+  before it and never while it runs: the stub serves `fe/dist` from disk per request, so a rebuild
+  mid-run mixes two sheets in one pass and a state's report reads as a new defect. Carry in the stub's
   documents every value a control needs to render, or that control is unmeasured (the tag vocabulary is
   the API's). Its summary prints `axe: <rule> x<count>`, not the node: add a probe in a scratch copy of
   the check to learn the node.
@@ -701,6 +735,7 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   Playwright strict-mode violation, in every browser, at every width.
 
 ## Pitfalls
+- A `fe/ux/stub.py` started by hand for a probe outlives the run when it is launched detached (`&`, `nohup`, `setsid`): three were found orphaned under systemd on 2026-11-28, holding ports. Start it in the foreground of a `timeout 120` script with a `trap` that kills it, or note its PID and kill it before you report.
 
 ### The shared tree
 
@@ -728,6 +763,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 ### A cargo run
 
+- `isolated(test_path, body)` (core `isolated.rs`, TS2) re-runs the CALLING test in the child, so a
+  test-side shape that wraps the call breaks: a `catch_unwind` around it swallows the child's body
+  panic (the child's libtest reports 1 passed, exit 0), and a preamble that `set_var`s an env var the
+  body reads repoints it at a dir the child made. A phase body sits in its own `#[test]` with no
+  catcher, and hands data to the parent through a file named from OUTSIDE the test function.
 - `cmd | tail; echo $?` reports tail's 0.
 - `cargo test -p <crate> --test a --test b` without `--no-fail-fast` stops at the first failing test
   target: the second target's `test result` line is missing, not green.
