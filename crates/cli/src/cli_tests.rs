@@ -364,6 +364,33 @@ fn model_profile_download_parses_its_flags() {
     assert!(a.search && a.limit == 5 && a.spec == "unsloth/Qwen3");
 }
 
+/// IP7c: `--instance-profile <p>` asks the download to add the model to that
+/// instance profile and save the fit's placement into its entry; left out,
+/// the placement stays advice. Without the flag field the parse itself fails.
+#[test]
+fn model_profile_download_takes_the_instance_profile_flag() {
+    let cli = Cli::try_parse_from([
+        "pai",
+        "model-profile",
+        "download",
+        "unsloth/Qwen3-8B-GGUF:Q4_K_M",
+        "--instance-profile",
+        "desk",
+    ])
+    .expect("--instance-profile parses");
+    let Command::ModelProfile(ModelProfileCmd::Download(a)) = cli.command else {
+        panic!("not a preset download");
+    };
+    assert_eq!(a.instance_profile.as_deref(), Some("desk"));
+    // Left out, the download adds nothing to any instance profile.
+    let cli =
+        Cli::try_parse_from(["pai", "model-profile", "download", "unsloth/Qwen3-8B-GGUF"]).unwrap();
+    let Command::ModelProfile(ModelProfileCmd::Download(a)) = cli.command else {
+        panic!("not a preset download");
+    };
+    assert_eq!(a.instance_profile, None);
+}
+
 /// The search rows: aligned repo column, downloads, quant tags, sidecars,
 /// access; a hint to go on, or one line when nothing matched.
 #[test]

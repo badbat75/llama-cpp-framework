@@ -595,6 +595,11 @@ pub struct ModelProfileDownload {
     /// The model profile id. Default: derived from the model's file name.
     #[arg(long)]
     pub id: Option<String>,
+    /// Add the model to this instance profile and save the fit's placement
+    /// into its entry `[<profile>/<id>]`; left out, the placement is printed
+    /// as advice, and the entry is filled by `pai instance-profile placement`.
+    #[arg(long, value_name = "PROFILE")]
+    pub instance_profile: Option<String>,
 }
 
 // ── Dispatch & rendering ─────────────────────────────────────────────────
@@ -1431,8 +1436,9 @@ fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
         check_download_id(&id, &existing)?;
         model_profile.id = id;
     }
-    hf::save_model_profile(&model_profile, &models_dir)
-        .with_context(|| strings::t("save-model-profile-failed"))?;
+    let entry = a.instance_profile.as_deref();
+    let refusal = hf::save_downloaded_profile(&model_profile, &models_dir, entry)
+        .map_err(|e| anyhow::anyhow!("{}", e.text()))?;
     println!(
         "{}",
         strings::fill(
@@ -1443,16 +1449,42 @@ fn run_model_profile_download(a: ModelProfileDownload) -> Result<()> {
             ]
         )
     );
-    if let Some(line) = placement_line(&model_profile) {
-        println!("{line}");
+    // The placement the fit found: into the entry when one was named, printed
+    // as advice when not, and said again when the entry was refused, so the
+    // user learns the profile is there with no placement.
+    match (entry, &refusal) {
+        (Some(profile), None) => {
+            if let Some((keys, note)) = placement_parts(&model_profile) {
+                println!(
+                    "{}",
+                    strings::fill("placement-in-entry", &[&profile, &keys, &note])
+                );
+            }
+        }
+        (Some(profile), Some(e)) => {
+            println!(
+                "{}",
+                strings::fill(
+                    "download-entry-refused",
+                    &[&profile, &model_profile.id, &e.text()],
+                )
+            );
+        }
+        (None, _) => {
+            if let Some(line) = placement_line(&model_profile) {
+                println!("{line}");
+                println!("{}", strings::t("placement-advice"));
+            }
+        }
     }
     Ok(())
 }
 
-/// `Placement: device = ROCm1,CUDA0, tensor-split = 26,23, ctx-size = 32768
-/// (estimated at download ...)`: the placement keys a derived model profile got, and
-/// its note (pure); `None` when the download left them to the fit.
-fn placement_line(p: &model_profiles::ModelProfile) -> Option<String> {
+/// The placement keys and the note of a derived model profile (pure):
+/// `None` when the download left the placement to the fit, so there is
+/// nothing to say. `placement_line` prints them, the entry's line names the
+/// instance profile they went to.
+fn placement_parts(p: &model_profiles::ModelProfile) -> Option<(String, String)> {
     if p.placement_note.is_empty() {
         return None;
     }
@@ -1472,10 +1504,15 @@ fn placement_line(p: &model_profiles::ModelProfile) -> Option<String> {
     .into_iter()
     .flatten()
     .collect();
-    Some(strings::fill(
-        "placement-line",
-        &[&keys.join(", "), &p.placement_note],
-    ))
+    Some((keys.join(", "), p.placement_note.clone()))
+}
+
+/// `Placement: device = ROCm1,CUDA0, tensor-split = 26,23, ctx-size = 32768
+/// (estimated at download ...)`: the placement keys a derived model profile got, and
+/// its note (pure); `None` when the download left them to the fit.
+fn placement_line(p: &model_profiles::ModelProfile) -> Option<String> {
+    let (keys, note) = placement_parts(p)?;
+    Some(strings::fill("placement-line", &[&keys, &note]))
 }
 
 /// The listing as `model-profile download` prints it (pure): `repo @ commit`, then

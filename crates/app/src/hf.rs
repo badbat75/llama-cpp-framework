@@ -1850,6 +1850,78 @@ pub fn save_model_profile(p: &ModelProfile, models_dir: &Path) -> std::io::Resul
     model_profiles::save(p)
 }
 
+/// Create the download's model profile `p` (the fit's placement filled in by
+/// `model_profile_from_download`) through `CreateModelProfile`'s rules: the
+/// write to `models.ini` carries the stay keys
+/// (`pai_core::checks::MODEL_PROFILE_STAY_KEYS`) only, never a moved key
+/// (`PLACEMENT_KEYS`). When `instance_profile` names one, the model is added
+/// to it (`add_instance_profile_model`) and the fit's placement keys are
+/// saved into the entry `[<profile>/<id>]` (`set_instance_profile_model`);
+/// without it the placement is the caller's to print as advice. `models_dir`
+/// is the folder the files landed in, for the ModelsDir seed that is not the
+/// manager's: `Direct` (macOS) has no manager and no pool of the node, so the
+/// per-user save is kept there, the profile's own keys and all.
+/// `Ok(None)`: created, the entry saved or not asked for.
+/// `Ok(Some(refusal))`: created, the entry refused, the caller says so.
+/// `Err`: nothing created.
+pub fn save_downloaded_profile(
+    p: &ModelProfile,
+    models_dir: &Path,
+    instance_profile: Option<&str>,
+) -> Result<Option<pai_core::client::ClientError>, pai_core::client::ClientError> {
+    use pai_core::checks;
+    use pai_core::client::ModelProfileSource;
+    use pai_core::ini;
+    let files = crate::server_control::backend();
+    // `Direct` (macOS) has no manager, no instance profile pool and no
+    // `models.ini` of the node: the download keeps the per-user write there,
+    // the profile's own keys and all.
+    if files.kind() == crate::server_control::Kind::Direct {
+        return save_model_profile(p, models_dir)
+            .map(|()| None)
+            .map_err(|e| pai_core::client::ClientError::Other(e.to_string()));
+    }
+    // The section's keys, as a save renders them, split the way the migration
+    // split them: the moved keys go to the entry, the stay keys stay.
+    let rendered = model_profiles::render_section(p);
+    let keys = ini::section_keys(&rendered, &p.id);
+    let mut values: Vec<(String, String)> = Vec::new();
+    let mut placement: Vec<(String, String)> = Vec::new();
+    for (key, value) in keys {
+        if checks::placement_key(&key) {
+            placement.push((key, value));
+        } else {
+            values.push((key, value));
+        }
+    }
+    // One source key: the repository the download names carries the file and
+    // its provenance, so the file's own path rides in no create (the manager
+    // refuses a source that names two).
+    if values.iter().any(|(key, _)| key == "hf-repo") {
+        values.retain(|(key, _)| key != "model");
+    }
+    files.create_model_profile(&p.id, &ModelProfileSource::Keys(values))?;
+    let Some(entry) = instance_profile else {
+        return Ok(None);
+    };
+    // The entry first empty, then whole: `SetInstanceProfileModel` saves the
+    // entry it is given, so the placement of a fit that found nothing leaves
+    // the entry with no key, and the model stays listed.
+    if let Err(e) = files.add_instance_profile_model(entry, &p.id) {
+        return Ok(Some(e));
+    }
+    if placement.is_empty() {
+        return Ok(None);
+    }
+    let pool = match files.instance_profile_pool(entry) {
+        Ok(pool) => pool,
+        Err(e) => return Ok(Some(e)),
+    };
+    Ok(files
+        .set_instance_profile_model(entry, &p.id, &placement, &pool)
+        .err())
+}
+
 /// `4.68 GiB` / `812.0 MiB`: a size for a candidate list or a progress line.
 pub fn format_size(bytes: u64) -> String {
     const MIB: f64 = 1024.0 * 1024.0;

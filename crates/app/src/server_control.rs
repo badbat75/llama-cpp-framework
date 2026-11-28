@@ -5,7 +5,7 @@
 
 use crate::server_cfg::ServerConfig;
 use crate::strings;
-use pai_core::client::{ClientError, InstanceState, ManagerClient};
+use pai_core::client::{Affected, ClientError, InstanceState, ManagerClient, ModelProfileSource};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -317,6 +317,67 @@ impl Backend {
                 .client()
                 .and_then(|c| c.set_boot_enabled(INSTANCE, enabled))
                 .map_err(|e| e.text()),
+        }
+    }
+}
+
+impl Backend {
+    /// The model profile verbs a caller asks of the manager (ARCHITECTURE.md
+    /// "Instance profiles", IP7c). `Direct` has no manager and no instance
+    /// profile pool, only the per-user files `model_profiles::save` writes, so
+    /// every one of these answers there that no manager is there.
+    ///
+    /// Write a new model profile `id` from `source`: the manager checks each
+    /// key, the id and the pool, and appends the section to `models.ini`.
+    pub fn create_model_profile(
+        &self,
+        id: &str,
+        source: &ModelProfileSource,
+    ) -> Result<(), ClientError> {
+        match self {
+            Backend::Direct => Err(ClientError::Unavailable),
+            Backend::Manager(m) => m.client()?.create_model_profile(id, source),
+        }
+    }
+
+    /// Give the instance profile `profile` the model profile `model`, with an
+    /// empty entry, answering what the add re-rendered (IP4a).
+    pub fn add_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+    ) -> Result<Affected, ClientError> {
+        match self {
+            Backend::Direct => Err(ClientError::Unavailable),
+            Backend::Manager(m) => m.client()?.add_instance_profile_model(profile, model),
+        }
+    }
+
+    /// The instance profile pool's text, as `GetInstanceProfile` answers it:
+    /// the revision [`Self::set_instance_profile_model`] of this moment needs.
+    pub fn instance_profile_pool(&self, profile: &str) -> Result<String, ClientError> {
+        match self {
+            Backend::Direct => Err(ClientError::Unavailable),
+            Backend::Manager(m) => Ok(m.client()?.instance_profile(profile)?.revision),
+        }
+    }
+
+    /// Save the entry `[<profile>/<model>]` whole: the keys of `values` and
+    /// none else. `pool` is the text just read from
+    /// [`Self::instance_profile_pool`], so a pool that moved under the caller
+    /// is the manager's `Changed`, never an overwrite.
+    pub fn set_instance_profile_model(
+        &self,
+        profile: &str,
+        model: &str,
+        values: &[(String, String)],
+        pool: &str,
+    ) -> Result<Affected, ClientError> {
+        match self {
+            Backend::Direct => Err(ClientError::Unavailable),
+            Backend::Manager(m) => m
+                .client()?
+                .set_instance_profile_model(profile, model, values, pool),
         }
     }
 }
@@ -748,7 +809,10 @@ pub fn backend() -> &'static Backend {
 /// A recording [`ManagerClient`] for the tests of this seam and its callers.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake {
-    use pai_core::client::{ClientError, InstanceInfo, InstanceState, ManagerClient, ManagerFile};
+    use pai_core::client::{
+        Affected, ClientError, InstanceInfo, InstanceProfileInfo, InstanceState, ManagerClient,
+        ManagerFile, ModelProfileSource,
+    };
     use std::sync::{Arc, Mutex};
 
     /// One log shared by the fake and whatever else a test records (the
@@ -794,6 +858,11 @@ pub mod fake {
     /// test reads them after the fake moved into a backend.
     pub type Files = Arc<Mutex<std::collections::BTreeMap<String, String>>>;
 
+    /// One call that writes a set of keys, in order: the two names the call
+    /// carries (the model profile, and beside it the profile it copies or the
+    /// instance profile the entry belongs to) and the keys.
+    pub type KeyWrite = (String, String, Vec<(String, String)>);
+
     /// The manager as the tests need it: a state that start, stop and restart
     /// move (a stop goes through `Deactivating` once, as systemd's does), and
     /// optional failures.
@@ -833,6 +902,25 @@ pub mod fake {
         pub fail_boot: Option<ClientError>,
         /// What set_boot_enabled fails with (the state is then left as it was).
         pub fail_set_boot: Option<ClientError>,
+        /// The instance profiles `instance_profiles()` and `instance_profile()`
+        /// answer; shared out so a test reads them after the fake moved into a
+        /// backend.
+        pub profiles: Arc<Mutex<Vec<InstanceProfileInfo>>>,
+        /// The `create_model_profile` calls, in order: the id, the source
+        /// profile and the source's keys; shared out so a test reads them
+        /// after the fake moved into a backend.
+        pub created: Arc<Mutex<Vec<KeyWrite>>>,
+        /// The `set_instance_profile_model` calls, in order: the profile, the
+        /// model and the entry's keys; shared out so a test reads them after
+        /// the fake moved into a backend.
+        pub entries_set: Arc<Mutex<Vec<KeyWrite>>>,
+        /// What create_model_profile fails with (the call is recorded, nothing
+        /// is kept).
+        pub fail_create_model: Option<ClientError>,
+        /// What add_instance_profile_model fails with (the entry is not added).
+        pub fail_add_model: Option<ClientError>,
+        /// What set_instance_profile_model fails with (no keys are kept).
+        pub fail_set_entry: Option<ClientError>,
     }
 
     impl FakeClient {
@@ -865,7 +953,25 @@ pub mod fake {
                 boot: Arc::new(Mutex::new(false)),
                 fail_boot: None,
                 fail_set_boot: None,
+                profiles: Arc::new(Mutex::new(vec![])),
+                created: Arc::new(Mutex::new(vec![])),
+                entries_set: Arc::new(Mutex::new(vec![])),
+                fail_create_model: None,
+                fail_add_model: None,
+                fail_set_entry: None,
             }
+        }
+
+        /// The fake with the instance profile `id` running the server profile
+        /// `server_profile`, its file text answered as `revision`.
+        pub fn with_profile(self, id: &str, server_profile: &str, revision: &str) -> FakeClient {
+            self.profiles.lock().unwrap().push(InstanceProfileInfo {
+                id: id.to_string(),
+                server_profile: server_profile.to_string(),
+                entries: vec![],
+                revision: revision.to_string(),
+            });
+            self
         }
 
         /// The fake with the manager's file `name` holding `text`.
@@ -1002,6 +1108,74 @@ pub mod fake {
         }
         fn authenticate(&self, _user: &str, _password: &str) -> Result<(bool, bool), ClientError> {
             Err(ClientError::Unavailable)
+        }
+        /// The instance profiles. Deliberately not recorded, as `instances`:
+        /// a listing read is no action.
+        fn instance_profiles(&self) -> Result<Vec<InstanceProfileInfo>, ClientError> {
+            Ok(self.profiles.lock().unwrap().clone())
+        }
+        fn instance_profile(&self, profile: &str) -> Result<InstanceProfileInfo, ClientError> {
+            self.profiles
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|p| p.id == profile)
+                .cloned()
+                .ok_or_else(|| ClientError::NoInstanceProfile(profile.to_string()))
+        }
+        fn create_model_profile(
+            &self,
+            profile: &str,
+            source: &ModelProfileSource,
+        ) -> Result<(), ClientError> {
+            self.record("create_model_profile", profile);
+            if let Some(e) = &self.fail_create_model {
+                return Err(e.clone());
+            }
+            let (from, values) = source.as_source();
+            self.created
+                .lock()
+                .unwrap()
+                .push((profile.to_string(), from, values));
+            Ok(())
+        }
+        fn add_instance_profile_model(
+            &self,
+            profile: &str,
+            model: &str,
+        ) -> Result<Affected, ClientError> {
+            self.record("add_instance_profile_model", &format!("{profile} {model}"));
+            if let Some(e) = &self.fail_add_model {
+                return Err(e.clone());
+            }
+            if let Some(p) = self
+                .profiles
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|p| p.id == profile)
+            {
+                p.entries.push(model.to_string());
+            }
+            Ok(Affected::default())
+        }
+        fn set_instance_profile_model(
+            &self,
+            profile: &str,
+            model: &str,
+            values: &[(String, String)],
+            _revision: &str,
+        ) -> Result<Affected, ClientError> {
+            self.record("set_instance_profile_model", &format!("{profile} {model}"));
+            if let Some(e) = &self.fail_set_entry {
+                return Err(e.clone());
+            }
+            self.entries_set.lock().unwrap().push((
+                profile.to_string(),
+                model.to_string(),
+                values.to_vec(),
+            ));
+            Ok(Affected::default())
         }
     }
 
