@@ -4,7 +4,8 @@
 //! A client [`DbusClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
-//! `CreateServerProfile`, `DeleteServerProfile` and
+//! `CreateServerProfile`, `DeleteServerProfile`, `CopyServerProfile`,
+//! `CopyInstanceProfile` and
 //! `SetInstanceTags` and `SetInstanceLabel` and `ModelInfo` and `NodeInfo` and
 //! `ModelFiles` go as the `As` form of the same method, with the user's name as
 //! its first argument
@@ -22,6 +23,8 @@
 //! SetServerProfileAs(s principal, s instance, s profile)
 //! CreateServerProfileAs(s principal, s engine, s profile, q port)
 //! DeleteServerProfileAs(s principal, s engine, s profile)
+//! CopyServerProfileAs(s principal, s engine, s from, s profile)
+//! CopyInstanceProfileAs(s principal, s from, s profile)
 //! SetInstanceTagsAs(s principal, s instance, as tags)
 //! SetInstanceLabel(s instance, s label)
 //! SetInstanceLabelAs(s principal, s instance, s label)
@@ -499,6 +502,20 @@ impl ManagerClient for DbusClient {
         }
         .map(|_| ())
     }
+    fn copy_server_profile(
+        &self,
+        engine: &str,
+        from: &str,
+        profile: &str,
+    ) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => {
+                self.call("CopyServerProfileAs", &(principal, engine, from, profile))
+            }
+            None => self.call("CopyServerProfile", &(engine, from, profile)),
+        }
+        .map(|_| ())
+    }
     // The instance profile verbs, mirroring the server profile pair's shape,
     // the `As` form carrying the principal first. The two reads are guarded
     // too: the pool is a `configure` read, so a caller vouching for a signed-in
@@ -551,6 +568,13 @@ impl ManagerClient for DbusClient {
         match self.acting() {
             Some(principal) => self.call("DeleteInstanceProfileAs", &(principal, profile)),
             None => self.call("DeleteInstanceProfile", &(profile,)),
+        }
+        .map(|_| ())
+    }
+    fn copy_instance_profile(&self, from: &str, profile: &str) -> Result<(), ClientError> {
+        match self.acting() {
+            Some(principal) => self.call("CopyInstanceProfileAs", &(principal, from, profile)),
+            None => self.call("CopyInstanceProfile", &(from, profile)),
         }
         .map(|_| ())
     }

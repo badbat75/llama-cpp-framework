@@ -897,6 +897,38 @@ where
             .await?)
     }
 
+    /// `CopyServerProfile`: copies an existing server profile to a new name,
+    /// `(sss)`: the engine, the source and the new name. Its reply is the
+    /// unit.
+    async fn copy_server_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        engine: String,
+        from: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.copy_server_profile(&who, &engine, &from, &profile))
+            .await?)
+    }
+
+    /// `CopyServerProfile` for `principal`, the principal first as every `As`
+    /// method has it (`ssss`).
+    async fn copy_server_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        engine: String,
+        from: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.copy_server_profile(&who, &engine, &from, &profile))
+            .await?)
+    }
+
     // ── The instance profile verbs (`ARCHITECTURE.md` "Instance profiles").
 
     /// `InstanceProfiles`: the node's instance profiles, `a(ssas)`: each one
@@ -1020,6 +1052,36 @@ where
         let who = requester_as(&header, principal)?;
         Ok(self
             .core(move |m| m.delete_instance_profile(&who, &profile))
+            .await?)
+    }
+
+    /// `CopyInstanceProfile`: copies an existing instance profile, its entry
+    /// sections with it, `(ss)`: the source and the new name. Its reply is the
+    /// unit.
+    async fn copy_instance_profile(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        from: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_of(&header)?;
+        Ok(self
+            .core(move |m| m.copy_instance_profile(&who, &from, &profile))
+            .await?)
+    }
+
+    /// `CopyInstanceProfile` for `principal`, the principal first as every
+    /// `As` method has it (`sss`).
+    async fn copy_instance_profile_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        from: String,
+        profile: String,
+    ) -> Result<(), Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(self
+            .core(move |m| m.copy_instance_profile(&who, &from, &profile))
             .await?)
     }
 

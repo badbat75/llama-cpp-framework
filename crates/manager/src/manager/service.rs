@@ -2101,6 +2101,60 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
+    /// Copies the server profile `from` of the engine `engine` to a new
+    /// profile `profile`, byte for byte. Guarded as a write of a served
+    /// file is. The id and target checks are the create's, in its order; the
+    /// source's file is read whole and written through the same temp file and
+    /// rename, so the copy lands complete. The API key line rides with the
+    /// bytes: the manager never hands a key to a client, and a client that
+    /// cannot read a file cannot read the copy. No render, no record, no unit
+    /// and no state: an instance running on the source keeps running on it.
+    pub fn copy_server_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        engine: &str,
+        from: &str,
+        profile: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            known_engine(engine)?;
+            let io = |e: std::io::Error| ManagerError::Io(e.kind());
+            // The name rule `config_file` applies to `server@<x>.ini`: no name
+            // builds a path outside the engine's directory, and the target
+            // check that follows is the create's.
+            let path = crate::paths::instance_ini(profile)
+                .ok_or_else(|| one_value_refusal("server-profile-bad-id", profile))?;
+            if std::fs::symlink_metadata(&path).is_ok() {
+                return Err(ManagerError::ServerProfileExists(profile.to_string()));
+            }
+            // A source name the rule refuses is a source with no file: the
+            // delete answers it the same way.
+            let source = crate::paths::instance_ini(from)
+                .ok_or_else(|| ManagerError::NoServerProfile(from.to_string()))?;
+            let bytes = std::fs::read(&source).map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => ManagerError::NoServerProfile(from.to_string()),
+                other => ManagerError::Io(other),
+            })?;
+            // The bytes are text: the served-file write takes a text, and a
+            // source that stopped being text is not a served file.
+            let text = String::from_utf8(bytes)
+                .map_err(|_| ManagerError::Io(std::io::ErrorKind::InvalidData))?;
+            write_served_file(
+                &path,
+                &ConfigFile::ServerProfile(profile.to_string()),
+                &text,
+                &*self.group,
+            )
+            .map_err(io)
+        };
+        let answer = run();
+        self.record_action("copy_server_profile", profile, Some(&who), &answer);
+        answer
+    }
+
     // ── The instance profile verbs ────────────────────────────────────────
     // The pool of instance profiles, its entries, the instance's profile and
     // its address (`ARCHITECTURE.md` "Instance profiles", slice IP3). A write
@@ -2249,6 +2303,59 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         };
         let answer = run();
         self.record_action("delete_instance_profile", profile, Some(&who), &answer);
+        answer
+    }
+
+    /// Copies the instance profile `from` to a new profile `profile`, with
+    /// its entry sections. Guarded as a write of a served file is. The id
+    /// and target checks are the create's, in its order; the source's own
+    /// section is copied whole with its keys, its header renamed, and each
+    /// entry section is copied whole, raw, in the source's order: the entry's
+    /// keys are its state, and a copy carries it. No render, no record, no
+    /// unit and no state: the copy names no instance, and an instance running
+    /// the source keeps running it.
+    pub fn copy_instance_profile<W: AsRequester>(
+        &self,
+        who: &W,
+        from: &str,
+        profile: &str,
+    ) -> Result<(), ManagerError> {
+        let who = who.as_requester();
+        let run = || -> Result<(), ManagerError> {
+            self.authorize_as(&who, Action::Configure)?;
+            let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+            if !crate::paths::valid_instance_id(profile) {
+                return Err(one_value_refusal("instance-profile-bad-id", profile));
+            }
+            let text = self.pool_text()?;
+            let rows = profile_rows(&text);
+            if rows.iter().any(|row| row.id == profile) {
+                return Err(ManagerError::InstanceProfileExists(profile.to_string()));
+            }
+            let row = rows
+                .iter()
+                .find(|row| row.id == from)
+                .ok_or_else(|| ManagerError::NoInstanceProfile(from.to_string()))?;
+            // The source's sections, cut from no text: the copy appends to the
+            // pool text it read under this lock, and every read of the pool
+            // takes the same lock, so no write moves that text. The profile's
+            // own section first, then its entries in the source's order.
+            let mut next = text.clone();
+            let own = pai_core::ini::text::section_text(&text, from)
+                .ok_or(ManagerError::NoInstanceProfile(from.to_string()))?;
+            next = append_pool_section(&next, &renamed_section(&own, profile));
+            for entry in &row.entries {
+                let body = pai_core::ini::text::section_text(&text, &format!("{from}/{entry}"))
+                    .ok_or(ManagerError::Io(std::io::ErrorKind::UnexpectedEof))?;
+                let name = format!("{profile}/{entry}");
+                next = append_pool_section(&next, &renamed_section(&body, &name));
+            }
+            // No render: the new profile runs no instance, and the instance
+            // that runs the source keeps running it.
+            self.write_pool_quiet(&next)
+        };
+        let answer = run();
+        self.record_action("copy_instance_profile", profile, Some(&who), &answer);
         answer
     }
 
@@ -2654,6 +2761,23 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     .is_ok_and(|state| state == UnitState::Active)
             })
             .collect())
+    }
+
+    /// Writes the instance profile pool `text` and renders nothing: the
+    /// served-file write on its own, for the one pool write that can change no
+    /// instance's render, [`Self::copy_instance_profile`]: its new sections are
+    /// a profile no instance runs.
+    fn write_pool_quiet(&self, text: &str) -> Result<(), ManagerError> {
+        let io = |e: std::io::Error| ManagerError::Io(e.kind());
+        let dir = crate::paths::engine_config_dir();
+        std::fs::create_dir_all(&dir).map_err(io)?;
+        write_served_file(
+            &dir.join(INSTANCE_PROFILES_FILE),
+            &ConfigFile::Models,
+            text,
+            &*self.group,
+        )
+        .map_err(io)
     }
 
     /// Writes the instance profile pool `text` over the text `before` the file
@@ -4806,6 +4930,32 @@ fn instance_owning_profile(record: &str, profile: &str) -> Option<String> {
 fn cut_section(text: &str, section: &str) -> Result<String, ManagerError> {
     pai_core::ini::text::delete_section(text, section)
         .ok_or(ManagerError::Io(std::io::ErrorKind::NotFound))
+}
+
+/// The raw text of one section `section` (a header line and the lines after
+/// it) appended to the pool text `text` at the end, in the pool's own shape:
+/// a blank line, the section, the file's line ending.
+fn append_pool_section(text: &str, section: &str) -> String {
+    let eol = pai_core::ini::detect_eol(text);
+    let mut out = text.trim_end().to_string();
+    out.push_str(eol);
+    out.push_str(eol);
+    out.push_str(section.trim_end_matches(['\r', '\n']));
+    out.push_str(eol);
+    out
+}
+
+/// The raw text of a section `body` with its header line rewritten to
+/// `[name]`, in the header line's own line ending: the keys, comments and
+/// order after the header are the source's, byte for byte.
+fn renamed_section(body: &str, name: &str) -> String {
+    match body.split_once('\n') {
+        Some((line, rest)) => {
+            let eol = if line.ends_with('\r') { "\r\n" } else { "\n" };
+            format!("[{name}]{eol}{rest}")
+        }
+        None => format!("[{name}]"),
+    }
 }
 
 /// The key `key` of the section `section` of the text `text`, trimmed, `None`

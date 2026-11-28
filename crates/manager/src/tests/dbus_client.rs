@@ -5037,3 +5037,281 @@ pub(crate) fn manager_dbus_client_ip4b_e2e() {
         "IP4b 2: the refused create wrote no section"
     );
 }
+
+/// E2E phase: CP1, the copy verbs over the bus, with pai-core's client
+/// (`ARCHITECTURE.md` "Profile copy", slice CP1): `CopyServerProfile` /
+/// `CopyServerProfileAs` and `CopyInstanceProfile` / `CopyInstanceProfileAs`.
+/// The copies cross as plain successes and the bytes land on disk; every
+/// refusal crosses decoded with its name: `NoServerProfile`,
+/// `ServerProfileExists`, the keyed `server-profile-bad-id` and
+/// `unknown-engine`, `NoInstanceProfile`, `InstanceProfileExists`, the keyed
+/// `instance-profile-bad-id`. The `As` form rides the bff's account, and the
+/// pair (the bff's account, a current member) decides the right: polkit is
+/// asked nothing. No copy renders, probes a state, or reaches a unit verb.
+pub(crate) fn manager_dbus_client_cp1_copy_profile_e2e() {
+    use crate::manager::service::fakes::FakePasswords;
+
+    const BFF: &str = ":1.9";
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("system config dir");
+    const POOL: &str = "[lab]\nServerProfile = lab\n\n[lab/alpha]\ndevice = cuda0\n\n[lab/gamma]\ngpu_split = \"0/1,1/2\"\n\n[unassigned]\nServerProfile = lab\n";
+    const RECORD: &str =
+        "[default]\nInstanceProfile = unassigned\nHostname = 127.0.0.1\nPort = 8581\n";
+    const LAB: &str = "[Server]\nHostname = 0.0.0.0\nPort = 8681\nOpencodeApiKey = sk-local-3f9a\n";
+    std::fs::write(sys.join("instance-profiles.ini"), POOL).expect("pool");
+    std::fs::write(sys.join("instances.ini"), RECORD).expect("record");
+    std::fs::write(sys.join("server@lab.ini"), LAB).expect("server profile");
+    std::fs::write(sys.join("server@default.ini"), "[Server]\nPort = 8581\n")
+        .expect("server profile");
+
+    let pool = || std::fs::read_to_string(sys.join("instance-profiles.ini")).expect("pool");
+    let record = || std::fs::read_to_string(sys.join("instances.ini")).expect("record");
+    let bytes_of = |name: &str| std::fs::read(sys.join(name)).expect("read");
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    // A section read as a copy leaves it, in two parts: `header_of` is its
+    // header line, which the copy renames to the new id, `body_of` the text
+    // after the header. `section_text` starts AT the header line, so a copy's
+    // whole section can never equal the source's; what a copy owes is its own
+    // header and the source's body. The body's trailing line endings are off
+    // the comparison because the last section of a copy ends the file, where
+    // the same section of the source ends at a blank line.
+    let header_of = |text: &str, id: &str| -> String {
+        section(text, id)
+            .split_once('\n')
+            .map(|(line, _)| line.to_string())
+            .unwrap_or_default()
+    };
+    let body_of = |text: &str, id: &str| -> String {
+        section(text, id)
+            .split_once('\n')
+            .map(|(_, rest)| rest.trim_end_matches(['\r', '\n']).to_string())
+            .unwrap_or_default()
+    };
+    let ids_of = |text: &str| -> Vec<String> {
+        pai_core::ini::parse_sections(text)
+            .into_iter()
+            .map(|s| s.id)
+            .collect()
+    };
+    let refused = |key: &'static str, values: &[&str]| -> ClientError {
+        ClientError::Invalid(Refusal {
+            key,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        })
+    };
+
+    // ── The plain form, answered to a caller with configure ──────────────
+    {
+        let c = core(true, &[]);
+        let (_server, client) = connect(&c, Some(":1.42"));
+
+        assert_eq!(
+            client.copy_server_profile("llama.cpp", "lab", "team"),
+            Ok(()),
+            "the copy of a server profile lands"
+        );
+        assert_eq!(
+            bytes_of("server@team.ini"),
+            LAB.as_bytes(),
+            "the bytes cross inside the manager: the copy is the source byte for \
+             byte, the API key line included"
+        );
+        assert_eq!(
+            client.copy_server_profile("llama.cpp", "nope", "team2"),
+            Err(ClientError::NoServerProfile("nope".into())),
+            "a source with no file, decoded with the name"
+        );
+        assert_eq!(
+            client.copy_server_profile("llama.cpp", "lab", "default"),
+            Err(ClientError::ServerProfileExists("default".into())),
+            "a target the engine has, decoded with the name"
+        );
+        assert_eq!(
+            client.copy_server_profile("llama.cpp", "lab", "Bad Id"),
+            Err(refused("server-profile-bad-id", &["Bad Id"])),
+            "a target the rule refuses, decoded as the keyed refusal"
+        );
+        assert_eq!(
+            client.copy_server_profile("vllm", "lab", "team3"),
+            Err(refused("unknown-engine", &["vllm"])),
+            "the engine is asked first, as the create answers it"
+        );
+        assert_eq!(
+            client.copy_instance_profile("lab", "team"),
+            Ok(()),
+            "the copy of an instance profile lands"
+        );
+        let p = pool();
+        assert!(
+            p.starts_with(POOL),
+            "the pool's own bytes keep their place: {p}"
+        );
+        for id in ["team", "team/alpha", "team/gamma"] {
+            assert_eq!(
+                header_of(&p, id),
+                format!("[{id}]"),
+                "each copied section carries the header of the new id"
+            );
+        }
+        assert_eq!(
+            body_of(&p, "team"),
+            body_of(POOL, "lab"),
+            "the section crosses as the source's, keys included"
+        );
+        assert_eq!(
+            body_of(&p, "team/alpha"),
+            body_of(POOL, "lab/alpha"),
+            "the first entry crosses with its keys"
+        );
+        assert_eq!(
+            body_of(&p, "team/gamma"),
+            body_of(POOL, "lab/gamma"),
+            "the second entry crosses with its keys"
+        );
+        assert_eq!(
+            ids_of(&p),
+            vec![
+                "lab",
+                "lab/alpha",
+                "lab/gamma",
+                "unassigned",
+                "team",
+                "team/alpha",
+                "team/gamma"
+            ],
+            "the copied sections append at the file's end, the profile first, \
+             then its entries in the source's order"
+        );
+        assert_eq!(
+            client.copy_instance_profile("nope", "t1"),
+            Err(ClientError::NoInstanceProfile("nope".into())),
+            "a source the pool has no section for, decoded with the name"
+        );
+        assert_eq!(
+            client.copy_instance_profile("lab", "unassigned"),
+            Err(ClientError::InstanceProfileExists("unassigned".into())),
+            "a target the pool has, decoded with the name"
+        );
+        assert_eq!(
+            client.copy_instance_profile("lab", "Bad Id"),
+            Err(refused("instance-profile-bad-id", &["Bad Id"])),
+            "a target the rule refuses, decoded as the keyed refusal"
+        );
+        assert_eq!(record(), RECORD, "no copy wrote the record");
+        assert_eq!(
+            calls(&c),
+            vec![],
+            "the copies render nothing: no state probe, no unit verb"
+        );
+        assert_eq!(
+            asked(&c),
+            vec![(Caller(":1.42".into()), Action::Configure); 9],
+            "the guard is asked once per call, as a write of a served file is"
+        );
+        assert!(
+            !sys.join("server@team2.ini").exists()
+                && !sys.join("server@team3.ini").exists()
+                && !pool().contains("[t1]"),
+            "the refused copies wrote nothing"
+        );
+    }
+
+    // ── The `As` form, on the bff's account ──────────────────────────────
+    {
+        let passwords = FakePasswords::new();
+        let admins = passwords.asked_admin.clone();
+        let (c, _checked) = auth_core(BFF, passwords);
+        let (_server, client) = connect(&c, Some(BFF));
+
+        let member = Arc::new(client.acting_for("alice"));
+        assert_eq!(
+            on("copy_server_profile", &member, |c| c.copy_server_profile(
+                "llama.cpp",
+                "lab",
+                "as-team"
+            )),
+            Ok(()),
+            "a member's copy, vouched for by the bff: the right is the pair, \
+             not polkit"
+        );
+        assert_eq!(
+            bytes_of("server@as-team.ini"),
+            LAB.as_bytes(),
+            "the member's copy is the source, byte for byte"
+        );
+        assert_eq!(
+            on("copy_instance_profile", &member, |c| c
+                .copy_instance_profile("lab", "as-ip")),
+            Ok(()),
+            "the member's instance profile copy"
+        );
+        let p = pool();
+        assert_eq!(
+            header_of(&p, "as-ip"),
+            "[as-ip]",
+            "the member's copy carries the header of the new id"
+        );
+        assert_eq!(
+            body_of(&p, "as-ip"),
+            body_of(POOL, "lab"),
+            "the member's copy carries the section: {p}"
+        );
+        assert_eq!(
+            header_of(&p, "as-ip/alpha"),
+            "[as-ip/alpha]",
+            "and the entry's header"
+        );
+        assert_eq!(
+            body_of(&p, "as-ip/alpha"),
+            body_of(POOL, "lab/alpha"),
+            "and the entry"
+        );
+
+        let outsider = Arc::new(client.acting_for("bob"));
+        assert_eq!(
+            on("copy_server_profile", &outsider, |c| c.copy_server_profile(
+                "llama.cpp",
+                "lab",
+                "bob-team"
+            )),
+            Err(ClientError::NotAuthorized),
+            "bob is no member of `pai`"
+        );
+        assert_eq!(
+            on("copy_instance_profile", &outsider, |c| c
+                .copy_instance_profile("lab", "bob-ip")),
+            Err(ClientError::NotAuthorized),
+            "the same for the instance profile copy"
+        );
+        assert!(
+            !sys.join("server@bob-team.ini").exists() && !pool().contains("[bob-ip]"),
+            "a refusal of the `As` form wrote nothing"
+        );
+
+        assert_eq!(
+            asked(&c),
+            Vec::<(Caller, Action)>::new(),
+            "an `As` call asks polkit nothing: the pair decides"
+        );
+        assert_eq!(
+            c.authority().asked_bff.lock().unwrap().clone(),
+            vec![Caller(BFF.into()); 4],
+            "the caller checked once per `As` call"
+        );
+        assert_eq!(
+            admins.lock().unwrap().clone(),
+            vec![
+                "alice".to_string(),
+                "alice".into(),
+                "bob".into(),
+                "bob".into()
+            ],
+            "the membership of the vouched name, asked once per call, never cached"
+        );
+        assert_eq!(calls(&c), vec![], "and nothing reaches the service manager");
+    }
+}

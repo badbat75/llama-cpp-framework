@@ -884,6 +884,38 @@ fn manager_pipe_client_ip4b_e2e() {
 }
 
 #[test]
+fn manager_cp1_copy_profile_e2e() {
+    // ── Manager core: copying a server profile and an instance profile ────
+    // (ARCHITECTURE.md "Profile copy", slice CP1: the bytes and the refusals
+    // of `CopyServerProfile` and `CopyInstanceProfile`, at the core.)
+    isolated(
+        "tests::manager_cp1_copy_profile_e2e",
+        crate::manager::service::manager_cp1_copy_profile_e2e,
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn manager_dbus_client_cp1_copy_profile_e2e() {
+    // ── pai-core's D-Bus client: the copy verbs, plain and `As` (CP1) ─────
+    isolated(
+        "tests::manager_dbus_client_cp1_copy_profile_e2e",
+        dbus_client::manager_dbus_client_cp1_copy_profile_e2e,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn manager_pipe_client_cp1_copy_profile_e2e() {
+    // ── pai-core's client over a stream: the copy verbs, plain and `As` ───
+    // (CP1, the same pins as the D-Bus phase, on the frame.)
+    isolated(
+        "tests::manager_pipe_client_cp1_copy_profile_e2e",
+        pipe_client::manager_pipe_client_cp1_copy_profile_e2e,
+    );
+}
+
+#[test]
 fn manager_principal_e2e() {
     // ── Manager core: acting for a signed-in user (the bff names a member)
     isolated(

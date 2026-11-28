@@ -75,6 +75,9 @@ enum Request {
     CreateServerProfile(String, String, u16, Option<Principal>),
     /// `engine`, `profile`: removes a server profile no instance points at.
     DeleteServerProfile(String, String, Option<Principal>),
+    /// `engine`, `from`, `profile`: copies a server profile's file to a new
+    /// name, byte for byte.
+    CopyServerProfile(String, String, String, Option<Principal>),
     // ── The instance profile verbs (`ARCHITECTURE.md` "Instance profiles").
     /// No arguments: the node's instance profiles.
     InstanceProfiles(Option<Principal>),
@@ -84,6 +87,9 @@ enum Request {
     CreateInstanceProfile(String, String, Option<Principal>),
     /// `profile`: removes an instance profile no instance runs.
     DeleteInstanceProfile(String, Option<Principal>),
+    /// `from`, `profile`: copies an instance profile, its entry sections with
+    /// it.
+    CopyInstanceProfile(String, String, Option<Principal>),
     /// `profile`, `model`: gives an instance profile a model profile.
     AddInstanceProfileModel(String, String, Option<Principal>),
     /// `profile`, `model`: takes a model profile away from an instance profile.
@@ -295,6 +301,16 @@ impl Request {
                 arg("profile")?,
                 principal().map(Some)?,
             ),
+            // Its copy: the source, then the new name.
+            "CopyServerProfile" => {
+                Request::CopyServerProfile(arg("engine")?, arg("from")?, arg("profile")?, None)
+            }
+            "CopyServerProfileAs" => Request::CopyServerProfile(
+                arg("engine")?,
+                arg("from")?,
+                arg("profile")?,
+                principal().map(Some)?,
+            ),
             // The instance profile verbs (`ARCHITECTURE.md` "Instance
             // profiles"). The reads take no argument beside `profile`; the
             // writes carry `revision`, the file's text the caller read.
@@ -315,6 +331,12 @@ impl Request {
             "DeleteInstanceProfile" => Request::DeleteInstanceProfile(arg("profile")?, None),
             "DeleteInstanceProfileAs" => {
                 Request::DeleteInstanceProfile(arg("profile")?, principal().map(Some)?)
+            }
+            "CopyInstanceProfile" => {
+                Request::CopyInstanceProfile(arg("from")?, arg("profile")?, None)
+            }
+            "CopyInstanceProfileAs" => {
+                Request::CopyInstanceProfile(arg("from")?, arg("profile")?, principal().map(Some)?)
             }
             "AddInstanceProfileModel" => {
                 Request::AddInstanceProfileModel(arg("profile")?, arg("model")?, None)
@@ -626,6 +648,13 @@ where
         Request::DeleteServerProfile(engine, profile, principal) => requester(caller, principal)
             .and_then(|who| manager.delete_server_profile(&who, &engine, &profile))
             .map(|()| Value::Null),
+        // Its copy: the source's bytes land in the new file, and the reply is
+        // the unit.
+        Request::CopyServerProfile(engine, from, profile, principal) => {
+            requester(caller, principal)
+                .and_then(|who| manager.copy_server_profile(&who, &engine, &from, &profile))
+                .map(|()| Value::Null)
+        }
         // A new model profile, born switched off: the id, the profile to copy
         // and the keys of the file pick.
         Request::CreateModelProfile(profile, from, values, principal) => {
@@ -683,6 +712,9 @@ where
         }
         Request::DeleteInstanceProfile(profile, principal) => requester(caller, principal)
             .and_then(|who| manager.delete_instance_profile(&who, &profile))
+            .map(|()| Value::Null),
+        Request::CopyInstanceProfile(from, profile, principal) => requester(caller, principal)
+            .and_then(|who| manager.copy_instance_profile(&who, &from, &profile))
             .map(|()| Value::Null),
         // An entry of the pool is the render of every instance running the
         // profile, so these two writes answer the apply as every save does

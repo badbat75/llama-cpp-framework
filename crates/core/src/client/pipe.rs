@@ -18,6 +18,8 @@
 //! {"method":"SetInstanceTags","instance":"default","tags":["edge","v2"]}
 //! {"method":"CreateServerProfile","engine":"llama.cpp","profile":"big","port":8123}
 //! {"method":"DeleteServerProfile","engine":"llama.cpp","profile":"big"}
+//! {"method":"CopyServerProfile","engine":"llama.cpp","from":"lab","profile":"team"}
+//! {"method":"CopyInstanceProfile","from":"lab","profile":"team"}
 //! {"method":"CreateModelProfile","profile":"qwen3","from":"","values":{"model":"/m/a.gguf"}}
 //! {"method":"DeleteModelProfile","profile":"qwen3"}
 //! {"method":"ServerProfiles"}
@@ -32,7 +34,8 @@
 //! A client [`PipeClient::acting_for`] a signed-in user vouches for: `Start`,
 //! `Stop`, `Restart`, `ReadFile`, `WriteFile`, `WriteFileIf`,
 //! `SetBootEnabled`, `SetModelProfile`, `SetServerProfile`,
-//! `CreateServerProfile`, `DeleteServerProfile`, `CreateModelProfile`,
+//! `CreateServerProfile`, `DeleteServerProfile`, `CopyServerProfile`,
+//! `CopyInstanceProfile`, `CreateModelProfile`,
 //! `DeleteModelProfile`,
 //! `SetInstanceTags`, `Devices` and `ModelInfo` and `ModelFiles` go as the
 //! `As` form of the same request, with the user's name in a `principal` field
@@ -504,6 +507,21 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
             &[("engine", json!(engine)), ("profile", json!(profile))],
         ))
     }
+    fn copy_server_profile(
+        &self,
+        engine: &str,
+        from: &str,
+        profile: &str,
+    ) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "CopyServerProfile",
+            &[
+                ("engine", json!(engine)),
+                ("from", json!(from)),
+                ("profile", json!(profile)),
+            ],
+        ))
+    }
 
     /// `CreateModelProfile`: the source expanded as the frame carries it, `from`
     /// the profile to copy (`""` for none) and `values` the pick's keys, an
@@ -591,6 +609,12 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
     }
     fn delete_instance_profile(&self, profile: &str) -> Result<(), ClientError> {
         self.call_unit(self.guarded("DeleteInstanceProfile", &[("profile", json!(profile))]))
+    }
+    fn copy_instance_profile(&self, from: &str, profile: &str) -> Result<(), ClientError> {
+        self.call_unit(self.guarded(
+            "CopyInstanceProfile",
+            &[("from", json!(from)), ("profile", json!(profile))],
+        ))
     }
     fn add_instance_profile_model(
         &self,

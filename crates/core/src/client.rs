@@ -359,12 +359,18 @@ pub enum ModelProfileSource {
     Model(String),
     /// A new profile with `hf-repo`, and its `hf-file` when the pick named one.
     Hf { repo: String, file: Option<String> },
+    /// A new profile with the caller's own lines: the model key and every
+    /// other key of the profile a caller already has (a download's model
+    /// profile, whose keys come with it). The manager judges each key, so a
+    /// key of the entry is refused as on a pick.
+    Keys(Vec<(String, String)>),
 }
 
 impl ModelProfileSource {
     /// The pair `CreateModelProfile` takes: the profile to copy, `""` when the
-    /// source is a pick, and the pick's keys, `""` for a clone. A transport
-    /// expands the enum this way, the manager never seeing it.
+    /// source is a pick, and the pick's keys, `""` for a clone. A `Keys` source
+    /// is no copy either: its lines are the caller's own. A transport expands
+    /// the enum this way, the manager never seeing it.
     pub fn as_source(&self) -> (String, Vec<(String, String)>) {
         match self {
             Self::From(id) => (id.clone(), Vec::new()),
@@ -376,6 +382,7 @@ impl ModelProfileSource {
                 }
                 (String::new(), values)
             }
+            Self::Keys(values) => (String::new(), values.clone()),
         }
     }
 }
@@ -649,6 +656,29 @@ pub trait ManagerClient {
             "this transport of the manager has no DeleteServerProfile".into(),
         ))
     }
+    /// Copies the server profile `from` of the engine `engine` to a new
+    /// profile `profile`, byte for byte: the same file a save writes, with
+    /// the source's keys (the API key included, which never leaves the
+    /// manager). A name the id rule refuses is the keyed
+    /// `server-profile-bad-id`, a name the engine has is
+    /// [`ClientError::ServerProfileExists`], a source with no file is
+    /// [`ClientError::NoServerProfile`]. Guarded as a write of a served
+    /// file is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn copy_server_profile(
+        &self,
+        engine: &str,
+        from: &str,
+        profile: &str,
+    ) -> Result<(), ClientError> {
+        let _ = (engine, from, profile);
+        Err(ClientError::Other(
+            "this transport of the manager has no CopyServerProfile".into(),
+        ))
+    }
     // The instance profile verbs (ARCHITECTURE.md "Instance
     // profiles", slice IP3). The default bodies say the transport speaks none
     // of them, as every verb of an older manager does.
@@ -658,6 +688,29 @@ pub trait ManagerClient {
         Err(ClientError::Other(
             "this transport of the manager has no InstanceProfiles".into(),
         ))
+    }
+    /// The ids of the instance profiles whose entries list the model profile
+    /// `model`: what the web UI's model profile list and page answer `usedBy`
+    /// with (the design's IP4, "Model profiles", slice IP4e). The pool is read
+    /// and matched here, so one rule stands for every caller: the pool's order,
+    /// each id once, the entry's model id compared without case, as the
+    /// manager's own `model-profile-assigned` compares it. The default body
+    /// reads the pool with [`Self::instance_profiles`], the verb every
+    /// transport of a manager of this protocol speaks; a machine with no pool
+    /// answers no owner.
+    fn used_by(&self, model: &str) -> Result<Vec<String>, ClientError> {
+        let mut owners: Vec<String> = Vec::new();
+        for profile in self.instance_profiles()? {
+            if !owners.contains(&profile.id)
+                && profile
+                    .entries
+                    .iter()
+                    .any(|entry| entry.eq_ignore_ascii_case(model))
+            {
+                owners.push(profile.id);
+            }
+        }
+        Ok(owners)
     }
     /// One instance profile, by id.
     fn instance_profile(&self, profile: &str) -> Result<InstanceProfileInfo, ClientError> {
@@ -684,6 +737,23 @@ pub trait ManagerClient {
         let _ = profile;
         Err(ClientError::Other(
             "this transport of the manager has no DeleteInstanceProfile".into(),
+        ))
+    }
+    /// Copies the instance profile `from` to a new profile `profile`: the
+    /// section and every entry section `[<from>/<model>]` of the source, in
+    /// the source's order, appended to the pool. A name the id rule refuses
+    /// is the keyed `instance-profile-bad-id`, a name the pool has is
+    /// [`ClientError::InstanceProfileExists`], a source the pool has no
+    /// section for is [`ClientError::NoInstanceProfile`]. Guarded as a write
+    /// of a served file is.
+    ///
+    /// The default body is for a transport that speaks to a manager of an
+    /// older protocol: the call is one it cannot make, said as
+    /// [`ClientError::Other`]. A transport that speaks the method overrides it.
+    fn copy_instance_profile(&self, from: &str, profile: &str) -> Result<(), ClientError> {
+        let _ = (from, profile);
+        Err(ClientError::Other(
+            "this transport of the manager has no CopyInstanceProfile".into(),
         ))
     }
     /// Gives the instance profile `profile` the model profile `model`, an
@@ -825,12 +895,12 @@ pub trait ManagerClient {
             "this transport of the manager has no CreateModelProfile".into(),
         ))
     }
-    /// Removes the model profile `profile` from `models.ini.disabled`, when it
-    /// is switched off and no instance is assigned it: a profile of `models.ini`
-    /// is `model-profile-enabled`, one a key names is `model-profile-assigned`
-    /// naming the instances, and a name neither file holds is
-    /// `no-model-profile-named` (all `ClientError::Invalid`). Guarded as a write
-    /// of a served file is. A delete re-renders, so it answers [`Affected`].
+    /// Removes the model profile `profile` from `models.ini`, the one pool, when
+    /// no instance profile's entry lists it: a name the file has no section for
+    /// is `no-model-profile-named`, one an entry lists is
+    /// `model-profile-assigned` naming the instance profiles (both
+    /// `ClientError::Invalid`). Guarded as a write of a served file is. A delete
+    /// re-renders, so it answers [`Affected`].
     ///
     /// The default body is for a transport that speaks to a manager of an
     /// older protocol: the call is one it cannot make, said as

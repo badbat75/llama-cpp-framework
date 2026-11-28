@@ -21451,3 +21451,534 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
         "IP3a review D5: the address carried by a member lands"
     );
 }
+
+/// E2E phase: CP1, the copy verbs of the two profile pools
+/// (`ARCHITECTURE.md` "Profile copy", slice CP1).
+/// `CopyServerProfile(engine, from, profile)` writes `server@<profile>.ini`
+/// with the bytes of `server@<from>.ini`, key line and comments included;
+/// `CopyInstanceProfile(from, profile)` appends `[<profile>]` and every
+/// `[<profile>/<model>]` of the copy to `instance-profiles.ini`, in the
+/// source's order, with the source's keys. Neither renders, touches the
+/// record, nor reaches a unit verb. The refusals answer as the creates
+/// answer them (the target's name first, then the target taken, then the
+/// source), a source name with no file and no section is the source's own
+/// refusal, and every write is guarded as a create is: the `configure`
+/// gate, the `writing` lock, one action record with the new profile as its
+/// target.
+pub(crate) fn manager_cp1_copy_profile_e2e() {
+    use fakes::{
+        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    crate::paths::redirect_for_tests(dir.path());
+    let sys = crate::paths::engine_config_dir();
+    std::fs::create_dir_all(&sys).expect("engine config dir");
+
+    let bff = Caller(":1.9".into());
+    let member = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("alice".into())),
+    };
+    let outsider = Requester {
+        caller: bff.clone(),
+        principal: Some(Principal("bob".into())),
+    };
+    let desktop = Caller(":1.42".into());
+    let core_in = |allow: bool, group: FakeGroup, log: FakeActionLog| {
+        Manager::new(
+            FakeService::new(),
+            FakeAuthority::new(allow).quietly(true).bff(&bff),
+            FakeResolver::lan(),
+        )
+        .with_group(group)
+        .with_passwords(FakePasswords::new())
+        .with_log(log)
+    };
+    let core = |allow: bool, log: FakeActionLog| core_in(allow, FakeGroup::new(), log);
+    let profile_path = |name: &str| sys.join(format!("server@{name}.ini"));
+    let bytes_of = |name: &str| std::fs::read(sys.join(name)).expect("read");
+    let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
+    let listing = || -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&sys)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let records =
+        |lines: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| lines.lock().unwrap().clone();
+    let section =
+        |text: &str, id: &str| pai_core::ini::text::section_text(text, id).unwrap_or_default();
+    // A section read as a copy leaves it, in two parts: `header_of` is its
+    // header line, which the copy renames to the new id, `body_of` the text
+    // after the header. `section_text` starts AT the header line, so a copy's
+    // whole section can never equal the source's; what a copy owes is its own
+    // header and the source's body. The body's trailing line endings are off
+    // the comparison because the last section of a copy ends the file, where
+    // the same section of the source ends at a blank line.
+    let header_of = |text: &str, id: &str| -> String {
+        section(text, id)
+            .split_once('\n')
+            .map(|(line, _)| line.to_string())
+            .unwrap_or_default()
+    };
+    let body_of = |text: &str, id: &str| -> String {
+        section(text, id)
+            .split_once('\n')
+            .map(|(_, rest)| rest.trim_end_matches(['\r', '\n']).to_string())
+            .unwrap_or_default()
+    };
+    let ids_of = |text: &str| -> Vec<String> {
+        pai_core::ini::parse_sections(text)
+            .into_iter()
+            .map(|s| s.id)
+            .collect()
+    };
+    let exists = |name: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::ServerProfileExists(name.to_string()))
+    };
+    let no_profile = |name: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::NoServerProfile(name.to_string()))
+    };
+    let instance_exists = |name: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::InstanceProfileExists(name.to_string()))
+    };
+    let no_instance = |name: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::NoInstanceProfile(name.to_string()))
+    };
+    let refused = |key: &'static str, value: &str| -> Result<(), ManagerError> {
+        Err(ManagerError::Invalid(pai_core::checks::Refusal {
+            key,
+            values: vec![value.to_string()],
+        }))
+    };
+
+    // The tree: a record, a render, a pool with `lab` carrying two entries,
+    // and two server profiles, `lab` the one with the API key.
+    const RECORD: &str =
+        "[default]\nInstanceProfile = default\nHostname = 127.0.0.1\nPort = 8581\n";
+    const POOL: &str = "[default]\nServerProfile = default\n\n[lab]\nServerProfile = lab\nPort = 8681\n\n[lab/alpha]\ndevice = cuda0\n\n[lab/gamma]\ngpu_split = \"0/1,1/2\"\n\n[unassigned]\nServerProfile = default\n";
+    const LAB: &str = "[Server]\nPort = 8681\nHostname = 0.0.0.0\nTags = edge,v2\nOpencodeApiKey = sk-local-3f9a\n# a comment, kept byte for byte\n";
+    std::fs::write(sys.join(INSTANCES_FILE), RECORD).expect(INSTANCES_FILE);
+    std::fs::write(sys.join(INSTANCE_PROFILES_FILE), POOL).expect("pool");
+    std::fs::write(sys.join("models@default.ini"), "RENDER-KEEP\n").expect("render");
+    std::fs::write(profile_path("default"), "[Server]\nPort = 8581\n").expect("profile");
+    std::fs::write(profile_path("lab"), LAB).expect("lab");
+
+    // ── A server profile copy: the source's bytes, as a save writes ───────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let group = FakeGroup::new();
+        let gcalls = group.calls.clone();
+        let m = core_in(true, group, log);
+        let before = listing();
+
+        assert_eq!(
+            m.copy_server_profile(&desktop, "llama.cpp", "lab", "team"),
+            Ok(()),
+            "a name that is nothing yet, of the engine the manager serves"
+        );
+        assert_eq!(
+            bytes_of("server@team.ini"),
+            LAB.as_bytes(),
+            "the source's bytes, byte for byte: the key line, the comments and \
+             every spacing ride across"
+        );
+        assert!(
+            text_of("server@team.ini").contains("OpencodeApiKey = sk-local-3f9a"),
+            "the API key stays inside the copy: the file the manager wrote carries it"
+        );
+        let mut want = before.clone();
+        want.push("server@team.ini".to_string());
+        want.sort();
+        assert_eq!(listing(), want, "one new file, and no temp file left");
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            RECORD,
+            "the copy writes no instance record"
+        );
+        assert_eq!(
+            text_of("models@default.ini"),
+            "RENDER-KEEP\n",
+            "the copy renders nothing: a new profile runs no instance"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            vec![],
+            "and reaches no unit: the copy is a plain content write"
+        );
+        let g = gcalls.lock().unwrap().clone();
+        assert_eq!(g.len(), 1, "the group set once, on the way in");
+        assert_eq!(g[0].group, INSTANCE_GROUP, "the group of a served file");
+        assert_eq!(
+            g[0].path.file_name().and_then(|n| n.to_str()),
+            Some("server@team.ini.tmp"),
+            "the group is set on the temp file, before the rename"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(profile_path("team"))
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o640,
+                "the mode of a served profile"
+            );
+            assert_eq!(
+                g[0].mode, 0o640,
+                "the temp file had the mode when its group was set: the key of a \
+                 profile is never world readable"
+            );
+        }
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="copy_server_profile" target="team" caller=":1.42" principal=- outcome=ok"#
+                    .to_string()
+            ],
+            "one record for the whole call, the new profile as its target"
+        );
+    }
+
+    // ── The refusals: the target's name, the target taken, the source ─────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let before = listing();
+        let pool_before = text_of(INSTANCE_PROFILES_FILE);
+        let long = "t".repeat(33);
+        for (engine, from, to, want) in [
+            (
+                "vllm",
+                "lab",
+                "no-engine",
+                refused("unknown-engine", "vllm"),
+            ),
+            (
+                "llama.cpp",
+                "lab",
+                "../x",
+                refused("server-profile-bad-id", "../x"),
+            ),
+            (
+                "llama.cpp",
+                "lab",
+                "X",
+                refused("server-profile-bad-id", "X"),
+            ),
+            (
+                "llama.cpp",
+                "lab",
+                "a_b",
+                refused("server-profile-bad-id", "a_b"),
+            ),
+            ("llama.cpp", "lab", "", refused("server-profile-bad-id", "")),
+            (
+                "llama.cpp",
+                "lab",
+                long.as_str(),
+                refused("server-profile-bad-id", &long),
+            ),
+            ("llama.cpp", "lab", "default", exists("default")),
+            ("llama.cpp", "lab", "lab", exists("lab")),
+            ("llama.cpp", "nope", "team2", no_profile("nope")),
+            ("llama.cpp", "../x", "team2", no_profile("../x")),
+            ("llama.cpp", "", "team2", no_profile("")),
+        ] {
+            assert_eq!(
+                m.copy_server_profile(&desktop, engine, from, to),
+                want,
+                "copy of engine {engine:?}, source {from:?}, target {to:?}"
+            );
+        }
+        assert_eq!(listing(), before, "a refused copy writes nothing, anywhere");
+        assert_eq!(
+            text_of(INSTANCE_PROFILES_FILE),
+            pool_before,
+            "and never touches the pool"
+        );
+        let want = vec![
+            r#"action="copy_server_profile" target="no-engine" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            r#"action="copy_server_profile" target="../x" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            r#"action="copy_server_profile" target="X" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            r#"action="copy_server_profile" target="a_b" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            r#"action="copy_server_profile" target="" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+            format!(
+                r#"action="copy_server_profile" target="{long}" caller=":1.42" principal=- outcome="Invalid""#
+            ),
+            r#"action="copy_server_profile" target="default" caller=":1.42" principal=- outcome="ServerProfileExists""#.to_string(),
+            r#"action="copy_server_profile" target="lab" caller=":1.42" principal=- outcome="ServerProfileExists""#.to_string(),
+            r#"action="copy_server_profile" target="team2" caller=":1.42" principal=- outcome="NoServerProfile""#.to_string(),
+            r#"action="copy_server_profile" target="team2" caller=":1.42" principal=- outcome="NoServerProfile""#.to_string(),
+            r#"action="copy_server_profile" target="team2" caller=":1.42" principal=- outcome="NoServerProfile""#.to_string(),
+        ];
+        assert_eq!(
+            records(&lines),
+            want,
+            "one record per refused call, the new profile as its target"
+        );
+    }
+
+    // ── An instance profile copy: section and entries, in order ───────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let pool_before = text_of(INSTANCE_PROFILES_FILE);
+
+        assert_eq!(
+            m.copy_instance_profile(&desktop, "lab", "team"),
+            Ok(()),
+            "a name the pool has no section for"
+        );
+        let pool = text_of(INSTANCE_PROFILES_FILE);
+        assert!(
+            pool.starts_with(pool_before.as_str()),
+            "every byte of the pool before the copy keeps its place: {pool}"
+        );
+        for id in ["team", "team/alpha", "team/gamma"] {
+            assert_eq!(
+                header_of(&pool, id),
+                format!("[{id}]"),
+                "each copied section carries the header of the new id"
+            );
+        }
+        assert_eq!(
+            body_of(&pool, "team"),
+            body_of(&pool_before, "lab"),
+            "the profile's own section, the source's keys in the source's order"
+        );
+        assert_eq!(
+            body_of(&pool, "team/alpha"),
+            body_of(&pool_before, "lab/alpha"),
+            "the first entry, its keys the source's"
+        );
+        assert_eq!(
+            body_of(&pool, "team/gamma"),
+            body_of(&pool_before, "lab/gamma"),
+            "the second entry, its keys the source's"
+        );
+        assert_eq!(
+            ids_of(&pool),
+            vec![
+                "default",
+                "lab",
+                "lab/alpha",
+                "lab/gamma",
+                "unassigned",
+                "team",
+                "team/alpha",
+                "team/gamma"
+            ],
+            "the copied sections append at the file's end, the profile first, \
+             then its entries in the source's order"
+        );
+        for id in ["lab", "lab/alpha", "lab/gamma", "default", "unassigned"] {
+            assert_eq!(
+                body_of(&pool, id),
+                body_of(&pool_before, id),
+                "the source and every other section keep their lines: {id}"
+            );
+        }
+        assert_eq!(
+            text_of(INSTANCES_FILE),
+            RECORD,
+            "the copy writes no instance record: the new profile runs nothing"
+        );
+        assert_eq!(
+            text_of("models@default.ini"),
+            "RENDER-KEEP\n",
+            "the copy renders nothing"
+        );
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            vec![],
+            "and reaches no unit"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="copy_instance_profile" target="team" caller=":1.42" principal=- outcome=ok"#
+                    .to_string()
+            ],
+            "one record for the whole call, the new profile as its target"
+        );
+    }
+
+    // ── The refusals: the target's name, the target taken, the source ─────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let pool_before = text_of(INSTANCE_PROFILES_FILE);
+
+        for (from, to, want) in [
+            (
+                "lab",
+                "Bad Id",
+                refused("instance-profile-bad-id", "Bad Id"),
+            ),
+            ("lab", "a_b", refused("instance-profile-bad-id", "a_b")),
+            ("lab", "", refused("instance-profile-bad-id", "")),
+            ("lab", "lab", instance_exists("lab")),
+            ("lab", "team", instance_exists("team")),
+            ("nope", "t1", no_instance("nope")),
+            ("Bad Id", "t1", no_instance("Bad Id")),
+        ] {
+            assert_eq!(
+                m.copy_instance_profile(&desktop, from, to),
+                want,
+                "copy of source {from:?}, target {to:?}"
+            );
+        }
+        assert_eq!(
+            text_of(INSTANCE_PROFILES_FILE),
+            pool_before,
+            "a refused copy writes no section"
+        );
+        assert_eq!(text_of(INSTANCES_FILE), RECORD, "and no record");
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="copy_instance_profile" target="Bad Id" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+                r#"action="copy_instance_profile" target="a_b" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+                r#"action="copy_instance_profile" target="" caller=":1.42" principal=- outcome="Invalid""#.to_string(),
+                r#"action="copy_instance_profile" target="lab" caller=":1.42" principal=- outcome="InstanceProfileExists""#.to_string(),
+                r#"action="copy_instance_profile" target="team" caller=":1.42" principal=- outcome="InstanceProfileExists""#.to_string(),
+                r#"action="copy_instance_profile" target="t1" caller=":1.42" principal=- outcome="NoInstanceProfile""#.to_string(),
+                r#"action="copy_instance_profile" target="t1" caller=":1.42" principal=- outcome="NoInstanceProfile""#.to_string(),
+            ],
+            "one record per refused call"
+        );
+    }
+
+    // ── The guard: a caller without configure, and the `As` form ──────────
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(false, log);
+        let before = listing();
+        let pool_before = text_of(INSTANCE_PROFILES_FILE);
+        assert_eq!(
+            m.copy_server_profile(&desktop, "llama.cpp", "lab", "spare-1"),
+            Err(ManagerError::NotAuthorized),
+            "a caller the authority refuses for configure"
+        );
+        assert_eq!(
+            m.copy_instance_profile(&desktop, "lab", "spare-2"),
+            Err(ManagerError::NotAuthorized),
+            "the same for the instance profile copy"
+        );
+        assert_eq!(listing(), before, "a refused caller copies nothing");
+        assert_eq!(
+            text_of(INSTANCE_PROFILES_FILE),
+            pool_before,
+            "and writes no section"
+        );
+        assert_eq!(
+            records(&lines),
+            vec![
+                r#"action="copy_server_profile" target="spare-1" caller=":1.42" principal=- outcome=refused"#.to_string(),
+                r#"action="copy_instance_profile" target="spare-2" caller=":1.42" principal=- outcome=refused"#.to_string(),
+            ],
+            "the guard's refusals are recorded"
+        );
+    }
+    {
+        let log = FakeActionLog::new();
+        let lines = log.lines.clone();
+        let m = core(true, log);
+        let vouching = Requester {
+            caller: desktop.clone(),
+            principal: Some(Principal("alice".into())),
+        };
+        assert_eq!(
+            m.copy_server_profile(&member, "llama.cpp", "lab", "as-team"),
+            Ok(()),
+            "the bff's account, for a member of `pai`"
+        );
+        assert_eq!(
+            m.copy_instance_profile(&member, "lab", "as-ip"),
+            Ok(()),
+            "the same for the instance profile copy"
+        );
+        assert_eq!(
+            m.copy_server_profile(&outsider, "llama.cpp", "lab", "bob-team"),
+            Err(ManagerError::NotAuthorized),
+            "the bff's account, for a caller outside `pai`"
+        );
+        assert_eq!(
+            m.copy_instance_profile(&outsider, "lab", "bob-ip"),
+            Err(ManagerError::NotAuthorized),
+            "the same for the instance profile copy"
+        );
+        assert_eq!(
+            m.copy_server_profile(&vouching, "llama.cpp", "lab", "x-team"),
+            Err(ManagerError::NotAuthorized),
+            "a caller that is not the bff vouches for nobody"
+        );
+        assert_eq!(
+            m.copy_instance_profile(&vouching, "lab", "x-ip"),
+            Err(ManagerError::NotAuthorized),
+            "and cannot copy through one either"
+        );
+        assert!(
+            profile_path("as-team").exists()
+                && !profile_path("bob-team").exists()
+                && !profile_path("x-team").exists(),
+            "the accepted copy landed, the refused `As` copies wrote nothing"
+        );
+        let pool = text_of(INSTANCE_PROFILES_FILE);
+        assert!(
+            pool.contains("[as-ip]") && !pool.contains("[bob-ip]") && !pool.contains("[x-ip]"),
+            "the same for the sections: {pool}"
+        );
+        let got = records(&lines);
+        assert_eq!(got.len(), 6, "one record per call");
+        for (line, want) in [
+            (
+                got[0].as_str(),
+                r#"action="copy_server_profile" target="as-team" caller=":1.9""#,
+            ),
+            (
+                got[1].as_str(),
+                r#"action="copy_instance_profile" target="as-ip" caller=":1.9""#,
+            ),
+            (
+                got[2].as_str(),
+                r#"action="copy_server_profile" target="bob-team" caller=":1.9""#,
+            ),
+            (
+                got[3].as_str(),
+                r#"action="copy_instance_profile" target="bob-ip" caller=":1.9""#,
+            ),
+            (
+                got[4].as_str(),
+                r#"action="copy_server_profile" target="x-team" caller=":1.42""#,
+            ),
+            (
+                got[5].as_str(),
+                r#"action="copy_instance_profile" target="x-ip" caller=":1.42""#,
+            ),
+        ] {
+            assert!(line.starts_with(want), "{line} is not the record of {want}");
+        }
+        assert_eq!(
+            got.iter()
+                .map(|l| l.rsplit_once("outcome=").expect("outcome").1.to_string())
+                .collect::<Vec<_>>(),
+            vec!["ok", "ok", "refused", "refused", "refused", "refused"],
+            "the accepted calls ok, every `As` refusal recorded as refused"
+        );
+    }
+}
