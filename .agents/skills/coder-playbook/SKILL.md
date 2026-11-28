@@ -76,19 +76,24 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `crate::…::phase();` of `crates/manager/src/tests/mod.rs` in a `timed!` macro (`Instant` +
   `eprintln!` of `stringify!($e)` and the millis; the regex needs the parens kept, `$e;` on a bare
   path is no call), build once, then run the binary direct with
-  `--exact tests::data_root_e2e --nocapture --test-threads=1`. Load shapes: `nproc` spinners; N runs at
+  `--exact tests::data_root_e2e --nocapture --test-threads=1`. Since TS2b that file is one `#[test]`
+  per phase, so the same measure is the plain suite run with `-- --nocapture`. Load shapes: `nproc`
+  spinners; N runs at
   once (the TS2b pool); a real compile beside them (`touch` a lib.rs of the copy, then
   `cargo check -p <crate> --all-targets` in the copy's target dir). The manager's phases on this 24 vCPU
   box, 2026-11-28: slowest 1.1 s solo idle, 4.2 s with spinners + 3 runs, 4.0 s beside a compile, 1.6 s
   with 24 runs at once, and **10.5 s with 24 runs at once beside `nproc` spinners** (the TS2b pool, load
   avg 52): the pool + spinners shape is the one a bound of `isolated` must clear, so its default is 120 s.
-- Judge the manager's phase sequence (`tests::data_root_e2e`) ONLY with `-- --test-threads=1`: the phases
-  share the process-wide `PRIVATE_AI_DATA_ROOT`, so the default parallel run of the same test stops at a
-  DIFFERENT pin (measured 2026-11-27: single-threaded it stops where the rule bites, the full crate run
-  stopped two phases later at a D-Bus signature pin). Its phases also call over a peer-to-peer bus with
-  2 s and 10 s bounds: on a loaded machine the parallel run reddens it with a timeout (`bob's write: no
-  answer within 2s`, `SetInstanceProfile: ... TimedOut`) at an UNCHANGED HEAD too (measured 2026-11-28),
-  so a parallel red is no evidence at all; the solo test passes, slowly.
+- Judge the manager at the DEFAULT thread count: its phases are isolated tests since TS2b (3 runs,
+  4.05 s each, all green). A crate whose `data_root_e2e` is still ONE `#[test]` (pai-core, pai-app,
+  pai-cli, until TS2c) is judged ONLY with `-- --test-threads=1`: its phases share the
+  process-wide `PRIVATE_AI_DATA_ROOT`, so the default parallel run of the same test stops at a
+  DIFFERENT pin (measured 2026-11-27: single-threaded it stops where the rule bites, the full crate
+  run stopped two phases later at a D-Bus signature pin). Its phases also call over a
+  peer-to-peer bus with 2 s and 10 s bounds: on a loaded machine the parallel run reddens it with a
+  timeout (`bob's write: no answer within 2s`, `SetInstanceProfile: ... TimedOut`) at an UNCHANGED
+  HEAD too (measured 2026-11-28), so a parallel red is no evidence at all; the solo test passes,
+  slowly.
 - On Linux check `echo $CARGO_TARGET_DIR` first and never override a set value, not even in a one-off command line; keep the `CARGO_TARGET_DIR` your environment already has (the coordinator exports an ext4 path,
   `~/.cache/private-ai/cargo-target`: `/mnt/data` is ntfs3, whose bulk writes stall at 1 s and more); only when it
   is unset export `CARGO_TARGET_DIR=$PWD/build/linux/cargo-target` for every cargo command: the checked-in
@@ -130,18 +135,22 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   the report says so. A lib-root `use` needed only in `cfg(target_os = "linux")` code is `unused_imports`
   elsewhere: gate it, and put a windows-sys feature a crate calls in that crate's own manifest. Say when a file the check does not
   compile is involved (`crates/core/src/client/dbus.rs` is Linux-only).
-- To run ONE phase of the manager's `tests::data_root_e2e` solo, add a probe `#[test]` to
-  `crates/manager/src/tests/mod.rs` in a copy (`crate::manager::service::<phase>()`;
-  `self::<mod>::<phase>()` for a phase of a `tests/` submodule). To prove a rule inside a phase, extract
-  the phase's `{ … }` block into a `pub(crate) fn` with the giant fn's scope bindings re-added (`sys`,
-  `record`, `alice`, `bob`).
-- The cheap version of the same, in the repo, for ONE run: comment out every other phase call in
-  `tests/mod.rs`, run, and restore the file from a snapshot (`md5sum` both sides). Comment the
-  `#[cfg(target_os = "…")]` line ABOVE a commented call too: a stranded attribute is
-  `error: expected statement after outer attribute`, and the same trap hides the phase the run was for.
-  A script that rewrites those lines matches a whole call line (`    a::b_e2e();`) and builds its
-  target name by appending `();` to what the user typed: a `grep`-style prefix silently matches 0 lines
-  and the run reports `0 passed`.
+- Every phase of the manager's data-root e2e is its own `#[test]` in
+  `crates/manager/src/tests/mod.rs` (TS2b): run one solo with
+  `cargo test -p pai-manager --lib tests::<phase> -- --exact`. A new phase joins that file as
+  `isolated("tests::<name>", <mod>::<phase>)`: the path names the TEST, so it is `tests::<name>`
+  for a phase whose body lives in `manager/service_tests.rs` or a `tests/` submodule, and the
+  phase's `#[cfg]` rides the `#[test]`. Every phase redirects its own tree (6 of the manager's do
+  it through a helper, `ip3fix_tree`), so check a phase body for a `redirect_for_tests`, the
+  helper's counting, before writing setup for a phase that fails alone.
+- The isolated parent forwards the child's report with `print!`, and a plain `cargo test` captures
+  it: a PASSING phase leaves no `1 passed` line in the log, so 93 phases that ran read like 93
+  that did not. To see them, add `-- --nocapture` and grep the children's `test result: ok. 1
+  passed; … finished in <x>s` (the manager's 93 sum to 8 s, the heaviest 1.0 s: no phase needs
+  `PAI_TEST_ISOLATED_BOUND_MS`, whose default is 120 s). Split the phases and the crate's suite is
+  wall-clock bound by its slowest phase, not by their sum (TS2b: the manager's `--lib` 7 min 39 s
+  to 4 s). To prove a rule inside a phase, extract the phase's `{ … }` block into a
+  `pub(crate) fn` with the giant fn's scope bindings re-added (`sys`, `record`, `alice`, `bob`).
 - A phase whose fixture writes a pool file by hand must write each instance's render with
   `assign::render_profile`'s text in the same breath, or the phase's own seed moves under its first
   write: `render_all_locked` rewrites a render whose bytes differ from the pool's render. And a render
@@ -886,7 +895,8 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - `mod windows` is `#[cfg(windows)]`, so no file under `xtask/src/windows/` is compiled on Linux. A
   `pub fn` only Linux code calls is `dead_code` on windows-gnu. `cargo clippy -p xtask` prints two
   `xtask (manifest)` warnings that are not yours.
-- Every phase of the manager's e2e sets the process-wide `PRIVATE_AI_DATA_ROOT`, so several probes in one
+- Every phase of a crate's ONE `data_root_e2e` (pai-core, pai-app, pai-cli: the manager's phases are
+  isolated tests since TS2b) sets the process-wide `PRIVATE_AI_DATA_ROOT`, so several probes in one
   run MUST use `--test-threads=1`: in parallel they read each other's temp dirs, and a probe that fails
   at an early assertion of a phase it never reached is that cross-talk, not a red.
 - A sandbox copy that shares `CARGO_TARGET_DIR` with the real tree hands ITS test binary to the real
