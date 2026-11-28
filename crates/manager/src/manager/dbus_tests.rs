@@ -1,5 +1,7 @@
-/// E2E phase for the D-Bus interface, for this crate's e2e test to call: it sets
-/// the process-wide `PRIVATE_AI_DATA_ROOT` redirect (`src/tests/mod.rs`).
+/// E2E phase for the D-Bus interface, for one of this crate's isolated phase
+/// tests to call (`src/tests/mod.rs`): it runs in a child process of its own
+/// (`pai_core::isolated::isolated`), where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect.
 /// The interface is served over a peer-to-peer connection on a Unix socket
 /// pair inside the test, never a bus; the seams are the core's fakes. A
 /// client given a unique name stamps it as the sender of its calls, as the
@@ -1326,8 +1328,9 @@ pub(crate) fn manager_dbus_e2e() {
 }
 
 /// E2E phase for the D-Bus interface while polkit waits for a user to
-/// authenticate, for this crate's e2e test to call (it sets the process-wide
-/// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`). On the system bus
+/// authenticate, for one of this crate's isolated phase tests to call
+/// (`src/tests/mod.rs`, which runs it in a child process of its own, where it
+/// sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect). On the system bus
 /// every caller reaches the service over its one connection; here one p2p
 /// connection carries both calls: a `Status` must answer while a `Start` on
 /// the same connection waits for polkit, and the `Start` then gets its own
@@ -1463,10 +1466,12 @@ pub(crate) fn manager_dbus_waits_e2e() {
     assert!(started.is_ok(), "the Start's own reply: {started:?}");
 }
 
-/// E2E phase for a refused write's reply over D-Bus, for this crate's e2e
-/// test to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
-/// `src/tests/mod.rs`): the client gets `org.privateai.Manager1.Error.Invalid`
-/// and reads the refusal back, key and values, with `Refusal::decode`.
+/// E2E phase for a refused write's reply over D-Bus, for one of this crate's
+/// isolated phase tests to call (`src/tests/mod.rs`, which runs it in a child
+/// process of its own, where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect): the client gets
+/// `org.privateai.Manager1.Error.Invalid` and reads the refusal back, key and
+/// values, with `Refusal::decode`.
 #[cfg(test)]
 pub(crate) fn manager_dbus_checks_e2e() {
     use super::super::service::fakes::{FakeAuthority, FakeResolver, FakeService};

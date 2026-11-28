@@ -11,9 +11,9 @@
 //! against the pair the running instance launched with (its `applied` record), so
 //! a change reverted before a restart shows none.
 //!
-//! Every phase runs over the redirected data root, inside the one
-//! `data_root_e2e` test of `mod.rs`, and writes only that root's engine config
-//! and state folders. The three fields a row answers and a save's answer are
+//! Every phase runs through `isolated` (the `#[test]`s of `mod.rs`), each in a
+//! child of its own over a data root of its own, and writes only that root's
+//! engine config and state folders. The three fields a row answers and a save's answer are
 //! read off the stream face (`manager::pipe::serve_stream` on a Unix socket
 //! pair), the files and the per-instance render off the core.
 

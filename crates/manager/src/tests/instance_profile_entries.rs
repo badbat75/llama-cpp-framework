@@ -4,9 +4,9 @@
 //! `instance-profiles.ini` (`ARCHITECTURE.md` "Instance profiles", its checks
 //! and slice IP3 part b).
 //!
-//! Every phase runs over the redirected data root, inside the one
-//! `data_root_e2e` test of `mod.rs`, and writes only the engine's config folder
-//! of that root.
+//! Every phase runs through `isolated` (the `#[test]`s of `mod.rs`), each in a
+//! child of its own over a data root of its own, and writes only the engine's
+//! config folder of that root.
 
 use crate::manager::service::fakes::{
     FakeAuthority, FakeGpus, FakeGroup, FakeResolver, FakeService,

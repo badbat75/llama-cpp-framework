@@ -704,5 +704,6 @@ fn editable_widgets_track_model_after_edit() {
     #[cfg(any(target_os = "linux", windows))]
     crate::gui::hw_window_e2e();
 
-    // The command line's phases run in pai-cli's own `data_root_e2e`.
+    // The command line's phases run in pai-cli's own `src/tests/mod.rs`, one
+    // phase per `#[test]`.
 }

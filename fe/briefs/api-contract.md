@@ -97,16 +97,16 @@ exist yet. Change this file first when a shape changes.
 | `GET /api/instances/{id}/profiles/model` | administrator | 15, served (2d9a4c8); **removed by IP4 (404)** | `{"all", "profiles": [rows]}` |
 | `PUT /api/instances/{id}/profiles/model/{profile}` | administrator (`configure`) | 15, served (2d9a4c8); **removed by IP4 (404)** | `{"effective", "running"}` |
 | `PUT /api/instances/{id}/profiles/model` | administrator (`configure`) | 15, served (2d9a4c8); **removed by IP4 (404)** | `{"running"}` |
-| `POST /api/instances` | administrator (`configure`) | 16, served (e262708); IP4 takes `instanceProfile` and answers the port, **proposed** | 201 `{"id"}` |
+| `POST /api/instances` | administrator (`configure`) | 16, served (e262708); IP4d's `instanceProfile` body and `{id, port}` answer, served (870fa961) | 201 `{"id", "port"}` |
 | `DELETE /api/instances/{id}` | administrator (`configure`) | 16, served (e262708) | 204 |
-| `GET` / `POST /api/profiles/instance` | signed in / administrator (`configure`) | IP4c, **proposed** | `{"rows": [rows]}` / 201 `{"id"}` |
-| `GET` / `DELETE /api/profiles/instance/{p}` | administrator / administrator (`configure`) | IP4c, **proposed** | `{id, server, models, usedBy, revision}` / 204 |
-| `PUT /api/profiles/instance/{p}/server` | administrator (`configure`) | IP4c, **proposed** | `{"running", "notConverged"}` |
-| `POST /api/profiles/instance/{p}/models` | administrator (`configure`) | IP4c, **proposed** | 201 `{"running", "notConverged"}` |
-| `GET` / `PUT /api/profiles/instance/{p}/models/{m}` | administrator / administrator (`configure`) | IP4c, **proposed** | `{profile, server, model, values, revision}` / `{"revision", "running", "notConverged"}` |
-| `DELETE /api/profiles/instance/{p}/models/{m}` | administrator (`configure`) | IP4c, **proposed** | `{"running", "notConverged"}` |
-| `PUT /api/instances/{id}/profile` | administrator (`configure`) | IP4d, **proposed** | `{"running", "notConverged"}` |
-| `PUT /api/instances/{id}/address` | administrator (`configure`) | IP4d, **proposed** | `{"running", "notConverged"}` |
+| `GET` / `POST /api/profiles/instance` | signed in / administrator (`configure`) | IP4c, served (e69b8f98) | `{"rows": [rows]}` / 201 `{"id"}` |
+| `GET` / `DELETE /api/profiles/instance/{p}` | administrator / administrator (`configure`) | IP4c, served (e69b8f98) | `{id, server, models, usedBy, revision}` / 204 |
+| `PUT /api/profiles/instance/{p}/server` | administrator (`configure`) | IP4c, served (e69b8f98) | `{"running", "notConverged"}` |
+| `POST /api/profiles/instance/{p}/models` | administrator (`configure`) | IP4c, served (e69b8f98) | 201 `{"running", "notConverged"}` |
+| `GET` / `PUT /api/profiles/instance/{p}/models/{m}` | administrator / administrator (`configure`) | IP4c, served (e69b8f98) | `{profile, server, model, values, revision}` / `{"revision", "running", "notConverged"}` |
+| `DELETE /api/profiles/instance/{p}/models/{m}` | administrator (`configure`) | IP4c, served (e69b8f98) | `{"running", "notConverged"}` |
+| `PUT /api/instances/{id}/profile` | administrator (`configure`) | IP4d, served (870fa961) | `{"running", "notConverged"}` |
+| `PUT /api/instances/{id}/address` | administrator (`configure`) | IP4d, served (870fa961) | `{"running", "notConverged"}` |
 
 The four model profile routes were served at `/api/presets...` until 5d54590 (step 4b, below), with
 the keys `no-preset-named`, `preset-changed-elsewhere`, `presets-malformed`, `invalid-preset-id`,
@@ -784,15 +784,16 @@ pick: not JSON, over the cap, no branch, no GGUF); 503 `hf-tool-missing` (no `cu
 504 `hf-unreachable` (HF never reached). Source: `crates/bff/src/hf.rs`,
 `crates/bff/tests/hf_files.rs`, `ARCHITECTURE.md` "Choosing the model file on the web".
 
-## IP4: the instance profile routes (proposed)
+## IP4: the instance profile routes (all served)
 
 The contract `ARCHITECTURE.md` settled on 2026-11-28 (its IP4 entry, 60188bde, written from brief 26
-section 0 and the IP3 methods as built; that entry is the source, this section copies it). **None of
-these routes is served**: `router_with_session` (`crates/bff/src/lib.rs`) has no one of them, so
-today each answers the router's own 404, with no body and no manager call. Brief 26's pages call
-them. The bff's slices are IP4c (the instance profile routes) and IP4d (the instance routes), on
-top of IP4a and IP4b, which give the manager and the client what these routes need (`PLAN.md` step
-10).
+section 0 and the IP3 methods as built; that entry is the source, this section copies it). **Every
+route of it is served**: the nine instance profile routes of IP4c (e69b8f98) and the two instance
+routes of IP4d with the create's new shape (`PUT /api/instances/{id}/profile`,
+`PUT /api/instances/{id}/address`, 870fa961), all in `router_with_session` in `crates/bff/src/lib.rs`.
+The answers and the keys as built: `crates/bff/README.md` "The instance profile pool" and "The
+instance's profile and address". Brief 26's pages call them. IP4a, IP4b and IP4c are built, as is IP4d
+(`PLAN.md` step 10).
 
 ### The rules every one of them keeps
 
@@ -859,10 +860,10 @@ top of IP4a and IP4b, which give the manager and the client what these routes ne
 
 | Method and path | Body | Answer | Refusals beside the rules above |
 | --- | --- | --- | --- |
-| `GET /api/instances` | none | each row gains `instanceProfile`, `hostname` (`null` when the record sets none), `converged`, `reason` (`{"key", "args"}` or `null`) and `pendingRestart`; the last three from the manager's `InstanceStates()` | unchanged |
-| `PUT /api/instances/{id}/profile` | `{"instanceProfile"}`, no revision | the affected answer | 404 for the instance (today that is `client-no-instance`, IP4 names no key), 422 `no-instance-profile-named`, 409 `address-in-use` `[instance]` |
-| `PUT /api/instances/{id}/address` | `{"hostname", "port"}`; `hostname` `null` clears it, no revision | the affected answer | 422 `invalid-port`, 422 `invalid-hostname`, 409 `address-in-use` `[instance]` |
-| `POST /api/instances` | `{"engine", "id", "instanceProfile"}` | 201 `{"id", "port"}`, the port the manager picked from 8581 | 409 `instance-exists`, 422 `no-instance-profile-named`, 503 `no-free-port` |
+| `GET /api/instances` | none | each row gains `instanceProfile`, `hostname` (`null` when the record sets none), `converged`, `reason` (`{"key", "args"}` or `null`) and `pendingRestart`; the last three off the manager's `Instances()` rows, an instance with no row being converged, reasonless and not pending a restart | unchanged |
+| `PUT /api/instances/{id}/profile` | `{"instanceProfile"}`, no revision | the affected answer | 404 `client-no-instance` (the bff compares the path's id with the record's ids first, no case, nothing written), 422 `no-instance-profile-named`, 409 `stale-revision`, 409 `address-in-use` `[instance]` |
+| `PUT /api/instances/{id}/address` | `{"hostname", "port"}`; `hostname` `null` clears it, `port` a string, no revision | the affected answer | 404 `client-no-instance`, 422 `invalid-port`, 422 `invalid-hostname`, 409 `stale-revision`, 409 `address-in-use` `[instance]`, 400 `address-malformed` |
+| `POST /api/instances` | `{"engine", "id", "instanceProfile"}` | 201 `{"id", "port"}`, the port the manager picked (it walks up from 8581, every port of the node belonging to an instance it runs or to the web service) | 409 `instance-exists`, 422 `no-instance-profile-named`, 503 `no-free-port` |
 
 - The address's keys are the manager's names, the bff mapping any that differ.
 - The create supersedes the served one (e262708), whose body names a **server** profile and whose

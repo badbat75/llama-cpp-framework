@@ -17,7 +17,7 @@
 //!
 //! Nothing here touches `paths::` (the exe is named by the test, the
 //! production wiring is pinned by reading the source's text), so these plain
-//! `#[test]`s run in parallel beside the crate's `data_root_e2e`.
+//! `#[test]`s run in parallel beside the crate's isolated phases.
 //!
 //! Names the tests assume, the contract for the coder: the production seam is
 //! `ProbedGpus::new(exe, timeout)` for a test and `ProbedGpus::for_node()`

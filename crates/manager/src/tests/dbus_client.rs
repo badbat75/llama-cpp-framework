@@ -167,9 +167,10 @@ fn a_manager_that_went_away_is_unavailable() {
     }
 }
 
-/// E2E phase for the client against the interface, for this crate's e2e
-/// test to call: it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect
-/// (`src/tests/mod.rs`).
+/// E2E phase for the client against the interface, for one of this crate's
+/// isolated phase tests to call (`src/tests/mod.rs`): it runs in a child
+/// process of its own (`pai_core::isolated::isolated`), where it sets the
+/// process-wide `PRIVATE_AI_DATA_ROOT` redirect.
 pub(crate) fn manager_dbus_client_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());

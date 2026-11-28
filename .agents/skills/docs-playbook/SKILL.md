@@ -200,6 +200,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 ### Grep the repeats
 
+- A test-topology change repeats inside the test files' own comments. Since TS2b (the manager, 0d890104)
+  and TS2c (`pai-core`, `pai-app`, `pai-cli`, 2c064a52) every data-root phase is its own `#[test]` run
+  through `pai_core::isolated`, in a child of its own over a data root of its own, so a phase's
+  end-of-phase restore is its own tidying and hands nothing to a later phase. Grep `data_root_e2e`,
+  `phases after it`, `phases that follow` and `one #[test]` in `crates/*/src/tests/*.rs` and
+  `crates/manager/src/manager/service_tests.rs`; inside one phase, what follows is a `// ──` section, not
+  a phase. `pai-config`'s GUI phases stay the one shared `#[test]` (`src/tests/save_flow.rs`'s header), so
+  do not sweep those.
 - When a rule about who does what changes, grep it in: `AGENTS.md` ("Commands", "Roles", the "Cycle:"
   line, and the coordinator's "done only on" sentence in the Roles bullet), the role bodies and the
   `description:` lines of `.opencode/agents/*.md`, the playbooks, and `PLAN.md`'s Definition of Done.
@@ -468,6 +476,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   `cargo test -p pai-bff --test model_profiles --test model_profiles_switch` and grep `test result`. A
   **lib** test (`src/tests/model_profile_body.rs`) needs `cargo test -p pai-bff --lib`: a `--test <name>`
   flag does not reach it.
+- A suite's count is only verified on a clean tree: `git status --porcelain -- <crate>` first, because an
+  in-flight slice makes a phase red (a `tests::cli_server_profile_e2e` failure in a dirty `crates/cli`
+  belongs to the coder, and a suite total printed beside it is not a fact to cite). The isolated suites'
+  phase counts need no run: `git show HEAD:<crate>/src/tests/mod.rs | grep -c 'isolated('`.
 - Count a suite's tests with `grep -c '#\[test\]\|#\[tokio::test\]'` on the file; a whole-crate total
   wants `grep -cE '#\[(tokio::)?test(\(|\])'` over the crate's files. Say which it is: it counts
   attributes, not a run, and a run can be larger (`tests/hf_files.rs`: 16 attributes, 18 tests run).
@@ -540,6 +552,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   and `MajorUpgrade` uninstalls first, so each upgrade would empty what the administrator filled. The
   `.wxs` test in `xtask/src/common/msi.rs` reads the group's name from the manager's `ADMIN_GROUP` const,
   so renaming the group fails a test: grep the const too.
+- The playbooks of the other roles lag a test-topology change by many lines: the coder's and the tester's
+  still teach one sequential `data_root_e2e` per crate, which TS2b and TS2c (2c064a52) removed from every
+  crate. They are theirs to change, report them; `ARCHITECTURE.md`'s TS2 record does the same, listing
+  TS2b and TS2c as open.
 - `PLAN.md` can name a file that does not exist (it lists `crates/manager/README.md`): check with
   `git ls-files` before promising to edit a file, and report the line.
 - `grep` here is ugrep: a long `.{0,120}` context regex fails with "exceeds complexity limits". Use a

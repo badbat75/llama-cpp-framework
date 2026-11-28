@@ -811,8 +811,9 @@ pub(crate) fn real_model_files(dir: &std::path::Path, text: &str) -> String {
 
 /// The umask window of the mode pins: the constructor masks the process with
 /// the mode it is given and keeps the previous umask, `Drop` restores it. The
-/// umask is process-wide and the e2e phases run on parallel threads, so a
-/// panic between the mask and the restore must not leave 0o077 on the process.
+/// umask is process-wide and each phase runs in a child process of its own
+/// (TS2b) beside this file's plain `#[test]`s, so a panic between the mask and
+/// the restore must not leave 0o077 in it.
 #[cfg(all(test, target_os = "linux"))]
 struct UmaskGuard(nix::sys::stat::Mode);
 
@@ -832,8 +833,10 @@ impl Drop for UmaskGuard {
     }
 }
 
-/// E2E phase for the manager core, for this crate's e2e test to call: it sets
-/// the process-wide `PRIVATE_AI_DATA_ROOT` redirect (`src/tests/mod.rs`).
+/// E2E phase for the manager core, for one of this crate's isolated phase
+/// tests to call (`src/tests/mod.rs`): it runs in a child process of its own
+/// (`pai_core::isolated::isolated`), where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect.
 /// Nothing here touches D-Bus, systemd, polkit or the GPUs: both seams are
 /// fakes.
 #[cfg(test)]
@@ -1606,9 +1609,10 @@ pub(crate) fn manager_e2e() {
     }
 }
 
-/// E2E phase for the instance files' secret (`OpencodeApiKey`), for this
-/// crate's e2e test to call (it sets the process-wide
-/// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`): an authorized read
+/// E2E phase for the instance files' secret (`OpencodeApiKey`), for one of
+/// this crate's isolated phase tests to call (`src/tests/mod.rs`, which runs
+/// it in a child process of its own, where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect): an authorized read
 /// of an instance file, a model profile read with no caller, and the writes going
 /// through the group seam with their modes.
 #[cfg(test)]
@@ -1731,8 +1735,9 @@ pub(crate) fn manager_instance_files_e2e() {
 }
 
 /// E2E phase for the API key withheld from a reader who may not configure,
-/// for this crate's e2e test to call (it sets the process-wide
-/// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`). An instance file
+/// for one of this crate's isolated phase tests to call (`src/tests/mod.rs`,
+/// which runs it in a child process of its own, where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect). An instance file
 /// needs only control to read, so a caller without configure (asked without
 /// a prompt: a polkit challenge counts as no) gets the `OpencodeApiKey` line
 /// blanked to `OpencodeApiKey =`, every other line as it was, and is told
@@ -1904,9 +1909,11 @@ ModelsMax = 2
     }
 }
 
-/// E2E phase for a write that keeps the API key, for this crate's e2e test
-/// to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
-/// `src/tests/mod.rs`). A caller the key was withheld from saves the file
+/// E2E phase for a write that keeps the API key, for one of this crate's
+/// isolated phase tests to call (`src/tests/mod.rs`, which runs it in a child
+/// process of its own, where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect). A caller the key was withheld from saves
+/// the file
 /// it read, its key line blanked or gone: with `keep_api_key`, once the write
 /// is authorized (configure, as every write), the manager puts the key it
 /// holds back. The incoming `OpencodeApiKey` line takes the current value,
@@ -2144,9 +2151,11 @@ ModelsMax = 2
     }
 }
 
-/// E2E phase for where the instance files live, for this crate's e2e test to
-/// call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
-/// `src/tests/mod.rs`): the engine's directory (`paths::engine_config_dir`,
+/// E2E phase for where the instance files live, for one of this crate's
+/// isolated phase tests to call (`src/tests/mod.rs`, which runs it in a child
+/// process of its own, where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect): the engine's directory
+/// (`paths::engine_config_dir`,
 /// `/etc/llama.cpp` on Linux), never the framework's
 /// (`paths::system_config_dir`, `/etc/private-ai`, which keeps `bff.ini`).
 /// Files an earlier layout left in the framework's directory are neither
@@ -2300,8 +2309,9 @@ pub(crate) fn manager_engine_dir_e2e() {
 }
 
 /// E2E phase for the manager core while polkit waits for a user to
-/// authenticate, for this crate's e2e test to call (it sets the process-wide
-/// `PRIVATE_AI_DATA_ROOT` redirect, `src/tests/mod.rs`). A caller whose
+/// authenticate, for one of this crate's isolated phase tests to call
+/// (`src/tests/mod.rs`, which runs it in a child process of its own, where it
+/// sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect). A caller whose
 /// authorization is pending holds up no other caller, reads or changes, and
 /// gets its own answer once polkit gives it; writes still run one at a time,
 /// so the address check of one sees the file another has just written.
@@ -2581,10 +2591,11 @@ pub(crate) fn manager_waits_e2e() {
     }
 }
 
-/// E2E phase for the content checks of `write_file`, for this crate's e2e
-/// test to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT` redirect,
-/// `src/tests/mod.rs`). Invalid contents are refused with the check's
-/// refusal after the authorization, and nothing is written.
+/// E2E phase for the content checks of `write_file`, for one of this crate's
+/// isolated phase tests to call (`src/tests/mod.rs`, which runs it in a child
+/// process of its own, where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect). Invalid contents are refused with the
+/// check's refusal after the authorization, and nothing is written.
 #[cfg(test)]
 pub(crate) fn manager_checks_e2e() {
     use fakes::{FakeAuthority, FakeResolver, FakeService};
@@ -4017,7 +4028,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "and the render of the instance follows the record"
         );
 
-        // The fixture's record and files back for the phases that follow.
+        // The fixture's record and files back for the sections that follow.
         std::fs::remove_file(sys.join("server@small.ini")).expect("small out");
         std::fs::remove_file(sys.join("server@lan.ini")).expect("lan profile out");
         std::fs::remove_file(sys.join("models@lan.ini")).expect("lan render out");
@@ -6997,8 +7008,9 @@ pub(crate) fn manager_pair_memory_check_e2e() {
     std::fs::create_dir_all(&sys).expect("engine config dir");
 
     // The tree as this phase found it. It adds server profiles and moves the
-    // record, and the phases after it in `data_root_e2e` read both, so the
-    // phase puts back the names and the texts it found, at its end.
+    // record, so the phase puts back the names and the texts it found, at its
+    // end: each phase has a data root of its own (`src/tests/mod.rs`,
+    // `isolated`), so this leaves that root as the phase found it.
     let found: Vec<(String, String)> = std::fs::read_dir(&sys)
         .expect("engine config dir")
         .flatten()
@@ -7578,7 +7590,8 @@ pub(crate) fn manager_pair_memory_check_e2e() {
     // R3-PIN-12 END
 
     // The phase leaves the tree as it found it: the record it moved and the
-    // server profiles it added belong to the phases after it.
+    // server profiles it added are its own, this phase's root being nobody
+    // else's.
     for entry in std::fs::read_dir(&sys).expect("listing").flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if !found.iter().any(|(found, _)| *found == name) {
@@ -13751,9 +13764,10 @@ pub(crate) fn manager_action_log_e2e() {
     }
 }
 
-/// E2E phase for the compare-and-swap write (`write_file_if`), for this
-/// crate's e2e test to call (it sets the process-wide `PRIVATE_AI_DATA_ROOT`
-/// redirect, `src/tests/mod.rs`). `expected` is the whole text the caller
+/// E2E phase for the compare-and-swap write (`write_file_if`), for one of this
+/// crate's isolated phase tests to call (`src/tests/mod.rs`, which runs it in
+/// a child process of its own, where it sets the process-wide
+/// `PRIVATE_AI_DATA_ROOT` redirect). `expected` is the whole text the caller
 /// read: equal bytes run `write_file`'s checks and its write; a file that is
 /// missing, or holds any other bytes, is `Changed` with nothing written. Each
 /// block redirects a data root of its own, so it reads only the files it

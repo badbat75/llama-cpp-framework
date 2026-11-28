@@ -10,7 +10,9 @@ instances with their state, the run verbs, the start-at-boot flag, an instance's
 list and one model profile, read and saved (the model profile switch route is served with no caller
 since IP5, 0d855368), the server profile pool: its list, a new profile, one profile read and saved,
 and its delete
-([below](#the-server-profile-pool)), and an instance's associations: its server profile switched, and
+([below](#the-server-profile-pool)), the instance profile pool: its list, a new profile, one profile
+read, its server profile switched, one model entry of it read, saved and removed, and its delete
+([below](#the-instance-profile-pool)), and an instance's associations: its server profile switched, and
 its model profiles listed and assigned, one at a time or as the whole pool
 ([below](#the-association-routes)), and an instance created and its record removed
 ([below](#creating-and-removing-an-instance)), and the node's model files and a Hugging Face repo's
@@ -126,9 +128,11 @@ runtime (axum).
 | Route | Answer |
 | --- | --- |
 | `GET /api/version` | `{"version": "<framework version>", "name": "<host name>", "os": {"name": <text|null>, "version": <text|null>, "kernel": <text|null>}}` (e52480d: `name` as `GET /api/node` answers it, `os` read by the bff itself with `pai_core::host::os`, the machine the bff runs on), for a signed-in user; 401 `session-required` with no session, the manager not asked. The read asks the manager nothing and leaves the session's idle deadline where it was |
-| `GET /api/instances` | `[{"id": "<id>", "label": "<text>|null", "engine": "llama.cpp", "serverProfile": "<profile>|null", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>, "removable": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the server profiles, the ports, the tags, the labels and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
-| `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, each a string: 201 `{"id"}` with the id the body sent, once the manager wrote the instance, for a signed-in user, as that user, under the write's 15 s. A body that is not those three strings is 400 `instance-malformed`, the manager not connected to; every rule of the instance itself is the manager's and keeps its key ([below](#creating-and-removing-an-instance)) |
+| `GET /api/instances` | `[{"id": "<id>", "label": "<text>|null", "engine": "llama.cpp", "serverProfile": "<profile>|null", "state": "<state>", "port": <n>, "tags": [<text>, ...], "instanceTags": [<text>, ...], "boot": <bool>, "removable": <bool>, "instanceProfile": "<profile>|null", "hostname": "<host>|null", "converged": <bool>, "reason": {"key", "args"}|null, "pendingRestart": <bool>}]` from `private-ai-manager`, for a signed-in user; 401 `session-required` with no session, the manager not connected to. The session gates the read and is not its principal: the list, the states, the server profiles, the ports, the tags, the labels and the start-at-boot flag are what the manager answers of the bff's own account, and the idle deadline stays where it was, the page polling this read ([below](#the-instances-from-the-manager)) |
+| `POST /api/instances` | `{"engine", "id", "instanceProfile"}` in, each a string: 201 `{"id", "port"}` with the id the body sent and the port the manager picked from the range, once the manager wrote the instance, for a signed-in user, as that user, under the write's 15 s. A body that is not those three strings, and a body that still names `serverProfile`, are 400 `instance-malformed`, the manager not connected to; every rule of the instance itself is the manager's and keeps its key ([below](#creating-and-removing-an-instance)) |
 | `DELETE /api/instances/{id}` | 204 with no body once the manager took the instance away, for a signed-in user, as that user, under the write's 15 s: 409 `instance-protected` `[id]` for `default` and `instance-running` `[id]` for one that is up, 404 `client-no-instance` for an id the record does not name ([below](#creating-and-removing-an-instance)) |
+| `PUT /api/instances/{id}/profile` | `{"instanceProfile": "<name>"}` in: 200 with the affected answer `{"running", "notConverged"}`, for a signed-in user, as that user, under the write's 15 s: 400 `profile-malformed` for a body that is not that one string, 404 `client-no-instance` for an id the record does not name, 422 `no-instance-profile-named` for a pool with no such section, 409 `stale-revision` and 409 `address-in-use` ([below](#the-instances-profile-and-address)) |
+| `PUT /api/instances/{id}/address` | `{"hostname", "port"}` in, the port a string and a `null` host the empty host: 200 with the affected answer, for a signed-in user, as that user, under the write's 15 s: 400 `address-malformed`, 404 `client-no-instance`, 422 `invalid-port` and 422 `invalid-hostname`, 409 `stale-revision` and 409 `address-in-use` ([below](#the-instances-profile-and-address)) |
 | `GET /api/node` | `{"name": "<host name>", "api": "/api", "version": "<framework version>", "engines": [{"engine": "<engine>", "version": <text|null>, "backends": [{"name": "<suffix>", "version": <text|null>}]}], "os": {...}|null, "vulkan": "ok"|"none"|"failed"|null, "gpus": [...]|null}`, for a signed-in user, the last three from the manager's `NodeInfoAs` as that user (e52480d); 401 `session-required` with no session, the manager not asked. It leaves the session's idle deadline where it was ([below](#the-node)) |
 | `GET /api/node/devices` | `{"probedAt": "<UTC text>|null", "ramMib": <int>, "cpuThreads": <int>, "devices": [{"id", "name", "backend", "totalMib", "freeMib"}]}`: the node's compute devices beside the host's RAM and logical CPUs, asked of the manager as the signed-in user, on a bound long enough for the engine probe it runs (35 s); 401 `session-required` with no session, the manager not asked ([below](#the-node)) |
 | `POST /api/session` | Signs in, for anyone: `{"user"}` and the session cookie ([below](#the-session)) |
@@ -156,6 +160,15 @@ runtime (axum).
 | `GET /api/profiles/server/{id}` | The profile's own `server@<id>.ini` as the instance route's document, gaining `instance` and a `defaults.StateDir` of the instance that runs it, for a signed-in user ([below](#the-server-profile-pool)) |
 | `PUT /api/profiles/server/{id}` | The form's save of that file, `{"revision", "values"}` in, `{"revision", "running"}` out with the state of the instance using the profile, for a signed-in user ([below](#the-server-profile-pool)) |
 | `DELETE /api/profiles/server/{id}` | 204 with no body once the manager removed a profile no instance names, for a signed-in user ([below](#the-server-profile-pool)) |
+| `GET /api/profiles/instance` | `{"rows": [{"id", "server", "models": [<model id>, ...], "usedBy": [<instance id>, ...]}]}`: the pool's rows in the pool's own order, the entry model ids in the file's order, as the signed-in user. `usedBy` is computed by the bff from the instance rows' `instanceProfile`, no verb answering it ([below](#the-instance-profile-pool)) |
+| `POST /api/profiles/instance` | `{"id", "server"}` in, two strings: 201 `{"id"}`, as the signed-in user, under the write's 15 s. A body that is not those two strings is 400 `instance-profile-malformed`, the manager not connected to; every rule of the name and of the server profile is the manager's ([below](#the-instance-profile-pool)) |
+| `GET /api/profiles/instance/{id}` | `{"id", "server", "models": [{"id": <model id>, "keys": <n>}], "usedBy", "revision"}`: the profile's page, `models` one row per entry with the count of its keys, `revision` the SHA-256 hex of the profile's own sections, both read out of the pool text `GetInstanceProfile` answers; a pool with no such section is 404 `no-instance-profile-named`, answered from that text before the record is asked ([below](#the-instance-profile-pool)) |
+| `DELETE /api/profiles/instance/{id}` | 204 with no body once the manager took the profile away, as the signed-in user: 409 `instance-profile-in-use` naming an instance that runs it, 404 `no-instance-profile-named` ([below](#the-instance-profile-pool)) |
+| `PUT /api/profiles/instance/{id}/server` | `{"server"}` in: 200 with the affected answer `{"running", "notConverged"}`. No revision: the switch is one set-like change, the manager refusing it on its own. The instances the new server profile does not fit are rows of `notConverged`, not a refusal; a name that is not on the node is 422 `no-server-profile-named` with `field: "server"` ([below](#the-instance-profile-pool)) |
+| `POST /api/profiles/instance/{id}/models` | `{"model"}` in: 201 with the affected answer, an empty entry giving the profile the model profile. The add is a create, not a replace: the entry's keys belong to its save. 422 `no-model-profile-named` with `field: "model"` for a model profile that is not there, 409 `instance-profile-model-listed` for one the profile lists ([below](#the-instance-profile-pool)) |
+| `GET /api/profiles/instance/{id}/models/{model}` | `{"profile", "server", "model", "values", "revision"}`: the entry's page, its keys as the file holds them and the same hash the profile's page answers, both out of one text; an entry the profile lists nowhere is 404 `no-instance-profile-model` ([below](#the-instance-profile-pool)) |
+| `PUT /api/profiles/instance/{id}/models/{model}` | `{"values", "revision"}` in: 200 with `{"revision", "running", "notConverged"}`, the NEW hash beside the affected answer, so the page saves again without reading again. A body nothing can be made of is 400 `model-profiles-malformed` and a body with no revision 422 `model-profiles-malformed`, neither asking the manager; a hash that is not the pool's own is 409 `stale-revision`, no write asked ([below](#the-instance-profile-pool)) |
+| `DELETE /api/profiles/instance/{id}/models/{model}` | 200 with the affected answer, the entry taken away; an entry the profile lists nowhere is 404 `no-instance-profile-model` ([below](#the-instance-profile-pool)) |
 | `GET /` | The embedded `index.html`, for anyone |
 | `GET /assets/{*path}` | The embedded file at `assets/<path>`, for anyone |
 
@@ -199,14 +212,17 @@ write ([below](#the-tags-of-an-instance)), the label write ([below](#the-label-o
 pool's create, delete, document and save
 ([below](#the-server-profile-pool)), the three association writes with the reads of `assignments.ini`
 and of the two model profile files ([below](#the-association-routes)), the instance's create and
-removal ([below](#creating-and-removing-an-instance)), and the model profile list,
-switch and save on one connect as the user ([below](#the-model-profile-routes))
+removal ([below](#creating-and-removing-an-instance)) with its instance profile and its address
+([below](#the-instances-profile-and-address)), and the model profile list,
+switch and save on one connect as the user ([below](#the-model-profile-routes)), and the instance
+profile pool's eight verbs on one connect as the user, the record `Instances` riding the same connect
+for `usedBy` ([below](#the-instance-profile-pool))
 (`crates/bff/src/lib.rs`). The association routes ask `Instances` and `Status` as well, on a connect
 of the bff's own account ([below](#the-association-routes)).
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `[{"id", "label", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
+| 200 | `[{"id", "label", "engine", "serverProfile", "state", "port", "tags", "instanceTags", "boot", "removable", "instanceProfile", "hostname", "converged", "reason", "pendingRestart"}]` in the manager's order, `[]` when there is none | Every call answered; an instance removed between the calls is left out |
 | 401 | `{"key": "session-required", "args": []}` | The request's cookie names no live session: `connect` is never called, no `Set-Cookie` goes out |
 | 503 | `{"key": "client-unavailable", "args": []}` | No manager to reach (none running, macOS), or no full answer within 5 s |
 | 502 | `{"key": "client-not-authorized", "args": []}` | The manager refused a call |
@@ -243,6 +259,16 @@ of the bff's own account ([below](#the-association-routes)).
   `crates/bff/src/instances.rs`, whose `PROTECTED_INSTANCE` is the id the manager protects in
   `service.rs`), whatever its state: whether it runs is `state`, and the removal refuses a running one
   anyway ([below](#creating-and-removing-an-instance)).
+- **`instanceProfile` and `hostname` are the record's two names** (IP4d, 870fa961, the manager's rows
+  carrying them since IP4b, 4db952c7, protocol `4`): the instance profile the instance's section of
+  `instances.ini` binds, and the `Hostname` of that section, each `null` when the record carries
+  neither, the instance taking its bind from its server profile then. The page reads them, and the two
+  writes of [below](#the-instances-profile-and-address) are what change them.
+- **`converged`, `reason` and `pendingRestart` are the manager's states of the row**, read off
+  `Instances` (IP4d, 870fa961): `converged` false goes with a `reason` of `{"key", "args"}`, the
+  manager's key of the check the row fails and its args, `pendingRestart` is true when the running
+  instance is not what the render says. An instance with no `Instances` row is `converged` true, no
+  `reason` and `pendingRestart` false: the three are extra, like the port and the tags.
 - **A new connection per request**, so a manager started after the bff is seen at the next request.
   The connect and the calls run on a blocking thread under one 5 s timeout (`MANAGER_TIMEOUT` in
   `lib.rs`) that covers the connect. The routes that write a file, the server save, the model profile
@@ -1242,6 +1268,66 @@ the device list it is gated by a session and `Sessions::current` moves that sess
 
 **No page calls it yet**: the picker that reads it (M4) is open `PLAN.md` work.
 
+## The instance profile pool
+
+`GET`/`POST /api/profiles/instance`, `GET`/`DELETE /api/profiles/instance/{id}`,
+`PUT /api/profiles/instance/{id}/server`, `POST /api/profiles/instance/{id}/models` and
+`GET`/`PUT`/`DELETE /api/profiles/instance/{id}/models/{model}` (`crates/bff/src/instance_pool.rs`,
+IP4c, built 2026-11-28, e69b8f98, on the manager's verbs of IP4a (d044867d) and IP4b (4db952c7);
+`ARCHITECTURE.md` IP4, copied by [`fe/briefs/api-contract.md`](../../fe/briefs/api-contract.md)):
+the pool's list, one profile's page, one model entry of it, the create, the removal, the server
+switch. All nine are behind sign-in and every one of them asks `private-ai-manager` on **one connect
+as the signed-in user**, so the gate is the model profile pool's: 401 `session-required` with no
+session (the manager not connected to), 403 `session-not-administrator` and the end of the session
+when the manager refuses that user, the reads included, a read being a verb of the same guard. No
+page calls them yet: the pages are the open work of `PLAN.md` step 10, and the fe's stub
+(`fe/src/test/bff.ts`) answers all nine so a page built on it is testable today.
+
+What they read and write is the manager's record `instance-profiles.ini` in the engine's config
+directory (`paths::instance_profiles_ini`, beside `instances.ini`): one `[<p>]` section per profile,
+naming the server profile it binds, and one `[<p>/<m>]` entry per model profile the profile is given,
+carrying that pair's keys. The manager is the only writer, and every value here is one of its eight
+verbs (`InstanceProfiles`, `GetInstanceProfile`, `CreateInstanceProfile`, `DeleteInstanceProfile`,
+`AddInstanceProfileModel`, `RemoveInstanceProfileModel`, `SetInstanceProfileModel`,
+`SetInstanceProfileServer`, each with its `As` form): the bff opens no file, the entry key counts and
+the revision being read out of the pool text `GetInstanceProfile` answers, parsed with
+`pai_core::instance_profiles::parse`. The reads are on the reads' 5 s, the writes on the write's 15 s
+`WRITE_TIMEOUT` ([above](#saving-the-server-file)), a write answering 503 `client-unavailable` while
+its call was never handed over the manager and 504 `client-timeout` once it was, its outcome unknown,
+as on the server profile pool.
+
+- **`usedBy`**, on the list's rows and on the page, is computed by the bff from the instance rows'
+  `instanceProfile` (`used_by`): no verb answers it, and `Instances()` is asked of any caller, so the
+  record read rides the same connect as the pool's read. A profile no instance runs answers no rows.
+- **The revision** rides the wire for the entry's save alone: a SHA-256 hex, lowercase, of the
+  profile's OWN sections (the `[<p>]` and its `[<p>/*]`), so an edit of another profile of the same
+  file leaves it alone. The save reads the pool text on the connect of the write, looks the profile
+  and its entry up in it (a missing one is the read's own 404, no write asked), compares the hash it
+  was sent (a stale one is 409 `stale-revision`, no write asked), hands the manager that same text so
+  the manager's own compare closes the window between the read and the write, and answers the hash of
+  the text the write LEFT, read back off the manager, so the page can save again without reading
+  again. A set-like change carries no revision: the switch of the server profile and the removal of an
+  entry are refused by the manager on their own.
+- **The affected answer** is what every write that re-renders answers, read off the manager's
+  `Affected`: `{"running": [<instance id>], "notConverged": [{"instance", "key", "args"}]}`, the
+  running instances the write left drifting from the pair they launched with, and the instances it
+  leaves not yet fitted, each with the manager's key and args. The instances a server switch does not
+  fit are rows of `notConverged`, not a refusal. The create answers 201 `{"id"}` (a new profile runs
+  nowhere, so it renders nowhere) and the profile's removal 204; the entry's add answers 201 with the
+  affected answer.
+- **The keys** are the manager's own, except the ones the contract renames, mapped by `write_failure`
+  and `refused_of`: a name the id rule refuses is 422 `invalid-instance-profile-id` with `field: "id"`,
+  a name the pool has 409 `instance-profile-name-taken` with `field: "id"`, a server profile that is
+  not on the node 422 `no-server-profile-named` with `field: "server"`, a model profile that is not
+  there 422 `no-model-profile-named` with `field: "model"`, a profile an instance runs 409
+  `instance-profile-in-use` naming that instance. A refusal carries `{"key", "args"}` and, when it is
+  of a value of the body, `field`, never the manager's detail.
+- **`crates/bff/tests/instance_profile_routes.rs` is 46 tests** over the nine routes on the same fake
+  manager as the other suites: the shape of each answer, `usedBy` computed from the record, the
+  revision of the entry's save and its 409, the 404 answered before the record is asked, the 422 with
+  a `field` and the 409 without one, the 503 of a write never handed over and the 504 of one that was.
+  **Nothing here has been called against a real manager.**
+
 ## The association routes
 
 `PUT /api/instances/{id}/profiles/server`, `GET /api/instances/{id}/profiles/model`,
@@ -1344,7 +1430,8 @@ here has been called against a real manager.**
 The two writes that make an instance and take its record away, each on one connect as the signed-in
 user, under the write's 15 s ([above](#the-instances-from-the-manager)). The manager is the only
 writer of the records, and it is the one that does the work: a create appends the section of
-`instances.ini`, writes the render `models@<id>.ini` off the pool, and drops the leftovers of a
+`instances.ini` (naming the instance profile and the port it was given, IP4b, 4db952c7), writes the
+render `models@<id>.ini` off the pool, and drops the leftovers of a
 same-named instance removed before the manager existed; a removal stops asking the service manager
 about the instance, and removes its `assignments.ini` section, its render and its record section,
 leaving the server profile it named in the pool. (`CreateInstance` / `RemoveInstance`, their checks
@@ -1352,15 +1439,16 @@ and their order: `crates/config/README.md` "Through the manager (Linux, Windows)
 
 | Route | Answers |
 | --- | --- |
-| `POST /api/instances` | `{"engine", "id", "serverProfile"}` in, three strings. 201 `{"id"}` with the id the body sent and `args: []`: the instance has no model profile, its start at boot is off, and nothing is started. 400 `instance-malformed` with no args, when the body is not JSON, not an object, missing one of the three keys, or one of them is not text; the manager is not connected to. A body over 64 KiB is the extractor's 413 `payload-too-large`, after the session check ([above](#saving-the-server-file)). 422 `unknown-engine` `[engine]` with `field` `engine`, 422 `instance-bad-id` `[id]` with `field` `id` (the instance-id rule: 1 to 32 of `a-z`, `0-9` and `-`, starting with a letter or a digit), 422 `client-address-in-use` `[the other instance]` with `field` `serverProfile` when the address of the profile asked for is the address of another instance's server profile, 422 `client-unresolvable-host` `[host]` with `field` `serverProfile` when its host is a name this machine cannot look up. 404 `client-no-server-profile` `[name]` for a profile whose `server@<name>.ini` is not there, 409 `client-server-profile-in-use` `[profile, instance]` for a profile a running instance has, 409 `instance-exists` `[id]` for an id the record already has a section for. Any other check the manager ran keeps its own key and values, as a 422 with no `field`. 503 `client-unavailable` with no manager, or a 15 s that ran out before the call was handed over; 504 `client-timeout` after it (below). 502 `client-service-failed` with no args when the service manager refused, 502 `client-other` with no args for anything else the manager failed as. |
+| `POST /api/instances` | `{"engine", "id", "instanceProfile"}` in, three strings. 201 `{"id", "port"}` with the id the body sent and the port the manager picked from the range, the instance's address with no second read, and the instance inactive: it has no model profile and its start at boot is off. 400 `instance-malformed` with no args, when the body is not JSON, not an object, missing one of the three keys, one of them not text, **or the body names `serverProfile` at all**: that is the key of the create this one replaced, and a body carrying it is refused, never read as the instance profile that supersedes it. The manager is not connected to. A body over 64 KiB is the extractor's 413 `payload-too-large`, after the session check ([above](#saving-the-server-file)). 422 `unknown-engine` `[engine]` with `field` `engine`, 422 `instance-bad-id` `[id]` with `field` `id` (the instance-id rule: 1 to 32 of `a-z`, `0-9` and `-`, starting with a letter or a digit), 422 `no-instance-profile-named` `[name]` naming the bind the body asks for, the manager refusing a name `instance-profiles.ini` has no section for, 404 `client-no-server-profile` `[name]` and 409 `client-server-profile-in-use` `[profile, instance]` naming the server profile the instance profile names, one step behind, 409 `address-in-use` `[the other instance]` when that address is the address of another instance, 422 `invalid-hostname` `[host]` when its host is a name this machine cannot look up, 503 `no-free-port` `[first, last]` naming the two ends of the range when the node holds a port at every one of them, 409 `instance-exists` `[id]` for an id the record already has a section for. Any other check the manager ran keeps its own key and values, as a 422 with no `field`. 503 `client-unavailable` with no manager, or a 15 s that ran out before the call was handed over; 504 `client-timeout` after it (below). 502 `client-service-failed` with no args when the service manager refused, 502 `client-other` with no args for anything else the manager failed as. |
 | `DELETE /api/instances/{id}` | 204 with no body. 409 `instance-protected` `[id]` for `default`, 409 `instance-running` `[id]` for an instance that is up, 404 `client-no-instance` with no args for an id the record does not name and for an id that is not a name at all (the manager's `InvalidId`), 503 `client-unavailable` and 504 `client-timeout` as for the create, and the two 502s as above. A removal is refused while the instance runs, so the caller stops it first; the fe does not ask, its Remove is offered for a stopped one. |
 
 - **The checks are the manager's and the bff keeps the key.** `instance-bad-id`, `instance-exists`,
   `instance-protected`, `instance-running` and `unknown-engine` are keys of
-  `crates/core/strings/cli.toml`, and the manager's refusal names in `args` the value it refused. A
-  refusal of the `serverProfile` value is 422 with a `field`, so the fe marks the field of the create
-  form; a refusal about the instance (an id already in the record, a profile a running instance holds)
-  is 409 with no `field`, because it is not about a value of the form.
+  `crates/core/strings/cli.toml`, and the manager's refusal names in `args` the value it refused. Two
+  refusals carry a `field`, the two of a value of the create form: `unknown-engine` marks `engine` and
+  `instance-bad-id` marks `id`. The rest answer with none: a server profile that is not there, a
+  profile a running instance holds, an address in use, a host that does not resolve and an id already
+  in the record are not about a value of the form.
 - **Both write as the signed-in user, and a refusal of the user ends the session**, exactly as the
   server save ([above](#saving-the-server-file)): the session is the proof, the principal rides the
   call, and the same 403 `session-not-administrator` is answered for an account the manager no longer
@@ -1371,13 +1459,50 @@ and their order: `crates/config/README.md` "Through the manager (Linux, Windows)
   did not return in time) it is 503 `client-unavailable` and nothing was written (since 57666cb). A retried create of an instance
   the first one did write is 409 `instance-exists`, which is how the ambiguity shows, and the read of
   the list is the truth.
-- **The reply's id is the id the body sent**, read before the manager is asked: a create answers no
-  document, and the page re-reads the list.
+- **The reply's id is the id the body sent**, read before the manager is asked, and its `port` is the
+  one the manager picked, carried out of the task so a limit that runs out once the create landed
+  answers the address it gave, as the pool's entry save carries its revision out.
+- **The create is on the write's 15 s, not the reads' 5 s**: the create checks the address of the
+  instance profile it binds, whose refusals name a host that does not resolve, an address another
+  instance holds, and a port range with nothing free in it ([below](#the-instances-profile-and-address)).
 - **`crates/bff/tests/instances.rs` is 49 tests** over these two routes and the `removable` of the
   list: the shape of the replies, the exact `args` of each key, the 422 with a `field` and the 409
   without one, the 504 of a manager lost after the write was handed over, and the 403 that ends the session.
   A refusal test asserts the `args` and, where the key has one, the `field`: that is all the fe has to
   show. **Nothing here has been called against a real manager.**
+
+## The instance's profile and address
+
+`PUT /api/instances/{id}/profile` and `PUT /api/instances/{id}/address` (`crates/bff/src/instances.rs`,
+IP4d, built 2026-11-28, 870fa961, on the manager's `SetInstanceProfile` and `SetInstanceAddress`): the
+instance profile the record binds, and the address of the record's section. Both are behind sign-in,
+both act for the signed-in user on one connect (`configure`, so a refusal of that user is 403
+`session-not-administrator` and ends the session), both are on the write's 15 s, and both answer the
+affected answer `{"running", "notConverged"}` ([the instance profile pool](#the-instance-profile-pool)):
+the instances this write leaves running, and the ones it leaves not yet fitted, each with the manager's
+key and args. Neither carries a revision of its own on the wire: the bff reads the text the manager
+compares and hands it over with the write, so the manager's own compare covers the window the read
+leaves. The id of the path is answered from the record of the instances first, the ids read on the same
+connect compared without case: an id the record does not name is 404 `client-no-instance` with nothing
+written, no write asked.
+
+| Route | Answers |
+| --- | --- |
+| `PUT /api/instances/{id}/profile` | `{"instanceProfile": "<name>"}` in, one string, a body nothing can be made of being 400 `profile-malformed` with the manager not connected to. The revision is the pool's text of the profile named, read with the one verb that answers one profile (`instance_profile`, as on the pool's routes): a pool with no such section is 422 `no-instance-profile-named`, with no write asked. 200 with the affected answer. 409 `address-in-use` `[the other instance]` when the profile's address is another instance's, 409 `stale-revision` with no args when the pool moved between the read and the write, 502 `client-other` for the manager's `Io`. |
+| `PUT /api/instances/{id}/address` | `{"hostname", "port"}` in: the port a string, and a `null` hostname the empty host, the key the manager takes away. A body that is not an object, a missing key, a port that is not a string, and a hostname that is neither a string nor `null`, are 400 `address-malformed`. The revision is the `instances.ini` text read here, a file the manager has not written read as the empty text. 200 with the affected answer. 422 `invalid-port` `[key, value, min, max]` (the manager's `not-whole-number-in-range` renamed, as on the pool's routes), 422 `invalid-hostname` `[host]`, 409 `address-in-use` `[the other instance]`, 409 `stale-revision`, 502 `client-other`. |
+
+- **Neither carries a `field`**: an address in use, a port out of the range and a host that does not
+  resolve are the manager's rules about the instance, not about a value of a form the page sent, and
+  the two writes have no create form.
+- **The time limit is the pool's**: 503 `client-unavailable` while the call was never handed over the
+  manager and nothing was written, 504 `client-timeout` once it was, the outcome unknown, the session
+  living on ([above](#saving-the-server-file)).
+- **`crates/bff/tests/ip4_instance_routes.rs` is 22 tests** over the create, the removal, the profile
+  switch and the address write, and the five new keys of the list, on the same fake manager: 201 with
+  the id and the picked port, a body naming the retired `serverProfile` refused as 400, the 404
+  answered before any write, the affected answer of both writes, the `null` host clearing the host, the
+  `field`-less 422s and 409s, the 503 of a write never handed over and the 504 of one that was, and the
+  403 that ends the session. **Nothing here has been called against a real manager.**
 
 ## The web UI (`fe/`)
 
@@ -1479,7 +1604,12 @@ manager (`router_with`, a short timeout); `tests/session.rs` drives `/api/sessio
 `tests/authenticator.rs` drives `SystemAuthenticator` over a fake manager client, the same `Connect`
 the bff's other routes use (never PAM, `LogonUserW`, the bus or the pipe), and pins how the
 manager's two answers become `Identity` or `AuthError`; `tests/server.rs` drives
-`GET` and `PUT /api/instances/{id}/server` the same way, over a fake manager; `tests/model_profiles.rs`,
+`GET` and `PUT /api/instances/{id}/server` the same way, over a fake manager;
+`tests/ip4_instance_routes.rs` drives the create, the removal, the profile switch and the address write
+of one instance, and the five new keys of the list, over the same fake (IP4d, 870fa961);
+`tests/instance_profile_routes.rs` drives the nine routes of the instance profile pool
+([above](#the-instance-profile-pool)) over the same fake, whose `Instances` rows make `usedBy` and
+whose own compare answers a stale revision (IP4c, e69b8f98); `tests/model_profiles.rs`,
 `tests/model_profiles_switch.rs`, `tests/model_profile_read.rs` and `tests/model_profile_save.rs` drive the model profile list,
 the switch, the section read and the save over the same fake manager, whose
 compare and swap lands only when the `expected` text is what the fake answered for that file in that

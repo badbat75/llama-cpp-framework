@@ -16,7 +16,7 @@
 //! so a reply carrying a fixture text is the fake's answer, and the join is
 //! `pai_core::vulkan::join` (AN2) driven through the manager. Nothing here
 //! touches `paths::` (the read resolves no path), so these plain `#[test]`s run
-//! in parallel beside the crate's `data_root_e2e`.
+//! in parallel beside the crate's isolated phases.
 //!
 //! Names the tests assume, the contract for the coder: the seam is
 //! `service::NodeFacts` (`os`, `gpus`, `vulkan`), wired with

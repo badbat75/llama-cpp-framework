@@ -89,9 +89,10 @@ fn hang_up(server: JoinHandle<std::io::Result<()>>, client: PipeClient<UnixStrea
     );
 }
 
-/// E2E phase for the stream client against the server, for this crate's
-/// e2e test to call: it sets the process-wide `PRIVATE_AI_DATA_ROOT`
-/// redirect (`src/tests/mod.rs`).
+/// E2E phase for the stream client against the server, for one of this crate's
+/// isolated phase tests to call (`src/tests/mod.rs`): it runs in a child
+/// process of its own (`pai_core::isolated::isolated`), where it sets the
+/// process-wide `PRIVATE_AI_DATA_ROOT` redirect.
 pub(crate) fn manager_pipe_client_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
