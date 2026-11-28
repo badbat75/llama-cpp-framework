@@ -203,3 +203,5 @@ Rules are in `AGENTS.md` and the role in `.opencode/agents/designer.md`. Format 
 - Do not ask for `overflow-wrap: normal` (or `break-word`) on a table cell to stop mid-word breaks:
   only `anywhere` lowers the cell's min-content, so a long id without a break point keeps the table in
   its box at 320 px (CSS Text 3 `overflow-wrap`); the same goes for `nowrap` on a link holding an id.
+- A nav label wider than bold "Model profiles" drops under its icon in the 224 px column (H8a.5's wrap):
+  brief a nav entry with its measured height (`build/ux-review/ip6a/nav.js` injects a column width).

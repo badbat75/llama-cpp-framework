@@ -498,6 +498,8 @@ test('2a.1: signed in, the nav holds Overview, the instance links, then Model pr
     'coder',
     // 20 N.7: Node info is in the host list, after its instances.
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     // 13 N.6: About, last.
@@ -520,6 +522,8 @@ test('2a.1: a failed instances read leaves out the instance links, not Model pro
   expect(navLinks()).toEqual([
     en('nav-overview'),
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
@@ -762,6 +766,8 @@ test('2a.20, 2b.35, 2c.53, 2d.60, 22 D4.1, 22 IP5.1: Tab goes skip link, banner,
     'coder',
     // 20 N.7: Node info is in the host list, after its instances.
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     // 13 N.6: About, last, both before the page.

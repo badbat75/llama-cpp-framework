@@ -1154,6 +1154,8 @@ const SHELL = [
   // and fe/briefs/02-models.md 2a criterion 1 keeps Model profiles after it,
   // where brief 16 (17a.2) puts the new Server profiles before them.
   en('nav-node'),
+  // Brief 26 (26.1): Instance profiles leads the Profiles group.
+  en('nav-instance-profiles'),
   en('nav-server-profiles'),
   en('nav-model-profiles'),
   // Slice 13: About is the nav's last entry, so it precedes the page.

@@ -999,6 +999,6 @@ test('H8a.10: inside the wide block the .nav rule gives the column no right padd
   )
   expect(
     oneLine(prop(layout.body, 'grid-template-columns')),
-    'H8a.10: the nav column stays 224 px (a wider one narrows main on every page, rejected), so every page keeps its main width',
-  ).toBe('224px minmax(0, 1fr)')
+    'the nav column is 248 px (brief 26 IP6a review R1 amends H8a.10: the width that keeps the longest nav label, "Instance profiles", on one line beside its icon), so every page keeps its main width',
+  ).toBe('248px minmax(0, 1fr)')
 })

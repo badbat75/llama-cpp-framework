@@ -118,6 +118,11 @@ const SWITCH_BUTTON = `main button:has-text("${S['instance-server-switch']}")`
 // fails, as it asks.
 const DELETE_QUESTION = S['model-profile-delete-question']?.split('{0}')[0]
 
+// The refusal of a delete an instance answers with 409 `instance-profile-in-use`
+// (brief 26, 26.3): the bff's words, with the id in place.
+const IN_USE = (id) =>
+  (S['api-instance-profile-in-use'] ?? '{0}').replace('{0}', id)
+
 // The states to look at: the stub's /__set query, the route, the expect: the
 // selectors (with the text they carry) only that state shows, the optional
 // click: selectors clicked in order once the state is rendered (each one only
@@ -273,6 +278,8 @@ const STATES = [
     set: 'session=admin&list=many',
     hash: '#/',
     menu: true,
+    // The IP6a review R1: the nav column at the wide widths, read by `navColumn`.
+    probe: 'nav-column',
     expect: [
       { selector: '#nav-nodes', text: S['nav-nodes'] },
       { selector: '#nav-host', text: HOST },
@@ -529,6 +536,75 @@ const STATES = [
       click: 'main button:has(svg path[d="M12 5v14"])',
       then: 'main form',
     },
+  },
+  {
+    // Brief 26, slice IP6a (26.2, the brief's item 15): the instance profile
+    // list at its widest row, so the check reads the table box, the count
+    // cells and the Used by cell at 320 px and at 200 % text. stub.py answers
+    // GET /api/profiles/instance with three profiles, one of them used by an
+    // instance (its trash can is switched off) and one with no model.
+    name: 'instance-profiles',
+    set: 'session=admin',
+    hash: '#/profiles/instance',
+    // The IP6a review R2 and R3: the folded list below 480 px and the words of
+    // its cells at 320 px, read by `instanceListNarrow`.
+    probe: 'instance-profiles-narrow',
+    expect: [
+      { selector: '#page-heading', text: S['instance-profiles-title'] },
+      {
+        selector: 'a[href="#/profiles/instance/coder"]',
+        text: 'coder',
+      },
+    ],
+  },
+  {
+    // Brief 26, slice IP6a (26.4, the brief's item 15): the create form of the
+    // list page, opened in place. As `server-profiles-new`, the opener carries
+    // the plus of Icon.tsx, so its selector names the icon.
+    name: 'instance-profiles-new',
+    set: 'session=admin',
+    hash: '#/profiles/instance',
+    expect: [
+      { selector: '#page-heading', text: S['instance-profiles-title'] },
+      {
+        selector: 'main button:has(svg path[d="M12 5v14"])',
+        message: 'the opener of the create form: the button with the plus',
+      },
+    ],
+    open: {
+      click: 'main button:has(svg path[d="M12 5v14"])',
+      then: 'main form',
+    },
+  },
+  {
+    // Brief 26, 26.3, as the IP6a review reads it: the refusal of a delete the
+    // bff answers 409 `instance-profile-in-use`. The pool at rest has a row whose
+    // trash acts (`coder`: the stub lists no instance running it), and its
+    // DELETE the stub refuses (`instuse=race`), the answer of a page that raced
+    // an instance taking the profile. The chain opens the confirm and presses
+    // Confirm, which deletes nothing, so the row stays and the list is read
+    // again. The words are the bff's `{key, args}` body: a refusal in any other
+    // shape shows the generic "could not be deleted" here, not this sentence.
+    name: 'instance-profiles-in-use',
+    set: 'session=admin&instuse=race',
+    hash: '#/profiles/instance',
+    expect: [
+      { selector: '#page-heading', text: S['instance-profiles-title'] },
+      {
+        selector: 'main tbody .ot-add:not([aria-disabled="true"])',
+        message: 'the − of a row no instance runs, which can act (26.3)',
+      },
+    ],
+    opens: [
+      {
+        click: 'main tbody .ot-add:not([aria-disabled="true"])',
+        then: 'main tr.confirm-row [role="group"]',
+      },
+      {
+        click: 'main #confirm-delete',
+        then: `main [role="alert"]:has-text("${IN_USE('coder')}")`,
+      },
+    ],
   },
   {
     // Brief 16, slice 17b (17b.7) as 22D4 amends it (22 D4.9, 22 D4.10): the
@@ -1199,12 +1275,189 @@ async function modelsListNarrow(page, width) {
   })
 }
 
-/** The probes, by the name a state's `probe` gives. */
-const PROBES = { 'model-profiles-narrow': modelsListNarrow }
+/** The nav column at the wide widths (brief 26, the IP6a review R1): the
+ *  `.layout` grid gives the nav 248 px, so every entry of the Profiles group
+ *  keeps its label beside its icon on one line (at the 224 px the sheet had,
+ *  "Instance profiles" moved whole under its icon and the pill grew to 64 px
+ *  while its siblings stayed 34). Below 960 px the nav is not a column (index.css
+ *  784), so the state says nothing there. */
+async function navColumn(page, width) {
+  if (width < 960) return []
+  return page.evaluate(() => {
+    const found = []
+    const layout = document.querySelector('.layout')
+    if (layout === null) return ['nav column: no .layout on the page']
+    const column = getComputedStyle(layout).gridTemplateColumns.split(' ')[0]
+    if (column !== '248px') {
+      found.push(`nav column: ${column} (expected 248px, R1)`)
+    }
+    const entries = [
+      ...document.querySelectorAll('ul[aria-labelledby="nav-profiles"] a'),
+    ]
+    if (entries.length === 0) {
+      return [...found, 'nav column: the Profiles group holds no entry']
+    }
+    const heights = []
+    for (const a of entries) {
+      const label = [...a.childNodes].find(
+        (n) => n.nodeType === 3 && (n.textContent ?? '').trim() !== '',
+      )
+      const icon = a.querySelector('.icon')
+      if (label === undefined || icon === null) continue
+      const range = a.ownerDocument.createRange()
+      range.selectNodeContents(label)
+      const text = range.getBoundingClientRect()
+      const pill = a.getBoundingClientRect()
+      heights.push(Math.round(pill.height))
+      const words = (label.textContent ?? '').trim()
+      // The label is whole on a line of its own when it has no room beside the
+      // icon (index.css 588): its box sits under the icon's.
+      if (text.top > icon.getBoundingClientRect().bottom) {
+        found.push(
+          `nav "${words}": the label is under the icon, the pill is ${Math.round(pill.height)} px (R1: one line beside the icon)`,
+        )
+      }
+    }
+    const widest = Math.max(...heights)
+    const narrowest = Math.min(...heights)
+    if (widest - narrowest > 1) {
+      found.push(
+        `nav entries: heights ${heights.join(' ')} px, the group is not one line each (R1)`,
+      )
+    }
+    return found
+  })
+}
 
-/** What the state's `probe` measures, on the page at rest. Every probe reads a
- *  rule of the narrow layout, so a page at or above the 480 px fold, where the
- *  layout does not fold, says nothing. */
+/** The Instance profiles list in the narrow layout, read as the page stands
+ *  below the 480 px fold (brief 26, the IP6a review R2 and R3):
+ *  - R2: the Server profile and the Model profiles columns are folded away, so
+ *    each row's muted second line under the name carries both: the server
+ *    profile link, ` · `, the count text of 26.2. Its link takes `--muted`, the
+ *    line's own colour, so a row shows one purple link and not two.
+ *  - R3: no cell of the table breaks inside a word (the rule D4.37 states for
+ *    an id: a line may start after a space or a hyphen, nowhere inside a word),
+ *    and a head reads its two words whole.
+ *  - R5: the table is no wider than the box it scrolls inside, so the box has
+ *    nothing to scroll: a box whose child overflows is a Tab stop in Firefox
+ *    and takes a scrollbar, which narrows the box further. */
+async function instanceListNarrow(page, width) {
+  if (width > NARROW_MAX) return []
+  return page.evaluate(() => {
+    const found = []
+    const table = document.querySelector('table.instance-profiles')
+    if (table === null) {
+      return ['instance profiles: no table.instance-profiles']
+    }
+    // R5: the width the eye has, and the width the table takes. The box's
+    // clientWidth is its content less its border and its scrollbar.
+    const box = table.parentElement
+    if (box === null) {
+      found.push('width: the table has no scroll box (R5)')
+    } else if (table.scrollWidth > box.clientWidth) {
+      found.push(
+        `width: the table is ${table.scrollWidth} px, its scroll box ${box.clientWidth} px (R5)`,
+      )
+    }
+    const taken = (el) => {
+      const s = getComputedStyle(el)
+      const r = el.getBoundingClientRect()
+      return s.display === 'none' || r.width < 2 || r.height < 2
+    }
+    const word = (el) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
+    const rows = [...table.querySelectorAll('tbody tr')].filter(
+      (tr) => !tr.classList.contains('confirm-row'),
+    )
+    const cells = (tr) => [...tr.children].filter((c) => c.tagName === 'TD')
+    const hidden = (el) => el?.closest('.visually-hidden') !== null
+    // R3: every word of a cell ends on the line it starts on.
+    const midWord = (el) => {
+      const doc = el.ownerDocument
+      const walker = doc.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      const out = []
+      for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) {
+        const text = n.textContent ?? ''
+        if (text.trim() === '' || hidden(n.parentElement)) continue
+        const tops = []
+        for (let i = 0; i < text.length; i++) {
+          const r = doc.createRange()
+          r.setStart(n, i)
+          r.setEnd(n, i + 1)
+          tops.push(r.getBoundingClientRect().top)
+        }
+        for (let i = 1; i < text.length; i++) {
+          if (
+            tops[i] !== tops[i - 1] &&
+            text[i - 1] !== '-' &&
+            text[i - 1] !== ' '
+          ) {
+            out.push(`"${text}" breaks inside a word, "${text.slice(i)}" starts a line`)
+            break
+          }
+        }
+      }
+      return out
+    }
+    for (const el of table.querySelectorAll('th, td')) {
+      if (taken(el)) continue
+      for (const bad of midWord(el)) {
+        found.push(`${word(el).slice(0, 24) || 'cell'}: ${bad} (R3)`)
+      }
+    }
+    // R2: the two folded columns speak in the name cell.
+    for (const tr of rows) {
+      const td = cells(tr)
+      const id = word(td[0]?.querySelector('a'))
+      const line = td[0]?.querySelector('.muted')
+      if (line === null || line === undefined) {
+        found.push(`fold: the name cell of "${id}" holds no second line`)
+        continue
+      }
+      if (taken(line)) {
+        found.push(`fold: the second line of "${id}" is not visible`)
+        continue
+      }
+      for (const n of [1, 2]) {
+        if (td[n] !== undefined && !taken(td[n])) {
+          found.push(
+            `fold: column ${n + 1} of "${id}" is still laid out (R2 folds it away)`,
+          )
+        }
+      }
+      const link = line.querySelector('a')
+      if (link === null) {
+        found.push(`fold: the second line of "${id}" holds no server profile link`)
+        continue
+      }
+      const wanted = `${word(link)} · ${word(td[2])}`
+      if (word(line) !== wanted) {
+        found.push(
+          `fold: the second line of "${id}" is "${word(line)}", expected "${wanted}" (R2)`,
+        )
+      }
+      const muted = getComputedStyle(line).color
+      const own = getComputedStyle(link).color
+      if (own !== muted) {
+        found.push(
+          `fold: the second line's link of "${id}" is ${own} and the line's words are ${muted} (R2: the link takes --muted)`,
+        )
+      }
+    }
+    return found
+  })
+}
+
+/** The probes, by the name a state's `probe` gives. */
+const PROBES = {
+  'model-profiles-narrow': modelsListNarrow,
+  'nav-column': navColumn,
+  'instance-profiles-narrow': instanceListNarrow,
+}
+
+/** What the state's `probe` measures, on the page at rest, at this width. Each
+ *  probe gates itself: the narrow-layout ones say nothing at or above the
+ *  480 px fold, where the layout does not fold, and `nav-column` says nothing
+ *  below 960 px, where the nav is not a column. */
 async function probed(page, state, width) {
   if (state.probe === undefined) return []
   return PROBES[state.probe](page, width)
@@ -1216,13 +1469,14 @@ async function probed(page, state, width) {
  *  answering node: the two tile states ask for list=many themselves, the tags
  *  state for tags=long, the loading ones for load=session or load=slow and the
  *  node states for node=down or node=long, the blocks state for split=layer,
- *  the placement state for ot=1, the delete state for used=1, and a state that
+ *  the placement state for ot=1, the delete state for used=1, the in-use state
+ *  for instuse=race, and a state that
  *  ran before them leaves none of them behind for the pages after it. A hash
  *  change does not reload the app, so every state starts from a blank page. */
 async function load(page, state, base) {
   const found = []
   for (const q of [
-    'list=one&tags=few&load=fast&node=ok&split=tensor&ot=none&used=0&usedby=short',
+    'list=one&tags=few&load=fast&node=ok&split=tensor&ot=none&used=0&usedby=short&instuse=free',
     state.set,
   ]) {
     const res = await fetch(`${base}/__set?${q}`)

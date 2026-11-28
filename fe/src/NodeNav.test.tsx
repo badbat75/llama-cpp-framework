@@ -478,6 +478,8 @@ test('20 N.6: no instances to show, the Nodes label, the host label and the Node
   ).toEqual([
     en('nav-overview'),
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
@@ -606,6 +608,8 @@ test('13 N.11: at #/about the Tab path is the shell and its links with About las
     'default',
     'coder',
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
@@ -640,6 +644,8 @@ test('13 N.11: the Menu button opens the nav, its links read in the same order w
     'default',
     'coder',
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),

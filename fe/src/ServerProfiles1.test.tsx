@@ -94,6 +94,15 @@ function profileLinks() {
   }))
 }
 
+/** The Profiles group's entry to `href`, found by its address (brief 26 (26.1)
+ *  added an entry to the group, so a test that speaks of one entry names its
+ *  address rather than a position). */
+function profileLink(links: ReturnType<typeof profileLinks>, href: string) {
+  const found = links.filter((l) => l.href === href)
+  expect(found, `the group holds one entry to ${href}`).toHaveLength(1)
+  return found[0]!
+}
+
 /** The names of the elements Tab reaches, in order. */
 function tabbableNames(): string[] {
   return [
@@ -249,7 +258,7 @@ test('16 17a.1: serverProfileHref is the profile page of an id, the id percent-e
 
 // ── 17a.2: the nav ──────────────────────────────────────────────────────
 
-test('16 17a.2: the Profiles group holds Server profiles then Model profiles, the first with the server icon and, on the list, aria-current page', async () => {
+test('16 17a.2 (26.1): the Profiles group holds Instance profiles, then Server profiles, then Model profiles, the Server profiles entry with the server icon and, on the list, aria-current page', async () => {
   const { main } = open({ serverProfiles: ROWS })
   await within(main).findByRole('heading', {
     level: 1,
@@ -258,12 +267,13 @@ test('16 17a.2: the Profiles group holds Server profiles then Model profiles, th
   const links = profileLinks()
   expect(
     links.map((l) => [l.text, l.href]),
-    'the two entries, in the order of decision 1',
+    'the three entries, Instance profiles first (26.1), then the two of decision 1',
   ).toEqual([
+    [en('nav-instance-profiles'), '#/profiles/instance'],
     [en('nav-server-profiles'), '#/profiles/server'],
     [en('nav-model-profiles'), '#/profiles/model'],
   ])
-  const server = links[0]!
+  const server = profileLink(links, '#/profiles/server')
   expect(server.current, 'on the list page').toBe('page')
   const icon = server.icon
   expect(icon, 'the entry opens with its icon').not.toBeNull()
@@ -274,7 +284,7 @@ test('16 17a.2: the Profiles group holds Server profiles then Model profiles, th
   ).toBe(true)
   expect(icon!.getAttribute('aria-hidden'), 'decorative').toBe('true')
   expect(
-    links[1]!.current,
+    profileLink(links, '#/profiles/model').current,
     'Model profiles keeps 2d.64: nothing here',
   ).toBeNull()
 })
@@ -288,9 +298,12 @@ test('16 17a.2: on a profile page the Server profiles entry is aria-current true
     startAt(hash)
     open({ serverProfiles: ROWS, serverProfile: () => reply(200, {}) })
     const links = await waitForLinks()
-    expect(links[0]!.current, `${hash}: Server profiles`).toBe(current)
     expect(
-      links[1]!.current,
+      profileLink(links, '#/profiles/server').current,
+      `${hash}: Server profiles`,
+    ).toBe(current)
+    expect(
+      profileLink(links, '#/profiles/model').current,
       `${hash}: Model profiles keeps its rule (2d.64)`,
     ).toBe(hash === '#/profiles/model' ? 'page' : null)
     cleanup()
@@ -314,7 +327,7 @@ test('16 17a.2: at 1280 px with two instances the Tab path is the shell, Overvie
   // after the page heading: settle the nav before taking the Tab path.
   await within(nav()).findByRole('link', { name: 'coder' })
   expect(
-    tabbableNames().slice(0, 12),
+    tabbableNames().slice(0, 13),
     'the shell in 20 N.10 order with Server profiles added before Model profiles',
   ).toEqual([
     en('skip-to-content'),
@@ -326,6 +339,8 @@ test('16 17a.2: at 1280 px with two instances the Tab path is the shell, Overvie
     'default',
     'coder',
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),

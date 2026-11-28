@@ -10,6 +10,8 @@ export type Route =
   | { page: 'model-profile'; id: string }
   | { page: 'server-profiles' }
   | { page: 'server-profile'; id: string }
+  | { page: 'instance-profiles' }
+  | { page: 'instance-profile'; id: string }
   | { page: 'instance'; id: string }
   | { page: 'not-found' }
 
@@ -20,6 +22,19 @@ export function parseRoute(hash: string): Route {
   if (hash === '#/node') return { page: 'node' }
   if (hash === '#/profiles/model') return { page: 'model-profiles' }
   if (hash === '#/profiles/server') return { page: 'server-profiles' }
+  if (hash === '#/profiles/instance') return { page: 'instance-profiles' }
+  const instanceProfile = /^#\/profiles\/instance\/([^/]+)$/.exec(hash)
+  if (instanceProfile) {
+    try {
+      return {
+        page: 'instance-profile',
+        id: decodeURIComponent(instanceProfile[1]!),
+      }
+    } catch {
+      // A bad escape (`%zz`) is no profile: the not-found page, and nothing read.
+      return { page: 'not-found' }
+    }
+  }
   const serverProfile = /^#\/profiles\/server\/([^/]+)$/.exec(hash)
   if (serverProfile) {
     try {

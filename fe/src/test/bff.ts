@@ -102,6 +102,9 @@ export const EN: Record<string, string> = {
   'server-loading': 'Loading the server settings…',
   'server-load-failed': 'The server settings could not be read.',
   // Brief 16 slice 17a: the server profiles list and a profile's page.
+  // Brief 26, slice IP6a (26.1): the Profiles group gains the instance
+  // profiles entry, first, because an instance profile composes the other two.
+  'nav-instance-profiles': 'Instance profiles',
   'nav-server-profiles': 'Server profiles',
   'server-profiles-title': 'Server profiles',
   'server-profiles-intro':
@@ -128,6 +131,45 @@ export const EN: Record<string, string> = {
     'Delete the server profile {0}? Its settings file is removed. This cannot be undone.',
   'server-profiles-deleted': 'The server profile {0} was deleted.',
   'server-profile-back': 'All server profiles',
+  // Brief 26, slice IP6a (fe/briefs/26-instance-profiles.md, 26.2 to 26.4): the
+  // instance profile list, its row's trash can, and its create form. The words
+  // are the brief's; the three it does not quote (`api-instance-profile-name-
+  // taken`, `api-invalid-instance-profile-id`, and the done line) follow the
+  // server list's siblings. `1a strings` in App.test.tsx pins these against
+  // strings/en_US.json, so the production sheet gains exactly IP6a's keys.
+  'instance-profiles-title': 'Instance profiles',
+  'instance-profiles-intro':
+    'An instance profile is one server profile and the model profiles it serves, with where each model runs on this machine. Every instance runs one instance profile; several instances may run the same one.',
+  'instance-profiles-loading': 'Loading the instance profiles…',
+  'instance-profiles-failed': 'The instance profiles could not be read.',
+  'instance-profiles-empty': 'There are no instance profiles yet.',
+  'instance-profiles-column-name': 'Instance profile',
+  'instance-profiles-column-server': 'Server profile',
+  'instance-profiles-column-models': 'Model profiles',
+  'instance-profiles-column-used-by': 'Used by',
+  'instance-profiles-models-count': '{0} models',
+  'instance-profiles-models-count-one': '1 model',
+  'instance-profiles-models-none': 'None',
+  'instance-profiles-unused': 'No instance',
+  'instance-profiles-delete-row': 'Delete instance profile {0}',
+  'instance-profiles-delete-in-use':
+    'An instance uses it: give that instance another instance profile to delete this one.',
+  'instance-profiles-delete-question':
+    'Delete the instance profile {0}? Its model entries and their placement settings are removed; the server and model profiles stay. This cannot be undone.',
+  'instance-profiles-deleted': 'The instance profile {0} was deleted.',
+  'api-instance-profile-in-use':
+    'An instance uses the instance profile {0}: give it another one first.',
+  'instance-profiles-new': 'New instance profile',
+  'instance-profiles-new-title': 'New instance profile',
+  'instance-profile-name': 'Name',
+  'instance-profile-name-hint':
+    'Letters, digits, ., _ and -. It cannot be changed later.',
+  'instance-profile-server-choose': 'Choose a server profile',
+  'instance-profile-no-server': 'Create a server profile first.',
+  'api-instance-profile-name-taken':
+    'The instance profile {0} is already there.',
+  'api-invalid-instance-profile-id':
+    "{0} cannot be an instance profile name: use letters, digits, '.', '_' and '-', starting with a letter or a digit.",
   // 22 D4.12: the page's status row and its two sentences leave with 22 D4.9
   // (`server-profile-unused` and `server-profile-used-by` are gone); the list's
   // Used by cell keeps `server-profiles-unused` and gains the row's −.
@@ -1626,6 +1668,20 @@ export type ServerProfile = {
 export const SERVER_PROFILES: ServerProfile[] = [{ id: 'default', tags: [] }]
 
 /**
+ * One row of GET /api/profiles/instance (brief 26, section 0): the profile's
+ * id, the server profile it runs, the model profiles it serves in file order,
+ * and the instances that run it. `models` and `usedBy` are ids; the list page
+ * spells the instances' names from GET /api/instances, as the Server profiles
+ * list does (brief 22, 22 D4.37).
+ */
+export type InstanceProfile = {
+  id: string
+  server: string
+  models: string[]
+  usedBy: string[]
+}
+
+/**
  * One row of GET /api/instances/{id}/profiles/model (fe/briefs/api-contract.md
  * 868, brief 16 slice 17e): the pool row's fields, plus `enabled` (the 17e
  * record's own value: ARCHITECTURE.md IP4 removes these routes and this field
@@ -2306,6 +2362,39 @@ export type BffOptions = {
     init?: RequestInit,
   ) => Response | Promise<Response>
   /**
+   * GET /api/profiles/instance (brief 26, section 0): the rows to answer 200
+   * with, as `{rows: [{id, server, models, usedBy}]}` in file order, or the
+   * reply. Where a test names none the route rejects as an unknown one does,
+   * so a page that never lists instance profiles sees nothing.
+   */
+  instanceProfiles?: InstanceProfile[] | Answer
+  /**
+   * POST /api/profiles/instance (brief 26, 26.4): the reply to the n-th create
+   * (from 1), given the parsed body `{"id","server"}`. Default 201
+   * `{"id": <the body's id>}`.
+   */
+  instanceProfileCreate?: (
+    body: unknown,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * DELETE /api/profiles/instance/{id} (brief 26, 26.3): the reply to the n-th
+   * delete (from 1) of the decoded id. Default 204.
+   */
+  instanceProfileDelete?: (
+    id: string,
+    n: number,
+    init?: RequestInit,
+  ) => Response | Promise<Response>
+  /**
+   * GET /api/profiles/instance/{p} (brief 26, section 0): the reply. Where a
+   * test names none, the route answers 404 `no-instance-profile-named`, the
+   * manager's refusal of an id the pool has not got: the list page never reads
+   * it, and the page's own tests name their answers.
+   */
+  instanceProfile?: Answer
+  /**
    * POST /api/instances (brief 16, 16 17c.4): the reply to the n-th create
    * (from 1), given the parsed body `{"engine","id","serverProfile"}`.
    * Default 201 `{"id": <the body's id>}`, the reply the app lands on.
@@ -2513,6 +2602,16 @@ export function fakeBff(options: BffOptions = {}) {
       if (Array.isArray(p)) return Promise.resolve(reply(200, p))
       return answer(p, init)
     }
+    // Brief 26, section 0: the instance profile pool. A test that names no
+    // rows gets the rejection of an unknown route, so a page that never lists
+    // instance profiles sees nothing, as the node's and the devices' routes do.
+    if (route === 'GET /api/profiles/instance') {
+      const p = options.instanceProfiles
+      if (p === undefined)
+        return Promise.reject(new TypeError(`unexpected ${route}`))
+      if (Array.isArray(p)) return Promise.resolve(reply(200, { rows: p }))
+      return answer(p, init)
+    }
     if (route === 'POST /api/profiles/server') {
       const n = calls.filter(
         (c) => c.method === 'POST' && c.path === '/api/profiles/server',
@@ -2521,6 +2620,42 @@ export function fakeBff(options: BffOptions = {}) {
         options.serverProfileCreate
           ? options.serverProfileCreate(body, n, init)
           : reply(201, { id: (body as { id?: string })?.id ?? '' }),
+      )
+    }
+    if (route === 'POST /api/profiles/instance') {
+      const n = calls.filter(
+        (c) => c.method === 'POST' && c.path === '/api/profiles/instance',
+      ).length
+      return Promise.resolve(
+        options.instanceProfileCreate
+          ? options.instanceProfileCreate(body, n, init)
+          : reply(201, { id: (body as { id?: string })?.id ?? '' }),
+      )
+    }
+    // The profile's own page (brief 26 section 3) is a later slice: the
+    // default is the manager's refusal of an id the pool has not got, so a
+    // test that lands on the address sees a page, not a network failure.
+    const instanceProfileRead = /^GET \/api\/profiles\/instance\/([^/]+)$/.exec(
+      route,
+    )
+    if (instanceProfileRead) {
+      return answer(
+        options.instanceProfile ??
+          (() => reply(404, { key: 'no-instance-profile-named', args: [] })),
+        init,
+      )
+    }
+    const instanceProfileDelete =
+      /^DELETE \/api\/profiles\/instance\/([^/]+)$/.exec(route)
+    if (instanceProfileDelete) {
+      const id = decodeURIComponent(instanceProfileDelete[1]!)
+      const n = calls.filter(
+        (c) => c.method === 'DELETE' && c.path === path,
+      ).length
+      return Promise.resolve(
+        options.instanceProfileDelete
+          ? options.instanceProfileDelete(id, n, init)
+          : reply(204),
       )
     }
     const serverProfileDelete =

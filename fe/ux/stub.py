@@ -63,6 +63,11 @@ STATE = {
     # `removable=1` says the instance's record can be removed, where the page
     # offers the remove verb.
     "removable": "0",
+    # Brief 26, 26.3, as the IP6a review reads it (the state
+    # `instance-profiles-in-use` of check.js): `instuse=race` refuses the DELETE
+    # of `coder`, the profile the list says no instance runs, with the bff's 409
+    # `instance-profile-in-use`: the page raced an instance taking it.
+    "instuse": "free",
 }
 
 # How long a held read stays open, for the loading states of brief 17 U17a:
@@ -149,6 +154,16 @@ LONG_POOL_ROW = {
     "tags": LONG_OWN,
     "instance": None,
 }
+
+# GET /api/profiles/instance (brief 26 section 0, the states
+# `instance-profiles` and `instance-profiles-new` of check.js): three profiles,
+# one of them used by the `default` instance so its row's trash can is switched
+# off, one with two models and one with none.
+INSTANCE_PROFILES = [
+    {"id": "default", "server": "default", "models": ["Qwen3-27B"], "usedBy": ["default"]},
+    {"id": "coder", "server": "coder", "models": ["Qwen3.6-35B-A3B-UD-Q4_K_XL", "Qwen3-27B"], "usedBy": []},
+    {"id": "office", "server": "default", "models": [], "usedBy": []},
+]
 
 # GET /api/profiles/model: rows with every engine shape the list shows. Brief 22
 # slice IP5 (IP5.0): a row carries no `enabled` and no `assignments`, and carries
@@ -574,6 +589,12 @@ class Handler(SimpleHTTPRequestHandler):
             if STATE["pool"] == "long":
                 return self.json(200, SERVER_PROFILES + [LONG_POOL_ROW])
             return self.json(200, SERVER_PROFILES)
+        # Brief 26 section 0 (the states `instance-profiles` and
+        # `instance-profiles-new` of check.js): the instance profile pool, in
+        # file order. The check opens the create form and reads it; it never
+        # presses Create, so the pool never changes.
+        if p == "/api/profiles/instance":
+            return self.json(200, {"rows": INSTANCE_PROFILES})
         # Brief 16 slice 17a: a server profile's own page. The document is
         # today's server document plus `instance`, the instance that runs it.
         # `/api/profiles/server/<id>` has four slashes (the model profile route
@@ -715,6 +736,16 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, KeyError):
                 return self.json(400, {"key": "server-profile-malformed", "args": []})
             return self.json(201, {"id": new_id})
+        # Brief 26 section 0 (the state `instance-profiles-new` of check.js):
+        # the list page creates an instance profile here, and the bff's reply
+        # is 201 with the new id. The check opens the form and reads it; it
+        # never presses Create, so the answer is a plain 201.
+        if p == "/api/profiles/instance":
+            try:
+                new_id = json.loads(body)["id"]
+            except (ValueError, KeyError):
+                return self.json(400, {"key": "invalid-instance-profile-id", "args": []})
+            return self.json(201, {"id": new_id})
         # Brief 16 slice 17c (17c.4, the state `instances-new` of check.js): the
         # Overview's list creates an instance here, and the bff's reply is 201
         # with the new id. The check opens the form and reads it; it never
@@ -750,6 +781,32 @@ class Handler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return
             return self.json(404, {"key": "client-no-server-profile", "args": [pid]})
+        # Brief 26 section 0 (the state `instance-profiles` of check.js): the
+        # list page's trash can deletes a profile here, and the bff's reply is
+        # 204. The check opens the confirm and reads it; it never presses the
+        # verb, so the pool stays. The profile an instance uses refuses with
+        # the bff's 409 (brief 26 26.3), as the page shows it.
+        if p.startswith("/api/profiles/instance/") and p.count("/") == 4:
+            pid = unquote(p.split("/")[4])
+            # The bff's refusals are `{key, args}` (fe/briefs/api-contract.md),
+            # the body api.ts reads: any other shape is the generic sentence.
+            if pid == "default":
+                return self.json(
+                    409, {"key": "instance-profile-in-use", "args": ["default"]}
+                )
+            if pid == "coder" and STATE["instuse"] == "race":
+                # The state of 26.3's race: the list says no instance runs the
+                # profile, and the delete answers that an instance took it.
+                return self.json(
+                    409, {"key": "instance-profile-in-use", "args": [pid]}
+                )
+            if pid in [row["id"] for row in INSTANCE_PROFILES]:
+                self.send_response(204)
+                self.end_headers()
+                return
+            return self.json(
+                404, {"key": "no-instance-profile-named", "args": [pid]}
+            )
         # Brief 22 slice 22D (22 D.3, the state `model-profile-delete` of
         # check.js): a model profile's page deletes it here, and the bff's reply
         # is 204. The check opens the confirm and reads it; it never presses the

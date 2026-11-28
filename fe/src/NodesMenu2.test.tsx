@@ -265,9 +265,10 @@ test('20 N.7: the Node info link carries aria-current="page" on #/node and none 
 
 // ── 20 N.8: Profiles ────────────────────────────────────────────────────────
 
-// Brief 16, 17a.2, added the Server profiles entry to this group: the group is
-// the same, the list holds the two entries, Server profiles first.
-test('20 N.8 (17a.2): the Profiles group is p#nav-profiles reading nav-profiles, text only, and its list holds the Server profiles and the Model profiles link, in that order', async () => {
+// Brief 16, 17a.2, added the Server profiles entry to this group; brief 26
+// (26.1) added the Instance profiles entry. The group is the same, the list
+// holds the three entries, Instance profiles first.
+test('20 N.8 (17a.2, 26.1): the Profiles group is p#nav-profiles reading nav-profiles, text only, and its list holds the Instance profiles, the Server profiles and the Model profiles link, in that order', async () => {
   const { nav } = await open({ version: VERSION_HOST, instances: TWO })
   const label = byId('nav-profiles')
   expect(label?.tagName, 'a paragraph, like every nav label').toBe('P')
@@ -283,8 +284,8 @@ test('20 N.8 (17a.2): the Profiles group is p#nav-profiles reading nav-profiles,
   expect(list, 'the list is named by the label').not.toBeNull()
   expect(
     Array.from(list!.querySelectorAll('a')).map((a) => a.getAttribute('href')),
-    'Server profiles, then Model profiles',
-  ).toEqual(['#/profiles/server', '#/profiles/model'])
+    'Instance profiles, then Server profiles, then Model profiles',
+  ).toEqual(['#/profiles/instance', '#/profiles/server', '#/profiles/model'])
 })
 
 test('20 N.8 (17a.1, 17a.2): the Model profiles entry keeps 2d.64 (page on the list, true on a profile page), and #/profiles/server is the list page, with the group entry current', async () => {
@@ -400,6 +401,8 @@ test('20 N.10: at #/about the Tab path is the shell, Overview, the two instance 
     'default',
     'coder',
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
@@ -430,6 +433,8 @@ test('20 N.10: the Menu button opens the nav holding the same links in the same 
     'default',
     'coder',
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),

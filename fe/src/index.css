@@ -704,7 +704,8 @@ main > * {
      specificity, and the rule that hides the line (`.model-profiles
      td:first-child .muted`, further down the sheet) answers at the same
      specificity and is read later. */
-  .model-profiles tbody td:first-child .muted {
+  .model-profiles tbody td:first-child .muted,
+  .instance-profiles tbody td:first-child .muted {
     display: block;
   }
 
@@ -742,6 +743,82 @@ main > * {
     white-space: nowrap;
     border: 0;
   }
+
+  /* The Instance profiles list folds the same way (brief 26, 26.2): below 480
+     px the Server profile column, whose words the name cell's muted second line
+     carries, and the Model profiles column, whose words that line repeats, are
+     taken out of the row, each keeping an emptied box so every head stands over
+     its column. 26.2 names every one of these selectors, so they are the list's
+     own rules and not a wider selector list.
+
+     The head of a folded column is hidden the way `.visually-hidden` hides
+     (`clip-path`, and `visibility` for the a11y tree, no `display`, which would
+     take the column's cells with it), and it keeps its place in the head row.
+     `position: absolute` (what the block above does to the Engine head of the
+     model list) leaves the head out of the row's cells, and with two of them
+     gone the three heads left pack into the first columns of the grid: `Used
+     by` stood over the emptied third column, and the fourth column, the one
+     that shows it, was squeezed to the head's 34 px, where "llama.cpp :9931"
+     broke inside a word at 320 px (the IP6a review R3, measured there). So the
+     head keeps its slot with a box of nothing: `width` and `max-width` 0, the
+     padding, the border and the `line-height` out, `overflow: hidden`, which is
+     what collapses the column, the auto table layout sizing a column from its
+     cells' specified widths (as the block above says of the model list). */
+  .instance-profiles td:nth-child(2) {
+    display: none;
+  }
+
+  .instance-profiles td:nth-child(3) {
+    display: none;
+  }
+
+  .instance-profiles tbody td:nth-child(2) {
+    display: table-cell;
+    visibility: hidden;
+    width: 0;
+    max-width: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    line-height: 0;
+  }
+
+  .instance-profiles tbody td:nth-child(3) {
+    display: table-cell;
+    visibility: hidden;
+    width: 0;
+    max-width: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    line-height: 0;
+  }
+
+  .instance-profiles th:nth-child(2) {
+    visibility: hidden;
+    width: 0;
+    max-width: 0;
+    height: 1px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    line-height: 0;
+    clip-path: inset(50%);
+  }
+
+  .instance-profiles th:nth-child(3) {
+    visibility: hidden;
+    width: 0;
+    max-width: 0;
+    height: 1px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    line-height: 0;
+    clip-path: inset(50%);
+  }
 }
 
 /* Wide: the nav is a fixed column; no Menu button, and no divider between it
@@ -753,7 +830,10 @@ main > * {
 
   .layout {
     display: grid;
-    grid-template-columns: 224px minmax(0, 1fr);
+    /* 248 px (IP6a review R1): the width that keeps the longest nav label,
+       "Instance profiles", on one line beside its icon (the ux check's
+       `nav-column` probe reads the column and the label's box). */
+    grid-template-columns: 248px minmax(0, 1fr);
     flex: 1;
   }
 
@@ -876,34 +956,41 @@ tr:last-child td {
    under its name, so the narrow block can hide the Engine column and the row
    still says what runs it. At 480 px and wider the column shows it, so the
    line is not shown: the two are the same words, and a row read twice reads
-   twice. The narrow block shows it, and the sheet's `.muted` gives its colour. */
-.model-profiles td:first-child .muted {
+   twice. The narrow block shows it, and the sheet's `.muted` gives its colour.
+   The Instance profiles list carries the server profile and the model count in
+   its line the same way, and hides it at the wide widths (brief 26, 26.2). */
+.model-profiles td:first-child .muted,
+.instance-profiles td:first-child .muted {
   display: none;
 }
 
-/* The Actions column of both lists (22 D4.23, D4.24, D4.26): the last, holding
-   the row's trash can alone. `width: 1%` shrinks it to the button, so the
-   spare width of the table goes to the text columns; `white-space: nowrap`
-   keeps the cell one line, and `text-align: end` puts the trash can's edge at
-   the cell's padding from the row's end. */
+/* The Actions column of the three profile lists (22 D4.23, D4.24, D4.26): the
+   last, holding the row's trash can alone. `width: 1%` shrinks it to the
+   button, so the spare width of the table goes to the text columns;
+   `white-space: nowrap` keeps the cell one line, and `text-align: end` puts the
+   trash can's edge at the cell's padding from the row's end. */
 .model-profiles th:last-child,
 .model-profiles td:last-child,
 .server-profiles th:last-child,
-.server-profiles td:last-child {
+.server-profiles td:last-child,
+.instance-profiles th:last-child,
+.instance-profiles td:last-child {
   width: 1%;
   white-space: nowrap;
 }
 
 .model-profiles td:last-child,
-.server-profiles td:last-child {
+.server-profiles td:last-child,
+.instance-profiles td:last-child {
   text-align: end;
 }
 
-/* Every cell of the two lists centres its content (22 D4.25): the cells are
+/* Every cell of the three lists centres its content (22 D4.25): the cells are
    table cells, not flex boxes, so `vertical-align` is what centres a switch, a
    link or a trash can in a row taller than it. */
 .model-profiles td,
-.server-profiles td {
+.server-profiles td,
+.instance-profiles td {
   vertical-align: middle;
 }
 
@@ -927,6 +1014,32 @@ tr:last-child td {
 }
 
 .server-profiles td:nth-child(3) {
+  overflow-wrap: normal;
+}
+
+/* The Instance profiles table (brief 26, as the IP6a review R3 and its R5 read
+   it): the base break of `th, td` stood the two heads that show at 320 px,
+   "Instance profile" and "Used by", one letter per line, so R3 gave them
+   `overflow-wrap: normal`, which keeps every word whole. The `white-space:
+   nowrap` that went with it held the head on one line, and the one line of
+   "Instance profile" made the table wider than the scroll box it sits in (R5,
+   measured at 320 px: box 286 px, table 287 in Chromium, 288.45 in Firefox and
+   WebKit). So the heads wrap, and only between whole words: `white-space`
+   normal, `overflow-wrap` normal. The heads of the two folded columns are
+   hidden in the block above, with a box of nothing and a `line-height` of 0, so
+   the line they keep asks no width of the grid. */
+.instance-profiles th {
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
+/* The Used by cell of the Instance profiles list (brief 26, the IP6a review
+   R3): its words are an instance's name and its port, "llama.cpp :9931", and
+   with the base break the auto layout shrinks the column to one character, so
+   the name stood one letter per line at 320 px. The words break at the space
+   between them, and each stands whole. The name cell keeps the base break,
+   which is what wraps a long profile id inside the column. */
+.instance-profiles td:nth-child(4) {
   overflow-wrap: normal;
 }
 
@@ -1798,6 +1911,16 @@ legend.field-label {
 }
 
 .muted {
+  color: var(--muted);
+}
+
+/* A link inside the Instance profiles list's muted line is part of the line,
+   not a second purple one (brief 26, 26.2: the row's second line under the name
+   names its server profile): the sheet's `a` colour would leave a row that
+   already carries its row link showing two links in the accent colour. The rule
+   is scoped to the list, as every rule of it is: a page whose muted line holds
+   a link names itself here when it lands. */
+.instance-profiles .muted a {
   color: var(--muted);
 }
 

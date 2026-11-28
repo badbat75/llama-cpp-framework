@@ -98,6 +98,8 @@ test('H5b.7: one nav landmark named Main, each group named by a .nav-label above
     'default',
     'coder',
     EN['nav-node'],
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    EN['nav-instance-profiles'],
     EN['nav-server-profiles'],
     EN['nav-model-profiles'],
     EN['nav-about'],

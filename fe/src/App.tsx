@@ -15,6 +15,8 @@ import About from './About.tsx'
 import { DiscardDialog } from './Dialog.tsx'
 import { Icon } from './Icon.tsx'
 import InstancePage from './InstancePage.tsx'
+import InstanceProfilePage from './InstanceProfilePage.tsx'
+import InstanceProfiles from './InstanceProfiles.tsx'
 import {
   instancesStore,
   instanceName,
@@ -500,6 +502,26 @@ export default function App() {
             </p>
             <ul aria-labelledby="nav-profiles">
               <li>
+                {/* An instance profile composes the server and the model
+                    profiles, so its entry leads the group (brief 26, 26.1). Its
+                    page belongs to the list without being it, so the list is its
+                    current item, as the two below do (16 17a.2, 02-models.md
+                    2d.64). */}
+                <a
+                  href="#/profiles/instance"
+                  aria-current={
+                    route.page === 'instance-profiles'
+                      ? 'page'
+                      : route.page === 'instance-profile'
+                        ? 'true'
+                        : undefined
+                  }
+                >
+                  <Icon name="box" />
+                  {t('nav-instance-profiles')}
+                </a>
+              </li>
+              <li>
                 {/* The server profile page belongs to the list without being it,
                     so the list is its current item, not its current page, as
                     Model profiles does (16 17a.2, 02-models.md 2d.64). */}
@@ -794,6 +816,27 @@ function Page({
         onDirty={onDirty}
         nameOf={nameOf}
         onInstances={onInstances}
+      />
+    )
+  }
+  if (route.page === 'instance-profiles') {
+    // The instance profile pool, read at every arrival, with the create form
+    // of 26.4.
+    return (
+      <InstanceProfiles
+        onSignedOut={onSignedOut}
+        onRenewed={onRenewed}
+        nameOf={nameOf}
+      />
+    )
+  }
+  if (route.page === 'instance-profile') {
+    // One profile's head (brief 26, 26.5): where a create of 26.4 lands.
+    return (
+      <InstanceProfilePage
+        id={route.id}
+        nameOf={nameOf}
+        onSignedOut={onSignedOut}
       />
     )
   }

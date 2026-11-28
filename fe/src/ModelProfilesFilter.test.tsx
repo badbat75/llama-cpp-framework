@@ -454,11 +454,14 @@ test('2b.35, 2c.53, 2d.60, 22 D4.1, 22 IP5.1 (as 17c.2 amends it: the two sortab
   // Clear and before the first row's link.
   // 22 D4.1: the row's minus follows its link.
   const order = tabbable().map(nameOf)
-  expect(order.slice(-11)).toEqual([
+  expect(order.slice(-12)).toEqual([
     // 20 N.10: Node info rides the host list so it comes with the instances,
     // then, brief 16 (17a.2), Server profiles and Model profiles, then About,
-    // all before the filter.
+    // all before the filter. Brief 26 (26.1) puts Instance profiles at the
+    // head of that group.
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),

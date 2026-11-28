@@ -97,8 +97,8 @@ test('09 S1a.12: inside the min-width: 960px block, .layout > main:only-child sp
   expect(layout, 'the .layout rule of the wide block').toHaveLength(1)
   expect(
     prop(layout[0]!.body, 'grid-template-columns'),
-    'the nav column that main must not fall into',
-  ).toContain('224px')
+    'the nav column that main must not fall into (248 px since brief 26 IP6a review R1)',
+  ).toContain('248px')
 })
 
 // ── The code that goes: the signedIn prop, the current prop, the pill ─────

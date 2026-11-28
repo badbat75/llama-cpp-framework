@@ -334,7 +334,7 @@ test.each(NAMES)(
 
 // ── H8a.2: the nav ────────────────────────────────────────────────────────
 
-test('H8a.2: the Overview link holds Icon house then its text, the Server profiles link Icon server (17a.2), the Model profiles link Icon layers, the Node info link Icon cpu, the About link Icon info, each instance link Icon box, the host label Icon computer, and the names by role are unchanged', async () => {
+test('H8a.2: the Overview link holds Icon house then its text, the Server profiles link Icon server (17a.2), the Instance profiles link Icon box (26.1), the Model profiles link Icon layers, the Node info link Icon cpu, the About link Icon info, each instance link Icon box, the host label Icon computer, and the names by role are unchanged', async () => {
   openApp()
   const nav = await screen.findByRole('navigation', { name: en('nav-label') })
   await within(nav).findByRole('link', { name: 'default' })
@@ -356,6 +356,19 @@ test('H8a.2: the Overview link holds Icon house then its text, the Server profil
   })
   expectIcon(serverProfiles, 'server', 'the Server profiles link (17a.2)')
   expect(text(serverProfiles), 'and its name').toBe(en('nav-server-profiles'))
+  // Brief 26 (26.1): the Instance profiles entry joins the group, leading it,
+  // with the `box` icon (an instance profile names an instance's shape).
+  const instanceProfiles = within(nav).getByRole('link', {
+    name: en('nav-instance-profiles'),
+  })
+  expectIcon(instanceProfiles, 'box', 'the Instance profiles link (26.1)')
+  expect(text(instanceProfiles), 'and its name').toBe(
+    en('nav-instance-profiles'),
+  )
+  expect(
+    before(instanceProfiles, serverProfiles),
+    '26.1: Instance profiles sits before Server profiles',
+  ).toBe(true)
   expect(
     before(serverProfiles, profiles),
     '17a.2: Server profiles sits before Model profiles',
@@ -383,8 +396,8 @@ test('H8a.2: the Overview link holds Icon house then its text, the Server profil
   }
   expect(
     nav.querySelectorAll('svg.icon').length,
-    'eight icons in the nav: Overview, the host label, the two instance links, Node info, Server profiles, Model profiles, About (20 N.4, N.5, N.7, N.8, N.9, 17a.2)',
-  ).toBe(8)
+    'nine icons in the nav: Overview, the host label, the two instance links, Node info, Instance profiles, Server profiles, Model profiles, About (20 N.4, N.5, N.7, N.8, N.9, 17a.2, 26.1)',
+  ).toBe(9)
 })
 
 // ── H8a.3: the banner ─────────────────────────────────────────────────────
@@ -511,9 +524,10 @@ test('H8a.3: ThemeSwitch.tsx renders Icon and holds no drawing of its own (comme
 test.each([
   // Brief 20 (20 N.4, N.5): the nav gains the host label's computer and one
   // box per instance link; brief 16 (17a.2) the Server profiles entry's
-  // server. The signed-in nav draws eight: Overview, the host, its two
-  // instances, Node info, Server profiles, Model profiles, About (as H8a.2).
-  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 8 },
+  // server; brief 26 (26.1) the Instance profiles entry's box. The signed-in
+  // nav draws nine: Overview, the host, its two instances, Node info, Instance
+  // profiles, Server profiles, Model profiles, About (as H8a.2).
+  { signed: 'in', options: {} as BffOptions, banner: 3, nav: 9 },
   // 09 S1a.4: signed out there is no nav, so the nav has no icon to sweep and
   // the banner has the theme icon only.
   {

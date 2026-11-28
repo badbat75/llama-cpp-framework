@@ -49,6 +49,9 @@ export type DeleteAnswer =
 const IN_USE: Record<string, (args: string[]) => string> = {
   'client-server-profile-in-use': (args) =>
     t('api-client-server-profile-in-use', ...args),
+  // Brief 26, 26.3: the instance profile an instance runs.
+  'instance-profile-in-use': (args) =>
+    t('api-instance-profile-in-use', ...args),
 }
 
 /** The refusals that say the profile is already gone: the read again shows the

@@ -301,18 +301,20 @@ So there is one signed-in role, and no page has a read-only view for a lesser on
   S1: signed out the tools hold the theme button only). Measured
   2026-11-18, signed in: 72 px (one row) at 1280, 112 px (two rows) at 479 and 320 px.
   The nav (H5b) has no fill either and no rule on its right: at 960 px and up the column ends at
-  x 224 and the main region's content starts 40 px further, the gap is the only divider. There the
-  nav has no right padding (08 H8a.10), so the pills end at x 224 and the current, bold "Model
-  profiles" keeps its label beside its icon at 100 % text (34 px, about 9 px of slack, measured
-  2026-11-19); the 3 px focus ring with its 2 px offset reaches x 229, into `main`'s padding, and
-  nothing clips it. Entries are
+  x 248 and the main region's content starts 40 px further, the gap is the only divider. The
+  column is 248 px since brief 26's IP6a review R1: the width that keeps "Instance profiles",
+  the longest label, on one line beside its icon (the ux check's `nav-column` probe). There the
+  nav has no right padding (08 H8a.10), so the pills end at x 248 and the current, bold "Model
+  profiles" keeps its label beside its icon at 100 % text (34 px high, measured 2026-11-18 in
+  the 224 px column R1 widened by 24 px); the 3 px focus ring with its 2 px offset reaches
+  x 253, into `main`'s padding, and nothing clips it. Entries are
   pills (`--radius-pill`, at least 32 px high, measured 34; a long id wraps inside, two lines 61 px
   at 320, three 87 px in the 224 px column); group labels in `--fs-xs` `--muted` (5.65 / 7.52) and
   each labelled list indented beside a decorative 2 px `--line` rule; below 960 px the open menu ends
   with a 1 px `--line` rule.
   Landmarks: `header` (banner), `nav` with an accessible name, `main`. A "Skip to content" link is the
   first focusable element ([2.4.1 Bypass Blocks](https://www.w3.org/TR/WCAG22/#bypass-blocks)).
-- **Wide (min-width 960px)**: nav as a fixed column of 224px on the left; main content max 880px wide.
+- **Wide (min-width 960px)**: nav as a fixed column of 248px on the left; main content max 880px wide.
 - **Narrow (below 960px)**: the nav collapses behind a **Menu** button in the header
   (`aria-expanded`, `aria-controls`); the menu closes on a link, on Escape (focus back to the button).
 - **Forms**: from 720px up, the label in a column of 200px and the control beside it; below, the label

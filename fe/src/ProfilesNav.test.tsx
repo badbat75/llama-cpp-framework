@@ -42,6 +42,9 @@ const ENTRY = en('nav-model-profiles')
 /** Brief 16 (17a.2): the entry the Profiles group gains, before this one. */
 const SERVER_ENTRY = en('nav-server-profiles')
 const SERVER_LIST_HASH = '#/profiles/server'
+/** Brief 26 (26.1): the entry the group gains, before both of them. */
+const INSTANCE_ENTRY = en('nav-instance-profiles')
+const INSTANCE_LIST_HASH = '#/profiles/instance'
 /** Slice 13 (13 N.3): the last entry of the nav. */
 const ABOUT = en('nav-about')
 /** Slice 18 (18 AN.6): Node info, the entry before About. */
@@ -206,7 +209,7 @@ function keepButton(d: HTMLElement): HTMLElement {
 
 // ── 5b.1, 5b.2: the nav's Profiles group ────────────────────────────────
 
-test('5b.1 (17a.2): signed in, the nav holds a Profiles group: a p#nav-profiles.nav-label and a ul labelled by it, with the Server profiles link to #/profiles/server then the Model profiles link to #/profiles/model, after Overview and the host list', async () => {
+test('5b.1 (17a.2, 26.1): signed in, the nav holds a Profiles group: a p#nav-profiles.nav-label and a ul labelled by it, with the Instance profiles link to #/profiles/instance (26.1) then the Server profiles link to #/profiles/server then the Model profiles link to #/profiles/model, after Overview and the host list', async () => {
   const { main } = open()
   await table(main)
   const n = await navReady()
@@ -222,11 +225,13 @@ test('5b.1 (17a.2): signed in, the nav holds a Profiles group: a p#nav-profiles.
   expect(list.tagName).toBe('UL')
   expect(list.getAttribute('aria-labelledby')).toBe('nav-profiles')
   const links = within(list).getAllByRole('link')
-  expect(links, '17a.2: two entries, in this order').toHaveLength(2)
-  expect(links[0]!.textContent).toBe(SERVER_ENTRY)
-  expect(links[0]!.getAttribute('href')).toBe(SERVER_LIST_HASH)
-  expect(links[1]!.textContent).toBe(ENTRY)
-  expect(links[1]!.getAttribute('href')).toBe(LIST_HASH)
+  expect(links, '26.1: three entries, in this order').toHaveLength(3)
+  expect(links[0]!.textContent).toBe(INSTANCE_ENTRY)
+  expect(links[0]!.getAttribute('href')).toBe(INSTANCE_LIST_HASH)
+  expect(links[1]!.textContent).toBe(SERVER_ENTRY)
+  expect(links[1]!.getAttribute('href')).toBe(SERVER_LIST_HASH)
+  expect(links[2]!.textContent).toBe(ENTRY)
+  expect(links[2]!.getAttribute('href')).toBe(LIST_HASH)
   // DOM order: the Overview list, the Nodes list with the host inside it, the
   // Profiles label, the list.
   const lists = within(n).getAllByRole('list')
@@ -239,12 +244,14 @@ test('5b.1 (17a.2): signed in, the nav holds a Profiles group: a p#nav-profiles.
   expect(before(label!, list), 'the label right above its list').toBe(true)
   expect(n.contains(label), 'the group is inside the nav').toBe(true)
   // The screen reader's nav reads Overview, each instance, Node info under
-  // them, Model profiles (20 N.3, 20 N.7).
+  // them, Instance profiles, Server profiles, Model profiles (20 N.3, 20 N.7,
+  // 26.1).
   expect(navLinks()).toEqual([
     en('nav-overview'),
     'default',
     'coder',
     NODE_INFO,
+    INSTANCE_ENTRY,
     SERVER_ENTRY,
     ENTRY,
     ABOUT,
@@ -279,6 +286,7 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
   expect(navLinks()).toEqual([
     en('nav-overview'),
     NODE_INFO,
+    INSTANCE_ENTRY,
     SERVER_ENTRY,
     ENTRY,
     ABOUT,
@@ -299,11 +307,13 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
     'nav-profiles',
   )
   const failedLinks = within(failed).getAllByRole('link')
-  expect(failedLinks, '17a.2: the two entries').toHaveLength(2)
-  expect(failedLinks[0]!.textContent).toBe(SERVER_ENTRY)
-  expect(failedLinks[0]!.getAttribute('href')).toBe(SERVER_LIST_HASH)
-  expect(failedLinks[1]!.textContent).toBe(ENTRY)
-  expect(failedLinks[1]!.getAttribute('href')).toBe(LIST_HASH)
+  expect(failedLinks, '26.1: the three entries').toHaveLength(3)
+  expect(failedLinks[0]!.textContent).toBe(INSTANCE_ENTRY)
+  expect(failedLinks[0]!.getAttribute('href')).toBe(INSTANCE_LIST_HASH)
+  expect(failedLinks[1]!.textContent).toBe(SERVER_ENTRY)
+  expect(failedLinks[1]!.getAttribute('href')).toBe(SERVER_LIST_HASH)
+  expect(failedLinks[2]!.textContent).toBe(ENTRY)
+  expect(failedLinks[2]!.getAttribute('href')).toBe(LIST_HASH)
   expect(
     within(nav()).getByRole('list', { name: en('nav-this-node') }),
     'the host list is there after a failed read too (20 N.6)',
@@ -315,6 +325,7 @@ test('5b.1: the Profiles group shows whatever the instances read gives: loading,
   expect(navLinks()).toEqual([
     en('nav-overview'),
     NODE_INFO,
+    INSTANCE_ENTRY,
     SERVER_ENTRY,
     ENTRY,
     ABOUT,

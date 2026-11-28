@@ -312,8 +312,8 @@ test('20 N.3: signed in, the nav is the Overview list, the Nodes label and its l
     Array.from(profilesList?.querySelectorAll('a') ?? []).map((a) =>
       a.getAttribute('href'),
     ),
-    'the Profiles list holds Server profiles then Model profiles (17a.2)',
-  ).toEqual(['#/profiles/server', '#/profiles/model'])
+    'the Profiles list holds Instance profiles, then Server profiles, then Model profiles (17a.2, 26.1)',
+  ).toEqual(['#/profiles/instance', '#/profiles/server', '#/profiles/model'])
 
   const top = Array.from(nav.querySelectorAll(':scope > ul'))
   const last = top[top.length - 1]!
@@ -402,6 +402,8 @@ test('20 N.4: before the host read answers the label is "This node", and when th
     'default',
     'coder',
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
@@ -607,6 +609,8 @@ test('20 N.6: while the first list read is open, after it failed, and when it an
   expect(navNames(pending)).toEqual([
     en('nav-overview'),
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
@@ -619,6 +623,8 @@ test('20 N.6: while the first list read is open, after it failed, and when it an
   expect(navNames(failed)).toEqual([
     en('nav-overview'),
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
@@ -629,6 +635,8 @@ test('20 N.6: while the first list read is open, after it failed, and when it an
   expect(navNames(empty)).toEqual([
     en('nav-overview'),
     en('nav-node'),
+    // Brief 26 (26.1): Instance profiles leads the Profiles group.
+    en('nav-instance-profiles'),
     en('nav-server-profiles'),
     en('nav-model-profiles'),
     en('nav-about'),
