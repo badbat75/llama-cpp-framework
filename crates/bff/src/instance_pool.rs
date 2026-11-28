@@ -26,11 +26,13 @@
 //!
 //! Only the entry's save carries a revision on the wire: [`revision`], a
 //! SHA-256 hex of the profile's OWN sections, so an edit of another profile
-//! leaves it alone. The save reads the pool text, compares the hash it was sent
-//! (a stale one is 409 `stale-revision`, with no write asked), hands the
-//! manager the text it read, so the manager's own compare closes the window
-//! between the read and the write, and answers the NEW hash, computed from the
-//! text the write leaves, so a second save needs no re-read.
+//! leaves it alone. The save reads the pool text, looks the profile and its
+//! entry up in it (a missing one is the read's own 404, with no write asked),
+//! compares the hash it was sent (a stale one is 409 `stale-revision`, with no
+//! write asked), hands the manager the text it read, so the manager's own
+//! compare closes the window between the read and the write, and answers the
+//! NEW hash, hashed from the text the write leaves as the manager left it, so
+//! a second save needs no re-read.
 //!
 //! The writes are bound by `write_timeout`, the reads by `timeout`, and a write
 //! answers 503 `client-unavailable` while its call was never handed over the
@@ -266,7 +268,8 @@ fn used_by(rows: &[InstanceInfo], id: &str) -> Vec<String> {
 /// hash of the profile's own sections: both read out of the pool text
 /// `GetInstanceProfile` answers, the record read on the same connect for
 /// `usedBy`. A profile the text has no section for is 404
-/// `no-instance-profile-named`.
+/// `no-instance-profile-named`, answered from that text before the record is
+/// asked, so a record failure cannot turn a missing profile into a bad gateway.
 async fn page(
     connect: Connect,
     timeout: Duration,
@@ -285,8 +288,8 @@ async fn page(
         identity.user,
         move |client| {
             let info = client.instance_profile(&id)?;
-            let rows = client.instances()?;
             let found = own_profile(&info.revision, &id).ok_or_else(|| not_there(&id))?;
+            let rows = client.instances()?;
             Ok(json!({
                 "id": found.id,
                 "server": found.server_profile.clone().unwrap_or_default(),
@@ -556,12 +559,15 @@ async fn delete_entry(
 /// notConverged}`. The session and the body answer first, so a body nothing can
 /// be made of (400 `model-profiles-malformed`) and a body with no revision (422
 /// `model-profiles-malformed`) reach no manager. The pool text is read on the
-/// connect of the write, and the hash of the profile's own sections is compared
-/// with the one sent: a stale edit is 409 `stale-revision` with no write asked.
-/// The manager is handed that same text, so the manager's own compare answers
-/// the same 409 for a pool that moved between the two. The save answers the hash
-/// of the text the write leaves, which the bff computes with the manager's own
-/// section writer, so the page can save again without reading again.
+/// connect of the write: the profile and its entry are looked up in it first (a
+/// missing one is the same 404 the read of it answers, with no write asked),
+/// then the hash of the profile's own sections is compared with the one sent: a
+/// stale edit is 409 `stale-revision` with no write asked. The manager is handed
+/// that same text, so the manager's own compare answers the same 409 for a pool
+/// that moved between the two. The save answers the hash of the profile's
+/// sections of the text the write LEFT, read back off the manager: the manager
+/// rewrites the entry where it sits, and the page hashes that same text, so the
+/// page can save again without reading again.
 async fn save_entry(
     connect: Connect,
     write_timeout: Duration,
@@ -597,8 +603,8 @@ async fn save_entry(
     };
     let user = identity.user;
     let sent = sent.to_string();
-    // The hash the save answers, carried out of the task so a limit that runs
-    // out once the write landed answers the revision of the text it left.
+    // The hash of the text the write left, carried out of the task so a limit
+    // that runs out once the write landed answers the revision of that text.
     let answered = Arc::new(Mutex::new(String::new()));
     let shared = answered.clone();
     let state = Arc::new(WriteState::new());
@@ -606,19 +612,32 @@ async fn save_entry(
     let task = tokio::task::spawn_blocking(move || -> Result<Value, ClientError> {
         let client = connect(Some(user.as_str()))?;
         let text = client.instance_profile(&id)?.revision;
+        // The profile and its entry are looked up in the text read, before the
+        // revision is compared: the revision guards a write to an entry there
+        // IS one, so a missing one stays missing whatever revision is sent.
+        let found = own_profile(&text, &id).ok_or_else(|| not_there(&id))?;
+        if !found
+            .entries
+            .iter()
+            .any(|entry| entry.model.eq_ignore_ascii_case(&model))
+        {
+            return Err(no_entry(&id, &model));
+        }
         if revision(&text, &id) != sent {
             return Err(ClientError::Changed);
         }
-        let after = instance_profiles::set_entry_keys(&text, &id, &model, &values);
-        let after = revision(&after, &id);
-        *shared.lock().unwrap_or_else(|e| e.into_inner()) = after.clone();
         // Lost to a handler that already ran out of time, no call is sent: the
         // 503 it answered stands, and this value is never read.
         if !mine.may_write() {
-            return Ok(save_answer(&after, &Affected::default()));
+            return Ok(save_answer("", &Affected::default()));
         }
         let touched = client.set_instance_profile_model(&id, &model, &values, &text)?;
         mine.landed();
+        // The revision is hashed from the text the write left, read back: the
+        // manager rewrites the entry where it sits, which is not the text the
+        // bff's own writer leaves.
+        let after = revision(&client.instance_profile(&id)?.revision, &id);
+        *shared.lock().unwrap_or_else(|e| e.into_inner()) = after.clone();
         Ok(save_answer(&after, &touched))
     });
     match tokio::time::timeout(write_timeout, task).await {
@@ -861,8 +880,8 @@ fn write_failure(
 /// `invalid-instance-profile-id`, marking the `id` field; `no-instance-profile-model`
 /// is the entry's 404; a model profile the pool has not got marks the `model`
 /// field; a model the profile lists already is a conflict. Every other key keeps
-/// the manager's, 422, marking the field its first value names: a value rule
-/// refuses the entry key, and that key is the field the form marks.
+/// the manager's, 422, and marks a field only when its first value IS the key
+/// the form holds ([`KEY_IS_FIELD`]).
 fn refused_of(status: StatusCode, refusal: &Refusal) -> Response {
     let key = if refusal.key == "instance-profile-bad-id" {
         "invalid-instance-profile-id"
@@ -878,12 +897,30 @@ fn refused_of(status: StatusCode, refusal: &Refusal) -> Response {
         StatusCode::UNPROCESSABLE_ENTITY => match refusal.key {
             "instance-profile-bad-id" => Some("id"),
             "no-model-profile-named" => Some("model"),
-            _ => refusal.values.first().map(String::as_str),
+            key if KEY_IS_FIELD.contains(&key) => refusal.values.first().map(String::as_str),
+            _ => None,
         },
         _ => None,
     };
     reply(status, key, &args, field)
 }
+
+/// The refusals whose first value is the entry key the form marks: the entry's
+/// checks name the key they refused, `model-profile-stay-key` the key that
+/// stays in the model profile, the whole-number, device list, float, enum and
+/// JSON rules the key of the value they refused, the pair rule its lower key.
+/// Every other refusal of these routes values a position, a value or a count
+/// (`tensor-split-format`, the `override-tensor` rules, `bind-all-with-others`),
+/// so it names no field.
+const KEY_IS_FIELD: &[&str] = &[
+    "device-bad-name",
+    "min-above-max",
+    "model-profile-stay-key",
+    "not-a-number",
+    "not-json-object",
+    "not-one-of",
+    "not-whole-number-in-range",
+];
 
 /// The status of one of the manager's keyed refusals on these routes: 404 for
 /// the entry the profile lists nowhere, 409 for the model it lists already, 422

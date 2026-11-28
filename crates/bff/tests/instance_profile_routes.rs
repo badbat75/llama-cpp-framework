@@ -74,6 +74,9 @@ const REVISION_KEY: [u8; 16] = [0; 16];
 /// The key of the gate's answer (`session.rs`).
 const SESSION_REQUIRED: &str = "session-required";
 
+/// A revision no pool hashes to: the stale one of a save.
+const STALE: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
 /// The engine every instance of these tests runs.
 const ENGINE: &str = "llama.cpp";
 
@@ -133,6 +136,33 @@ fn pool() -> String {
 fn drop_section(text: String, section: &str) -> String {
     let left = ini::text::delete_section(&text, section);
     left.unwrap_or(text)
+}
+
+/// The shape of the entry save the MANAGER leaves (`write_entry_section` in
+/// `crates/manager/src/manager/service.rs`): the entry `[<p>/<m>]` is rewritten
+/// where it sits, with its keys exactly as sent, every other byte of the file
+/// its own. `instance_profiles::set_entry_keys` writes the same entry at the
+/// END of the file, which moves it in the profile's entry order, so the fake
+/// lands what the manager leaves and not what the bff computes.
+fn write_entry_in_place(
+    text: &str,
+    profile: &str,
+    model: &str,
+    keys: &[(String, String)],
+) -> String {
+    let section = format!("{profile}/{model}");
+    let eol = ini::detect_eol(text);
+    let Some(body) = ini::text::section_text(text, &section) else {
+        return text.to_string();
+    };
+    let at = text.find(&body).unwrap_or(0);
+    let mut next = text[..at].to_string();
+    next.push_str(&format!("[{section}]{eol}"));
+    for (key, value) in keys {
+        next.push_str(&format!("{key} = {value}{eol}"));
+    }
+    next.push_str(&text[at + body.len()..]);
+    next
 }
 
 /// `text` without the profile `id`: its `[<id>]` section and every entry of it.
@@ -210,6 +240,11 @@ struct Fixture {
     write_delay: Duration,
     /// The last entry save the fake was handed.
     last_save: LastSave,
+    /// The read of a profile the pool text has no section for answers that
+    /// text, as every read of the file answers its text, instead of the
+    /// manager's `NoInstanceProfile`: the 404 the contract asks is then the
+    /// bff's own, read off the text, which is where the contract puts it.
+    missing_reads_as_text: bool,
 }
 
 impl Default for Fixture {
@@ -233,6 +268,7 @@ impl Default for Fixture {
             set_entry: Ok(affected()),
             write_delay: Duration::ZERO,
             last_save: LastSave::default(),
+            missing_reads_as_text: false,
         }
     }
 }
@@ -326,6 +362,13 @@ impl Fixture {
         self.write_delay = delay;
         self
     }
+
+    /// The read of a profile the pool has no section for answers the pool's
+    /// text, so the 404 is the bff's own check on the text it read.
+    fn missing_reads_as_text(mut self) -> Fixture {
+        self.missing_reads_as_text = true;
+        self
+    }
 }
 
 /// A manager that answers from a [`Fixture`] and logs every call
@@ -355,6 +398,7 @@ impl FakeManager {
                 set_entry: fixture.set_entry.clone(),
                 write_delay: fixture.write_delay,
                 last_save: fixture.last_save.clone(),
+                missing_reads_as_text: fixture.missing_reads_as_text,
             },
             log: log.clone(),
         }
@@ -470,6 +514,12 @@ impl ManagerClient for FakeManager {
                 entries: p.entries.into_iter().map(|e| e.model).collect(),
                 revision: text,
             }),
+            None if self.fixture.missing_reads_as_text => Ok(InstanceProfileInfo {
+                id: profile.to_string(),
+                server_profile: String::new(),
+                entries: Vec::new(),
+                revision: text,
+            }),
             None => Err(ClientError::NoInstanceProfile(profile.to_string())),
         }
     }
@@ -555,7 +605,9 @@ impl ManagerClient for FakeManager {
         ));
         let answer = self.answered(&self.fixture.set_entry);
         if answer.is_ok() {
-            let text = instance_profiles::set_entry_keys(&self.pool(), profile, model, values);
+            // The manager's own shape, so the text the bff's answered hash is
+            // built from is not the text the write leaves.
+            let text = write_entry_in_place(&self.pool(), profile, model, values);
             self.set_pool(&text);
         }
         answer
@@ -1335,6 +1387,64 @@ async fn the_page_of_a_profile_the_pool_has_not_is_404() {
     );
 }
 
+/// The profile has no section in the text the read answered, and the instance
+/// record cannot be read: the page is 404, not 502. The profile is answered
+/// from the text the read gave, before the record is asked for `usedBy`, so a
+/// record failure cannot turn a missing profile into a bad gateway (IP4c
+/// review N2).
+#[tokio::test]
+async fn the_page_of_a_profile_the_pool_has_not_is_404_when_the_record_fails() {
+    let app = app_for(
+        Fixture::default()
+            .with_pool()
+            .missing_reads_as_text()
+            .rows_fails(ClientError::Io("the record went away".into())),
+    );
+    let (reply, _) = app.page("gamma").await;
+    reply.assert_error(
+        StatusCode::NOT_FOUND,
+        "no-instance-profile-named",
+        &["gamma"],
+    );
+}
+
+/// A profile id that differs from the file's only in letter case is the same
+/// profile, answered as the file spells it. `fe/briefs/api-contract.md` names
+/// no letter-case rule for these routes; the rule they keep is the pool's own
+/// (`instance_profiles::parse`, and the bff's `own_profile`): one id is one
+/// profile in any letter case, spelled as the first section spells it, the same
+/// rule the model profile page's contract states ("matched case-insensitively",
+/// "id as the file spells it"). So the bff's own layer answers the file's
+/// spelling and one hash for one profile (IP4c review N5).
+#[tokio::test]
+async fn a_profile_id_in_another_letter_case_is_the_profile_as_the_file_spells_it() {
+    let app = app_for(
+        Fixture::default()
+            .with_pool()
+            .used(&[("default", Some("alpha"))]),
+    );
+    let (reply, _) = app.page("ALPHA").await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let doc = reply.json();
+    assert_eq!(
+        without_revision(&doc),
+        json!({
+            "id": "alpha",
+            "server": "default",
+            "models": [{ "id": "alpha1", "keys": 2 }, { "id": "alpha2", "keys": 0 }],
+            "usedBy": ["default"]
+        }),
+        "the id and the entries as the file spells them: {}",
+        reply.body
+    );
+    let (same, _) = app.page("alpha").await;
+    assert_eq!(
+        reply.revision(),
+        same.revision(),
+        "one profile is one hash, asked in any letter case"
+    );
+}
+
 // ── The profile create ───────────────────────────────────────────────────
 
 /// `POST /api/profiles/instance` `{"id", "server"}` answers 201 `{"id"}`: no
@@ -1553,6 +1663,29 @@ async fn a_switch_body_with_no_server_reaches_no_manager() {
     app.assert_no_call("set-server", "no switch for a body with no server");
 }
 
+/// The switch moves the profile's revision. The page's hash covers the profile's
+/// own `[<p>]` section, and the switch writes that section, so a page read
+/// before the switch cannot be fed back to a write after it: the page's revision
+/// is the guard of every write of the profile, the switch included (IP4c review
+/// N4).
+#[tokio::test]
+async fn the_server_switch_changes_the_pages_revision() {
+    let app = app_for(Fixture::default().with_pool());
+    let (before, _) = app.page("alpha").await;
+    assert_eq!(before.status, StatusCode::OK, "{}", before.body);
+    let (reply, _) = app.set_server("alpha", r#"{"server": "big"}"#).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let (after, _) = app.page("alpha").await;
+    assert_eq!(after.status, StatusCode::OK, "{}", after.body);
+    assert_ne!(
+        before.revision(),
+        after.revision(),
+        "the switch moves the profile's hash: {}\n{}",
+        before.body,
+        after.body
+    );
+}
+
 // ── The entry add ────────────────────────────────────────────────────────
 
 /// `POST /api/profiles/instance/{p}/models` `{"model"}` answers 201 with the
@@ -1679,6 +1812,26 @@ async fn the_read_of_an_entry_the_profile_lists_not_is_404() {
     reply.assert_key(StatusCode::NOT_FOUND, "no-instance-profile-model");
 }
 
+/// The entry of a profile the pool text has no section for, and the instance
+/// record cannot be read: the entry is 404 too, on the page's rule. The profile
+/// is answered from the text the read gave, before the record is asked (IP4c
+/// review N2).
+#[tokio::test]
+async fn the_entry_of_a_profile_the_pool_has_not_is_404_when_the_record_fails() {
+    let app = app_for(
+        Fixture::default()
+            .with_pool()
+            .missing_reads_as_text()
+            .rows_fails(ClientError::Io("the record went away".into())),
+    );
+    let (reply, _) = app.entry("gamma", "alpha1").await;
+    reply.assert_error(
+        StatusCode::NOT_FOUND,
+        "no-instance-profile-named",
+        &["gamma"],
+    );
+}
+
 // ── The entry save ───────────────────────────────────────────────────────
 
 /// `PUT /api/profiles/instance/{p}/models/{m}` `{"values", "revision"}` answers
@@ -1776,6 +1929,102 @@ async fn a_stale_revision_is_409_and_asks_no_write() {
         app.pool(),
         pool(),
         "a stale edit writes nothing to the pool"
+    );
+}
+
+/// The save goes to a profile the pool has no section for, and the revision is
+/// one no text hashes to: the answer is 404, the profile named, as the page of
+/// that profile answers. The profile is looked up before the revision is
+/// compared, so a missing profile stays missing whatever revision is sent: the
+/// revision guards a write to a profile there IS one (IP4c review N1).
+#[tokio::test]
+async fn saving_an_entry_of_a_profile_the_pool_has_not_is_404_with_a_stale_revision() {
+    let app = app_for(Fixture::default().with_pool());
+    let (reply, _) = app
+        .save_entry(
+            "gamma",
+            "alpha1",
+            &json!({ "values": { "device": "cuda1" }, "revision": STALE }),
+        )
+        .await;
+    reply.assert_error(
+        StatusCode::NOT_FOUND,
+        "no-instance-profile-named",
+        &["gamma"],
+    );
+    app.assert_no_call(
+        "set-entry",
+        "a save to a profile that is not there writes nothing",
+    );
+}
+
+/// The save goes to an entry the profile lists no section for, and the revision
+/// is a stale one: 404 `no-instance-profile-model`, naming the profile and the
+/// model, as the read of the same missing entry answers. The entry is looked up
+/// in the text the bff read, before the revision is compared (IP4c review N1).
+#[tokio::test]
+async fn saving_an_entry_the_profile_lists_not_is_404_with_a_stale_revision() {
+    let app = app_for(Fixture::default().with_pool());
+    let (reply, _) = app
+        .save_entry(
+            "alpha",
+            "gamma1",
+            &json!({ "values": { "device": "cuda1" }, "revision": STALE }),
+        )
+        .await;
+    reply.assert_error(
+        StatusCode::NOT_FOUND,
+        "no-instance-profile-model",
+        &["alpha", "gamma1"],
+    );
+    app.assert_no_call(
+        "set-entry",
+        "a save to an entry that is not there writes nothing",
+    );
+}
+
+/// The hash the save answers is the hash of the text the manager holds AFTER the
+/// write: the page read of the profile answers exactly the revision the save
+/// answered, and that revision feeds the next save. The bff's hash is taken over
+/// the profile's own sections of the text the write left, not of the text the
+/// bff computed (IP4c review N3).
+#[tokio::test]
+async fn the_page_after_a_save_answers_the_revision_the_save_answered() {
+    let app = app_for(Fixture::default().with_pool());
+    let (entry, _) = app.entry("alpha", "alpha1").await;
+    let (saved, _) = app
+        .save_entry(
+            "alpha",
+            "alpha1",
+            &json!({
+                "values": { "device": "cuda7", "n-gpu-layers": "7" },
+                "revision": entry.revision()
+            }),
+        )
+        .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let written = saved.revision();
+    assert_hash(&written, "the revision the save answers");
+    let (page, _) = app.page("alpha").await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert_eq!(
+        page.revision(),
+        written,
+        "the page hashes the text the write left: {}",
+        app.pool()
+    );
+    let (again, _) = app
+        .save_entry(
+            "alpha",
+            "alpha1",
+            &json!({ "values": { "device": "cuda8" }, "revision": page.revision() }),
+        )
+        .await;
+    assert_eq!(
+        again.status,
+        StatusCode::OK,
+        "the page's revision feeds the next save: {}",
+        again.body
     );
 }
 
