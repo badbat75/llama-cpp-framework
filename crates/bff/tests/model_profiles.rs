@@ -430,6 +430,9 @@ fn info(id: &str) -> InstanceInfo {
         profile_tags: Vec::new(),
         instance_tags: Vec::new(),
         label: None,
+        converged: true,
+        reason: None,
+        pending_restart: false,
     }
 }
 

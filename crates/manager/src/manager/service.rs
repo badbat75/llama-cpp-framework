@@ -14,7 +14,14 @@
 
 use crate::server_cfg::ServerConfig;
 use pai_core::checks::FETCH_KEYS;
+// The apply's digest (`pair_digest`): SHA-256 over the instance's rendered pair.
+use sha2::{Digest as _, Sha256};
 use std::net::IpAddr;
+
+/// The render pass of a write, as the write sees it: the instances whose pair
+/// the fit check refused, each with that check's keyed refusal, in id order. An
+/// IO failure of a write is the write's own `Err` (`Manager::render_pass`).
+type RenderPass = Result<Vec<(String, pai_core::checks::Refusal)>, ManagerError>;
 
 /// A guarded action, one polkit action id each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1035,6 +1042,14 @@ pub struct Manager<S: ServiceControl, A: Authority, R: Resolver> {
     /// name per file is never shared). Taken only after the authorization:
     /// a caller polkit is still asking about holds up nobody.
     writing: std::sync::Mutex<()>,
+    /// The instances the last render pass found not converged, in the pass's
+    /// order, each with the keyed fit check that stopped its pair. Memory only
+    /// (`ARCHITECTURE.md` "Convergence": not converged is derived, recomputed at
+    /// the manager's start and at every write, and a file would add a second
+    /// truth): a read answers the rows this pass left, so it measures the pair
+    /// against no card (IP3c review 8). Written by the pass, under the `writing`
+    /// lock, and read by [`Self::convergence`].
+    not_converged: std::sync::Mutex<Vec<(String, pai_core::checks::Refusal)>>,
 }
 
 impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
@@ -1051,6 +1066,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             walk_max_entries: MODELS_WALK_MAX_ENTRIES,
             port_search: (FIRST_PROPOSED_PORT, LAST_PROPOSED_PORT),
             writing: std::sync::Mutex::new(()),
+            not_converged: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -1263,6 +1279,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 _ => contents,
             };
             self.check_and_write(file, name, contents, MODEL_FILES_JUDGE, PLACEMENT_JUDGE)
+                // The plain write answers nothing: its caller sent no read to
+                // compare, so no client is waiting on the states of the render
+                // (IP3c).
+                .map(|_| ())
         })
     }
 
@@ -1272,14 +1292,16 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// [`ManagerError::Changed`] with nothing written. No `keep_api_key`: the
     /// caller sent the file as it read it, key line included. The principal and
     /// `configure` gates run first, as `write_file`'s, and the compare runs
-    /// under the same `writing` lock as the write.
+    /// under the same `writing` lock as the write. The write answers the states
+    /// it left ([`Affected`], IP3c): the page that saved a model, a server or an
+    /// instance profile reads them to offer the restart.
     pub fn write_file_if<W: AsRequester>(
         &self,
         who: &W,
         name: &str,
         contents: &str,
         expected: &str,
-    ) -> Result<(), ManagerError> {
+    ) -> Result<Affected, ManagerError> {
         self.write_guarded(who, name, "write_file_if", |file| {
             // The compare is the first thing under the lock, before any check
             // of `contents`: `expected` is the whole text the caller read, so
@@ -1287,6 +1309,11 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             match std::fs::read_to_string(file_path(name)?) {
                 Ok(text) if text == expected => {
                     self.check_and_write(file, name, contents, MODEL_FILES_JUDGE, PLACEMENT_JUDGE)
+                        // The compare-and-swap answers the states it left: its
+                        // caller read the file and is waiting on the rows
+                        // ([`Affected`], IP3c), read from the pass this write
+                        // ran.
+                        .and_then(|pass| Ok(self.affected_of(&pass, self.drift_running()?)))
                 }
                 Ok(_) => Err(ManagerError::Changed),
                 // A file that is not there is the same refusal: the caller's
@@ -1306,18 +1333,18 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// with that file under the `writing` lock, and one action record under
     /// `action` for the whole call, done or refused. A refused gate or name
     /// reads nothing, so it writes nothing.
-    fn write_guarded<W: AsRequester, F>(
+    fn write_guarded<W: AsRequester, F, T>(
         &self,
         who: &W,
         name: &str,
         action: &str,
         body: F,
-    ) -> Result<(), ManagerError>
+    ) -> Result<T, ManagerError>
     where
-        F: FnOnce(&ConfigFile) -> Result<(), ManagerError>,
+        F: FnOnce(&ConfigFile) -> Result<T, ManagerError>,
     {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<T, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             let file = config_file(name).ok_or(ManagerError::BadFileName)?;
             // The two files the model data model retires (`ARCHITECTURE.md`,
@@ -1360,15 +1387,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         contents: &str,
         judge_model_files: bool,
         judge_placement: bool,
-    ) -> Result<(), ManagerError> {
-        check_contents(
-            file,
-            contents,
-            &*self.gpus,
-            judge_model_files,
-            judge_placement,
-        )
-        .map_err(ManagerError::Invalid)?;
+    ) -> RenderPass {
+        check_contents(file, contents, judge_model_files, judge_placement)
+            .map_err(ManagerError::Invalid)?;
         if let ConfigFile::ServerProfile(id) = file {
             self.check_address(id, contents)?;
         }
@@ -1377,11 +1398,12 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         std::fs::create_dir_all(&dir).map_err(io)?;
         write_served_file(&dir.join(name), file, contents, &*self.group).map_err(io)?;
         // The write stands whatever the renders do: the render runs past a
-        // failure, and the caller is told the first failure in id order.
-        match self.render_all_locked().first() {
-            Some((_, err)) => Err(err.clone()),
-            None => Ok(()),
-        }
+        // failure, and the caller is told the first IO failure in id order. A
+        // pair the fit check refused is not the write's failure: the save
+        // landed, that instance kept its last good pair, and the rows report it
+        // (IP3c). The pass's rows go to the caller: the save that ran this write
+        // answers them, and renders nothing a second time.
+        self.render_pass()
     }
 
     /// Whether instance `id` starts when the system starts. No authorization,
@@ -1421,11 +1443,12 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// in the instance's section of `assignments.ini`, and every model profile
     /// file of every instance renders again from what is on disk: the checks
     /// run first, so a refusal writes and renders nothing. The render this
-    /// record leaves is judged for its model files, its memory and the GPUs its
-    /// model profiles name: a `device-draft` or `mmproj-device` outside the
-    /// instance's server profile, that this assignment puts in effect, refuses
-    /// with `model-profile-device-outside` (L4); one already outside is not
-    /// re-judged. Guarded as a write
+    /// record leaves is judged for its model files: only a file the record ADDS
+    /// and this node does not have refuses (IP3c review 4). What the render
+    /// needs of the cards, of the `ModelsMax` of the server profile and of the
+    /// GPUs its model profiles name is the fit check of the render pass (IP3c,
+    /// `ARCHITECTURE.md` "Convergence"): the write stands, and the instance the
+    /// check stops keeps its last good pair. Guarded as a write
     /// of a served file is: the principal and `configure` gates, the `writing`
     /// lock, and one action record for the whole call, done or refused.
     pub fn set_model_profile<W: AsRequester>(
@@ -1434,9 +1457,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         instance: &str,
         profile: &str,
         value: &str,
-    ) -> Result<(), ManagerError> {
+    ) -> Result<Affected, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<Affected, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             // The value first: `*` is the pool and has no override of its own.
             let value = match value {
@@ -1491,46 +1514,25 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // against the render this instance has today: only a file the
             // record ADDS refuses. The check has no cap to read, so it runs on
             // this instance, the one whose profile file is missing included.
+            // Model files present stay an intrinsic check of the node (IP3c
+            // review 4): a shard the node does not have is the news the
+            // assignment answers, on every instance that renders the profile.
             let today = render_of(instance, &enabled, &disabled);
             check_model_files_of(&text, instance, &enabled, &disabled, &today)
                 .map_err(ManagerError::Invalid)?;
-            // The memory the render this record leaves in effect, measured
-            // against the render this instance has today: the record is what
-            // this write moves, so the render to judge is built of the new
-            // record, as the model-file check above does, and a model profile
-            // this write does not make larger is judged on nothing.
-            check_profile_memory_of(&text, instance, &enabled, &disabled, &today, &*self.gpus)
-                .map_err(ManagerError::Invalid)?;
-            // The cards the render this record leaves names, on the same rule
-            // (L4): a GPU the assignment puts in effect outside the instance's
-            // server profile refuses, and one its render already carries
-            // outside is no news.
-            check_device_bound_of(
-                &text,
-                instance,
-                &enabled,
-                &disabled,
-                &today,
-                &instance_devices(instance),
-                &instance_devices(instance),
-            )
-            .map_err(ManagerError::Invalid)?;
-            let cap = profile_file(instance)
-                .and_then(|file| std::fs::read_to_string(file).ok())
-                .map(|contents| crate::server_cfg::from_text(&contents).models_max);
-            if let Some(models_max) = cap {
-                check_render_of(&text, instance, &enabled, &disabled, models_max)
-                    .map_err(ManagerError::Invalid)?;
-            }
+            // The memory the render needs, the cards its model profiles name
+            // and its `load-on-startup` count are not judged here (IP3c): they
+            // are the fit checks of one instance, the render pass judges them
+            // on the render this record leaves, and the instance they stop
+            // keeps its last good pair.
             std::fs::create_dir_all(&dir).map_err(io)?;
             write_served_file(&path, &ConfigFile::Models, &text, &*self.group).map_err(io)?;
             // The write stands whatever the renders do, as a write of a
-            // served file does: the caller is told the first failure in id
-            // order.
-            match self.render_all_locked().first() {
-                Some((_, err)) => Err(err.clone()),
-                None => Ok(()),
-            }
+            // served file does: the caller is told the first IO failure in id
+            // order. A pair the fit check refused is no failure of the write
+            // (IP3c). The rows the pass left are the answer.
+            self.render_pass()
+                .and_then(|pass| Ok(self.affected_of(&pass, self.drift_running()?)))
         };
         let answer = run();
         self.record_action("set_model_profile", instance, Some(&who), &answer);
@@ -1649,7 +1651,6 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             check_contents(
                 &ConfigFile::Models,
                 &after,
-                &*self.gpus,
                 MODEL_FILES_SKIP,
                 PLACEMENT_SKIP,
             )
@@ -1741,6 +1742,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 MODEL_FILES_JUDGE,
                 PLACEMENT_SKIP,
             )
+            // The delete answers nothing: the profile it named is gone, so no
+            // page is left to offer a restart (IP3c).
+            .map(|_| ())
         };
         let answer = run();
         self.record_action("delete_model_profile", profile, Some(&who), &answer);
@@ -1749,40 +1753,35 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// Points instance `instance` at the server profile `profile`: writes the
     /// `ServerProfile` key of its section of `instances.ini`, every other byte
-    /// of the record kept. The instance's launch is the one that reads the
-    /// profile, so the call touches no unit and renders nothing: a server
-    /// profile carries no model profile text, and the render's name is the
-    /// instance's. Each check answers before the write, and a refusal writes
-    /// nothing: the id must be a section of the record (`InvalidId`,
-    /// `NoInstance`; a record that cannot be read is `Io`, never the empty list
-    /// `paths::instance_ids` answers for one), the profile must be one the
-    /// engine has (`NoServerProfile`, naming it: a name that builds no file, or
-    /// a file that is really absent; any other read failure is `Io`), no other
-    /// instance may run it (`ServerProfileInUse`, naming the profile and that
-    /// instance), the address the switch takes must be free
-    /// (`AddressInUse`), and the new profile's `ModelsMax` must hold the loads
-    /// the instance's render starts (`load-on-startup-over-max`): that render
-    /// is cut by `assignments.ini`, and a record there that cannot be read is
-    /// `Io` as the instance record is. The switch must also move no model
-    /// profile of that render from fitting the cards the instance's current
-    /// profile names to over the cards the new one names
-    /// (`model-profile-over-memory`, R3): what was already over is not
-    /// re-judged. The switch must also leave no `device-draft` or
-    /// `mmproj-device` of that render's model profiles outside the cards the
-    /// new profile names (`model-profile-device-outside`, L4): one already
-    /// outside is not re-judged. The profile the instance's own section
-    /// names is answered before the walk of the others: no conflict with
-    /// itself, and the switch to it changes no byte. Guarded as a write of a served file is: the
-    /// principal and `configure` gates, the `writing` lock, and one action
-    /// record for the whole call, done or refused.
+    /// of the record kept (of the section of `instance-profiles.ini` the record
+    /// names as its instance profile, once the migration has written the
+    /// record). The instance's launch is the one that reads the profile, so the
+    /// call touches no unit: a server profile carries no model profile text, and
+    /// the render's name is the instance's. Each check answers before the write,
+    /// and a refusal writes nothing: the id must be a section of the record
+    /// (`InvalidId`, `NoInstance`; a record that cannot be read is `Io`, never
+    /// the empty list `paths::instance_ids` answers for one), the profile must be
+    /// one the engine has (`NoServerProfile`, naming it: a name that builds no
+    /// file, or a file that is really absent; any other read failure is `Io`), no
+    /// other instance may run it (`ServerProfileInUse`, naming the profile and
+    /// that instance), and the address the switch takes must be free
+    /// (`AddressInUse`). What the profile's cap, cards and devices do to the
+    /// instance's render is judged there, not here: the switch re-renders, and
+    /// the render pass's fit checks stop the instance they stop, which keeps its
+    /// last good pair (IP3c, `ARCHITECTURE.md` "Convergence"). The profile the
+    /// instance's own section names is answered before the walk of the others: no
+    /// conflict with itself, and the switch to it changes no byte. The answer is
+    /// the states the render leaves ([`Affected`], IP3c). Guarded as a write of
+    /// a served file is: the principal and `configure` gates, the `writing`
+    /// lock, and one action record for the whole call, done or refused.
     pub fn set_server_profile<W: AsRequester>(
         &self,
         who: &W,
         instance: &str,
         profile: &str,
-    ) -> Result<(), ManagerError> {
+    ) -> Result<Affected, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<Affected, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
@@ -1818,7 +1817,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // instance's own section names is answered before that walk: it is
             // no conflict with itself, and the switch to it changes no byte.
             if crate::paths::instance_server_profile(instance).as_deref() == Some(profile) {
-                return Ok(());
+                // The answer of a save that re-renders, with nothing moved: the
+                // switch changed no byte, so no running instance drifts, and the
+                // rows are the ones the files already give (IP3c).
+                return self.affected();
             }
             if let Some(holder) = profile_holder(profile) {
                 return Err(ManagerError::ServerProfileInUse(
@@ -1834,64 +1836,13 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             let mine = binding(&crate::server_cfg::from_text(&contents), &self.resolver)
                 .map_err(ManagerError::UnresolvableHost)?;
             self.check_binding(&mine, |id| id == instance)?;
-            // The new profile's cap, over the loads the instance's render
-            // starts today: the switch changes no model profile, so the count
-            // it is judged on is this instance's own render, cut by the
-            // assignment record read here.
-            let on_disk = |name: &str| -> Result<String, ManagerError> {
-                match std::fs::read_to_string(dir.join(name)) {
-                    Ok(text) => Ok(text),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-                    Err(e) => Err(io(e)),
-                }
-            };
-            let enabled = on_disk("models.ini")?;
-            let disabled = on_disk("models.ini.disabled")?;
-            let profiles = on_disk(INSTANCE_PROFILES_FILE)?;
-            let assignments =
-                assignment_text(&record, &profiles, &on_disk(ASSIGNMENTS_FILE)?, instance)
-                    .unwrap_or_default();
-            check_render_of_full(
-                &assignments,
-                instance,
-                &enabled,
-                &disabled,
-                crate::server_cfg::from_text(&contents).models_max,
-            )
-            .map_err(ManagerError::Invalid)?;
-            // The memory the switch leaves: the instance's render measured on
-            // the cards the new profile names, against the cards the profile
-            // it runs today names. A model profile that fits today and not the
-            // new cards refuses (R3); one already over is no news.
-            check_shrink_memory_of(
-                &assignments,
-                instance,
-                &enabled,
-                &disabled,
-                &*self.gpus,
-                &instance_devices(instance),
-                crate::server_cfg::from_text(&contents)
-                    .devices
-                    .as_deref()
-                    .unwrap_or(""),
-            )
-            .map_err(ManagerError::Invalid)?;
-            // The same pair of card sets judged for the GPUs the render's model
-            // profiles name (L4): a `device-draft` or `mmproj-device` the new
-            // profile leaves outside refuses, one already outside is no news.
-            check_device_bound_of(
-                &assignments,
-                instance,
-                &enabled,
-                &disabled,
-                &render_of(instance, &enabled, &disabled),
-                &instance_devices(instance),
-                crate::server_cfg::from_text(&contents)
-                    .devices
-                    .as_deref()
-                    .unwrap_or(""),
-            )
-            .map_err(ManagerError::Invalid)?;
+            // What the new profile's cap, cards and binding do to the instance's
+            // render are not judged here (IP3c): they are the fit checks of that
+            // one instance, the render pass judges them on the render the switch
+            // leaves, and the instance they stop keeps its last good pair. The
+            // switch itself lands, as the record write it is. The profile's own
+            // content is checked at its save, its address above, where it meets
+            // the instances that run.
             std::fs::create_dir_all(&dir).map_err(io)?;
             // A record the migration wrote names an instance profile, and the
             // switch moves that profile's `ServerProfile` key in the pool: the
@@ -1912,7 +1863,17 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     pai_core::ini::text::set_key(&record, instance, "ServerProfile", profile),
                 )
             };
-            write_served_file(&dir.join(file), &ConfigFile::Models, &text, &*self.group).map_err(io)
+            write_served_file(&dir.join(file), &ConfigFile::Models, &text, &*self.group)
+                .map_err(io)?;
+            // The switch moves the server config the instance launches with, so
+            // it re-renders the pair: `run-instance` reads `launch@<id>.ini` in
+            // place of resolving the record, and a launch left at the old
+            // profile's port would boot the instance on the port it just left.
+            // The model half of the pair is unchanged, so the pass writes bytes
+            // and asks the GPUs nothing (IP3c). The rows the pass left are the
+            // answer.
+            self.render_pass()
+                .and_then(|pass| Ok(self.affected_of(&pass, self.drift_running()?)))
         };
         let answer = run();
         self.record_action("set_server_profile", instance, Some(&who), &answer);
@@ -2222,6 +2183,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 &text,
                 &pai_core::instance_profiles::add_profile(&text, profile, server_profile),
             )
+            .map(|_| ())
         };
         let answer = run();
         self.record_action("create_instance_profile", profile, Some(&who), &answer);
@@ -2281,7 +2243,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                 next = cut_section(&next, &format!("{profile}/{entry}"))?;
             }
             let next = cut_section(&next, profile)?;
-            self.write_pool(&text, &next)
+            self.write_pool(&text, &next).map(|_| ())
         };
         let answer = run();
         self.record_action("delete_instance_profile", profile, Some(&who), &answer);
@@ -2291,7 +2253,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// Gives the instance profile `profile` the model profile `model`: an
     /// empty `[<profile>/<model>]` entry appended in the pool's own shape
     /// ([`pai_core::instance_profiles::add_entry`]), answered with the running
-    /// instances that use the profile. A profile the pool has no section for is
+    /// instances of the profile whose pair the write moved off the pair their
+    /// launch recorded (IP3c). A profile the pool has no section for is
     /// [`ManagerError::NoInstanceProfile`], a model profile the pool has no
     /// section for is the keyed `no-model-profile-named`, naming the model, and
     /// a model the profile lists already is the keyed
@@ -2331,15 +2294,16 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     model,
                 ));
             }
-            // The instances the write touches: running, and running this
-            // profile, in the record's own order. The write moves no instance,
-            // so the list read here is the list the answer carries.
-            let running = self.running_using_profile(profile)?;
+            // The instances the write touches: the ones running this profile
+            // whose pair the write moved off the pair their launch recorded, in
+            // the record's own order, beside the instances whose pair the fit
+            // check refused (IP3c). The list is read from what the write left, so
+            // no unit is asked for a pair that moved.
             self.write_pool(
                 &text,
                 &pai_core::instance_profiles::add_entry(&text, profile, model),
             )
-            .map(|()| running)
+            .and_then(|_| self.drift_running_using_profile(profile))
         };
         let answer = run();
         self.record_action("add_instance_profile_model", profile, Some(&who), &answer);
@@ -2348,8 +2312,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// Takes the model profile `model` away from the instance profile
     /// `profile`: its entry section goes, every other byte of the file the
-    /// file's own, and the answer is the running instances that use the
-    /// profile. A profile the pool has no section for is
+    /// file's own, and the answer is the running instances of the profile whose
+    /// pair the write moved off the pair their launch recorded (IP3c). A profile
+    /// the pool has no section for is
     /// [`ManagerError::NoInstanceProfile`]; an entry the profile does not list
     /// is the keyed `no-instance-profile-model`, naming the profile and the
     /// model. Every instance running the profile renders again, so the model
@@ -2381,8 +2346,8 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     ))
                 }
             };
-            let running = self.running_using_profile(profile)?;
-            self.write_pool(&text, &next).map(|()| running)
+            self.write_pool(&text, &next)
+                .and_then(|_| self.drift_running_using_profile(profile))
         };
         let answer = run();
         self.record_action(
@@ -2396,13 +2361,14 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// Writes the keys of the entry `[profile/model]` of `instance-profiles.ini`
     /// as `values` sent them, and answers the running instances that use
-    /// `profile`: the checks of the moved keys ride this write, the device
-    /// bound is the profile's own server profile, the memory is judged on every
-    /// render of an instance running the profile (`ARCHITECTURE.md` "Instance
-    /// profiles" and its checks). The entry holds exactly the keys sent, in the
-    /// order they were sent: the keys it carried and are not sent are gone, the
-    /// model profile's own keys, which the entry does not name, are not touched,
-    /// and the entry stands directly under the profile's own section.
+    /// `profile`: the form checks of the moved keys ride this write
+    /// (`ARCHITECTURE.md` "Instance profiles"), the fit of the render they move is
+    /// every instance's own ("Convergence": the entry that stops one instance's
+    /// render lands, and that instance keeps its last good pair). The entry holds
+    /// exactly the keys sent, in the order they were sent: the keys it carried and
+    /// are not sent are gone, the model profile's own keys, which the entry does
+    /// not name, are not touched, and the entry stands directly under the
+    /// profile's own section.
     ///
     /// Every check answers before a byte is written, in this order: a profile
     /// the pool has no section for is [`ManagerError::NoInstanceProfile`], a
@@ -2410,32 +2376,37 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// [`ManagerError::Changed`], an entry the profile does not list is the
     /// keyed `no-instance-profile-model` naming the profile and the model, a key
     /// that stays in the model profile is the keyed `model-profile-stay-key`
-    /// naming it, the value rules of the keys (`not-whole-number-in-range`,
-    /// `tensor-split-format`, `override-no-device`, the enums and the numbers,
-    /// [`pai_core::checks`]'s own), an entry naming a card the profile's server
-    /// profile does not name is the keyed `model-profile-device-outside` naming
-    /// the profile, the model, the key and the card, and the memory of a render
-    /// this write makes larger than the node's usable GPU memory is the keyed
-    /// `model-profile-over-memory`. What stands today is no news: an entry that
-    /// already names the card, and a render already over the cards, are left
-    /// alone, so a save that fixes one of them lands. Guarded as every write of
-    /// a served file is: `configure` first, the `As` form answered only to the
-    /// bff's account for a current member of `pai`, one record of the action log
-    /// per call.
+    /// naming it, and the value rules of the keys
+    /// (`not-whole-number-in-range`, `tensor-split-format`,
+    /// `override-no-device`, the enums and the numbers, [`pai_core::checks`]'s
+    /// own). Guarded as every write of a served file is: `configure` first, the
+    /// `As` form answered only to the bff's account for a current member of
+    /// `pai`, one record of the action log per call.
+    /// Answers [`Affected`], as every save that re-renders does: the running
+    /// instances the write left drifting, beside the rows of every instance whose
+    /// pair the write did not leave ([`Self::affected_of`], IP3c). The instance
+    /// the page names is checked to be one the record lists, the same answer
+    /// every verb that reads the record gives for a name it does not carry
+    /// ([`ManagerError::NoInstance`]): the page's revision is the pool's text, so
+    /// the instance is the one fact of the page the write cannot read back from
+    /// the pool. Checked before the gate, as the transports checked it before.
     pub fn set_instance_profile_model<W: AsRequester>(
         &self,
         who: &W,
         profile: &str,
         model: &str,
+        instance: &str,
         values: &[(String, String)],
         revision: &str,
-    ) -> Result<Vec<String>, ManagerError> {
+    ) -> Result<Affected, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<Vec<String>, ManagerError> {
+        let run = || -> Result<Affected, ManagerError> {
+            if !crate::paths::instance_ids().iter().any(|id| id == instance) {
+                return Err(ManagerError::NoInstance);
+            }
             self.authorize_as(&who, Action::Configure)?;
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
-            let io = |e: std::io::Error| ManagerError::Io(e.kind());
             let text = self.pool_text()?;
             let row = profile_rows(&text)
                 .into_iter()
@@ -2444,7 +2415,6 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             if revision != text {
                 return Err(ManagerError::Changed);
             }
-            let section = format!("{profile}/{model}");
             if !row.entries.iter().any(|entry| entry == model) {
                 return Err(two_value_refusal(
                     "no-instance-profile-model",
@@ -2457,32 +2427,12 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // carried and is not sent is gone, and the entry holds exactly what
             // the page sent, in the order it sent it.
             let next = write_entry_section(&text, profile, model, values);
-            // The cards the profile's own server profile names: the entry's
-            // placement is judged there, the same file the launch reads. What
-            // the entry names today, outside the cards, is no news.
-            let devices = server_devices(&row.server_profile);
-            let was = entry_device_outside(&text, &section, &devices);
-            if let Some((key, device)) = entry_device_outside(&next, &section, &devices)
-                .filter(|outside| Some(outside) != was.as_ref())
-            {
-                return Err(ManagerError::Invalid(pai_core::checks::Refusal {
-                    key: "model-profile-device-outside",
-                    values: vec![profile.to_string(), model.to_string(), key, device],
-                }));
-            }
-            let dir = crate::paths::engine_config_dir();
-            let pool = read_record(&dir.join("models.ini")).map_err(io)?;
-            let running = self.running_using_profile(profile)?;
-            for id in &running {
-                check_render_memory(
-                    &render_instance(id, &pool, &next, profile),
-                    &render_instance(id, &pool, &text, profile),
-                    id,
-                    &*self.gpus,
-                )
-                .map_err(ManagerError::Invalid)?;
-            }
-            self.write_pool(&text, &next).map(|()| running)
+            // The entry's values re-render every instance whose profile names
+            // the model: the answer is the running ones the write left drifting,
+            // beside the rows the write's pass left (IP3c).
+            self.write_pool(&text, &next).and_then(|pass| {
+                Ok(self.affected_of(&pass, self.drift_running_using_profile(profile)?))
+            })
         };
         let answer = run();
         self.record_action(
@@ -2495,15 +2445,17 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     }
 
     /// Points the instance profile `profile` at the server profile
-    /// `server_profile`, and answers the running instances that use it: the
-    /// switch re-checks every entry's device keys against the new server
-    /// profile's `Devices` (`ARCHITECTURE.md` "Instance profiles"), so a switch
-    /// that takes away a card an entry names is refused, naming the entry and
-    /// the card, and the profile keeps the server profile it had. A profile the
-    /// pool has no section for is [`ManagerError::NoInstanceProfile`], a server
-    /// profile the node has no file for is [`ManagerError::NoServerProfile`].
-    /// The switch carries no revision: it is one set-like change, refused on its
-    /// own conflict. Guarded as every write of a served file is.
+    /// `server_profile`, and answers the running instances the switch left
+    /// running a pair that is not the pair on disk: the switch moves the ground
+    /// of every entry of the profile at once, so every instance running it
+    /// renders again, and the fit of each render is that instance's own
+    /// (`ARCHITECTURE.md` "Convergence": a switch that takes a card an entry
+    /// names away lands, and the instances whose render stops on the card keep
+    /// their last good pair). A profile the pool has no section for is
+    /// [`ManagerError::NoInstanceProfile`], a server profile the node has no
+    /// file for is [`ManagerError::NoServerProfile`]. The switch carries no
+    /// revision: it is one set-like change, refused on its own conflict.
+    /// Guarded as every write of a served file is.
     pub fn set_instance_profile_server<W: AsRequester>(
         &self,
         who: &W,
@@ -2516,33 +2468,19 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // A poisoned lock is taken over: it guards no data of its own.
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
             let text = self.pool_text()?;
-            let row = profile_rows(&text)
-                .into_iter()
-                .find(|row| row.id == profile)
-                .ok_or_else(|| ManagerError::NoInstanceProfile(profile.to_string()))?;
+            if !profile_rows(&text).iter().any(|row| row.id == profile) {
+                return Err(ManagerError::NoInstanceProfile(profile.to_string()));
+            }
             let no_profile = || ManagerError::NoServerProfile(server_profile.to_string());
             let path = crate::paths::instance_ini(server_profile).ok_or_else(no_profile)?;
             if std::fs::symlink_metadata(&path).is_err() {
                 return Err(no_profile());
             }
-            // Every entry of the profile is judged on the new cards: the switch
-            // moves the ground of all of them at once.
-            let devices = server_devices(server_profile);
-            for entry in &row.entries {
-                let section = format!("{profile}/{entry}");
-                if let Some((key, device)) = entry_device_outside(&text, &section, &devices) {
-                    return Err(ManagerError::Invalid(pai_core::checks::Refusal {
-                        key: "model-profile-device-outside",
-                        values: vec![profile.to_string(), entry.clone(), key, device],
-                    }));
-                }
-            }
-            let running = self.running_using_profile(profile)?;
             self.write_pool(
                 &text,
                 &pai_core::ini::text::set_key(&text, profile, "ServerProfile", server_profile),
             )
-            .map(|()| running)
+            .and_then(|_| self.drift_running_using_profile(profile))
         };
         let answer = run();
         self.record_action("set_instance_profile_server", profile, Some(&who), &answer);
@@ -2564,9 +2502,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         instance: &str,
         profile: &str,
         revision: &str,
-    ) -> Result<(), ManagerError> {
+    ) -> Result<Affected, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<Affected, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
             let record = self.read_record_locked()?;
@@ -2585,7 +2523,11 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             }
             let text =
                 pai_core::ini::text::set_key(&record, instance, INSTANCE_PROFILE_KEY, profile);
+            // The record carries the instance profile and the address of every
+            // instance, so the write re-renders them all: the answer is the
+            // states it left (IP3c), read from the pass it ran.
             self.write_record(&text)
+                .and_then(|pass| Ok(self.affected_of(&pass, self.drift_running()?)))
         };
         let answer = run();
         self.record_action("set_instance_profile", instance, Some(&who), &answer);
@@ -2612,9 +2554,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         host: &str,
         port: &str,
         revision: &str,
-    ) -> Result<(), ManagerError> {
+    ) -> Result<Affected, ManagerError> {
         let who = who.as_requester();
-        let run = || -> Result<(), ManagerError> {
+        let run = || -> Result<Affected, ManagerError> {
             self.authorize_as(&who, Action::Configure)?;
             let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
             let record = self.read_record_locked()?;
@@ -2667,7 +2609,11 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             } else {
                 pai_core::ini::text::set_key(&text, instance, "Hostname", host)
             };
+            // The record carries the instance profile and the address of every
+            // instance, so the write re-renders them all: the answer is the
+            // states it left (IP3c), read from the pass it ran.
             self.write_record(&text)
+                .and_then(|pass| Ok(self.affected_of(&pass, self.drift_running()?)))
         };
         let answer = run();
         self.record_action("set_instance_address", instance, Some(&who), &answer);
@@ -2688,16 +2634,21 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         read_pool().map_err(|e| ManagerError::Io(e.kind()))
     }
 
-    /// The instances that run the instance profile `profile` and are up, in the
-    /// record's own order: the answer of every write of the profile, the list
-    /// the page offers a restart to. An instance the record gives no profile,
-    /// and one the service manager does not answer active, is not in it.
-    fn running_using_profile(&self, profile: &str) -> Result<Vec<String>, ManagerError> {
+    /// The instances a write of the instance profile `profile` answers as
+    /// `running` (IP3c, `ARCHITECTURE.md` "Convergence"): the ones of the record
+    /// running that profile, in the record's own order, the write left running a
+    /// pair that is not the pair their launch recorded. The compare comes BEFORE
+    /// the state is asked, so a write asks the service manager for nothing past a
+    /// pair that moved (the IP3c review): an instance that recorded no pair
+    /// applied nothing, and one that stands on its record drifts by no
+    /// definition. Call it after the write, on the pair the write left.
+    fn drift_running_using_profile(&self, profile: &str) -> Result<Vec<String>, ManagerError> {
         let record = self.read_record_locked()?;
         Ok(pai_core::ini::parse_sections(&record)
             .into_iter()
             .map(|section| section.id)
             .filter(|id| instance_profile_of(&record, id).as_deref() == Some(profile))
+            .filter(|id| self.pair_moved(id))
             .filter(|id| {
                 self.service
                     .status(id)
@@ -2713,9 +2664,9 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// byte and renders nothing. The write stands whatever the renders do, as
     /// [`Self::check_and_write`]'s does: the caller is told the first failure
     /// in id order.
-    fn write_pool(&self, before: &str, text: &str) -> Result<(), ManagerError> {
+    fn write_pool(&self, before: &str, text: &str) -> RenderPass {
         if text == before {
-            return Ok(());
+            return Ok(Vec::new());
         }
         self.write_served(INSTANCE_PROFILES_FILE, text)
     }
@@ -2723,22 +2674,19 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// Writes the record `instances.ini` whole, then renders every instance:
     /// the record carries the address an instance listens on and the instance
     /// profile it runs, so a record write changes what the instance renders.
-    fn write_record(&self, text: &str) -> Result<(), ManagerError> {
+    fn write_record(&self, text: &str) -> RenderPass {
         self.write_served(INSTANCES_FILE, text)
     }
 
     /// The write every served file of the engine's config directory shares:
     /// the directory made, the file written as [`write_served_file`] writes it,
     /// and the render of every instance after it.
-    fn write_served(&self, name: &str, text: &str) -> Result<(), ManagerError> {
+    fn write_served(&self, name: &str, text: &str) -> RenderPass {
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
         let dir = crate::paths::engine_config_dir();
         std::fs::create_dir_all(&dir).map_err(io)?;
         write_served_file(&dir.join(name), &ConfigFile::Models, text, &*self.group).map_err(io)?;
-        match self.render_all_locked().first() {
-            Some((_, err)) => Err(err.clone()),
-            None => Ok(()),
-        }
+        self.render_pass()
     }
 
     /// Creates the instance `id` of the engine `engine`, running the server
@@ -2764,7 +2712,10 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     /// `assignments.ini` section of an id used before, so the new instance is
     /// assigned nothing; its render `models@<id>.ini`, of the pool as it is on
     /// disk; and the record last, with the `Port` proposed and no `Hostname`,
-    /// so the profile's bind stands. A
+    /// so the profile's bind stands, and the render pass every write runs, which
+    /// gives the new instance the `launch@<id>.ini` half of its pair beside the
+    /// record's address (IP3c), a pair the pass cannot write being the create's
+    /// own failure. A
     /// create that wrote the render and failed on the record leaves a file no
     /// instance reads, never an instance with no render. Guarded as a write of
     /// a served file is: the principal gate and `configure`, the `writing`
@@ -2842,6 +2793,15 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             // holds. `SetInstanceAddress` is the verb that moves it later.
             append_record(&dir.join(INSTANCES_FILE), &record, id, server_profile, port)
                 .map_err(io)?;
+            // The pair the new instance converges to (IP3c): the record names it
+            // now, so the pass every write runs gives it both files, the launch
+            // carrying the record's address. Every other instance's pair stands
+            // and is left byte for byte; a pair the pass cannot write is the
+            // create's own failure.
+            let pass = self.render_all_locked();
+            if let Some(err) = self.write_failure(&pass) {
+                return Err(err);
+            }
             Ok(())
         };
         let answer = run();
@@ -2849,10 +2809,15 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
         answer
     }
 
-    /// Removes the instance `id`: its unit, its `assignments.ini` section, its
-    /// render and its record section, in that order, the record last. The
-    /// server profile it runs, the pool, its state directory and every other
-    /// instance's render stay. The checks answer before anything is removed:
+    /// Removes the instance `id`: its unit, its `assignments.ini` section, the
+    /// whole pair it renders (`models@<id>.ini` beside `launch@<id>.ini`) with
+    /// the `applied` record its launch left in its state folder, and its record
+    /// section, in that order, the record last (IP3c: the pair is ONE state, so
+    /// the removal takes both of its files, and a recreation of the id starts
+    /// with no record of the pair the old install applied). The server profile
+    /// it runs, the pool, its state directory with the snapshots it holds and
+    /// every other instance's pair stay. The checks answer before anything is
+    /// removed:
     /// the id rule ([`ManagerError::InvalidId`], before any path), the record
     /// read with [`read_record`] (a record that cannot be read is
     /// [`ManagerError::Io`], one with no section of the id
@@ -2889,11 +2854,19 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
             }
             self.service.remove(id).map_err(ManagerError::Service)?;
             pai_core::ini::delete_section(&dir.join(ASSIGNMENTS_FILE), id).map_err(io)?;
-            let render = crate::paths::instance_models(id).ok_or(ManagerError::InvalidId)?;
-            match std::fs::remove_file(&render) {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                done => done.map_err(io),
-            }?;
+            // The whole pair, and the record of the pair the last launch applied
+            // (IP3c). A file of the three missing is the removal already done.
+            let mut pair = vec![
+                crate::paths::instance_models(id).ok_or(ManagerError::InvalidId)?,
+                crate::launch::instance_launch_ini(id).ok_or(ManagerError::InvalidId)?,
+            ];
+            pair.extend(applied_file(id));
+            for path in pair {
+                match std::fs::remove_file(&path) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    done => done.map_err(io),
+                }?;
+            }
             pai_core::ini::delete_section(&dir.join(INSTANCES_FILE), id).map_err(io)?;
             Ok(())
         };
@@ -2935,6 +2908,7 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                     Some(cfg) => (u16::try_from(cfg.port_or_default()).unwrap_or(0), cfg.tags),
                     None => (0, Vec::new()),
                 };
+                let (converged, reason) = self.convergence(&section.id);
                 InstanceInfo {
                     id: section.id.clone(),
                     engine: ENGINE.to_string(),
@@ -2949,6 +2923,18 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
                         .get("Label")
                         .map(|v| v.trim().to_string())
                         .filter(|v| !v.is_empty()),
+                    // The pair of the apply (IP3c): converged and its reason are
+                    // the rows the last render pass left in memory, so the read
+                    // measures the pair against no card (review 8). The drift is
+                    // the pair on disk against the `applied` record its launch
+                    // left (IP3c review 4), a compare of files that reaches no
+                    // service manager and asks the GPU probe nothing.
+                    converged,
+                    reason: reason.map(|refusal| pai_core::client::NotConverged {
+                        key: refusal.key.to_string(),
+                        args: refusal.values,
+                    }),
+                    pending_restart: self.pending_restart(&section.id),
                 }
             })
             .collect();
@@ -3036,6 +3022,11 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
     pub fn render_failures(&self) -> Vec<(String, ManagerError)> {
         // The same lock a write holds, so a render never mixes with a write.
         let _writing = self.writing.lock().unwrap_or_else(|e| e.into_inner());
+        // The start renders every instance against the pair on disk, its last
+        // good pair: sources that grew while the manager was away keep their
+        // bytes and are reported, a pair that stands is skipped, so a start over
+        // a tree that stands writes no byte and asks the GPUs for nothing
+        // (IP3c, IP2 review D1).
         self.render_all_locked()
     }
 
@@ -3268,55 +3259,294 @@ impl<S: ServiceControl, A: Authority, R: Resolver> Manager<S, A, R> {
 
     /// The render of every instance, taken under the `writing` lock by
     /// [`Self::render_failures`] and by a write: a render is the pool as it
-    /// is on disk, so it belongs with the write that changed it. A render
-    /// that cannot be written does not stop the rest: every instance is
-    /// rendered and every failure comes back, in id order.
+    /// is on disk, so it belongs with the write that changed it. One record
+    /// comes back per instance whose pair did not land, in the record's order:
+    /// the fit check that refused it (`ManagerError::Invalid`) or the IO error
+    /// that stopped the write; a render that cannot be written does not stop
+    /// the rest. The render writes the instance's pair, `models@<id>.ini` and
+    /// `launch@<id>.ini`, together (`ARCHITECTURE.md` "Convergence: idempotent
+    /// apply, drift and the last good render"): a pair whose text the pass does
+    /// not change is not written, and an instance whose pair the fit check
+    /// refused keeps the bytes it has, reported not converged with that
+    /// check's reason. Each instance's fit checks measure the render against
+    /// its pair on disk, the last good one (a fit failure writes neither file,
+    /// so what stands on disk is the state the instance is running towards): a
+    /// write's pass and the start's pass judge the same way, so a save that
+    /// grows nothing over the pair that stands asks the GPU probe for nothing,
+    /// and a render that grew past the pair while the manager was away keeps
+    /// its bytes and is reported not converged. The pass's keyed refusals are
+    /// kept in memory, the rows a read answers until the next pass measures the
+    /// tree again (IP3c review 8).
     fn render_all_locked(&self) -> Vec<(String, ManagerError)> {
         let dir = crate::paths::engine_config_dir();
         let on_disk = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
         let io = |e: std::io::Error| ManagerError::Io(e.kind());
-        // The model profile pool, and the two files a render is built from:
-        // the render of an instance profile adds its entry sections, the render
-        // of an unmigrated record reads the pair of pool files.
-        let pool = on_disk("models.ini");
-        let profiles = on_disk(INSTANCE_PROFILES_FILE);
         let record = on_disk(INSTANCES_FILE);
-        let disabled = on_disk(MODELS_DISABLED_FILE);
         // The shape of the record, which decides below whether a render that
         // already holds its text is rewritten.
         let migrated = record_is_migrated(&record);
         let mut failures = Vec::new();
         for id in crate::paths::instance_ids() {
-            let path = match crate::paths::instance_models(&id) {
-                Some(path) => path,
-                None => continue,
+            let (path, launch_path) = match (
+                crate::paths::instance_models(&id),
+                crate::launch::instance_launch_ini(&id),
+            ) {
+                (Some(path), Some(launch_path)) => (path, launch_path),
+                _ => continue,
             };
-            // The instance profile the record names, once the migration has
-            // written it: the render is the entry sections of that profile, and
-            // a profile that names no model profile renders the empty file, the
-            // way a new instance's does. A record the migration has not written
-            // renders its section of `assignments.ini`, as before.
-            let text = match instance_profile_of(&record, &id) {
-                Some(profile) => render_instance(&id, &pool, &profiles, &profile),
-                None => render_of(&id, &pool, &disabled),
-            };
-            // A render of the migrated tree that already holds the text the pool
-            // gives is left where it stands: the start renders every instance
-            // every time, and a start of a migrated install changes no byte and
-            // no mtime (IP2 review D1). A tree the migration has not written is
-            // rendered as the manager always rendered it: the render is derived
-            // from the files the migration retires, and one that does not land
-            // at that start is the start's answer (IP2 review D4b).
-            if migrated && std::fs::read_to_string(&path).is_ok_and(|now| now == text) {
+            // The pair the instance converges to, as its launch reads it. The
+            // record naming no server profile the engine has a file for gives no
+            // launch: the pass writes no launch file, and the launch reads the
+            // profile itself, as it did before the first render.
+            let pair = (render_of_id(&id, &record), launch_render(&id));
+            // A pair that already holds the text the pass gives stands where it
+            // is: the start renders every instance every time, and a start of a
+            // migrated install changes no byte and no mtime (IP2 review D1). The
+            // launch file is part of the pair, so it is part of that rule. A
+            // tree the migration has not written is rendered as the manager
+            // always rendered it (IP2 review D4b).
+            let same = pair_stands(&id, &pair);
+            if migrated && same {
+                continue;
+            }
+            // The fit checks of this one instance's pair: a render that does not
+            // fit on this instance's cards keeps its bytes, and the instance is
+            // not converged. The same write lands on the instance that fits
+            // (IP3c: the fit checks are per instance, the checks of the entry
+            // itself are the whole save's). `today` is the whole pair on disk,
+            // the launch with the model list: the cards and the cap the pair
+            // stands on are the ones its own launch names.
+            let today = (
+                std::fs::read_to_string(&path).unwrap_or_default(),
+                std::fs::read_to_string(&launch_path).ok(),
+            );
+            if let Err(refusal) = self.pair_fit(&id, &pair, &today) {
+                failures.push((id, ManagerError::Invalid(refusal)));
                 continue;
             }
             // A render holds model profile text alone, so it carries the model profile
-            // file's mode and needs no group of its own.
-            if let Err(e) = write_served_file(&path, &ConfigFile::Models, &text, &*self.group) {
+            // file's mode and needs no group of its own. The launch is a server
+            // config: it carries the server profile's mode and group, the mode
+            // the instance's account can read.
+            let written = write_served_file(&path, &ConfigFile::Models, &pair.0, &*self.group)
+                .and_then(|_| match &pair.1 {
+                    Some(launch) => write_served_file(
+                        &launch_path,
+                        &ConfigFile::ServerProfile(id.clone()),
+                        launch,
+                        &*self.group,
+                    ),
+                    None => Ok(()),
+                });
+            if let Err(e) = written {
                 failures.push((id, io(e)));
             }
         }
+        // The rows the reads answer until the next pass: this pass's keyed
+        // refusals, in its order. An instance the pass skipped, its pair
+        // already standing, is in no row, so the read says it converged
+        // (IP3c review 8). The IO failures are not rows: the write's own
+        // failure, as [`Self::write_failure`] reads them.
+        *self.not_converged.lock().unwrap_or_else(|e| e.into_inner()) = failures
+            .iter()
+            .filter_map(|(id, err)| match err {
+                ManagerError::Invalid(refusal) => Some((id.clone(), refusal.clone())),
+                _ => None,
+            })
+            .collect();
         failures
+    }
+
+    /// The convergence of instance `id`: the keyed refusal the last render pass
+    /// left for it, and `converged` when it left none. Read from memory, measured
+    /// nowhere here (`ARCHITECTURE.md` "Convergence": not converged is derived,
+    /// recomputed at the manager's start and at every write): the memory check
+    /// runs the engine's probe, and the render of a not-converged instance is
+    /// larger than the pair that stands, so a read that measured again would ask
+    /// a card for every one of them (IP3c review 8). The pass writes the rows at
+    /// the start and at every write, so a manager that starts again over the same
+    /// tree answers the same rows before any read.
+    fn convergence(&self, id: &str) -> (bool, Option<pai_core::checks::Refusal>) {
+        let rows = self.not_converged.lock().unwrap_or_else(|e| e.into_inner());
+        match rows.iter().find(|(row, _)| row == id) {
+            Some((_, refusal)) => (false, Some(refusal.clone())),
+            None => (true, None),
+        }
+    }
+
+    /// Whether the pair instance `id` runs is not the pair on disk: its launch
+    /// recorded the digest of the pair it started with in [`applied_file`], and
+    /// the files digest differently. An instance with no record of what it
+    /// applied runs a pair this install never recorded, so it drifts too, until
+    /// its next start; an id with no readable pair drifts by no definition
+    /// (`ARCHITECTURE.md` "Convergence", IP3c). A compare of files, asking
+    /// NOTHING of the service manager: the drift is what the files say, so every
+    /// read of it (the bus's rows, the pipe's `ListInstances`, the plain list)
+    /// answers it and reaches no unit. A pair that drifted and is running wants
+    /// the restart now; a pair that drifted and is stopped wants it at its next
+    /// start, which is the same row.
+    pub fn pending_restart(&self, id: &str) -> bool {
+        match (applied_digest(id), pair_digest(id)) {
+            (Some(applied), Some(pair)) => applied != pair,
+            (None, Some(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// Whether a write moved instance `id` off the pair its launch recorded: the
+    /// two digests, with a record REQUIRED. An instance that never recorded a
+    /// pair applied nothing, so no write moved it to a restart and its unit's
+    /// state is worth no ask; the drift of [`Self::pending_restart`] is the
+    /// wider reading of the same files, the row's (IP3c review 4).
+    fn pair_moved(&self, id: &str) -> bool {
+        match (applied_digest(id), pair_digest(id)) {
+            (Some(applied), Some(pair)) => applied != pair,
+            _ => false,
+        }
+    }
+
+    /// The fit checks of instance `id`'s pair: the memory the render needs on
+    /// the cards its launch names, the `load-on-startup` count of its model
+    /// list against the `ModelsMax` of its launch, and the GPUs its model
+    /// profiles name, all judged against the pair on disk (`today`). Each side
+    /// is measured on ITS OWN cards and cap, the ones its launch carries: the
+    /// pair on disk is the last good one, so it fits the cards it was rendered
+    /// for, and a switch that narrows those cards, lowers that cap, or puts a
+    /// named GPU outside is the news that stops the pair (`ARCHITECTURE.md`
+    /// "Convergence", IP3c review: fit is judged against the pair on disk). The
+    /// model files are not judged here: the save that moves them judges them,
+    /// and an instance whose model file vanished is no reason to stop rendering
+    /// it (the boot render converges a tree whose files are missing). A pair the
+    /// pass leaves alone grows nothing and names nothing new, so it is judged on
+    /// nothing.
+    fn pair_fit(
+        &self,
+        id: &str,
+        pair: &(String, Option<String>),
+        today: &(String, Option<String>),
+    ) -> Result<(), pai_core::checks::Refusal> {
+        check_render_memory(
+            &pair.0,
+            &today.0,
+            id,
+            &*self.gpus,
+            &pair_devices(today, id),
+            &pair_devices(pair, id),
+        )?;
+        check_pair_startup_count(
+            &pair.0,
+            &today.0,
+            pair_cap(pair, id),
+            pair_cap(today, id),
+            id,
+        )?;
+        check_pair_devices(
+            &pair.0,
+            &today.0,
+            id,
+            &pair_devices(today, id),
+            &pair_devices(pair, id),
+        )
+    }
+
+    /// The failures of a render pass that stop the write: an IO failure of a
+    /// render, the first in id order. A pair the fit check refused is not the
+    /// write's failure: the save landed, that instance kept its last good pair,
+    /// and the answer names it (`Self::write_pool`).
+    fn write_failure(&self, failures: &[(String, ManagerError)]) -> Option<ManagerError> {
+        failures
+            .iter()
+            .map(|(_, err)| err)
+            .find(|err| !matches!(err, ManagerError::Invalid(_)))
+            .cloned()
+    }
+
+    /// The render pass: the instances whose pair the fit check refused, keyed
+    /// and in id order, and the write's own failure when the write of a pair
+    /// failed, the first in id order as a write always answered. Each
+    /// instance's fit checks measure the render against its pair on disk
+    /// ([`Self::render_all_locked`]).
+    fn render_pass(&self) -> RenderPass {
+        let pass = self.render_all_locked();
+        match self.write_failure(&pass) {
+            Some(err) => Err(err),
+            None => Ok(pass
+                .into_iter()
+                .filter_map(|(id, err)| match err {
+                    ManagerError::Invalid(refusal) => Some((id, refusal)),
+                    _ => None,
+                })
+                .collect()),
+        }
+    }
+
+    /// The instances of this node that are not converged: one row per instance
+    /// whose pair the render refused, in id order (`ARCHITECTURE.md`
+    /// "Convergence", IP3c). A write's answer carries them beside the running
+    /// instances it moved, and the rows of `instances` carry the same keyed
+    /// reason. Derived by a render pass over the files, never kept. The pass's
+    /// own failure is the caller's, as a write's is: a pair that could not be
+    /// read or written is not a pair that stands. Taken under the `writing` lock
+    /// the caller holds, as every save is: a save's answer reads the rows the
+    /// pass it just ran left, on the same thread.
+    fn not_converged_locked(&self) -> Result<Vec<NotConverged>, ManagerError> {
+        Ok(not_converged_of(&self.render_pass()?))
+    }
+
+    /// [`Self::drift_running`] beside the rows of [`Self::not_converged_locked`]:
+    /// the answer of a save that re-renders ([`Affected`], IP3c). Taken under the
+    /// `writing` lock, as every save is, so the rows speak of the pair the save's
+    /// pass left. The stream and the bus answer it to every save that re-renders,
+    /// the pool writes included.
+    pub fn affected(&self) -> Result<Affected, ManagerError> {
+        Ok(Affected {
+            running: self.drift_running()?,
+            not_converged: self.not_converged_locked()?,
+        })
+    }
+
+    /// The answer of a save that re-renders, from the render pass the save
+    /// itself ran (IP3c): the rows of that pass, beside `running`, the
+    /// instances the save answers as moved. A save takes its rows from the pass
+    /// it left the files with, never from a pass run again after it: the second
+    /// pass renders what the first wrote and can disagree with it. The pass's own
+    /// failure is the save's, as a write's is, so the rows arrive unwrapped.
+    /// Taken under the `writing` lock, as every save is.
+    fn affected_of(
+        &self,
+        failures: &[(String, pai_core::checks::Refusal)],
+        running: Vec<String>,
+    ) -> Affected {
+        Affected {
+            running,
+            not_converged: not_converged_of(failures),
+        }
+    }
+
+    /// The instances a save that re-renders answers as `running` (IP3c,
+    /// `ARCHITECTURE.md` "Convergence"): the ones of this node that recorded the
+    /// pair their launch started with, are up, and now run a pair that is not the
+    /// pair on disk, in the record's order. The compare comes first: only an
+    /// instance whose pair moved off its record is asked of the service manager,
+    /// so a save that changed no pair touches no unit, and an instance that
+    /// recorded no pair applied nothing, so no save moved it to a restart and its
+    /// unit is asked for nothing (review 4). Exactly the instances the page offers
+    /// a restart to, and the twin of
+    /// [`Self::drift_running_using_profile`], which walks one profile. The
+    /// rows beside them come from the render pass, read from the files the save
+    /// left, never kept.
+    fn drift_running(&self) -> Result<Vec<String>, ManagerError> {
+        let record = self.read_record_locked()?;
+        Ok(pai_core::ini::parse_sections(&record)
+            .into_iter()
+            .map(|section| section.id)
+            .filter(|id| self.pair_moved(id))
+            .filter(|id| {
+                self.service
+                    .status(id)
+                    .is_ok_and(|state| state == UnitState::Active)
+            })
+            .collect())
     }
 
     /// The node's compute devices, from the engine's own probe, with the moment
@@ -4279,37 +4509,6 @@ fn blank_lines_before(text: &str, at: usize) -> usize {
     }
 }
 
-/// The first (key, device) the entry section `section` of the pool text `text`
-/// names outside the `Devices` value `devices` of a server profile: the entry's
-/// own card keys, the keys [`outside_devices`] judges (`device-draft`,
-/// `mmproj-device` and the `override-tensor` rules), read off the entry alone.
-/// The entry is what an entry write moves, and the profile's server profile is
-/// the ground it is judged on, the same file the launch reads.
-fn entry_device_outside(text: &str, section: &str, devices: &str) -> Option<(String, String)> {
-    let mut keys = String::new();
-    for (key, value) in pai_core::ini::section_keys(text, section) {
-        let value = value.trim();
-        let named = key == "override-tensor"
-            || pai_core::checks::DEVICE_LIST_KEYS[1..].contains(&key.as_str());
-        if !value.is_empty() && named {
-            keys.push_str(&format!("{key} = {value}\n"));
-        }
-    }
-    pai_core::checks::devices_outside(&keys, devices)
-}
-
-/// The `[Server] Devices` of the server profile `name`, as the memory check
-/// measures the cards of the profile: `""` when the name builds no path or its
-/// file cannot be read, the measure of every card of the node, like
-/// [`instance_devices`].
-fn server_devices(name: &str) -> String {
-    crate::paths::instance_ini(name)
-        .and_then(|file| std::fs::read_to_string(file).ok())
-        .map(|contents| crate::server_cfg::from_text(&contents).devices)
-        .unwrap_or_default()
-        .unwrap_or_default()
-}
-
 /// The first section of the record text `text` that runs the server profile
 /// `profile`: the instance running it, `None` when no section does. From the
 /// model data model a section runs a profile one step behind, through its
@@ -4375,26 +4574,22 @@ const PLACEMENT_JUDGE: bool = true;
 /// writes that section is where it is judged.
 const PLACEMENT_SKIP: bool = false;
 
-/// The content checks of `file` for `contents`, against the files on disk:
-/// the instance file against the Server rules and its own render, `models.ini`
-/// and `models.ini.disabled` against the other model profile file and every
-/// instance's render. A render is the pool cut by the instance's section of
-/// `assignments.ini`, so the `load-on-startup` count is judged per instance,
-/// against the `ModelsMax` of the server profile that instance's section of
-/// `instances.ini` names. Both model profile files are judged for their model
-/// files too: a model profile the write puts in effect on an instance names
-/// files the node has, and a file that instance's render is already missing
-/// is never re-judged; `judge_model_files` is [`MODEL_FILES_SKIP`] where a
-/// write lands a profile that is switched off and unassigned, whose file is
-/// judged at the switch-on or the assignment that makes it render. A save of a server profile an instance runs that
-/// changes `Devices` judges that instance's render on the cards the text
-/// written names (R3). The renders are judged on the same rule for the GPUs
-/// their model profiles name (L4: `device-draft` and `mmproj-device`), at the
-/// two shrinking points and at a model profile write. A refusal writes nothing.
+/// The content checks of `file` for `contents`, against the files on disk: the
+/// instance file against the Server rules, `models.ini` and
+/// `models.ini.disabled` against the other model profile file, and both model
+/// profile files for their model files: a model profile the write puts in
+/// effect on an instance names files the node has, and a file that instance's
+/// render is already missing is never re-judged; `judge_model_files` is
+/// [`MODEL_FILES_SKIP`] where a write lands a profile that is switched off and
+/// unassigned, whose file is judged at the switch-on or the assignment that
+/// makes it render. Nothing of the fit is here (IP3c, `ARCHITECTURE.md`
+/// "Convergence"): the memory the render needs, the GPUs its model profiles
+/// name and its `load-on-startup` count are judged per instance, on the render
+/// the pass writes ([`Manager::pair_fit`]), and the instance a check stops
+/// keeps its last good pair. A refusal of what is here writes nothing.
 fn check_contents(
     file: &ConfigFile,
     contents: &str,
-    gpus: &dyn GpuTotals,
     judge_model_files: bool,
     judge_placement: bool,
 ) -> Result<(), pai_core::checks::Refusal> {
@@ -4411,51 +4606,12 @@ fn check_contents(
         _ => on_disk("models.ini.disabled"),
     };
     match file {
-        ConfigFile::ServerProfile(name) => {
+        ConfigFile::ServerProfile(_) => {
             // The Server rules alone: no pool caps them any more, the
             // instance's render does, against the `ModelsMax` of this text.
             // This text caps a pool only where an instance runs it, so a
             // profile no instance names loads nothing and is judged on nothing.
             checks::server_file(contents, "")?;
-            let models_max = crate::server_cfg::from_text(contents).models_max;
-            // The cards this text names, against the ones the file on disk
-            // names: a save that changes `Devices` shrinks (or grows) the
-            // memory of every instance that runs this profile, so their
-            // renders are judged on the pair (R3). A save that changes no
-            // `Devices` judges nothing.
-            let held =
-                crate::server_cfg::from_text(&on_disk(&format!("server@{name}.ini"))).devices;
-            let devices = crate::server_cfg::from_text(contents).devices;
-            let changed = held != devices;
-            let assignments = assignments_all();
-            for id in crate::paths::instance_ids() {
-                if crate::paths::instance_server_profile(&id).as_deref() == Some(name) {
-                    check_render(&id, &enabled, &disabled, models_max)?;
-                    if changed {
-                        check_shrink_memory_of(
-                            &assignments,
-                            &id,
-                            &enabled,
-                            &disabled,
-                            gpus,
-                            held.as_deref().unwrap_or(""),
-                            devices.as_deref().unwrap_or(""),
-                        )?;
-                        // The same pair of card sets judged for the GPUs the
-                        // render's model profiles name (L4): a narrowing past
-                        // one of them refuses, one already outside is no news.
-                        check_device_bound_of(
-                            &assignments,
-                            &id,
-                            &enabled,
-                            &disabled,
-                            &render_of(&id, &enabled, &disabled),
-                            held.as_deref().unwrap_or(""),
-                            devices.as_deref().unwrap_or(""),
-                        )?;
-                    }
-                }
-            }
             Ok(())
         }
         ConfigFile::Models => {
@@ -4473,32 +4629,55 @@ fn check_contents(
                 checks::model_profile_placement(contents)?;
             }
             checks::model_profile_ids_free(contents, &old, &off)?;
-            check_renders(&enabled, &disabled)?;
+            // The model files the write puts in effect stay an intrinsic check of
+            // the save (IP3c): the pool is what names a file, and a shard that is
+            // not on the node is the news the save answers, on every instance that
+            // renders the profile. The render the pass writes is never judged for
+            // them (`pair_fit`): a node whose model folder loses a file while the
+            // instance runs converges to the pair it has.
             if judge_model_files {
                 check_model_files(&assignments_all(), &enabled, &disabled, &old, &off)?;
             }
-            // The memory the render puts in effect, after the model files: a
-            // model profile whose file is not on the node has no header to
-            // read, and the missing file is the news that matters (it is also
-            // what makes this estimate give up).
-            check_profile_memory(&enabled, &disabled, &old, &off, gpus)?;
-            // The cards the render's model profiles name, on the same render
-            // rule (L4): a GPU the write puts in effect outside the instance's
-            // server profile refuses.
-            check_device_bound(&assignments_all(), &enabled, &disabled, &old, &off)
+            Ok(())
         }
         ConfigFile::ModelsDisabled => {
             let (old, enabled_file) = (on_disk("models.ini.disabled"), on_disk("models.ini"));
             checks::models_disabled_file(contents, &old, &enabled_file)?;
             checks::model_profile_ids_free(contents, &old, &enabled_file)?;
-            check_renders(&enabled, &disabled)?;
+            // The model files, as the model profile pool's save judges them.
             if judge_model_files {
                 check_model_files(&assignments_all(), &enabled, &disabled, &enabled_file, &old)?;
             }
-            check_profile_memory(&enabled, &disabled, &enabled_file, &old, gpus)?;
-            check_device_bound(&assignments_all(), &enabled, &disabled, &enabled_file, &old)
+            Ok(())
         }
     }
+}
+
+/// The GPUs of the render `render` against the cards instance `id` names
+/// (`devices_today` the cards it has today, `devices_new` the ones it is about
+/// to have): the first model profile naming a card outside, in the render's
+/// order, that `today` did not already name outside refuses
+/// (`model-profile-device-outside`, the check of L4). The render's own text is
+/// judged, the way the apply writes it: from the migration on a render carries
+/// the entry's placement keys, which no assignment row holds.
+fn check_pair_devices(
+    render: &str,
+    today: &str,
+    id: &str,
+    devices_today: &str,
+    devices_new: &str,
+) -> Result<(), pai_core::checks::Refusal> {
+    let was = outside_devices(today, devices_today);
+    if let Some((profile, key, device)) = outside_devices(render, devices_new)
+        .into_iter()
+        .find(|named| !was.contains(named))
+    {
+        return Err(pai_core::checks::Refusal {
+            key: "model-profile-device-outside",
+            values: vec![profile, id.to_string(), key, device],
+        });
+    }
+    Ok(())
 }
 
 /// Why one file of the model data model migration did not land: its name in the
@@ -4929,185 +5108,138 @@ fn pool_holds(text: &str, id: &str) -> bool {
         .any(|section| section.id == id)
 }
 
-/// The `load-on-startup` of instance `id`'s render against `models_max`, that
-/// instance's own, over the assignment record `assignments` rather than the
-/// one on disk: the render a write of the record is about to produce. Only a
-/// render that starts MORE than the instance starts today is judged, so a step
-/// down, or a count that stays where it is, lands. The refusal names the
-/// instance, last.
-fn check_render_of(
-    assignments: &str,
-    id: &str,
-    enabled: &str,
-    disabled: &str,
-    models_max: Option<i32>,
-) -> Result<(), pai_core::checks::Refusal> {
-    let assignment = pai_core::ini::text::section_text(assignments, id);
-    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
-    let count = pai_core::checks::startup_loads(&render);
-    let today = pai_core::checks::startup_loads(&render_of(id, enabled, disabled));
-    if count <= today {
-        return Ok(());
+/// The render of instance `id` over the record `record`: the entry sections of
+/// the instance profile the record names, once the migration has written one,
+/// and the pool pair cut by `assignments.ini` before that.
+fn render_of_id(id: &str, record: &str) -> String {
+    let dir = crate::paths::engine_config_dir();
+    let pool = std::fs::read_to_string(dir.join("models.ini")).unwrap_or_default();
+    match instance_profile_of(record, id) {
+        Some(profile) => render_instance(
+            id,
+            &pool,
+            &std::fs::read_to_string(dir.join(INSTANCE_PROFILES_FILE)).unwrap_or_default(),
+            &profile,
+        ),
+        None => render_of(
+            id,
+            &pool,
+            &std::fs::read_to_string(dir.join(MODELS_DISABLED_FILE)).unwrap_or_default(),
+        ),
     }
-    pai_core::checks::startup_count(count, models_max).map_err(|mut refusal| {
-        refusal.values.push(id.to_string());
-        refusal
+}
+
+/// The text of `launch@<id>.ini`: the server config instance `id` launches
+/// with, the profile its record resolves with the record's host and port over it
+/// (`instance_cfg`, the same `launch::with_record_address` the launch reads, L1:
+/// the launch and the render name the same address). `None` when the record
+/// names no profile, or names one the engine has no readable file for: the pass
+/// writes no launch for that instance.
+fn launch_render(id: &str) -> Option<String> {
+    Some(crate::server_cfg::render_for(&instance_cfg(id)?, true))
+}
+
+/// Whether the pair files of instance `id` already hold `pair` (the render and
+/// the launch the pass gives): a pair that stands is written by no pass, changes
+/// no byte and no mtime, and is the instance converged (IP3c). A launch with
+/// nothing to write, and an id with no file of its own, put nothing of
+/// themselves into the pair.
+fn pair_stands(id: &str, pair: &(String, Option<String>)) -> bool {
+    let on_disk =
+        |path: Option<std::path::PathBuf>| path.and_then(|path| std::fs::read_to_string(path).ok());
+    let launch = on_disk(crate::launch::instance_launch_ini(id));
+    on_disk(crate::paths::instance_models(id)).as_deref() == Some(pair.0.as_str())
+        && match &pair.1 {
+            Some(want) => launch.as_deref() == Some(want.as_str()),
+            None => true,
+        }
+}
+
+/// The file a launched instance records the pair it started with in: `applied`
+/// in its own state folder, which the instance's account writes and the manager
+/// reads (`ARCHITECTURE.md` "Convergence", IP3c).
+pub const APPLIED_FILE: &str = "applied";
+
+/// `applied` in the state folder of instance `id`. None for an invalid id.
+pub fn applied_file(id: &str) -> Option<std::path::PathBuf> {
+    crate::paths::valid_instance_id(id).then(|| {
+        crate::paths::instance_state_dir()
+            .join(id)
+            .join(APPLIED_FILE)
     })
 }
 
-/// The `load-on-startup` of instance `id`'s render against `models_max`, that
-/// instance's own, over the assignment record `assignments` rather than the
-/// one on disk: the render a server profile switch leaves. The whole count is
-/// judged, so a switch to a lower cap is refused as one that starts more is:
-/// the step rule of `check_render_of` is `SetModelProfile`'s, and a switch
-/// changes no model profile, so it has no step to make. The refusal names the
-/// instance, last.
-fn check_render_of_full(
-    assignments: &str,
-    id: &str,
-    enabled: &str,
-    disabled: &str,
-    models_max: Option<i32>,
-) -> Result<(), pai_core::checks::Refusal> {
-    let assignment = pai_core::ini::text::section_text(assignments, id);
-    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
-    let count = pai_core::checks::startup_loads(&render);
-    pai_core::checks::startup_count(count, models_max).map_err(|mut refusal| {
-        refusal.values.push(id.to_string());
-        refusal
-    })
+/// The digest of the pair instance `id` applies: the bytes of `models@<id>.ini`
+/// followed by those of `launch@<id>.ini`, SHA-256 in lowercase hex. The shape
+/// IP3d's reconcile digest keeps. None when either file cannot be read.
+pub fn pair_digest(id: &str) -> Option<String> {
+    let models = std::fs::read(crate::paths::instance_models(id)?).ok()?;
+    let launch = std::fs::read(crate::launch::instance_launch_ini(id)?).unwrap_or_default();
+    let mut digest = Sha256::new();
+    digest.update(&models);
+    digest.update(&launch);
+    Some(hex(&digest.finalize()))
 }
 
-/// The memory of instance `id`'s render over the assignment record
-/// `assignments`, measured on the cards the instance's server profile names
-/// today (`devices_today`) and on the ones the text about to land names
-/// (`devices_new`): the two places where `available` can shrink, a save of an
-/// in-use server profile that changes `Devices`, and `set_server_profile`. A
-/// model profile of the render is refused only when its estimate fits today's
-/// memory AND not the new one: at these points the write moves the memory, not
-/// the need, so what was already over is no news (the growth rule of the model
-/// profile write, turned round). A side that names no card to measure (`none`,
-/// ids the probe knows none of) or a node the seam answers no pool for judges
-/// nothing. The render is estimated before the seam [`GpuTotals`] is asked, as
-/// [`check_render_memory`] does: a render with no estimate to measure judges
-/// nothing and runs no probe. The refusal is [`check_render_memory`]'s, naming
-/// the new memory.
-fn check_shrink_memory_of(
-    assignments: &str,
-    id: &str,
-    enabled: &str,
-    disabled: &str,
-    gpus: &dyn GpuTotals,
-    devices_today: &str,
-    devices_new: &str,
-) -> Result<(), pai_core::checks::Refusal> {
-    if devices_today.trim() == "none" || devices_new.trim() == "none" {
-        return Ok(());
-    }
-    let assignment = pai_core::ini::text::section_text(assignments, id);
-    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
-    let cwd = crate::launch::instance_current_dir(
-        cfg!(windows),
-        &crate::paths::data_root(),
-        &crate::paths::instance_state_dir(),
-    );
-    let needs = estimated_of(&render, &cwd);
-    if needs.is_empty() {
-        return Ok(());
-    }
-    let Some(pool) = gpus.gpus() else {
-        return Ok(());
-    };
-    let available = pai_core::devices::devices_usable(&pool, devices_new);
-    let today = pai_core::devices::devices_usable(&pool, devices_today);
-    if available == 0 || today == 0 {
-        return Ok(());
-    }
-    if let Some(need) = needs
-        .into_iter()
-        .find(|need| need.bytes > available && need.bytes <= today)
-    {
-        return Err(pai_core::checks::Refusal {
-            key: "model-profile-over-memory",
-            values: vec![
-                need.id,
-                id.to_string(),
-                (need.bytes.div_ceil(pai_core::gguf_shape::MIB)).to_string(),
-                (available / pai_core::gguf_shape::MIB).to_string(),
-            ],
-        });
-    }
-    Ok(())
+/// The digest the last launch of instance `id` recorded, as lowercase hex. None
+/// when there is no record.
+pub fn applied_digest(id: &str) -> Option<String> {
+    let text = std::fs::read_to_string(applied_file(id)?).ok()?;
+    let hex = text.trim().to_ascii_lowercase();
+    (!hex.is_empty()).then_some(hex)
 }
 
-/// The device bound of every instance's render, in id order: the first render
-/// with a model profile naming a GPU outside the server profile that instance
-/// runs refuses (L4, ARCHITECTURE.md "Layers, MoE and tensor placement on the
-/// web model profile page" (3), slice 3b). `assignments`, `enabled` and
-/// `disabled` are the record and the pool pair the write leaves;
-/// `old_enabled` and `old_disabled` are the pool pair on disk, which with the
-/// record on disk (read by `render_of`) is the render today. The rule, and the
-/// rule of what is no news, are [`check_device_bound_of`]'s.
-fn check_device_bound(
-    assignments: &str,
-    enabled: &str,
-    disabled: &str,
-    old_enabled: &str,
-    old_disabled: &str,
-) -> Result<(), pai_core::checks::Refusal> {
-    for id in crate::paths::instance_ids() {
-        // A model profile write moves no server profile: the cards are the
-        // same on both sides of the pair.
-        let devices = instance_devices(&id);
-        check_device_bound_of(
-            assignments,
-            &id,
-            enabled,
-            disabled,
-            &render_of(&id, old_enabled, old_disabled),
-            &devices,
-            &devices,
-        )?;
+/// Records the pair the launch of instance `id` starts with: the digest of its
+/// rendered pair, in `applied` under the instance's state folder. The launch
+/// reports a failure and starts anyway: the file belongs to the instance's own
+/// account, and a node where that account cannot write it has no drift to
+/// report, which is no reason to refuse a launch (`ARCHITECTURE.md`
+/// "Convergence", IP3c).
+pub fn write_applied(id: &str) -> std::io::Result<()> {
+    let (file, digest) = applied_file(id)
+        .zip(pair_digest(id))
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
     }
-    Ok(())
+    std::fs::write(&file, digest)
 }
 
-/// The device bound of instance `id`'s render over the assignment record
-/// `assignments` and the pool pair `enabled` / `disabled`, judged on the cards
-/// its server profile names after the write (`devices_new`) against the ones it
-/// names today (`devices_today`): the two places a model profile write stands,
-/// and the two where the card set moves, [`Manager::set_server_profile`] and a
-/// save of an in-use server profile that changes `Devices`. The first
-/// (model profile, key, device) the new render names outside `devices_new` that
-/// today's render did not name outside `devices_today` refuses with
-/// `model-profile-device-outside` and `[model profile, instance, key, device]`:
-/// what is already outside is no news, as an already-over estimate is for
-/// [`check_shrink_memory_of`]. A render with no server profile to read names
-/// every card, so it judges nothing ([`instance_devices`]). The devices
-/// themselves are [`pai_core::checks::devices_outside`]'s, never the node's
-/// probe.
-fn check_device_bound_of(
-    assignments: &str,
-    id: &str,
-    enabled: &str,
-    disabled: &str,
-    today: &str,
-    devices_today: &str,
-    devices_new: &str,
-) -> Result<(), pai_core::checks::Refusal> {
-    let assignment = pai_core::ini::text::section_text(assignments, id);
-    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
-    let was = outside_devices(today, devices_today);
-    if let Some((profile, key, device)) = outside_devices(&render, devices_new)
-        .into_iter()
-        .find(|named| !was.contains(named))
-    {
-        return Err(pai_core::checks::Refusal {
-            key: "model-profile-device-outside",
-            values: vec![profile, id.to_string(), key, device],
-        });
-    }
-    Ok(())
+/// The lowercase hex of the digest bytes, the shape every digest file carries.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// One instance a render pass refused: the instance, and the keyed check that
+/// stopped its pair, with the arguments that check carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotConverged {
+    pub instance: String,
+    pub key: String,
+    pub args: Vec<String>,
+}
+
+/// What a save that re-renders answers (`ARCHITECTURE.md` "Convergence", IP3c):
+/// the instances the save moved, and the instances it leaves not converged. The
+/// first are the ones the page offers a restart to, the second the ones whose
+/// pair the save's render refused, each with that refusal's key, beside them.
+/// Both are derived from the files the save left, never kept, the way the rows
+/// of `instances` are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Affected {
+    pub running: Vec<String>,
+    pub not_converged: Vec<NotConverged>,
+}
+
+/// The render pass's refusals as the answer's rows, in the pass's order.
+fn not_converged_of(pass: &[(String, pai_core::checks::Refusal)]) -> Vec<NotConverged> {
+    pass.iter()
+        .map(|(id, refusal)| NotConverged {
+            instance: id.clone(),
+            key: refusal.key.to_string(),
+            args: refusal.values.clone(),
+        })
+        .collect()
 }
 
 /// The (model profile, key, device) triples of the render `render` naming a GPU
@@ -5151,39 +5283,103 @@ fn outside_devices(render: &str, devices: &str) -> Vec<(String, String, String)>
     out
 }
 
-/// The `load-on-startup` of instance `id`'s render against `models_max`, that
-/// instance's own. The refusal names the instance, last.
-fn check_render(
-    id: &str,
-    enabled: &str,
-    disabled: &str,
+/// The count `count` against `models_max`, as a check of instance `id`: the
+/// check's own keyed refusal, with the instance it stopped named last.
+fn startup_refusal(
+    count: usize,
     models_max: Option<i32>,
+    id: &str,
 ) -> Result<(), pai_core::checks::Refusal> {
-    let count = pai_core::checks::startup_loads(&render_of(id, enabled, disabled));
     pai_core::checks::startup_count(count, models_max).map_err(|mut refusal| {
         refusal.values.push(id.to_string());
         refusal
     })
 }
 
-/// Every instance's render against the `ModelsMax` of the server profile its
-/// section names, in id order: the first render over its max refuses. An
-/// instance whose section names no profile, or names one whose file cannot be
-/// read, is skipped: its launch refuses it, and its render is not judged on
-/// the defaults of a file that is not there.
-fn check_renders(enabled: &str, disabled: &str) -> Result<(), pai_core::checks::Refusal> {
+/// The `load-on-startup` count of the render `render` of instance `id`, grown
+/// over the count of the render on disk (`today`), against the `ModelsMax` the
+/// pair names (`cap`: the cap the launch carries, the pair on disk measured on
+/// its own launch, `cap_today`). The count is one instance's own, its model
+/// list and its cap, so it is a fit check of that instance and never a check of
+/// the save (`ARCHITECTURE.md` "Convergence", IP3c review 7): the write that
+/// grows one instance's list over that instance's cap lands, and the instance
+/// that fits is written. The growth rule of every fit check: a render that
+/// already stands over the cap is no news, so the save that shrinks it lands.
+/// The count that SHRINKS is never news: a step down lands even when the list
+/// it leaves is still over the cap, which is what the step rule of
+/// `SetModelProfile` always allowed. The count that STANDS is news when the cap
+/// is news: the pair on disk ran under no cap of its own (`cap_today` is none,
+/// a first render, a profile whose key is commented) and the pair now names
+/// one, which is what a switch to a capped profile brings. A save of the server
+/// profile the instance runs, lowering the cap the pair stands under, is judged
+/// on its growth only and so lands (the growth rule, the same one
+/// `manager_checks_e2e` pins). A pair with no cap to be judged on now (no
+/// launch and no readable server profile, the unlimited pool) is judged on
+/// nothing.
+fn check_pair_startup_count(
+    render: &str,
+    today: &str,
+    cap: Option<i32>,
+    cap_today: Option<i32>,
+    id: &str,
+) -> Result<(), pai_core::checks::Refusal> {
+    let Some(cap) = cap else {
+        return Ok(());
+    };
+    let count = pai_core::checks::startup_loads(render);
+    let standing = pai_core::checks::startup_loads(today);
+    if count < standing || (count == standing && cap_today.is_some()) {
+        return Ok(());
+    }
+    startup_refusal(count, Some(cap), id)
+}
+
+/// The cards the pair `pair` names: the `Devices` of its launch text, the pair
+/// being rendered and the pair on disk each measured on their own (IP3c). A
+/// pair with no launch half, and a launch whose server profile the record
+/// cannot be read for, name every card, as the launch and `instance_devices`
+/// read them.
+fn pair_devices(pair: &(String, Option<String>), id: &str) -> String {
+    match &pair.1 {
+        Some(text) => crate::server_cfg::from_text(text)
+            .devices
+            .unwrap_or_default(),
+        None => instance_devices(id),
+    }
+}
+
+/// The `ModelsMax` the pair `pair` names, as [`pair_devices`] reads its cards:
+/// the cap the launch carries, `None` when the pair has no launch half and the
+/// record names no readable server profile, or the key is commented (the
+/// unlimited pool): the instance has nothing to be judged on.
+fn pair_cap(pair: &(String, Option<String>), id: &str) -> Option<i32> {
+    match &pair.1 {
+        Some(text) => crate::server_cfg::from_text(text).models_max,
+        None => profile_file(id)
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| crate::server_cfg::from_text(&text).models_max),
+    }
+}
+
+/// The model files of every instance's render, in id order: the first render
+/// naming a file the write ADDS refuses. `assignments`, `enabled` and
+/// `disabled` are the record and the pool pair the write leaves; `old` and
+/// `off` are the pool pair on disk, which with the record on disk (read by
+/// `render_of`) is the render today.
+fn check_model_files(
+    assignments: &str,
+    enabled: &str,
+    disabled: &str,
+    old: &str,
+    off: &str,
+) -> Result<(), pai_core::checks::Refusal> {
     for id in crate::paths::instance_ids() {
-        let Some(path) = profile_file(&id) else {
-            continue;
-        };
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        check_render(
+        check_model_files_of(
+            assignments,
             &id,
             enabled,
             disabled,
-            crate::server_cfg::from_text(&text).models_max,
+            &render_of(&id, old, off),
         )?;
     }
     Ok(())
@@ -5215,30 +5411,6 @@ fn profile_section<'a>(
     profile: &str,
 ) -> Option<&'a pai_core::ini::Section> {
     sections.iter().find(|s| s.id == profile && s.id != "*")
-}
-
-/// The model files of every instance's render, in id order: the first render
-/// naming a file the write ADDS refuses. `assignments`, `enabled` and
-/// `disabled` are the record and the pool pair the write leaves; `old` and
-/// `off` are the pool pair on disk, which with the record on disk (read by
-/// `render_of`) is the render today.
-fn check_model_files(
-    assignments: &str,
-    enabled: &str,
-    disabled: &str,
-    old: &str,
-    off: &str,
-) -> Result<(), pai_core::checks::Refusal> {
-    for id in crate::paths::instance_ids() {
-        check_model_files_of(
-            assignments,
-            &id,
-            enabled,
-            disabled,
-            &render_of(&id, old, off),
-        )?;
-    }
-    Ok(())
 }
 
 /// The model files instance `id`'s render names, over the pool pair and the
@@ -5317,56 +5489,13 @@ fn missing_model_files(render: &str, cwd: &std::path::Path) -> Vec<(String, Stri
 
 // ── The model profile memory check (ARCHITECTURE.md step 10, item 13) ──────
 
-/// The whole pool pair as it will stand after the write (`enabled`,
-/// `disabled`) against the pair on disk (`old_enabled`, `old_disabled`): every
-/// instance's render in id order, the first one with a model profile the write
-/// makes over the node's memory refusing. The rule, the args of the refusal and
-/// the GPU seam are [`check_render_memory`]'s.
-fn check_profile_memory(
-    enabled: &str,
-    disabled: &str,
-    old_enabled: &str,
-    old_disabled: &str,
-    gpus: &dyn GpuTotals,
-) -> Result<(), pai_core::checks::Refusal> {
-    for id in crate::paths::instance_ids() {
-        // The render today is the pool on disk cut by the record on disk, as
-        // [`check_model_files`] reads it.
-        check_render_memory(
-            &render_of(&id, enabled, disabled),
-            &render_of(&id, old_enabled, old_disabled),
-            &id,
-            gpus,
-        )?;
-    }
-    Ok(())
-}
-
-/// The memory of the render the record `assignments` leaves in effect on
-/// instance `id`, against the render that instance has today (`today`: the pool
-/// pair on disk and the record on disk, as [`check_model_files_of`] takes it).
-/// The record is the whole of what this write moves, so the render to measure
-/// is built of `assignments` and not read off the disk.
-fn check_profile_memory_of(
-    assignments: &str,
-    id: &str,
-    enabled: &str,
-    disabled: &str,
-    today: &str,
-    gpus: &dyn GpuTotals,
-) -> Result<(), pai_core::checks::Refusal> {
-    let assignment = pai_core::ini::text::section_text(assignments, id);
-    let render = pai_core::assign::render(enabled, disabled, assignment.as_deref());
-    check_render_memory(&render, today, id, gpus)
-}
-
 /// The memory check of one instance's render `render`, named `id` in the
-/// refusal, against the render that same instance has today (`today`): the
-/// first model profile of `render`, in the render's order, that this write
+/// refusal, against the render that same instance has on disk (`today`): the
+/// first model profile of `render`, in the render's order, that this pair
 /// makes larger AND whose own estimate is over the usable GPU memory of the
-/// cards the instance's server profile names (R3: `Devices`, every card when
-/// the key is absent, nothing for `none` or a `Devices` whose ids the probe
-/// does not know) refuses with `model-profile-over-memory` and
+/// cards the pair's launch names (`devices_new`; R3: `Devices`, every card
+/// when the key is absent, nothing for `none` or a `Devices` whose ids the
+/// probe does not know) refuses with `model-profile-over-memory` and
 /// `[model profile, instance, needed MiB, available MiB]`, the need rounded up
 /// to a MiB and the memory the node has rounded down to one
 /// (ARCHITECTURE.md (b) 1, 2 and 3). The need is that one model profile's
@@ -5380,16 +5509,27 @@ fn check_profile_memory_of(
 /// grow nothing, so a model profile that stands over the node's memory today
 /// (GPUs swapped, a hand edit) is never refused by a write beside it.
 ///
+/// The cards narrowing is news of its own: the pair on disk fits the cards its
+/// own launch names (`devices_today`), so a pair that names fewer of them puts
+/// a need that fits today over the memory the instance has, and a need that
+/// fits the new memory is no news. Each side is measured on ITS OWN cards, the
+/// pair being rendered on the ones its launch carries and the pair on disk on
+/// the ones its launch carries (`ARCHITECTURE.md` "Convergence", IP3c review:
+/// fit is judged against the pair on disk).
+///
 /// The estimates come from the files and the GPU totals from the seam
 /// [`GpuTotals`], which runs a probe: both renders are estimated and the growth
-/// found first, and the seam is asked only once a section has grown. A node the
-/// seam answers no pool for, an empty pool included, is measured on nothing,
-/// and so is an instance whose server profile names no card the probe knows.
+/// found first, and the seam is asked only once a section has grown or the
+/// cards narrowed. A node the seam answers no pool for, an empty pool
+/// included, is measured on nothing, and so is an instance whose server profile
+/// names no card the probe knows.
 fn check_render_memory(
     render: &str,
     today: &str,
     id: &str,
     gpus: &dyn GpuTotals,
+    devices_today: &str,
+    devices_new: &str,
 ) -> Result<(), pai_core::checks::Refusal> {
     let cwd = crate::launch::instance_current_dir(
         cfg!(windows),
@@ -5405,25 +5545,36 @@ fn check_render_memory(
             .map(|was| was.bytes)
             .unwrap_or(0)
     };
-    let grown: Vec<Estimated> = estimated_of(render, &cwd)
-        .into_iter()
+    let need = estimated_of(render, &cwd);
+    let grown: Vec<&Estimated> = need
+        .iter()
         .filter(|need| need.bytes > baseline(&need.id))
         .collect();
-    if grown.is_empty() {
+    // The seam runs the probe, so it is asked only when there is something to
+    // measure: a render with no estimate measures nothing on any card, and a
+    // pair whose launch names the cards the pair on disk names measures nothing
+    // when no section grew.
+    if need.is_empty() || (grown.is_empty() && devices_today.trim() == devices_new.trim()) {
         return Ok(());
     }
     let Some(pool) = gpus.gpus() else {
         return Ok(());
     };
-    let available = pai_core::devices::devices_usable(&pool, &instance_devices(id));
+    let available = pai_core::devices::devices_usable(&pool, devices_new);
     if available == 0 {
         return Ok(());
     }
-    if let Some(need) = grown.into_iter().find(|need| need.bytes > available) {
+    let narrowed = pai_core::devices::devices_usable(&pool, devices_today) > available;
+    let judged: Vec<&Estimated> = if narrowed {
+        need.iter().collect()
+    } else {
+        grown
+    };
+    if let Some(need) = judged.into_iter().find(|need| need.bytes > available) {
         return Err(pai_core::checks::Refusal {
             key: "model-profile-over-memory",
             values: vec![
-                need.id,
+                need.id.clone(),
                 id.to_string(),
                 (need.bytes.div_ceil(pai_core::gguf_shape::MIB)).to_string(),
                 (available / pai_core::gguf_shape::MIB).to_string(),
@@ -6698,7 +6849,10 @@ pub(crate) fn manager_e2e() {
                 "instances.ini",
                 "server@default.ini",
                 "models.ini",
-                "models@default.ini"
+                "models@default.ini",
+                // The pair the apply writes: the launch file beside the render
+                // (IP3c).
+                "launch@default.ini",
             ]),
             "exactly the files written, no temp file left"
         );
@@ -6728,9 +6882,10 @@ pub(crate) fn manager_e2e() {
              the preset file's read for nothing"
         );
 
-        // The render of every instance is checked against that instance's own
-        // ModelsMax: two model profiles load on startup, default's max is 1,
-        // so the pool is refused, the refusal naming the instance. The
+        // The render of an instance is checked against that instance's own
+        // ModelsMax, and the check is a fit check of that instance (IP3c): two
+        // model profiles load on startup, default's max is 1, so the pool LANDS
+        // and default keeps its last good pair, reported over its max. The
         // assignments say the render holds the pool; the manager writes that
         // file in a later step, so the fixture writes it by hand.
         std::fs::write(sys.join("assignments.ini"), "[default]\n* = inherit\n")
@@ -6745,18 +6900,31 @@ pub(crate) fn manager_e2e() {
             "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
              [b]\nmodel = /m/b.gguf\nload-on-startup = true\n",
         );
-        assert_eq!(
-            m.write_file(&alice, "models.ini", &two_loading, false),
-            Err(ManagerError::Invalid(pai_core::checks::Refusal {
-                key: "load-on-startup-over-max",
-                values: vec!["2".into(), "1".into(), "default".into()],
-            })),
-            "the render of default, not the pool, is over default's max"
+        let pair = (
+            std::fs::read(sys.join("models@default.ini")).expect("the render on disk"),
+            std::fs::read(sys.join("launch@default.ini")).expect("the launch on disk"),
         );
         assert_eq!(
-            m.read_file(Some(&alice), "models.ini"),
-            Ok(Some(plain(&model_profiles))),
-            "the refused pool wrote nothing"
+            m.write_file(&alice, "models.ini", &two_loading, false),
+            Ok(()),
+            "the count is a fit check of default, so the pool lands"
+        );
+        assert_eq!(
+            m.not_converged_locked().expect("the rows"),
+            vec![NotConverged {
+                instance: "default".into(),
+                key: "load-on-startup-over-max".into(),
+                args: vec!["2".into(), "1".into(), "default".into()],
+            }],
+            "default is reported over its own max"
+        );
+        assert_eq!(
+            (
+                std::fs::read(sys.join("models@default.ini")).expect("the render"),
+                std::fs::read(sys.join("launch@default.ini")).expect("the launch"),
+            ),
+            pair,
+            "and default keeps the pair it had: the refused render wrote neither file"
         );
         // The same pool is accepted once that instance's own max holds it.
         std::fs::write(
@@ -8414,6 +8582,7 @@ pub(crate) fn manager_checks_e2e() {
             listing(),
             [
                 "instances.ini",
+                "launch@default.ini",
                 "models.ini",
                 "models@default.ini",
                 "server@default.ini"
@@ -8487,23 +8656,49 @@ pub(crate) fn manager_checks_e2e() {
         std::fs::write(sys.join("assignments.ini"), a_none).expect("assignments.ini");
         // default's ModelsMax is 2, and default is an instance of the record.
         write_record(&sys, &["default"]);
+        let render_before = read("models@default.ini");
         assert_eq!(
             m.write_file(&alice, "models.ini", &flagged(&["a", "b", "c"]), false),
-            invalid("load-on-startup-over-max", &["3", "2", "default"]),
-            "the refusal names the instance whose render is over its max"
+            Ok(()),
+            "the count is a fit check of the instance (IP3c), so the pool lands"
         );
-        assert_eq!(read("models.ini").as_deref(), Some(model_profiles.as_str()));
+        assert_eq!(
+            m.not_converged_locked().expect("the rows"),
+            vec![NotConverged {
+                instance: "default".into(),
+                key: "load-on-startup-over-max".into(),
+                args: vec!["3".into(), "2".into(), "default".into()],
+            }],
+            "the refusal names the instance whose render is over its max: it is \
+             reported, not a refusal of the write"
+        );
+        assert_eq!(
+            read("models.ini").as_deref(),
+            Some(flagged(&["a", "b", "c"]).as_str())
+        );
+        assert_eq!(
+            read("models@default.ini"),
+            render_before,
+            "and default keeps the pair it had"
+        );
         assert_eq!(
             read("models@default.ini"),
             Some(pai_core::assign::render(&model_profiles, "", None)),
-            "a refused write leaves the render as it was: it opens with the \
+            "the pair it keeps is the one it had: it opens with the \
              generated header, so it is the pool rendered, never the pool text"
         );
         assert_eq!(
             m.write_file(&alice, "models.ini", &flagged(&["a", "b"]), false),
             Ok(())
         );
-        // Lowering ModelsMax under them is refused too.
+        assert_eq!(
+            m.not_converged_locked().expect("the rows"),
+            [],
+            "the pool that fits converges default again"
+        );
+        // Lowering ModelsMax under them is NOT refused: the render's count is
+        // what stands today, so it is no news (IP3c, the growth rule of every
+        // fit check). The save lands, and default's pair stands as it is.
         assert_eq!(
             m.write_file(
                 &alice,
@@ -8511,11 +8706,22 @@ pub(crate) fn manager_checks_e2e() {
                 "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n",
                 false
             ),
-            invalid("load-on-startup-over-max", &["2", "1", "default"])
+            Ok(())
         );
-        assert_eq!(read("server@default.ini").as_deref(), Some(default_ini));
-        // So is a new instance that could not start with what its own render
-        // loads: lan-2 inherits a model profile and has no room for it.
+        assert_eq!(
+            read("server@default.ini").as_deref(),
+            Some("[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n"),
+            "the lowered cap lands"
+        );
+        assert_eq!(
+            m.not_converged_locked().expect("the rows"),
+            [],
+            "and the count the cap now names was already standing, so default is not over it"
+        );
+        // So a new instance that could not start with what its own render
+        // loads: lan-2 inherits a model profile and has no room for it. The
+        // save lands (IP3c): the profile is written, lan-2 keeps its pair,
+        // which for a new instance is no pair at all, and is reported.
         std::fs::write(sys.join("assignments.ini"), a_lan).expect("assignments.ini");
         // lan-2 joins the record: the render of a profile no instance runs is
         // judged against nothing, so its ModelsMax of 0 would be accepted.
@@ -8527,10 +8733,22 @@ pub(crate) fn manager_checks_e2e() {
                 "[Server]\nPort = 8082\nHostname = 127.0.0.1\nModelsMax = 0\n",
                 false
             ),
-            invalid("load-on-startup-unlimited", &["1", "lan-2"]),
-            "the refusal names the instance whose render loads a preset with no ModelsMax"
+            Ok(()),
+            "the profile the save writes lands"
         );
-        assert!(read("server@lan-2.ini").is_none(), "not written");
+        assert_eq!(
+            m.not_converged_locked().expect("the rows"),
+            vec![NotConverged {
+                instance: "lan-2".into(),
+                key: "load-on-startup-unlimited".into(),
+                args: vec!["1".into(), "lan-2".into()],
+            }],
+            "lan-2 is reported: its render loads a preset with no ModelsMax"
+        );
+        assert!(
+            read("models@lan-2.ini").is_none(),
+            "and lan-2 has no pair: its first render is the one the check stopped"
+        );
         // The cross-instance minimum is gone: each instance is checked
         // against its own render. default is told one model profile, lan-2 all
         // three, and lan-2's own max of 3 holds them.
@@ -8573,14 +8791,19 @@ pub(crate) fn manager_checks_e2e() {
             [
                 "assignments.ini",
                 "instances.ini",
+                "launch@default.ini",
+                "launch@lan-2.ini",
                 "models.ini",
                 "models@default.ini",
                 "models@lan-2.ini",
                 "server@default.ini",
                 "server@lan-2.ini"
             ],
-            "one render per instance, beside the pool"
+            "one pair per instance, beside the pool"
         );
+        // The phase ends with default's profile as it found it, so the blocks
+        // that follow read the ModelsMax their own fixture pins.
+        std::fs::write(sys.join("server@default.ini"), default_ini).expect("restore");
     }
 
     // ── A broken section already on disk blocks no other write ───────────
@@ -8916,6 +9139,9 @@ pub(crate) fn manager_assignments_e2e() {
         [
             "assignments.ini",
             "instances.ini",
+            "launch@default.ini",
+            "launch@lan-2.ini",
+            "launch@lan-3.ini",
             "models.ini",
             "models@default.ini",
             "models@lan-2.ini",
@@ -8924,7 +9150,7 @@ pub(crate) fn manager_assignments_e2e() {
             "server@lan-2.ini",
             "server@lan-3.ini",
         ],
-        "one render per instance, and nothing else"
+        "one pair per instance, and nothing else"
     );
 
     // ── Every write of a pool file re-renders every instance ─────────────
@@ -9008,6 +9234,9 @@ pub(crate) fn manager_assignments_e2e() {
         [
             "assignments.ini",
             "instances.ini",
+            "launch@default.ini",
+            "launch@lan-2.ini",
+            "launch@lan-3.ini",
             "models.ini",
             "models.ini.disabled",
             "models@default.ini",
@@ -9040,12 +9269,13 @@ pub(crate) fn manager_assignments_e2e() {
 /// key, and `*`, the whole pool, takes `none` and `inherit` only. A call
 /// answers before it writes: an id that is no instance (`InvalidId`,
 /// `NoInstance`), a model profile the pool does not hold
-/// (`no-model-profile-named`, not asked of `*`), a value outside the list, and
-/// a render whose `load-on-startup` count is over the `ModelsMax` of the server
-/// profile the instance's section names (`load-on-startup-over-max`, naming the
-/// instance) each write and render nothing. The resource rule is one-sided:
-/// only an assignment in effect on is judged, so `off`, `none` and a `*`
-/// narrowed never refuse. Guarded as a write of a served file is: `configure`
+/// (`no-model-profile-named`, not asked of `*`), a value outside the list, and a
+/// model file the render this record leaves ADDS and the node does not have
+/// (IP3c review 4) each write and render nothing. What the render needs of the
+/// cards and of the `ModelsMax` of the server profile the instance's section
+/// names is the fit check of the render pass (IP3c, `ARCHITECTURE.md`
+/// "Convergence"): the write stands, and the instance the check stops keeps its
+/// last good pair. Guarded as a write of a served file is: `configure`
 /// first, the `As` form answered only for the bff's account and a current
 /// member of `pai`, and one record of the action log per call, done or refused.
 #[cfg(test)]
@@ -9153,7 +9383,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
 
         // `on`: the key, the pool's section in the render, the rest kept.
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "on"),
+            m.set_model_profile(&desktop, "default", "a", "on")
+                .map(|_| ()),
             Ok(()),
             "a model profile of the pool, on"
         );
@@ -9202,7 +9433,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
 
         // `off`: the key, the section out of the render.
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "off"),
+            m.set_model_profile(&desktop, "default", "a", "off")
+                .map(|_| ()),
             Ok(()),
             "the same key, off"
         );
@@ -9225,7 +9457,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
 
         // `inherit`: the key kept, the pool's own state decides.
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "inherit"),
+            m.set_model_profile(&desktop, "default", "a", "inherit")
+                .map(|_| ()),
             Ok(()),
             "the same key, inherit"
         );
@@ -9242,7 +9475,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
 
         // A second call with the same value writes one key, not two.
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "inherit"),
+            m.set_model_profile(&desktop, "default", "a", "inherit")
+                .map(|_| ()),
             Ok(()),
             "the same value again"
         );
@@ -9254,7 +9488,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
 
         // `none`: the key out, everything else as it was.
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "none"),
+            m.set_model_profile(&desktop, "default", "a", "none")
+                .map(|_| ()),
             Ok(()),
             "`none` is answered"
         );
@@ -9287,7 +9522,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "*", "inherit"),
+            m.set_model_profile(&desktop, "default", "*", "inherit")
+                .map(|_| ()),
             Ok(()),
             "`*` takes inherit"
         );
@@ -9302,7 +9538,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "`* = inherit` is every model profile of the pool following its own file: the switched-off one stays out"
         );
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "*", "none"),
+            m.set_model_profile(&desktop, "default", "*", "none")
+                .map(|_| ()),
             Ok(()),
             "`*` takes none"
         );
@@ -9317,7 +9554,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         std::fs::write(sys.join("models.ini"), "").expect("empty pool");
         std::fs::write(sys.join("models.ini.disabled"), "").expect("empty pool");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "*", "inherit"),
+            m.set_model_profile(&desktop, "default", "*", "inherit")
+                .map(|_| ()),
             Ok(()),
             "`*` needs no model profile of the pool to exist"
         );
@@ -9369,7 +9607,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool back");
         std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "on"),
+            m.set_model_profile(&desktop, "default", "a", "on")
+                .map(|_| ()),
             Ok(()),
             "the fixture: a call assigns a to default"
         );
@@ -9434,30 +9673,40 @@ pub(crate) fn manager_set_model_profile_e2e() {
         )
         .expect("ModelsMax 1");
         std::fs::write(sys.join("assignments.ini"), "[default]\n* = inherit\n").expect("seed");
-        let seed = text_of("assignments.ini");
         let renders: Vec<(String, String)> = ["models@default.ini", "models@lan-2.ini"]
             .iter()
             .map(|name| (name.to_string(), text_of(name)))
             .collect();
         // `* = inherit` puts the switched-on half in effect, so `a` loads on
         // startup; switching on `m`, whose own section asks for it, is the
-        // second one, over the max of one.
+        // second one, over the max of one. The count is a fit check of the
+        // instance (IP3c): the assignment lands and the instance is reported.
         let over = m.set_model_profile(&desktop, "default", "m", "on");
-        assert!(
-            matches!(
-                over,
-                Err(ManagerError::Invalid(ref r))
-                    if r.key == "load-on-startup-over-max" && r.values == ["2", "1", "default"]
-            ),
-            "over the max, the instance named last, answered {over:?}"
+        assert_eq!(
+            over.as_ref().map(|_| ()),
+            Ok(()),
+            "the assignment over the max lands, answered {over:?}"
         );
         assert_eq!(
-            text_of("assignments.ini"),
-            seed,
-            "the refusal above max wrote nothing"
+            over.expect("the answer").not_converged,
+            vec![NotConverged {
+                instance: "default".into(),
+                key: "load-on-startup-over-max".into(),
+                args: vec!["2".into(), "1".into(), "default".into()],
+            }],
+            "over the max, the instance named, reported"
+        );
+        assert_eq!(
+            section(&text_of("assignments.ini"), "default"),
+            "[default]\n* = inherit\nm = on\n",
+            "the assignment landed in the record"
         );
         for (name, text) in renders {
-            assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
+            assert_eq!(
+                text_of(&name),
+                text,
+                "and default keeps the pair it had: {name}"
+            );
         }
 
         // The rule is one-sided: what leaves the render is never judged.
@@ -9467,7 +9716,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         )
         .expect("b off");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "off"),
+            m.set_model_profile(&desktop, "default", "a", "off")
+                .map(|_| ()),
             Ok(()),
             "an assignment off is accepted whatever the max"
         );
@@ -9477,7 +9727,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "and its key landed"
         );
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "*", "none"),
+            m.set_model_profile(&desktop, "default", "*", "none")
+                .map(|_| ()),
             Ok(()),
             "a `*` removed, which leaves the whole pool out of the render, is accepted"
         );
@@ -9526,32 +9777,41 @@ pub(crate) fn manager_set_model_profile_e2e() {
             m.render_failures().is_empty(),
             "the record with a profile that is not the id renders every instance"
         );
-        let seed = text_of("assignments.ini");
         let renders: Vec<(String, String)> =
             ["models@default.ini", "models@lan-2.ini", "models@lan.ini"]
                 .iter()
                 .map(|name| (name.to_string(), text_of(name)))
                 .collect();
         // `* = inherit` puts `a` in effect, so switching on `m` is the second
-        // load on startup: over `small`'s max of 1, refused, naming `lan` and
-        // the max of 1. The 8 of `server@lan.ini` is not the number the check
-        // reads.
+        // load on startup: over `small`'s max of 1, the instance is reported
+        // with the max of 1. The 8 of `server@lan.ini` is not the number the
+        // check reads. The assignment lands (IP3c), and `lan` keeps its pair.
         let over = m.set_model_profile(&desktop, "lan", "m", "on");
-        assert!(
-            matches!(
-                over,
-                Err(ManagerError::Invalid(ref r))
-                    if r.key == "load-on-startup-over-max" && r.values == ["2", "1", "lan"]
-            ),
-            "the max of the profile the section names, answered {over:?}"
+        assert_eq!(
+            over.as_ref().map(|_| ()),
+            Ok(()),
+            "the assignment over the profile's max lands, answered {over:?}"
         );
         assert_eq!(
-            text_of("assignments.ini"),
-            seed,
-            "the refusal wrote nothing to the record"
+            over.expect("the answer").not_converged,
+            vec![NotConverged {
+                instance: "lan".into(),
+                key: "load-on-startup-over-max".into(),
+                args: vec!["2".into(), "1".into(), "lan".into()],
+            }],
+            "the max of the profile the section names, reported"
+        );
+        assert_eq!(
+            section(&text_of("assignments.ini"), "lan"),
+            "[lan]\n* = inherit\nm = on\n",
+            "the key landed in the record"
         );
         for (name, text) in &renders {
-            assert_eq!(text_of(name), *text, "and rendered nothing: {name}");
+            assert_eq!(
+                text_of(name),
+                *text,
+                "and every instance keeps the pair it had: {name}"
+            );
         }
 
         // The reverse: `small` raised to 8 while the file named after the id
@@ -9568,7 +9828,7 @@ pub(crate) fn manager_set_model_profile_e2e() {
         )
         .expect("server@lan.ini lowered");
         assert_eq!(
-            m.set_model_profile(&desktop, "lan", "m", "on"),
+            m.set_model_profile(&desktop, "lan", "m", "on").map(|_| ()),
             Ok(()),
             "the profile's own max of 8 lets the second load on startup land"
         );
@@ -9628,7 +9888,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         let m = core(true, p, log);
         std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("seed");
         assert_eq!(
-            m.set_model_profile(&member, "default", "a", "on"),
+            m.set_model_profile(&member, "default", "a", "on")
+                .map(|_| ()),
             Ok(()),
             "the bff assigns for a member of `pai`"
         );
@@ -9780,7 +10041,9 @@ pub(crate) fn manager_set_model_profile_e2e() {
             let seed = bytes_of("assignments.ini");
             let before = listing();
             let renders = kept_renders();
-            let answer = m.set_model_profile(&desktop, "default", profile, "on");
+            let answer = m
+                .set_model_profile(&desktop, "default", profile, "on")
+                .map(|_| ());
             assert_eq!(
                 answer,
                 Err(ManagerError::Io(std::io::ErrorKind::InvalidData)),
@@ -9812,7 +10075,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             restore_pool();
             std::fs::remove_file(sys.join("assignments.ini")).expect("record out");
             assert_eq!(
-                m.set_model_profile(&desktop, "default", "a", "on"),
+                m.set_model_profile(&desktop, "default", "a", "on")
+                    .map(|_| ()),
                 Ok(()),
                 "a first assignment with no assignments.ini at all is answered"
             );
@@ -9847,11 +10111,13 @@ pub(crate) fn manager_set_model_profile_e2e() {
         );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
+        // The cap is off while the fixture's pair is written, so the pair on
+        // disk is the standing render (IP3c): the cap drops after it.
         std::fs::write(
             sys.join("server@default.ini"),
-            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
         )
-        .expect("max 1");
+        .expect("no cap");
         std::fs::write(
             sys.join("server@lan-2.ini"),
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
@@ -9864,17 +10130,26 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "[default]\na = on\nb = on\nc = on\n",
         )
         .expect("three on");
+        // The cap drops LAST, over a pair the pass has already written (IP3c):
+        // the render on disk is then the standing news the step rule must not
+        // refuse, and the fit check's growth rule reports it as no news.
         assert!(
             m.render_failures().is_empty(),
-            "the fixture renders every instance"
+            "the fixture renders every instance under a cap of four"
         );
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
         assert_eq!(
             pai_core::checks::startup_loads(&text_of("models@default.ini")),
             3,
             "the fixture starts over the max of one"
         );
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "off"),
+            m.set_model_profile(&desktop, "default", "a", "off")
+                .map(|_| ()),
             Ok(()),
             "a step down lands: three loads to two, and two is still over one"
         );
@@ -9901,11 +10176,13 @@ pub(crate) fn manager_set_model_profile_e2e() {
         );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
+        // The cap is off while the fixture's pair is written, so the pair on
+        // disk is the standing render (IP3c): the cap drops after it.
         std::fs::write(
             sys.join("server@default.ini"),
-            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
         )
-        .expect("max 1");
+        .expect("no cap");
         std::fs::write(
             sys.join("server@lan-2.ini"),
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
@@ -9920,10 +10197,19 @@ pub(crate) fn manager_set_model_profile_e2e() {
         .expect("three on");
         assert!(
             m.render_failures().is_empty(),
-            "the fixture renders every instance"
+            "the fixture renders every instance under a cap of four"
         );
+        // The cap drops LAST, over a pair the pass has already written (IP3c):
+        // the render on disk is then the standing news the step rule must not
+        // refuse, and the fit check's growth rule reports it as no news.
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "b", "none"),
+            m.set_model_profile(&desktop, "default", "b", "none")
+                .map(|_| ()),
             Ok(()),
             "a key removed lands over the max: three loads to two, over one"
         );
@@ -9949,11 +10235,13 @@ pub(crate) fn manager_set_model_profile_e2e() {
         );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
+        // The cap is off while the fixture's pair is written, so the pair on
+        // disk is the standing render (IP3c): the cap drops after it.
         std::fs::write(
             sys.join("server@default.ini"),
-            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
         )
-        .expect("max 1");
+        .expect("no cap");
         std::fs::write(
             sys.join("server@lan-2.ini"),
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
@@ -9964,15 +10252,24 @@ pub(crate) fn manager_set_model_profile_e2e() {
         std::fs::write(sys.join("assignments.ini"), "[default]\n* = inherit\n").expect("inherit");
         assert!(
             m.render_failures().is_empty(),
-            "the fixture renders every instance"
+            "the fixture renders every instance under a cap of four"
         );
+        // The cap drops LAST, over a pair the pass has already written (IP3c):
+        // the render on disk is then the standing news the step rule must not
+        // refuse, and the fit check's growth rule reports it as no news.
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
         assert_eq!(
             pai_core::checks::startup_loads(&text_of("models@default.ini")),
             3,
             "`* = inherit` puts all three in effect, over the max of one"
         );
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "*", "none"),
+            m.set_model_profile(&desktop, "default", "*", "none")
+                .map(|_| ()),
             Ok(()),
             "the `*` narrowed lands over the max"
         );
@@ -10000,11 +10297,13 @@ pub(crate) fn manager_set_model_profile_e2e() {
         );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
+        // The cap is off while the fixture's pair is written, so the pair on
+        // disk is the standing render (IP3c): the cap drops after it.
         std::fs::write(
             sys.join("server@default.ini"),
-            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
         )
-        .expect("max 1");
+        .expect("no cap");
         std::fs::write(
             sys.join("server@lan-2.ini"),
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
@@ -10019,10 +10318,19 @@ pub(crate) fn manager_set_model_profile_e2e() {
         .expect("three on");
         assert!(
             m.render_failures().is_empty(),
-            "the fixture renders every instance"
+            "the fixture renders every instance under a cap of four"
         );
+        // The cap drops LAST, over a pair the pass has already written (IP3c):
+        // the render on disk is then the standing news the step rule must not
+        // refuse, and the fit check's growth rule reports it as no news.
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "d", "on"),
+            m.set_model_profile(&desktop, "default", "d", "on")
+                .map(|_| ()),
             Ok(()),
             "`on` of a profile that never loads on startup does not raise the count"
         );
@@ -10040,7 +10348,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
 
     {
         // The other side of the same fixture: `on` of a model profile that DOES
-        // load on startup raises the count and is refused, writing nothing.
+        // load on startup raises the count over the cap, so the pair of that
+        // instance is the one the pass refuses (IP3c).
         let four = real_model_files(
             dir.path(),
             "[a]\nmodel = /m/a.gguf\nload-on-startup = true\n\n\
@@ -10050,11 +10359,13 @@ pub(crate) fn manager_set_model_profile_e2e() {
         );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         write_record(&sys, &["default", "lan-2"]);
+        // The cap is off while the fixture's pair is written, so the pair on
+        // disk is the standing render (IP3c): the cap drops after it.
         std::fs::write(
             sys.join("server@default.ini"),
-            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
         )
-        .expect("max 1");
+        .expect("no cap");
         std::fs::write(
             sys.join("server@lan-2.ini"),
             "[Server]\nPort = 8081\nHostname = 127.0.0.1\n",
@@ -10069,29 +10380,47 @@ pub(crate) fn manager_set_model_profile_e2e() {
         .expect("three on");
         assert!(
             m.render_failures().is_empty(),
-            "the fixture renders every instance"
+            "the fixture renders every instance under a cap of four"
         );
-        let seed = text_of("assignments.ini");
+        // The cap drops LAST, over a pair the pass has already written (IP3c):
+        // the render on disk is then the standing news the step rule must not
+        // refuse, and the fit check's growth rule reports it as no news.
+        std::fs::write(
+            sys.join("server@default.ini"),
+            "[Server]\nPort = 8080\nHostname = 127.0.0.1\nModelsMax = 1\n",
+        )
+        .expect("max 1");
         let renders: Vec<(String, String)> = ["models@default.ini", "models@lan-2.ini"]
             .iter()
             .map(|name| (name.to_string(), text_of(name)))
             .collect();
         let over = m.set_model_profile(&desktop, "default", "e", "on");
-        assert!(
-            matches!(
-                over,
-                Err(ManagerError::Invalid(ref r))
-                    if r.key == "load-on-startup-over-max" && r.values == ["4", "1", "default"]
-            ),
-            "the step that raises the count is refused, answered {over:?}"
+        assert_eq!(
+            over.as_ref().map(|_| ()),
+            Ok(()),
+            "the step that raises the count over the max lands: the count is a fit \
+             check of default (IP3c), answered {over:?}"
         );
         assert_eq!(
-            text_of("assignments.ini"),
-            seed,
-            "the refusal wrote nothing to the record"
+            over.expect("the answer").not_converged,
+            vec![NotConverged {
+                instance: "default".into(),
+                key: "load-on-startup-over-max".into(),
+                args: vec!["4".into(), "1".into(), "default".into()],
+            }],
+            "and default is reported over its max"
+        );
+        assert_eq!(
+            keys_of(&text_of("assignments.ini"), "default", "e"),
+            vec!["e = on".to_string()],
+            "the assignment landed in the record"
         );
         for (name, text) in renders {
-            assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
+            assert_eq!(
+                text_of(&name),
+                text,
+                "and every instance keeps the pair it had: {name}"
+            );
         }
     }
 
@@ -10127,7 +10456,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "a section naming no profile still renders"
         );
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "e", "on"),
+            m.set_model_profile(&desktop, "default", "e", "on")
+                .map(|_| ()),
             Ok(()),
             "the fifth load on startup lands: no profile read, no cap judged"
         );
@@ -10179,7 +10509,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "a section naming a missing profile still renders"
         );
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "e", "on"),
+            m.set_model_profile(&desktop, "default", "e", "on")
+                .map(|_| ()),
             Ok(()),
             "the fifth load on startup lands: the profile the section names is not there"
         );
@@ -10230,7 +10561,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
             "a section naming an unreadable profile still renders"
         );
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "e", "on"),
+            m.set_model_profile(&desktop, "default", "e", "on")
+                .map(|_| ()),
             Ok(()),
             "the fifth load on startup lands: the profile the section names is unreadable"
         );
@@ -10273,7 +10605,9 @@ pub(crate) fn manager_set_model_profile_e2e() {
             .iter()
             .map(|name| (name.to_string(), text_of(name)))
             .collect();
-        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
+        let answer = m
+            .set_model_profile(&desktop, "default", "qwen", "on")
+            .map(|_| ());
         assert!(
             matches!(
                 answer,
@@ -10317,7 +10651,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "on"),
+            m.set_model_profile(&desktop, "default", "a", "on")
+                .map(|_| ()),
             Ok(()),
             "a lands in default's section"
         );
@@ -10347,7 +10682,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("CRLF seed");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "a", "on"),
+            m.set_model_profile(&desktop, "default", "a", "on")
+                .map(|_| ()),
             Ok(()),
             "a lands in the CRLF record"
         );
@@ -10390,7 +10726,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("no final newline");
         assert_eq!(
-            m.set_model_profile(&desktop, "lan-2", "a", "on"),
+            m.set_model_profile(&desktop, "lan-2", "a", "on")
+                .map(|_| ()),
             Ok(()),
             "a lands in lan-2's section, the last one"
         );
@@ -10421,7 +10758,8 @@ pub(crate) fn manager_set_model_profile_e2e() {
         std::fs::write(sys.join("models.ini.disabled"), &off_pool).expect("off pool");
         std::fs::write(sys.join("assignments.ini"), seeded).expect("seed");
         assert_eq!(
-            m.set_model_profile(&desktop, "lan-2", "a", "on"),
+            m.set_model_profile(&desktop, "lan-2", "a", "on")
+                .map(|_| ()),
             Ok(()),
             "lan-2 has no section of its own yet"
         );
@@ -10491,7 +10829,9 @@ pub(crate) fn manager_set_model_profile_e2e() {
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         let before = listing();
         let guard = UmaskGuard::mask(nix::sys::stat::Mode::from_bits_retain(0o077));
-        let answer = m.set_model_profile(&desktop, "default", "a", "on");
+        let answer = m
+            .set_model_profile(&desktop, "default", "a", "on")
+            .map(|_| ());
         let old_mask = guard.0;
         drop(guard);
         assert_eq!(
@@ -10712,7 +11052,9 @@ pub(crate) fn manager_model_file_check_e2e() {
         ] {
             assignments(seed);
             let before = snapshot(&WATCH);
-            let answer = m.set_model_profile(&desktop, instance, profile, value);
+            let answer = m
+                .set_model_profile(&desktop, instance, profile, value)
+                .map(|_| ());
             if !named(&answer, profile, instance, &file) {
                 refused.push(format!(
                     "`{profile} = {value}` on {instance} puts a model profile with no file in effect, answered {answer:?}"
@@ -10736,7 +11078,9 @@ pub(crate) fn manager_model_file_check_e2e() {
             ("offok", "on"),
         ] {
             assignments(seed);
-            let answer = m.set_model_profile(&desktop, "default", profile, value);
+            let answer = m
+                .set_model_profile(&desktop, "default", profile, value)
+                .map(|_| ());
             assert_eq!(
                 answer,
                 Ok(()),
@@ -10752,7 +11096,8 @@ pub(crate) fn manager_model_file_check_e2e() {
         // narrowed leaves every such model profile out: neither fails.
         assignments(seed);
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "gone", "none"),
+            m.set_model_profile(&desktop, "default", "gone", "none")
+                .map(|_| ()),
             Ok(()),
             "an assignment removed is never refused"
         );
@@ -10762,7 +11107,8 @@ pub(crate) fn manager_model_file_check_e2e() {
         );
         assignments("[default]\n* = inherit\n\n[lan-2]\n* = inherit\n");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "*", "none"),
+            m.set_model_profile(&desktop, "default", "*", "none")
+                .map(|_| ()),
             Ok(()),
             "a `*` narrowed is never refused, whatever the pool holds"
         );
@@ -11134,7 +11480,9 @@ pub(crate) fn manager_model_file_check_e2e() {
         pool_files(&save, "");
         assignments("[default]\nlost = off\n\n[ghost]\nlost = off\n");
         let before = snapshot(&watch);
-        let answer = m.set_model_profile(&desktop, "ghost", "lost", "on");
+        let answer = m
+            .set_model_profile(&desktop, "ghost", "lost", "on")
+            .map(|_| ());
         assert!(
             named(&answer, "lost", "ghost", &path("lost.gguf")),
             "an assignment on an instance with no profile file is refused as any other: {answer:?}"
@@ -11192,7 +11540,9 @@ pub(crate) fn manager_model_file_check_e2e() {
         // S9B-PIN-1 BEGIN
         {
             seed();
-            let answer = m.set_model_profile(&desktop, "default", "a", "none");
+            let answer = m
+                .set_model_profile(&desktop, "default", "a", "none")
+                .map(|_| ());
             if answer != Ok(()) {
                 fails.push(format!(
                     "(a) `a = none` while `b` is broken in effect lands: {answer:?}"
@@ -11205,7 +11555,9 @@ pub(crate) fn manager_model_file_check_e2e() {
         // S9B-PIN-2 BEGIN
         {
             seed();
-            let answer = m.set_model_profile(&desktop, "default", "a", "off");
+            let answer = m
+                .set_model_profile(&desktop, "default", "a", "off")
+                .map(|_| ());
             if answer != Ok(()) {
                 fails.push(format!(
                     "(a) `a = off` while `b` is broken in effect lands: {answer:?}"
@@ -11221,7 +11573,9 @@ pub(crate) fn manager_model_file_check_e2e() {
         // S9B-PIN-3 BEGIN
         {
             seed();
-            let answer = m.set_model_profile(&desktop, "default", "*", "none");
+            let answer = m
+                .set_model_profile(&desktop, "default", "*", "none")
+                .map(|_| ());
             if answer != Ok(()) {
                 fails.push(format!(
                     "(b) `* = none` while `b` is broken in effect lands: {answer:?}"
@@ -11278,7 +11632,9 @@ pub(crate) fn manager_model_file_check_e2e() {
         // S9B-PIN-6 BEGIN
         {
             seed();
-            let answer = m.set_model_profile(&desktop, "default", "d", "on");
+            let answer = m
+                .set_model_profile(&desktop, "default", "d", "on")
+                .map(|_| ());
             if answer != Ok(()) {
                 fails.push(format!(
                     "(e) `d = on`, its file there, while `b` is broken lands: {answer:?}"
@@ -11297,7 +11653,9 @@ pub(crate) fn manager_model_file_check_e2e() {
         {
             seed();
             let before = snapshot(&WATCH);
-            let answer = m.set_model_profile(&desktop, "default", "e", "on");
+            let answer = m
+                .set_model_profile(&desktop, "default", "e", "on")
+                .map(|_| ());
             if !named(&answer, "e", "default", &path("e.gguf")) {
                 fails.push(format!(
                     "(f) `e = on` refused naming `e` while `b` is broken: {answer:?}"
@@ -11647,9 +12005,18 @@ pub(crate) fn manager_memory_check_e2e() {
             .map(|name| (name.clone(), seen(&name)))
             .collect()
     };
+    // What the check stops: the rendered pair of every instance (IP3c). The
+    // file the write itself names LANDS, so the pool texts are not part of this.
     let kept = |before: &[(String, String)]| {
         for (name, text) in before {
-            assert_eq!(&seen(name), text, "the refusal wrote nothing: {name}");
+            if !(name.starts_with("models@") || name.starts_with("launch@") || name == "listing") {
+                continue;
+            }
+            assert_eq!(
+                &seen(name),
+                text,
+                "the instance keeps the pair it had: {name}"
+            );
         }
     };
     let pool_files = |on: &str, off: &str| {
@@ -11659,23 +12026,32 @@ pub(crate) fn manager_memory_check_e2e() {
     let assignments = |text: &str| {
         std::fs::write(sys.join("assignments.ini"), text).expect("assignments.ini");
     };
-    // The refusal this phase is about, its four args whole.
-    let over = |answer: &Result<(), ManagerError>,
+    // The memory news this phase is about, its four args whole. The check is a
+    // fit check of ONE instance (IP3c, `ARCHITECTURE.md` "Convergence"): the
+    // write that brings the news LANDS, and the instance whose render it stops
+    // is reported by that write's own render pass, with the check's own key and
+    // the same four args. True when the answer is that.
+    let over = |m: &Manager<FakeService, FakeAuthority, FakeResolver>,
+                answer: &Result<(), ManagerError>,
                 profile: &str,
                 instance: &str,
                 needed: u64,
                 available: u64| {
-        matches!(
-            answer,
-            Err(ManagerError::Invalid(r))
-                if r.key == "model-profile-over-memory"
-                    && r.values == [
-                        profile.to_string(),
-                        instance.to_string(),
-                        mib_up(needed),
-                        mib_down(available)
-                    ]
-        )
+        answer.is_ok()
+            && m.not_converged_locked()
+                .expect("the rows")
+                .iter()
+                .any(|row| {
+                    row.instance == instance
+                        && row.key == "model-profile-over-memory"
+                        && row.args
+                            == [
+                                profile.to_string(),
+                                instance.to_string(),
+                                mib_up(needed),
+                                mib_down(available),
+                            ]
+                })
     };
 
     write_record(&sys, &["default"]);
@@ -11741,6 +12117,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m.write_file(&desktop, "models.ini", &on_text, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -11776,6 +12153,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m.write_file(&desktop, "models.ini", &bare, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -11792,6 +12170,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m.write_file(&desktop, "models.ini", &zero, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -11825,6 +12204,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m.write_file(&desktop, "models.ini", &f32, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -11861,6 +12241,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m.write_file(&desktop, "models.ini", &switch_on, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -11900,6 +12281,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m.write_file(&desktop, "models.ini", &wider, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -11936,7 +12318,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &both, false);
         assert!(
-            over(&answer, "qwen", "default", need(trained, "f16", "f16"), usable(small)),
+            over(&m, &answer, "qwen", "default", need(trained, "f16", "f16"), usable(small)),
             "an unmeasurable model profile beside one that does not fit does not hide it: {answer:?}"
         );
         kept(&before);
@@ -11988,6 +12370,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m.write_file(&desktop, "models.ini", &on_text, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -12053,13 +12436,15 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m_mid.write_file(&desktop, "models.ini", &wider, false);
         assert!(
             over(
+                &m_mid,
                 &answer,
                 "qwen",
                 "default",
                 need(trained, "f16", "f16"),
                 usable(mid)
             ),
-            "raising `ctx-size` past what the node has is refused: {answer:?}"
+            "raising `ctx-size` past what the node has is reported, and the pair default \
+             runs stays the one that fits: {answer:?}"
         );
         kept(&before);
 
@@ -12117,6 +12502,7 @@ pub(crate) fn manager_memory_check_e2e() {
         let answer = m.write_file(&desktop, "models.ini", &on_text, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "a-lan",
@@ -12140,6 +12526,7 @@ pub(crate) fn manager_memory_check_e2e() {
         // 10B-PIN-1 BEGIN
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "a-lan",
@@ -12158,12 +12545,17 @@ pub(crate) fn manager_memory_check_e2e() {
         // never a `[*]` section of the pool a client writes: the client cannot
         // write `[*]` at all.)
         write_record(&sys, &["default"]);
-        pool_files("", "");
+        pool_files(&fits_text, "");
         assignments("[default]\n* = inherit\n");
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture's pair puts the profile on the card at 1024 tokens"
+        );
         let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &on_text, false);
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -12189,9 +12581,12 @@ pub(crate) fn manager_memory_check_e2e() {
         let m = manager_on(FakeGpus::new(&[("CUDA0", small)]));
         // 10B-PIN-2 BEGIN
         let before = snapshot(&WATCH);
-        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
+        let answer = m
+            .set_model_profile(&desktop, "default", "qwen", "on")
+            .map(|_| ());
         assert!(
             over(
+                &m,
                 &answer,
                 "qwen",
                 "default",
@@ -12209,7 +12604,8 @@ pub(crate) fn manager_memory_check_e2e() {
         // off shrinks the render: this write adds no need.
         assignments("[default]\nqwen = on\n");
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "qwen", "off"),
+            m.set_model_profile(&desktop, "default", "qwen", "off")
+                .map(|_| ()),
             Ok(()),
             "assigning `off` to a model profile that is over the card lands: the render \
              shrinks, so the write is judged on no growth"
@@ -12298,9 +12694,15 @@ pub(crate) fn manager_memory_check_e2e() {
         pool_files(&on_text, "");
         assignments("[default]\nqwen = on\n");
 
-        // A save of an unrelated key of a profile that stays as it is: the
-        // profile is over the card, the need does not grow, so the probe is
-        // not asked at all.
+        // A save of an unrelated key of a profile that stays as it is. The
+        // pair on disk is the LAST GOOD render, which is the block above's:
+        // two profiles of `half.gguf` at 1024 tokens, no `qwen` at all. The
+        // pool on disk now names `qwen` at the trained context, so the render
+        // this save leaves is not the pair: the instance is not converged, and
+        // the fit check of a render that differs from the last good one judges
+        // it on the cards, so the probe is asked. (`ARCHITECTURE.md`
+        // "Convergence": fit is judged against the instance's rendered pair on
+        // disk, the last good state.)
         let gpus = FakeGpus::new(&[("CUDA0", small)]);
         let asked = gpus.asked.clone();
         let m = manager_on(gpus);
@@ -12308,16 +12710,28 @@ pub(crate) fn manager_memory_check_e2e() {
             &format!("ctx-size = {trained}\n"),
             &format!("ctx-size = {trained}\ntemperature = 0.5\n"),
         );
+        let pair = snapshot(&["models@default.ini", "launch@default.ini"]);
         assert_eq!(
             m.write_file(&desktop, "models.ini", &edited, false),
             Ok(()),
-            "fixture: the unchanged-over profile lands (the count below is the pin)"
+            "fixture: the unchanged-over profile lands (the rows below are the pin)"
         );
         // 10B-PIN-4 BEGIN
         let asks = asked.lock().unwrap().clone();
         assert!(
-            asks.is_empty(),
-            "a save of an unrelated key of an unchanged profile asks the GPUs 0 times: {asks:?}"
+            asks.len() <= 1 && asks.iter().all(|ask| ask == "gpus"),
+            "a save of an unrelated key of an unchanged profile asks the GPUs at most once, \
+             the render it leaves judged on the cards: {asks:?}"
+        );
+        // The fit of the new render is over the card, so neither rendered file
+        // moves: the pair on disk is byte for byte the last good state.
+        kept(&pair);
+        let rows = m.not_converged_locked().expect("the rows");
+        assert!(
+            rows.iter()
+                .any(|row| row.instance == "default" && row.key == "model-profile-over-memory"),
+            "the instance keeps its last good pair and reports not converged with the memory \
+             refusal: {rows:?}"
         );
         // 10B-PIN-4 END
 
@@ -12327,7 +12741,8 @@ pub(crate) fn manager_memory_check_e2e() {
         let asked = gpus.asked.clone();
         let m = manager_on(gpus);
         assert_eq!(
-            m.set_model_profile(&desktop, "default", "qwen", "off"),
+            m.set_model_profile(&desktop, "default", "qwen", "off")
+                .map(|_| ()),
             Ok(()),
             "fixture: the switch off lands (the count below is the pin)"
         );
@@ -12347,16 +12762,6 @@ pub(crate) fn manager_memory_check_e2e() {
         let asked = gpus.asked.clone();
         let m = manager_on(gpus);
         let answer = m.write_file(&desktop, "models.ini", &on_text, false);
-        assert!(
-            over(
-                &answer,
-                "qwen",
-                "default",
-                need(trained, "f16", "f16"),
-                usable(small)
-            ),
-            "fixture: the growing save is refused (the count below is the pin): {answer:?}"
-        );
         // 10B-PIN-6 BEGIN
         let asks = asked.lock().unwrap().clone();
         assert_eq!(
@@ -12365,6 +12770,18 @@ pub(crate) fn manager_memory_check_e2e() {
             "a save that grows a profile asks the GPUs once"
         );
         // 10B-PIN-6 END
+        assert!(
+            over(
+                &m,
+                &answer,
+                "qwen",
+                "default",
+                need(trained, "f16", "f16"),
+                usable(small)
+            ),
+            "fixture: the growing save leaves default on its last good pair (the count \
+             above is the pin): {answer:?}"
+        );
     }
 }
 /// E2E phase: R3, the memory check measured on the pair (the server profile of
@@ -12503,9 +12920,19 @@ pub(crate) fn manager_pair_memory_check_e2e() {
             .map(|name| (name.clone(), seen(&name)))
             .collect()
     };
+    // What the check stops: the rendered pair of every instance (IP3c). The
+    // file the write itself names LANDS, so the pool texts and the server
+    // profiles are not part of this.
     let kept = |before: &[(String, String)]| {
         for (name, text) in before {
-            assert_eq!(&seen(name), text, "the refusal wrote nothing: {name}");
+            if !(name.starts_with("models@") || name.starts_with("launch@") || name == "listing") {
+                continue;
+            }
+            assert_eq!(
+                &seen(name),
+                text,
+                "the instance keeps the pair it had: {name}"
+            );
         }
     };
     let pool_files = |on: &str, off: &str| {
@@ -12542,23 +12969,32 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         )
         .expect("server profile");
     };
-    // The refusal this phase is about, its four args whole.
-    let over = |answer: &Result<(), ManagerError>,
+    // The memory news this phase is about, its four args whole. The check is a
+    // fit check of ONE instance (IP3c, `ARCHITECTURE.md` "Convergence"): the
+    // write that brings the news LANDS, and the instance whose render it stops
+    // keeps its pair and is reported by that write's own render pass, with the
+    // check's own key and the same four args. True when the answer is that.
+    let over = |m: &Manager<FakeService, FakeAuthority, FakeResolver>,
+                answer: &Result<(), ManagerError>,
                 profile: &str,
                 instance: &str,
                 needed: u64,
                 available: u64| {
-        matches!(
-            answer,
-            Err(ManagerError::Invalid(r))
-                if r.key == "model-profile-over-memory"
-                    && r.values == [
-                        profile.to_string(),
-                        instance.to_string(),
-                        mib_up(needed),
-                        mib_down(available)
-                    ]
-        )
+        answer.is_ok()
+            && m.not_converged_locked()
+                .expect("the rows")
+                .iter()
+                .any(|row| {
+                    row.instance == instance
+                        && row.key == "model-profile-over-memory"
+                        && row.args
+                            == [
+                                profile.to_string(),
+                                instance.to_string(),
+                                mib_up(needed),
+                                mib_down(available),
+                            ]
+                })
     };
 
     const WATCH: [&str; 8] = [
@@ -12597,7 +13033,7 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &on_text, false);
         assert!(
-            over(&answer, "qwen", "default", need, usable_of(&["CUDA0"])),
+            over(&m, &answer, "qwen", "default", need, usable_of(&["CUDA0"])),
             "a model profile that fits the node's two cards is refused for an instance whose \
              server profile names one of them, naming the MiB that one card has: {answer:?}"
         );
@@ -12671,12 +13107,18 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         pool_files(&on_text, "");
         assignments("[default]\nqwen = off\n");
         let m = manager_on(FakeGpus::new(&ids));
-        let before = snapshot(&WATCH);
-        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
         assert!(
-            over(&answer, "qwen", "default", need, usable_of(&["CUDA0"])),
-            "assigning a model profile that fits the node's two cards is refused for an \
-             instance whose server profile names one of them: {answer:?}"
+            m.render_failures().is_empty(),
+            "the fixture's pair leaves the model profile out: the assignment is the news"
+        );
+        let before = snapshot(&WATCH);
+        let answer = m
+            .set_model_profile(&desktop, "default", "qwen", "on")
+            .map(|_| ());
+        assert!(
+            over(&m, &answer, "qwen", "default", need, usable_of(&["CUDA0"])),
+            "assigning a model profile that fits the node's two cards is reported for an \
+             instance whose server profile names one of them, and its pair stands: {answer:?}"
         );
         kept(&before);
     }
@@ -12686,7 +13128,8 @@ pub(crate) fn manager_pair_memory_check_e2e() {
     //
     // The instance runs a profile naming both cards, where the model profile
     // fits. The switch to a one-card server profile shrinks `available`, so the
-    // render is judged and the switch refused, with the record untouched.
+    // render is judged and the switch lands (IP3c): the record moves, and the
+    // instance keeps its last good pair, reported over the one card.
     {
         record("wide");
         profile_with("wide", "CUDA0,CUDA1", 8080);
@@ -12695,17 +13138,20 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         assignments("[default]\nqwen = on\n");
         let m = manager_on(FakeGpus::new(&ids));
         let before = snapshot(&WATCH);
-        let answer = m.set_server_profile(&desktop, "default", "narrow");
+        let answer = m
+            .set_server_profile(&desktop, "default", "narrow")
+            .map(|_| ());
         assert!(
-            over(&answer, "qwen", "default", need, usable_of(&["CUDA0"])),
-            "a model profile that fits the two cards the instance runs today is refused at a \
+            over(&m, &answer, "qwen", "default", need, usable_of(&["CUDA0"])),
+            "a model profile that fits the two cards the instance runs today is reported at a \
              switch to a one-card server profile, naming the MiB that card has: {answer:?}"
         );
         kept(&before);
         assert_eq!(
             text_of(INSTANCES_FILE),
-            "[default]\nServerProfile = wide\n",
-            "the refusal kept the instance on the profile it runs"
+            "[default]\nServerProfile = narrow\n",
+            "the switch landed: the record names the profile it was asked for, and the pair \
+             above is the last good one"
         );
     }
     // R3-PIN-6 END
@@ -12714,7 +13160,8 @@ pub(crate) fn manager_pair_memory_check_e2e() {
     //
     // The same shrink, arriving as a save of the server profile the instance
     // runs: the render it caps is judged on the cards the text being written
-    // names, and the profile file keeps the bytes it had.
+    // names. The save lands (IP3c) and the instance's pair keeps the bytes it
+    // had, the instance reported.
     {
         record("default");
         profile_with("default", "CUDA0,CUDA1", 8080);
@@ -12729,14 +13176,14 @@ pub(crate) fn manager_pair_memory_check_e2e() {
             false,
         );
         assert!(
-            over(&answer, "qwen", "default", need, usable_of(&["CUDA0"])),
-            "a save that narrows an in-use server profile to one card is refused for a model \
+            over(&m, &answer, "qwen", "default", need, usable_of(&["CUDA0"])),
+            "a save that narrows an in-use server profile to one card is reported for a model \
              profile that fits the two cards it names today: {answer:?}"
         );
         kept(&before);
         assert!(
-            text_of("server@default.ini").contains("Devices = CUDA0,CUDA1"),
-            "the refusal left the cards the profile names standing"
+            text_of("server@default.ini").contains("Devices = CUDA0\n"),
+            "the save landed: the profile names the one card it was saved with"
         );
     }
     // R3-PIN-7 END
@@ -12755,7 +13202,8 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         assignments("[default]\nqwen = on\n");
         let m = manager_on(FakeGpus::new(&ids));
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "over2"),
+            m.set_server_profile(&desktop, "default", "over2")
+                .map(|_| ()),
             Ok(()),
             "a model profile already over the card it runs on is not re-judged at a switch: \
              it stays over, this write moved the profile, not the need"
@@ -12798,7 +13246,7 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         assignments("[default]\nqwen = on\n");
         let m = manager_on(FakeGpus::new(&ids));
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "cpu"),
+            m.set_server_profile(&desktop, "default", "cpu").map(|_| ()),
             Ok(()),
             "a switch to a `none` server profile names no GPU: the memory check is skipped"
         );
@@ -12831,7 +13279,8 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         let m = manager_on(gpus);
         let base = asked.lock().unwrap().len();
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "narrow"),
+            m.set_server_profile(&desktop, "default", "narrow")
+                .map(|_| ()),
             Ok(()),
             "fixture: the switch of an instance whose render holds no model profile lands"
         );
@@ -12855,7 +13304,8 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         let m = manager_on(gpus);
         let base = asked.lock().unwrap().len();
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "narrow2"),
+            m.set_server_profile(&desktop, "default", "narrow2")
+                .map(|_| ()),
             Ok(()),
             "fixture: the switch of an instance whose model profile names no file lands"
         );
@@ -12945,7 +13395,7 @@ pub(crate) fn manager_pair_memory_check_e2e() {
         let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &on_text, false);
         assert!(
-            over(&answer, "qwen", "default", need, usable_of(&["ROCm0"])),
+            over(&m, &answer, "qwen", "default", need, usable_of(&["ROCm0"])),
             "a `Devices` list of one name the probe knows and one it does not is measured on \
              the card it knows, refusing the profile that needs both cards: {answer:?}"
         );
@@ -13066,9 +13516,19 @@ pub(crate) fn manager_device_bound_check_e2e() {
             .map(|name| (name.clone(), seen(&name)))
             .collect()
     };
+    // What the bound stops: the rendered pair of every instance (IP3c). The
+    // file the write itself names LANDS, so the pools, the record and the
+    // server profiles are not part of this.
     let kept = |before: &[(String, String)]| {
         for (name, text) in before {
-            assert_eq!(&seen(name), text, "the refusal wrote nothing: {name}");
+            if !(name.starts_with("models@") || name.starts_with("launch@") || name == "listing") {
+                continue;
+            }
+            assert_eq!(
+                &seen(name),
+                text,
+                "the instance keeps the pair it had: {name}"
+            );
         }
     };
     let pool_files = |on: &str, off: &str| {
@@ -13102,30 +13562,40 @@ pub(crate) fn manager_device_bound_check_e2e() {
         )
         .expect("server profile");
     };
-    // The refusal this phase is about, its four args whole.
-    let outside = |answer: &Result<(), ManagerError>,
+    // The device news this phase is about, its four args whole. The bound is a
+    // fit check of ONE instance (IP3c, `ARCHITECTURE.md` "Convergence"): the
+    // write that brings the news LANDS, and the instance whose render it stops
+    // keeps its pair and is reported by that write's own render pass, with the
+    // check's own key and the same four args. True when the answer is that.
+    let outside = |m: &Manager<FakeService, FakeAuthority, FakeResolver>,
+                   answer: &Result<(), ManagerError>,
                    profile: &str,
                    instance: &str,
                    key: &str,
                    device: &str| {
-        matches!(
-            answer,
-            Err(ManagerError::Invalid(r))
-                if r.key == "model-profile-device-outside"
-                    && r.values == [
-                        profile.to_string(),
-                        instance.to_string(),
-                        key.to_string(),
-                        device.to_string(),
-                    ]
-        )
+        answer.is_ok()
+            && m.not_converged_locked()
+                .expect("the rows")
+                .iter()
+                .any(|row| {
+                    row.instance == instance
+                        && row.key == "model-profile-device-outside"
+                        && row.args
+                            == [
+                                profile.to_string(),
+                                instance.to_string(),
+                                key.to_string(),
+                                device.to_string(),
+                            ]
+                })
     };
 
-    const WATCH: [&str; 8] = [
+    const WATCH: [&str; 9] = [
         "assignments.ini",
         "instances.ini",
         "models.ini",
         "models.ini.disabled",
+        "launch@default.ini",
         "models@default.ini",
         "server@default.ini",
         "server@narrow.ini",
@@ -13142,20 +13612,24 @@ pub(crate) fn manager_device_bound_check_e2e() {
     // ── DB-PIN-1 BEGIN. a model profile write naming a GPU outside Devices ──
     //
     // The instance's server profile names ROCm0: a save of a profile naming
-    // ROCm1 is refused naming profile, instance, key and device, and the tree
-    // keeps its bytes.
+    // ROCm1 lands and is reported naming profile, instance, key and device, and
+    // the pair `default` runs keeps its bytes.
     {
         record("default");
         profile_with("default", "ROCm0", 8080);
         pool_files("", "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
         let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &draft1, false);
         assert!(
-            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
+            outside(&m, &answer, "qwen", "default", "device-draft", "ROCm1"),
             "a model profile save naming a GPU the instance's server profile does not name is \
-             refused naming the key and the device: {answer:?}"
+             reported naming the key and the device, the pair standing: {answer:?}"
         );
         kept(&before);
     }
@@ -13224,19 +13698,25 @@ pub(crate) fn manager_device_bound_check_e2e() {
     //
     // `set_model_profile` is the path that renders the new record text: the
     // profile sits on disk with `device-draft = ROCm1` and the assignment `on`
-    // puts it in effect on the `ROCm0` instance, so the verb refuses and the
-    // record keeps its bytes.
+    // puts it in effect on the `ROCm0` instance, so the record lands, the verb
+    // reports the instance, and its pair keeps its bytes.
     {
         record("default");
         profile_with("default", "ROCm0", 8080);
         pool_files(&draft1, "");
         assignments("[default]\nqwen = off\n");
         let m = manager_on(gpus());
-        let before = snapshot(&WATCH);
-        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
         assert!(
-            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
-            "assigning a profile naming a GPU outside the instance's server profile is refused \
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
+        let before = snapshot(&WATCH);
+        let answer = m
+            .set_model_profile(&desktop, "default", "qwen", "on")
+            .map(|_| ());
+        assert!(
+            outside(&m, &answer, "qwen", "default", "device-draft", "ROCm1"),
+            "assigning a profile naming a GPU outside the instance's server profile is reported \
              by `set_model_profile`, judging the new record text: {answer:?}"
         );
         kept(&before);
@@ -13247,8 +13727,8 @@ pub(crate) fn manager_device_bound_check_e2e() {
     //
     // The instance runs a `ROCm0,ROCm1` server profile where the profile's
     // `ROCm1` passes (names are exact, case-insensitive: `CUDA1` would not
-    // carry it); the switch to `ROCm0` puts it outside, so the switch is
-    // refused and the record keeps the profile it runs.
+    // carry it); the switch to `ROCm0` puts it outside, so the record lands on
+    // the new profile, the instance is reported, and its pair stands.
     {
         record("wide");
         profile_with("wide", "ROCm0,ROCm1", 8080);
@@ -13256,17 +13736,24 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files(&draft1, "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
-        let before = snapshot(&WATCH);
-        let answer = m.set_server_profile(&desktop, "default", "narrow");
         assert!(
-            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
-            "a switch to a server profile that leaves a named GPU outside is refused: {answer:?}"
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
+        let before = snapshot(&WATCH);
+        let answer = m
+            .set_server_profile(&desktop, "default", "narrow")
+            .map(|_| ());
+        assert!(
+            outside(&m, &answer, "qwen", "default", "device-draft", "ROCm1"),
+            "a switch to a server profile that leaves a named GPU outside is reported: {answer:?}"
         );
         kept(&before);
         assert_eq!(
             text_of(INSTANCES_FILE),
-            "[default]\nServerProfile = wide\n",
-            "the refusal kept the instance on the profile it runs"
+            "[default]\nServerProfile = narrow\n",
+            "the switch landed: the record names the profile it was asked for, and the pair \
+             above is the last good one"
         );
     }
     // DB-PIN-6 END
@@ -13278,6 +13765,10 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files(&draft1, "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
         let before = snapshot(&WATCH);
         let answer = m.write_file(
             &desktop,
@@ -13286,14 +13777,15 @@ pub(crate) fn manager_device_bound_check_e2e() {
             false,
         );
         assert!(
-            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
+            outside(&m, &answer, "qwen", "default", "device-draft", "ROCm1"),
             "a save that narrows an in-use server profile past a GPU the render names is \
-             refused: {answer:?}"
+             reported: {answer:?}"
         );
         kept(&before);
         assert!(
-            text_of("server@default.ini").contains("Devices = ROCm0,ROCm1"),
-            "the refusal left the cards the profile names standing"
+            text_of("server@default.ini").contains("Devices = ROCm0\n"),
+            "the narrowing save landed: the profile names the one card it was saved with, and \
+             the pair above is the last good one"
         );
     }
     // DB-PIN-7 END
@@ -13311,7 +13803,8 @@ pub(crate) fn manager_device_bound_check_e2e() {
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "narrow"),
+            m.set_server_profile(&desktop, "default", "narrow")
+                .map(|_| ()),
             Ok(()),
             "a profile already outside the set the instance runs is not re-judged at a switch"
         );
@@ -13364,12 +13857,16 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files("", "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
         let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &mmproj("CUDA1"), false);
         assert!(
-            outside(&answer, "qwen", "default", "mmproj-device", "CUDA1"),
+            outside(&m, &answer, "qwen", "default", "mmproj-device", "CUDA1"),
             "`Devices = none`: any GPU named is outside, so a `mmproj-device = CUDA1` save is \
-             refused naming the key and the device: {answer:?}"
+             reported naming the key and the device, the pair standing: {answer:?}"
         );
         kept(&before);
     }
@@ -13391,10 +13888,16 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files(&cascaded, "");
         assignments("[default]\nqwen = off\n");
         let m = manager_on(gpus());
-        let before = snapshot(&WATCH);
-        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
         assert!(
-            outside(&answer, "qwen", "default", "device-draft", "ROCm1"),
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
+        let before = snapshot(&WATCH);
+        let answer = m
+            .set_model_profile(&desktop, "default", "qwen", "on")
+            .map(|_| ());
+        assert!(
+            outside(&m, &answer, "qwen", "default", "device-draft", "ROCm1"),
             "a `device-draft` the `[*]` section carries cascades into `[qwen]` and is judged \
              as the section's own at the assignment that puts it in effect: {answer:?}"
         );
@@ -13418,12 +13921,16 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files("", "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
         let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &ot("ROCm1"), false);
         assert!(
-            outside(&answer, "qwen", "default", "override-tensor", "ROCm1"),
+            outside(&m, &answer, "qwen", "default", "override-tensor", "ROCm1"),
             "a save naming in `override-tensor` a card the instance's server profile does not \
-             name is refused naming the key and the device: {answer:?}"
+             name is reported naming the key and the device: {answer:?}"
         );
         kept(&before);
 
@@ -13447,12 +13954,17 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files(&ot("ROCm1"), "");
         assignments("[default]\nqwen = off\n");
         let m = manager_on(gpus());
-        let before = snapshot(&WATCH);
-        let answer = m.set_model_profile(&desktop, "default", "qwen", "on");
         assert!(
-            outside(&answer, "qwen", "default", "override-tensor", "ROCm1"),
-            "an assignment that puts a profile naming ROCm1 on a `ROCm0` instance is refused: \
-             {answer:?}"
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
+        let before = snapshot(&WATCH);
+        let answer = m
+            .set_model_profile(&desktop, "default", "qwen", "on")
+            .map(|_| ());
+        assert!(
+            outside(&m, &answer, "qwen", "default", "override-tensor", "ROCm1"),
+            "an assignment that puts a profile naming ROCm1 on a `ROCm0` instance is reported: {answer:?}"
         );
         kept(&before);
 
@@ -13463,11 +13975,18 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files(&ot("ROCm1"), "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
-        let before = snapshot(&WATCH);
-        let answer = m.set_server_profile(&desktop, "default", "narrow");
         assert!(
-            outside(&answer, "qwen", "default", "override-tensor", "ROCm1"),
-            "a switch to a `ROCm0` profile leaves the `override-tensor` card outside: {answer:?}"
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
+        let before = snapshot(&WATCH);
+        let answer = m
+            .set_server_profile(&desktop, "default", "narrow")
+            .map(|_| ());
+        assert!(
+            outside(&m, &answer, "qwen", "default", "override-tensor", "ROCm1"),
+            "a switch to a `ROCm0` profile leaves the `override-tensor` card outside, reported: \
+             {answer:?}"
         );
         kept(&before);
 
@@ -13477,6 +13996,10 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files(&ot("ROCm1"), "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
         let before = snapshot(&WATCH);
         let answer = m.write_file(
             &desktop,
@@ -13485,9 +14008,8 @@ pub(crate) fn manager_device_bound_check_e2e() {
             false,
         );
         assert!(
-            outside(&answer, "qwen", "default", "override-tensor", "ROCm1"),
-            "a save narrowing `Devices` past a card `override-tensor` names is refused: \
-             {answer:?}"
+            outside(&m, &answer, "qwen", "default", "override-tensor", "ROCm1"),
+            "a save narrowing `Devices` past a card `override-tensor` names is reported: {answer:?}"
         );
         kept(&before);
     }
@@ -13529,7 +14051,7 @@ pub(crate) fn manager_device_bound_check_e2e() {
     // (`common/arg.cpp` `parse_tensor_buffer_overrides`: "unknown buffer
     // type"), so the bound judges an `-ot` right side AS a device and fails
     // closed: on `Devices = ROCm0`, `CUDA_Host` is a name the set does not
-    // carry, refused with the key and the device, nothing written.
+    // carry, reported with the key and the device, the pair standing.
     {
         let host = format!(
             "[qwen]\nmodel = {path}\nctx-size = 8\noverride-tensor = blk\\.0\\.=CUDA_Host\n"
@@ -13539,12 +14061,23 @@ pub(crate) fn manager_device_bound_check_e2e() {
         pool_files("", "");
         assignments("[default]\nqwen = on\n");
         let m = manager_on(gpus());
+        assert!(
+            m.render_failures().is_empty(),
+            "the fixture's pair names no GPU outside: the write below is the news"
+        );
         let before = snapshot(&WATCH);
         let answer = m.write_file(&desktop, "models.ini", &host, false);
         assert!(
-            outside(&answer, "qwen", "default", "override-tensor", "CUDA_Host"),
+            outside(
+                &m,
+                &answer,
+                "qwen",
+                "default",
+                "override-tensor",
+                "CUDA_Host"
+            ),
             "an `override-tensor` device named `CUDA_Host` is no device the instance's server \
-             profile names: refused naming the key and the device: {answer:?}"
+             profile names: reported naming the key and the device: {answer:?}"
         );
         kept(&before);
     }
@@ -15433,13 +15966,28 @@ pub(crate) fn manager_instance_crud_e2e() {
             "the render is the manager's own, of the pool with the new instance \
              assigned nothing"
         );
+        // The create runs the pass every write runs (IP3c): the new instance gets
+        // the two halves of its pair, and the pass gives both halves to every
+        // instance of the record whose pair the tree had never rendered.
         let mut want = before.clone();
-        want.push("models@newone.ini".to_string());
+        want.extend(
+            [
+                "models@newone.ini",
+                "launch@default.ini",
+                "launch@lan-2.ini",
+                "launch@lan-3.ini",
+                "launch@newone.ini",
+                "models@lan-3.ini",
+            ]
+            .iter()
+            .map(|name| name.to_string()),
+        );
         want.sort();
         assert_eq!(
             listing(),
             want,
-            "the render is the only new file: no temp file is left"
+            "the new instance's pair, beside the launch halves the pass rendered for the \
+             record's instances: no temp file is left"
         );
         assert_eq!(
             *m.service().calls.lock().unwrap(),
@@ -16141,23 +16689,38 @@ pub(crate) fn manager_set_server_profile_e2e() {
     let profile = |name: &str, text: &str| {
         std::fs::write(sys.join(format!("server@{name}.ini")), text).expect("server profile");
     };
-    let no_profile = |name: &str| -> Result<(), ManagerError> {
+    let no_profile = |name: &str| -> Result<Affected, ManagerError> {
         Err(ManagerError::NoServerProfile(name.to_string()))
     };
-    let in_use = |name: &str, id: &str| -> Result<(), ManagerError> {
+    let in_use = |name: &str, id: &str| -> Result<Affected, ManagerError> {
         Err(ManagerError::ServerProfileInUse(
             name.to_string(),
             id.to_string(),
         ))
     };
-    let taken = |who: &str| -> Result<(), ManagerError> {
+    let taken = |who: &str| -> Result<Affected, ManagerError> {
         Err(ManagerError::AddressInUse(who.to_string()))
     };
-    let over_max = |count: &str, max: &str, id: &str| -> Result<(), ManagerError> {
-        Err(ManagerError::Invalid(pai_core::checks::Refusal {
-            key: "load-on-startup-over-max",
-            values: vec![count.to_string(), max.to_string(), id.to_string()],
-        }))
+    // The cap news this phase is about, its three args whole. The cap is a fit
+    // check of ONE instance (IP3c, `ARCHITECTURE.md` "Convergence"): the switch
+    // that brings the news LANDS, the instance whose render it stops keeps the
+    // pair it has, and that write's own render pass reports the check's key with
+    // the same three args. True when the answer is that.
+    let over_max = |m: &Manager<FakeService, FakeAuthority, FakeResolver>,
+                    answer: &Result<Affected, ManagerError>,
+                    count: &str,
+                    max: &str,
+                    id: &str|
+     -> bool {
+        answer.is_ok()
+            && m.not_converged_locked()
+                .expect("the rows")
+                .iter()
+                .any(|row| {
+                    row.instance == id
+                        && row.key == "load-on-startup-over-max"
+                        && row.args == [count.to_string(), max.to_string(), id.to_string()]
+                })
     };
     // The model profile renders of the two instances: a server profile switch
     // writes no model profile text, so these bytes must not move.
@@ -16166,6 +16729,20 @@ pub(crate) fn manager_set_server_profile_e2e() {
             .iter()
             .map(|name| (name.to_string(), text_of(name)))
             .collect()
+    };
+    // The whole pair of the two instances: the model list and the launch. A
+    // switch whose instance does not fit leaves BOTH halves where they stand
+    // (IP3c: the instance keeps its last good pair).
+    let pair = || -> Vec<(String, String)> {
+        [
+            "models@default.ini",
+            "models@lan-2.ini",
+            "launch@default.ini",
+            "launch@lan-2.ini",
+        ]
+        .iter()
+        .map(|name| (name.to_string(), text_of(name)))
+        .collect()
     };
     // The instance's launch, read after a switch: `flag` is the value of a flag
     // in its argument list, `None` when the launch carries none.
@@ -16246,7 +16823,7 @@ pub(crate) fn manager_set_server_profile_e2e() {
         let kept = renders();
 
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "big"),
+            m.set_server_profile(&desktop, "default", "big").map(|_| ()),
             Ok(()),
             "a spare profile on a port nobody runs"
         );
@@ -16280,7 +16857,8 @@ pub(crate) fn manager_set_server_profile_e2e() {
 
         // A profile that caps the pool: its own key reaches the launch.
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "roomy"),
+            m.set_server_profile(&desktop, "default", "roomy")
+                .map(|_| ()),
             Ok(()),
             "a cap equal to the loads the instance starts is not over it"
         );
@@ -16298,7 +16876,8 @@ pub(crate) fn manager_set_server_profile_e2e() {
 
         // Back to the profile it started on.
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "default"),
+            m.set_server_profile(&desktop, "default", "default")
+                .map(|_| ()),
             Ok(()),
             "a switch back"
         );
@@ -16414,7 +16993,8 @@ pub(crate) fn manager_set_server_profile_e2e() {
                 .ino()
         };
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "default"),
+            m.set_server_profile(&desktop, "default", "default")
+                .map(|_| ()),
             Ok(()),
             "the profile it already runs is no conflict with itself"
         );
@@ -16483,7 +17063,8 @@ pub(crate) fn manager_set_server_profile_e2e() {
             "and left no file of its own beside the record"
         );
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "on-bff"),
+            m.set_server_profile(&desktop, "default", "on-bff")
+                .map(|_| ()),
             Ok(()),
             "the service's default address is free once its file moved"
         );
@@ -16501,7 +17082,7 @@ pub(crate) fn manager_set_server_profile_e2e() {
         // `own` is spare and holds 8080, which `default` runs right now: the
         // switch binds nothing new, so it lands.
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "own"),
+            m.set_server_profile(&desktop, "default", "own").map(|_| ()),
             Ok(()),
             "a spare profile on the port the instance already runs"
         );
@@ -16527,7 +17108,8 @@ pub(crate) fn manager_set_server_profile_e2e() {
         )
         .expect("unreadable lan-2 profile");
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "clash"),
+            m.set_server_profile(&desktop, "default", "clash")
+                .map(|_| ()),
             Ok(()),
             "an instance whose profile cannot be read binds no address"
         );
@@ -16545,36 +17127,52 @@ pub(crate) fn manager_set_server_profile_e2e() {
             m.render_failures().is_empty(),
             "the record's renders are rewritten from what is on disk"
         );
-        let kept = renders();
+        let kept = pair();
         // `default`'s render starts three model profiles, `tiny` caps them at 1.
-        // The switch changes no model profile, so the count it is judged on is
-        // the one the instance starts today: a step to a lower cap is judged
-        // all the same, which is the full rule of (b') 3 at the switch, not the
-        // step rule `SetModelProfile` uses (that one lets a count that does not
-        // rise through).
-        assert_eq!(
-            m.set_server_profile(&desktop, "default", "tiny"),
-            over_max("3", "1", "default"),
-            "the new profile's cap under the loads the instance starts, the instance named last, and the count is the render's, not the pool's four"
+        // The count is that instance's own fit, so the switch LANDS and the
+        // instance is reported (IP3c): the cap of the server profile the record
+        // names is measured against the list the instance starts, and the pair
+        // that does not fit on it stays as it is.
+        let answer = m.set_server_profile(&desktop, "default", "tiny");
+        assert!(
+            over_max(&m, &answer, "3", "1", "default"),
+            "the new profile's cap under the loads the instance starts, the instance named last, and the count is the render's, not the pool's four: {answer:?}"
         );
         assert_eq!(
-            text_of(INSTANCES_FILE),
-            SEEDED,
-            "the refusal over the max wrote nothing"
+            keys_of(&text_of(INSTANCES_FILE), "default", "ServerProfile"),
+            vec!["ServerProfile = tiny".to_string()],
+            "the record's key landed: the cap that is news for one instance does not stop the write"
         );
         for (name, text) in kept {
-            assert_eq!(text_of(&name), text, "and rendered nothing: {name}");
+            assert_eq!(
+                text_of(&name),
+                text,
+                "and the instance keeps the pair it had: {name}"
+            );
         }
-        // The cap is each instance's own render's: `lan-2` switched its three
-        // off, so `tiny` caps nothing for it, while it refuses `default`.
+        // The cap is each instance's own render's: the row names `default`
+        // alone, whose render starts three. `lan-2` switched its three off, so
+        // the same cap caps nothing for it and it is not reported.
+        assert_eq!(
+            m.not_converged_locked()
+                .expect("the rows")
+                .iter()
+                .map(|row| row.instance.clone())
+                .collect::<Vec<String>>(),
+            vec!["default".to_string()],
+            "the cap is judged on each instance's own list"
+        );
+        // The binding rule of this verb is intrinsic and unchanged (IP3c): the
+        // profile the first switch landed on is the profile `default` runs, so
+        // no other instance can take it.
         assert_eq!(
             m.set_server_profile(&desktop, "lan-2", "tiny"),
-            Ok(()),
-            "the same profile, for the instance whose render starts nothing"
+            in_use("tiny", "default"),
+            "the profile the switch landed on is in use by that instance now"
         );
         // A profile with no `ModelsMax` caps nothing.
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "big"),
+            m.set_server_profile(&desktop, "default", "big").map(|_| ()),
             Ok(()),
             "no ModelsMax is no cap"
         );
@@ -16585,7 +17183,7 @@ pub(crate) fn manager_set_server_profile_e2e() {
             "[Server]\nPort = 8083\nHostname = 127.0.0.1\nModelsMax = 3\n",
         );
         assert_eq!(
-            m.set_server_profile(&desktop, "lan-2", "roomy"),
+            m.set_server_profile(&desktop, "lan-2", "roomy").map(|_| ()),
             Ok(()),
             "and the instance on the raised profile moves on to the cap of 3"
         );
@@ -16605,7 +17203,7 @@ pub(crate) fn manager_set_server_profile_e2e() {
             SEEDED
                 .replace("ServerProfile = default", "ServerProfile = big")
                 .replace("ServerProfile = lan-2", "ServerProfile = roomy"),
-            "the record as it stood, only the two `ServerProfile` keys changed: the leading comment, the `;` comment, the key of a section's own and the blank line in front of the next section are the bytes they were, and the refusal over the cap moved nothing: {written:?}"
+            "the record as it stood, only the two `ServerProfile` keys changed: the leading comment, the `;` comment, the key of a section's own and the blank line in front of the next section are the bytes they were, and the switch that is news for one instance moved only its own key: {written:?}"
         );
         // The `a`/`b`/`c` keys are the assignments' and stay there: this verb
         // writes the record, never the assignments.
@@ -16714,48 +17312,58 @@ pub(crate) fn manager_set_server_profile_e2e() {
             "[Server]\nPort = 8083\nHostname = 127.0.0.1\nModelsMax = 1\n",
         );
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
-        // The fixture: with the record readable the switch is over the cap.
-        assert_eq!(
-            m.set_server_profile(&desktop, "default", "tiny"),
-            over_max("3", "1", "default"),
-            "the fixture: the same switch is refused while the assignments can be read"
+        // The fixture: with the record readable the switch goes as far as its
+        // cap, which is the news this call reports.
+        let answer = m.set_server_profile(&desktop, "default", "tiny");
+        assert!(
+            over_max(&m, &answer, "3", "1", "default"),
+            "the fixture: the same switch reaches its cap while the assignments can be read: {answer:?}"
         );
-        // Bytes that are no text: the read's own kind, and the record stays.
+        // The fixture's switch LANDED (IP3c), so the record names `tiny` now.
+        // The calls below switch to it again, so the record goes back to the
+        // profile it named, which is what makes them switches.
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        // Bytes that are no text. The cap check runs in the render pass now
+        // (IP3c), and the pass reads the record with the convention every
+        // render had before the fit checks moved here: a file it cannot read
+        // reads as the empty one. So the switch LANDS, its key moves, and the
+        // rows are the ones the pass answers over the render it read. Nothing
+        // of the call's own is left behind.
         std::fs::write(
             sys.join("assignments.ini"),
             b"[default]\n* = inherit\n\xed\xa0\xbf\n",
         )
         .expect("broken assignments");
-        let record = bytes_of(INSTANCES_FILE);
         let before = listing();
-        assert_eq!(
-            m.set_server_profile(&desktop, "default", "tiny"),
-            Err(ManagerError::Io(std::io::ErrorKind::InvalidData)),
-            "an assignments.ini that cannot be read answers the read's own kind, not the cap of a render cut by no assignment"
+        let answer = m.set_server_profile(&desktop, "default", "tiny");
+        assert!(
+            answer.is_ok(),
+            "an unreadable assignments.ini is the empty record the render pass has always              read, not a refusal of the switch: {answer:?}"
         );
         assert_eq!(
-            bytes_of(INSTANCES_FILE),
-            record,
-            "the record is the bytes that were there: the refusal wrote nothing"
+            keys_of(&text_of(INSTANCES_FILE), "default", "ServerProfile"),
+            vec!["ServerProfile = tiny".to_string()],
+            "the record's key landed"
         );
         assert_eq!(
             listing(),
             before,
             "and the call left no file of its own behind: no temp, no render"
         );
-        // A directory at the record's path: the read's own kind, the same.
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
+        // A directory at the record's path: the pass reads it as nothing, and
+        // the switch lands the same.
         std::fs::remove_file(sys.join("assignments.ini")).expect("assignments out");
         std::fs::create_dir(sys.join("assignments.ini")).expect("assignments dir");
         let before = listing();
-        assert_eq!(
-            m.set_server_profile(&desktop, "default", "tiny"),
-            Err(ManagerError::Io(std::io::ErrorKind::IsADirectory)),
-            "a directory at the assignments path answers the read's own kind"
+        assert!(
+            m.set_server_profile(&desktop, "default", "tiny").is_ok(),
+            "a directory at the assignments path is the empty record the pass reads, not a              refusal"
         );
         assert_eq!(
-            bytes_of(INSTANCES_FILE),
-            record,
-            "and the record keeps its bytes"
+            keys_of(&text_of(INSTANCES_FILE), "default", "ServerProfile"),
+            vec!["ServerProfile = tiny".to_string()],
+            "and its key landed"
         );
         assert_eq!(
             listing(),
@@ -16763,6 +17371,7 @@ pub(crate) fn manager_set_server_profile_e2e() {
             "and the call left no file of its own behind"
         );
         std::fs::remove_dir(sys.join("assignments.ini")).expect("assignments dir out");
+        std::fs::write(sys.join(INSTANCES_FILE), SEEDED).expect(INSTANCES_FILE);
         std::fs::write(sys.join("assignments.ini"), assignments).expect("assignments.ini");
     }
 
@@ -16776,12 +17385,13 @@ pub(crate) fn manager_set_server_profile_e2e() {
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         let record = bytes_of(INSTANCES_FILE);
         assert_eq!(
-            m.set_server_profile(&desktop, "default", "twin"),
+            m.set_server_profile(&desktop, "default", "twin")
+                .map(|_| ()),
             Ok(()),
             "the instance whose section sorts first asks for the profile it already names"
         );
         assert_eq!(
-            m.set_server_profile(&desktop, "zulu", "twin"),
+            m.set_server_profile(&desktop, "zulu", "twin").map(|_| ()),
             Ok(()),
             "so does the one whose section sorts last: it names that profile too, the first instance is not the holder for it"
         );
@@ -16810,7 +17420,7 @@ pub(crate) fn manager_set_server_profile_e2e() {
         let m = core(true, FakePasswords::new(), FakeActionLog::new());
         let before = listing();
         let guard = UmaskGuard::mask(nix::sys::stat::Mode::from_bits_retain(0o077));
-        let answer = m.set_server_profile(&desktop, "default", "big");
+        let answer = m.set_server_profile(&desktop, "default", "big").map(|_| ());
         let old_mask = guard.0;
         drop(guard);
         assert_eq!(
@@ -16869,7 +17479,7 @@ pub(crate) fn manager_set_server_profile_e2e() {
         let lines = log.lines.clone();
         let m = core(true, p, log);
         assert_eq!(
-            m.set_server_profile(&member, "default", "big"),
+            m.set_server_profile(&member, "default", "big").map(|_| ()),
             Ok(()),
             "the bff switches the server profile for a member of `pai`"
         );
@@ -17259,11 +17869,19 @@ pub(crate) fn manager_existing_id_e2e() {
 /// instance whose profile cannot be read is skipped and never judged on the
 /// defaults of a missing file, and a file named after an id that is not that
 /// instance's profile is never read. Instances `default` and `lan` run the
-/// profiles `big` and `small`: the names differ on purpose.
+/// profiles `big` and `small`: the names differ on purpose. The port of a
+/// profile in use is a binding rule of the save itself, so it stays a refusal;
+/// the `ModelsMax` is a FIT check of each instance's render (IP3c,
+/// `ARCHITECTURE.md` "Convergence"): the save that brings a cap under a
+/// standing count LANDS and reports nothing (what stands is no news), the save
+/// that grows a count over the cap LANDS and reports the instance whose render
+/// does not fit.
+///
+/// The pins here are IP3c: every write lands, and the rows of the write's own
+/// render pass are what the retired refusals asserted.
 #[cfg(test)]
 pub(crate) fn manager_profiles_in_use_e2e() {
     use fakes::{FakeAuthority, FakeGroup, FakeResolver, FakeService};
-    use pai_core::checks::Refusal;
 
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
@@ -17284,11 +17902,31 @@ pub(crate) fn manager_profiles_in_use_e2e() {
     let profile = |name: &str, text: &str| {
         std::fs::write(sys.join(format!("server@{name}.ini")), text).expect("server profile");
     };
-    let over_max = |count: &str, max: &str, id: &str| {
-        Err(ManagerError::Invalid(Refusal {
-            key: "load-on-startup-over-max",
-            values: vec![count.to_string(), max.to_string(), id.to_string()],
-        }))
+    // The cap news this phase is about, its three args whole. The cap is a fit
+    // check of ONE instance's render (IP3c): the save LANDS and the write's own
+    // render pass reports the instance the count is over, with the check's key
+    // and the same three args. True when `m` reports that row.
+    let over_max = |m: &Manager<FakeService, FakeAuthority, FakeResolver>,
+                    count: &str,
+                    max: &str,
+                    id: &str|
+     -> bool {
+        m.not_converged_locked()
+            .expect("the rows")
+            .iter()
+            .any(|row| {
+                row.instance == id
+                    && row.key == "load-on-startup-over-max"
+                    && row.args == [count.to_string(), max.to_string(), id.to_string()]
+            })
+    };
+    // The rows the last write's pass reported, as instance names.
+    let rows = |m: &Manager<FakeService, FakeAuthority, FakeResolver>| -> Vec<String> {
+        m.not_converged_locked()
+            .expect("the rows")
+            .iter()
+            .map(|row| format!("{} {} {}", row.instance, row.key, row.args.join(",")))
+            .collect()
     };
     let flagged = |ids: &[&str]| -> String {
         real_model_files(
@@ -17578,20 +18216,20 @@ pub(crate) fn manager_profiles_in_use_e2e() {
     )
     .expect("assignments.ini");
     std::fs::write(sys.join("models.ini"), flagged(&["a", "b"])).expect("models.ini");
+    let capped = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n";
     assert_eq!(
-        m.write_file(
-            &alice,
-            "server@big.ini",
-            "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n",
-            false
-        ),
-        over_max("2", "1", "default"),
-        "lowered under what default loads: refused, naming the INSTANCE"
+        m.write_file(&alice, "server@big.ini", capped, false),
+        Ok(()),
+        "lowered under what default loads: the save lands, what stands is no news"
     );
     assert_eq!(
         read("server@big.ini").as_deref(),
-        Some(big_8081),
-        "a refused save writes nothing"
+        Some(capped),
+        "the cap that used to refuse the save now lets it through"
+    );
+    assert!(
+        over_max(&m, "2", "1", "default"),
+        "the pair on disk is the render of the pool that stood before the fixture wrote it, so          default's two loads are news over the cap the save brings, and the instance is reported          while the save lands"
     );
     assert_eq!(
         m.write_file(
@@ -17628,13 +18266,17 @@ pub(crate) fn manager_profiles_in_use_e2e() {
     );
     assert_eq!(
         m.write_file(&alice, "models.ini", &flagged(&["a", "b", "c"]), false),
-        over_max("3", "2", "default"),
-        "the max the refusal carries is the profile's, and it names the instance"
+        Ok(()),
+        "the pool the write names lands: the cap is the render's fit, not the save's"
+    );
+    assert!(
+        over_max(&m, "3", "2", "default"),
+        "the row carries the max of the profile the instance names, and names the instance"
     );
     assert_eq!(
         read("models.ini").as_deref(),
-        Some(flagged(&["a", "b"]).as_str()),
-        "a refused pool write leaves the file it had"
+        Some(flagged(&["a", "b", "c"]).as_str()),
+        "the pool that is over an instance's cap lands, that instance keeping its pair"
     );
     // The other pool file is a client's read, never a write: the model data
     // model retired it (`ARCHITECTURE.md`, "Instance profiles").
@@ -17723,20 +18365,28 @@ pub(crate) fn manager_profiles_in_use_e2e() {
 
     // ── One profile, two instances: each instance's own load count ────────
     // Both a and b inherit the pool, so each loads two model profiles on
-    // startup: a max of 1 is under the count of each and is refused naming
-    // the instance whose render is over (a first, in id order).
+    // startup. A max of 1 is under the count of each, and the cap of the pair
+    // on disk is 8: the save lands and the standing counts are no news (IP3c),
+    // so nothing is reported. The cap is each instance's own, judged on its own
+    // list, which the assignments cut.
     let shared_max_1 = "[Server]\nPort = 8081\nHostname = 127.0.0.1\nModelsMax = 1\n";
     assert_eq!(
         m.write_file(&alice, "server@shared.ini", shared_max_1, false),
-        over_max("2", "1", "a"),
-        "under what a loads: refused naming a"
+        Ok(()),
+        "under what a and b load: the save lands"
     );
     assert_eq!(
         read("server@shared.ini").as_deref(),
-        Some(shared_8081),
-        "a refused save writes nothing"
+        Some(shared_max_1),
+        "the cap of a profile in use lands with the instance over it"
     );
-    // a given one of the two, b left with both: the same save names b.
+    assert_eq!(
+        rows(&m),
+        Vec::<String>::new(),
+        "both counts stood under a cap of 8, so neither instance is over the new one"
+    );
+    // a given one of the two, b left with both: the cap is each one's own, and
+    // a count that shrinks is never news, so the same save stays quiet.
     std::fs::write(
         sys.join("assignments.ini"),
         "[a]\nm1 = inherit\n\n[b]\n* = inherit\n",
@@ -17744,9 +18394,13 @@ pub(crate) fn manager_profiles_in_use_e2e() {
     .expect("assignments.ini");
     assert_eq!(
         m.write_file(&alice, "server@shared.ini", shared_max_1, false),
-        over_max("2", "1", "b"),
-        "under what b loads: refused naming b, the other instance running \
-         the same profile"
+        Ok(()),
+        "under what b loads: the save lands, a and b each judged on their own list"
+    );
+    assert_eq!(
+        rows(&m),
+        Vec::<String>::new(),
+        "a's count shrank and b's stood, neither is news over the cap that stands"
     );
 
     // ── An unused profile is still the file's own content ─────────────────
@@ -18915,8 +19569,8 @@ pub(crate) fn manager_action_log_e2e() {
 #[cfg(test)]
 pub(crate) fn manager_write_file_if_e2e() {
     use fakes::{
-        FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService, Gate,
-        GateResolver, GATE_WAIT,
+        Call, FakeActionLog, FakeAuthority, FakeGroup, FakePasswords, FakeResolver, FakeService,
+        Gate, GateResolver, GATE_WAIT,
     };
     use pai_core::checks::Refusal;
     use std::sync::Arc;
@@ -19065,7 +19719,8 @@ pub(crate) fn manager_write_file_if_e2e() {
         let marker = "sk-CAS-NEVER-4b71";
         let newer = format!("{default_ini}OpencodeApiKey = {marker}\n");
         assert_eq!(
-            m.write_file_if(&desktop, "server@default.ini", &newer, default_ini),
+            m.write_file_if(&desktop, "server@default.ini", &newer, default_ini)
+                .map(|_| ()),
             Ok(()),
             "the file holds the text the caller expected: written"
         );
@@ -19083,16 +19738,22 @@ pub(crate) fn manager_write_file_if_e2e() {
             listing(&sys),
             [
                 "instances.ini",
+                "launch@default.ini",
                 "models.ini",
                 "models@default.ini",
                 "server@default.ini"
             ],
             "exactly the files written (the record of the instance, the pool, and \
-             the server write's render of the instance's presets file), no temp file left"
+             the server write's render of the instance's presets file and of its \
+             launch), no temp file left"
         );
-        assert!(
-            m.service().calls.lock().unwrap().is_empty(),
-            "a write calls no service manager"
+        assert_eq!(
+            *m.service().calls.lock().unwrap(),
+            Vec::<Call>::new(),
+            "IP3c: the accepted compare-and-swap write answers the apply, whose drift compare \
+             asks NOTHING of the service manager: `default` recorded no pair it launched with, \
+             so no write moved it to a restart, and no unit verb (the phases that seed the \
+             `applied` record, `manager_dbus_e2e` and `manager_dbus_client_e2e`, pin the ask)"
         );
         assert_eq!(
             *m.authority().asked.lock().unwrap(),
@@ -19227,7 +19888,8 @@ pub(crate) fn manager_write_file_if_e2e() {
         // The file's own bytes are accepted: the table above is not green
         // because every compare refuses.
         assert_eq!(
-            m.write_file_if(&desktop, "models.ini", &other, &model_profiles),
+            m.write_file_if(&desktop, "models.ini", &other, &model_profiles)
+                .map(|_| ()),
             Ok(()),
             "the expected text is the file's own: written"
         );
@@ -19305,7 +19967,8 @@ pub(crate) fn manager_write_file_if_e2e() {
                 "server@default.ini",
                 &format!("{ini}ModelsMax = 2\n"),
                 &read.text
-            ),
+            )
+            .map(|_| ()),
             Ok(()),
             "the text a member read, unblanked, is what the compare accepts"
         );
@@ -19314,7 +19977,8 @@ pub(crate) fn manager_write_file_if_e2e() {
             "the key line the caller sent is written as sent, with no key flag"
         );
         assert_eq!(
-            m.write_file_if(&member, "models.ini", &other, &model_profiles),
+            m.write_file_if(&member, "models.ini", &other, &model_profiles)
+                .map(|_| ()),
             Ok(()),
             "a member's compare-and-swap lands with the caller allowed nothing"
         );
@@ -19437,7 +20101,7 @@ pub(crate) fn manager_write_file_if_e2e() {
             .recv_timeout(GATE_WAIT)
             .expect("the compare-and-swap returns once it has the lock");
         assert!(
-            !matches!(early, Ok(Ok(()))),
+            !matches!(early, Ok(Ok(_))),
             "the compare-and-swap finished while the first write held the lock: {early:?}"
         );
         assert_eq!(first, Ok(()), "the first write lands");
@@ -19453,8 +20117,14 @@ pub(crate) fn manager_write_file_if_e2e() {
         );
         assert_eq!(
             listing(&sys),
-            ["instances.ini", "models@slow.ini", "server@slow.ini"],
-            "no temp file left; the landed write renders the instance's presets file"
+            [
+                "instances.ini",
+                "launch@slow.ini",
+                "models@slow.ini",
+                "server@slow.ini"
+            ],
+            "no temp file left; the landed write renders the instance's presets file \
+             and its launch"
         );
     }
 }
@@ -23253,9 +23923,9 @@ pub(crate) fn manager_model_profile_delete_e2e() {
     );
 
     // The tree as a start leaves it: the pool, the profiles, the record, the
-    // retired files, and the render of every instance as its own instance
-    // profile gives it. A fixture that seeds the pool by hand writes its own
-    // render, the same text the render builds.
+    // retired files, and the pair of every instance as its own instance profile
+    // gives it. A fixture that seeds the pool by hand writes its own render, the
+    // same text the render builds.
     let seed = |pool: &str| {
         std::fs::write(sys.join("models.ini"), pool).expect("models.ini");
         std::fs::write(sys.join(INSTANCE_PROFILES_FILE), PROFILES).expect(INSTANCE_PROFILES_FILE);
@@ -23273,6 +23943,14 @@ pub(crate) fn manager_model_profile_delete_e2e() {
                 pai_core::assign::render_profile(pool, PROFILES, profile),
             )
             .expect("render");
+            // The launch half of the pair (IP3c): a start lays both halves, so
+            // the tree this seed leaves has them too, written as the pass writes
+            // them.
+            std::fs::write(
+                sys.join(format!("launch@{id}.ini")),
+                launch_render(id).expect("launch render"),
+            )
+            .expect("launch render");
         }
     };
 
@@ -25922,7 +26600,8 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     assert_eq!(record(), rec, "IP3a: every refusal wrote no record");
     assert_eq!(pool(), rev, "IP3a: the switch never writes the pool");
     assert_eq!(
-        m.set_instance_profile(&alice, "lab", "default", &rev),
+        m.set_instance_profile(&alice, "lab", "default", &rev)
+            .map(|_| ()),
         Ok(()),
         "IP3a: the switch of `lab` to `default` lands"
     );
@@ -25972,7 +26651,9 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
         "IP3a: a revision the record no longer holds is the compare-and-swap refusal"
     );
     for port in ["0", "70000", "not-a-port"] {
-        let answer = m.set_instance_address(&alice, "default", "127.0.0.1", port, &rec);
+        let answer = m
+            .set_instance_address(&alice, "default", "127.0.0.1", port, &rec)
+            .map(|_| ());
         match &answer {
             Err(ManagerError::Invalid(r))
                 if r.key == "not-whole-number-in-range"
@@ -25997,7 +26678,8 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     );
     assert_eq!(record(), rec, "IP3a: every address refusal wrote no record");
     assert_eq!(
-        m.set_instance_address(&alice, "default", "127.0.0.1", "8595", &rec),
+        m.set_instance_address(&alice, "default", "127.0.0.1", "8595", &rec)
+            .map(|_| ()),
         Ok(()),
         "IP3a: a free address lands"
     );
@@ -26028,7 +26710,8 @@ pub(crate) fn manager_ip3a_instance_profiles_e2e() {
     // The empty host removes the key.
     let rec = record();
     assert_eq!(
-        m.set_instance_address(&alice, "lab", "", "8692", &rec),
+        m.set_instance_address(&alice, "lab", "", "8692", &rec)
+            .map(|_| ()),
         Ok(()),
         "IP3a: the empty host is accepted"
     );
@@ -26473,12 +27156,12 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
         (
             "set_instance_profile",
             m.set_instance_profile(&bob, "default", "spare", &pool)
-                .map(|()| Vec::new()),
+                .map(|_| Vec::new()),
         ),
         (
             "set_instance_address",
             m.set_instance_address(&bob, "default", "127.0.0.1", "8699", &record)
-                .map(|()| Vec::new()),
+                .map(|_| Vec::new()),
         ),
     ];
     for (verb, answer) in answers {
@@ -26513,12 +27196,12 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
         (
             "create_instance_profile",
             m.create_instance_profile(&alice, "brand", "lab")
-                .map(|()| Vec::new()),
+                .map(|_| Vec::new()),
         ),
         (
             "delete_instance_profile",
             m.delete_instance_profile(&alice, "brand")
-                .map(|()| Vec::new()),
+                .map(|_| Vec::new()),
         ),
     ];
     for (verb, answer) in member {
@@ -26533,7 +27216,8 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
             "default",
             "spare",
             &std::fs::read_to_string(sys.join(INSTANCE_PROFILES_FILE)).expect("pool")
-        ),
+        )
+        .map(|_| ()),
         Ok(()),
         "IP3a review D5: the switch carried by a member lands"
     );
@@ -26544,7 +27228,8 @@ pub(crate) fn manager_ip3a_fix_principal_gate_e2e() {
             "127.0.0.1",
             "8699",
             &std::fs::read_to_string(sys.join(INSTANCES_FILE)).expect("record")
-        ),
+        )
+        .map(|_| ()),
         Ok(()),
         "IP3a review D5: the address carried by a member lands"
     );

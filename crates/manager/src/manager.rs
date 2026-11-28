@@ -517,6 +517,18 @@ fn run(args: &[String]) -> Result<i32, (i32, String)> {
             })?;
             Ok((exe, cmd))
         });
+    // The record of the pair this launch applies, written before the engine
+    // starts: the drift read compares what runs with the pair on disk (IP3c).
+    // A failure is one line in the instance's log, never a reason to refuse
+    // the launch.
+    if launch.is_ok() {
+        if let Err(e) = service::write_applied(&id) {
+            eprintln!(
+                "{}",
+                strings::fill("manager-applied-failed", &[&id, &e.to_string()])
+            );
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

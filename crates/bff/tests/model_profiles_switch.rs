@@ -671,6 +671,9 @@ impl ManagerClient for FakeManager {
                 profile_tags: vec![],
                 instance_tags: vec![],
                 label: None,
+                converged: true,
+                reason: None,
+                pending_restart: false,
             })
             .collect())
     }

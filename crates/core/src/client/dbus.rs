@@ -35,6 +35,8 @@
 //! ModelFilesAs(s principal)              (the same reply)
 //! Instances() -> a(sssqasass)      (id, engine, server profile, port, profile
 //!                                   tags, instance tags, label: empty when unset)
+//! InstanceStates() -> a(sbssasb)  (id, converged, reason key, reason args,
+//!                                   restart pending: the states of the apply)
 //! ServerProfiles() -> a(ssqass)       (id, engine, port, tags, instance)
 //! Version() -> (s version, u protocol)
 //! ```
@@ -42,7 +44,8 @@
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceProfileInfo, InstanceState, ManagerClient,
     ManagerFile, ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply,
-    ModelProfileSource, NodeDevices, NodeInfoReply, Reason, ServerProfileInfo, TensorRow,
+    ModelProfileSource, NodeDevices, NodeInfoReply, NotConverged, Reason, ServerProfileInfo,
+    TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu, Status};
@@ -76,6 +79,12 @@ type InstanceRow = (
     Vec<String>,
     String,
 );
+
+/// One row of `InstanceStates`, as the bus answers it: `(s id, b converged,
+/// s reason key, as reason args, b pendingRestart)`, the whole list one
+/// `a(sbssasb)`, the sibling method of `Instances` (IP3c review 6). The bus has
+/// no null, so a converged row carries the empty reason key and no args.
+type StateRow = (String, bool, String, Vec<String>, bool);
 
 /// One row of `ServerProfiles`, as the bus answers it: `(s id, s engine,
 /// q port, as tags, s instance)`, the whole list one `a(ssqass)`. A profile no
@@ -130,6 +139,12 @@ impl DbusClient {
         Connection::system()
             .map(DbusClient::new)
             .map_err(|_| ClientError::Unavailable)
+    }
+
+    /// The connection under the client: for a call the client itself does
+    /// not wrap (a method of a sibling interface, called by name).
+    pub fn connection(&self) -> &Connection {
+        &self.conn
     }
 
     /// A client of the same connection whose guarded calls act for
@@ -196,6 +211,23 @@ impl DbusClient {
     /// The acting name, when this client vouches for a principal.
     fn acting(&self) -> Option<&str> {
         self.principal.as_deref()
+    }
+
+    /// The three states of the apply of every instance, as the sibling method
+    /// of `Instances` answers them (IP3c review 6): the manager derives them
+    /// from the files, so it is a call of its own beside the list. A manager
+    /// that answers no `InstanceStates` (one built before the method) is read
+    /// as answering no states, exactly as [`DbusClient::version`] reads the
+    /// method it lacks: the rows beside it read converged, with no reason and
+    /// no drift.
+    fn instance_states(&self) -> Result<Vec<StateRow>, ClientError> {
+        match self.call_raw("InstanceStates", &()) {
+            Ok(reply) => body(reply),
+            Err(zbus::Error::MethodError(name, _, _)) if name.as_str() == UNKNOWN_METHOD => {
+                Ok(Vec::new())
+            }
+            Err(e) => Err(error(e)),
+        }
     }
 }
 
@@ -513,6 +545,7 @@ impl ManagerClient for DbusClient {
     }
     fn instances(&self) -> Result<Vec<InstanceInfo>, ClientError> {
         let rows: Vec<InstanceRow> = body(self.call("Instances", &())?)?;
+        let states = self.instance_states()?;
         Ok(rows
             .into_iter()
             // A row naming no server profile is a section that names no
@@ -521,6 +554,10 @@ impl ManagerClient for DbusClient {
             .filter(|row| !row.2.is_empty())
             .map(
                 |(id, engine, server_profile, port, profile_tags, instance_tags, label)| {
+                    // The states of the apply ride the sibling method, keyed by
+                    // the id (IP3c review 6). A row the states do not name
+                    // reads converged, with no reason and no drift.
+                    let state = states.iter().find(|state| state.0 == id);
                     InstanceInfo {
                         id,
                         engine,
@@ -531,6 +568,15 @@ impl ManagerClient for DbusClient {
                         // The bus has no null: the empty string is "this
                         // section has no label".
                         label: (!label.is_empty()).then_some(label),
+                        converged: state.is_some_and(|state| state.1),
+                        // Likewise the empty reason key is no reason.
+                        reason: state.and_then(|state| {
+                            (!state.2.is_empty()).then(|| NotConverged {
+                                key: state.2.clone(),
+                                args: state.3.clone(),
+                            })
+                        }),
+                        pending_restart: state.is_some_and(|state| state.4),
                     }
                 },
             )

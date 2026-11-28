@@ -3714,6 +3714,9 @@ pub(crate) fn cli_server_profile_e2e() {
         profile_tags: vec![],
         instance_tags: vec![],
         label: None,
+        converged: true,
+        reason: None,
+        pending_restart: false,
     }];
     let _files = c.files.clone();
     match fake::scoped(fake::backend(c), || {

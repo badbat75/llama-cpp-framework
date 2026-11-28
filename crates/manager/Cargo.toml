@@ -26,6 +26,12 @@ serde_json = "1"
 # needs no Vulkan headers, links no Vulkan loader and starts on a node that has
 # none. `loaded` only: `linked` would make the binary need a loader to start.
 ash = { version = "0.38", default-features = false, features = ["loaded"] }
+# The apply's digest (manager/service.rs): SHA-256 over one instance's rendered
+# pair, the record its launch leaves and the drift read compares. The convergence
+# tests (src/tests/convergence.rs) digest the same pair to write that record, so
+# the drift rule is judged on the pair's own bytes (IP3c); the version already in
+# the lock.
+sha2 = "0.10"
 
 # pai-manager's D-Bus service on the system bus (manager/dbus.rs). The
 # version already in the lock (accesskit, atspi, ashpd), so there is one zbus;

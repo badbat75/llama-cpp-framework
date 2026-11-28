@@ -9,8 +9,8 @@
 
 pub use super::service::error_reply;
 use super::service::{
-    state_name, Authority, Caller, Manager, ManagerError, Principal, Requester, Resolver,
-    ServiceControl,
+    state_name, Affected, Authority, Caller, Manager, ManagerError, NotConverged, Principal,
+    Requester, Resolver, ServiceControl,
 };
 use pai_core::client::pipe::{read_frame, write_frame, FrameError};
 use serde_json::{json, Value};
@@ -32,7 +32,9 @@ pub const BAD_REQUEST: &str = "org.privateai.Manager1.Error.BadRequest";
 /// each with its `As` form, and `ModelInfo` with its `As` form, the layer
 /// facts of one saved model profile, and `NodeInfo` with its `As` form, the
 /// node's own info; 3 also carries `ModelFiles` with its `As` form, the node's
-/// one models folder as the model-file picker's list.
+/// one models folder as the model-file picker's list; 3 also carries
+/// `SetInstanceProfileModel` with its `As` form, the keys of one entry of an
+/// instance profile, written from the page of one instance.
 pub const PROTOCOL: u32 = 3;
 
 /// The suffix of the `As` form of a guarded method, the one that carries a
@@ -82,6 +84,17 @@ enum Request {
     AddInstanceProfileModel(String, String, Option<Principal>),
     /// `profile`, `model`: takes a model profile away from an instance profile.
     RemoveInstanceProfileModel(String, String, Option<Principal>),
+    /// `profile`, `model`, `instance`, `values`, `revision`: the keys of one
+    /// entry of an instance profile, written from the page of `instance`, and
+    /// `values` the entry holds afterwards.
+    SetInstanceProfileModel(
+        String,
+        String,
+        String,
+        Vec<(String, String)>,
+        String,
+        Option<Principal>,
+    ),
     /// `instance`, `profile`, `revision`: points an instance at an instance
     /// profile, the revision the text of `instance-profiles.ini` the caller
     /// read.
@@ -293,6 +306,24 @@ impl Request {
                 arg("model")?,
                 principal().map(Some)?,
             ),
+            // The entry save: the keys the page sent, as an object of strings
+            // (`values` is required), and the instance whose page writes them.
+            "SetInstanceProfileModel" => Request::SetInstanceProfileModel(
+                arg("profile")?,
+                arg("model")?,
+                arg("instance")?,
+                values()?,
+                arg("revision")?,
+                None,
+            ),
+            "SetInstanceProfileModelAs" => Request::SetInstanceProfileModel(
+                arg("profile")?,
+                arg("model")?,
+                arg("instance")?,
+                values()?,
+                arg("revision")?,
+                principal().map(Some)?,
+            ),
             "SetInstanceProfile" => Request::SetInstanceProfile(
                 arg("instance")?,
                 arg("profile")?,
@@ -397,6 +428,77 @@ fn requester(caller: &Caller, principal: Option<Principal>) -> Result<Requester,
     }
 }
 
+/// One instance of the list, as the pipe answers it: the id, the engine, the
+/// server profile and the port, the two tag lists, the label, and the three
+/// states of the apply (IP3c, `ARCHITECTURE.md` "Convergence"). `converged`
+/// says the instance's rendered pair is the pair its profiles render, `reason`
+/// is the keyed check that stopped that pair (`null` for a converged instance),
+/// and `pendingRestart` says the pair the instance launched with, as its
+/// `applied` record holds it, is not the pair on disk: a compare of the files,
+/// asking no unit (IP3c review 4). `ListInstances` and `Instances` give the same
+/// rows, so a client of the older list of plain ids reads the id out of each
+/// row. The label is
+/// JSON `null` when the section has none: the pipe has a null, so the row says
+/// "no label" and not "an empty label".
+fn instance_row(i: &pai_core::client::InstanceInfo) -> Value {
+    json!({
+        "id": i.id,
+        "engine": i.engine,
+        "server_profile": i.server_profile.clone().unwrap_or_default(),
+        "port": i.port,
+        "profile_tags": i.profile_tags,
+        "instance_tags": i.instance_tags,
+        "label": i.label,
+        "converged": i.converged,
+        "reason": i.reason.as_ref().map(|r| json!({
+            "key": r.key,
+            "args": r.args,
+        })),
+        "pendingRestart": i.pending_restart,
+    })
+}
+
+/// One row of a save's `notConverged`: the instance that kept its last good
+/// pair, and the keyed check that stopped it, with that check's arguments. The
+/// same shape the row of `Instances` carries its `reason` in, so one page reads
+/// the tile and a save's answer the same way.
+fn not_converged_row(row: &NotConverged) -> Value {
+    json!({
+        "instance": row.instance,
+        "key": row.key,
+        "args": row.args,
+    })
+}
+
+/// The answer of a save that re-renders, as the stream carries it (IP3c,
+/// `ARCHITECTURE.md` "Convergence"): the running instances the save moved to a
+/// restart, and the instances that kept their last good pair, each with the
+/// check that stopped it.
+fn affected_answer(affected: Affected) -> Value {
+    json!({
+        "running": affected.running,
+        "notConverged": affected
+            .not_converged
+            .iter()
+            .map(not_converged_row)
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// The answer of a write of the instance profile pool: the same object every
+/// save that re-renders answers (IP3c). The entry add and remove write the pool,
+/// which is a source of every instance's render, so the states they leave are
+/// the states of the node: [`Manager::affected`] reads them from the files, and
+/// asks the units for nothing more.
+fn pool_answer<S, A, R>(manager: &Manager<S, A, R>) -> Result<Value, ManagerError>
+where
+    S: ServiceControl,
+    A: Authority,
+    R: Resolver,
+{
+    manager.affected().map(affected_answer)
+}
+
 /// The reply to `request`, run through `manager` as `caller`.
 fn answer<S, A, R>(manager: &Manager<S, A, R>, caller: &Caller, request: Request) -> Value
 where
@@ -405,25 +507,21 @@ where
     R: Resolver,
 {
     let result = match request {
-        Request::ListInstances => Ok(json!(manager.list_instances())),
-        // One object per instance, the two tag lists kept apart: the web UI
-        // shows the profile's first and says which is which. The server
-        // profile of a section that names none is the empty string, the same
-        // answer the bus gives. The label is JSON `null` when the section has
-        // none: the pipe has a null, so the row says "no label" and not "an
-        // empty label".
+        // One row per instance (`instance_row`): `ListInstances` and `Instances`
+        // answer the same rows, so a client of the older list of plain ids reads
+        // the id out of each row.
+        Request::ListInstances => Ok(json!(manager
+            .instances()
+            .iter()
+            .map(instance_row)
+            .collect::<Vec<_>>())),
+        // The two tag lists kept apart: the web UI shows the profile's first and
+        // says which is which. The server profile of a section that names none is
+        // the empty string, the same answer the bus gives.
         Request::Instances => Ok(json!(manager
             .instances()
             .iter()
-            .map(|i| json!({
-                "id": i.id,
-                "engine": i.engine,
-                "server_profile": i.server_profile.clone().unwrap_or_default(),
-                "port": i.port,
-                "profile_tags": i.profile_tags,
-                "instance_tags": i.instance_tags,
-                "label": i.label,
-            }))
+            .map(instance_row)
             .collect::<Vec<_>>())),
         Request::Status(id) => manager.status(&id).map(|s| json!(state_name(s))),
         // The version asks nothing of anybody: every caller gets it, the
@@ -448,7 +546,7 @@ where
         // the core answers `Changed` when the file no longer holds it.
         Request::WriteFileIf(name, contents, expected, principal) => requester(caller, principal)
             .and_then(|who| manager.write_file_if(&who, &name, &contents, &expected))
-            .map(|()| Value::Null),
+            .map(affected_answer),
         Request::BootEnabled(id) => manager.boot_enabled(&id).map(|on| json!(on)),
         Request::SetBootEnabled(id, enabled, principal) => requester(caller, principal)
             .and_then(|who| manager.set_boot_enabled(&who, &id, enabled))
@@ -457,12 +555,12 @@ where
         Request::SetModelProfile(instance, profile, value, principal) => {
             requester(caller, principal)
                 .and_then(|who| manager.set_model_profile(&who, &instance, &profile, &value))
-                .map(|()| Value::Null)
+                .map(affected_answer)
         }
         // The switch of an instance to another server profile.
         Request::SetServerProfile(instance, profile, principal) => requester(caller, principal)
             .and_then(|who| manager.set_server_profile(&who, &instance, &profile))
-            .map(|()| Value::Null),
+            .map(affected_answer),
         // The record's own tags of one instance.
         Request::SetInstanceTags(instance, tags, principal) => requester(caller, principal)
             .and_then(|who| manager.set_instance_tags(&who, &instance, &tags))
@@ -544,29 +642,41 @@ where
         Request::DeleteInstanceProfile(profile, principal) => requester(caller, principal)
             .and_then(|who| manager.delete_instance_profile(&who, &profile))
             .map(|()| Value::Null),
+        // An entry of the pool is the render of every instance running the
+        // profile, so these two writes answer the apply as every save does
+        // (IP3c, `ARCHITECTURE.md` "Convergence").
         Request::AddInstanceProfileModel(profile, model, principal) => requester(caller, principal)
             .and_then(|who| manager.add_instance_profile_model(&who, &profile, &model))
-            // The client's verb answers nothing: the stream carries the
-            // running instances from slice IP4 on.
-            .map(|_| Value::Null),
+            .and_then(|_| pool_answer(manager)),
         Request::RemoveInstanceProfileModel(profile, model, principal) => {
             requester(caller, principal)
                 .and_then(|who| manager.remove_instance_profile_model(&who, &profile, &model))
-                // The client's verb answers nothing: the stream carries the
-                // running instances from slice IP4 on.
-                .map(|_| Value::Null)
+                .and_then(|_| pool_answer(manager))
+        }
+        // The keys of one entry, from the page of one instance: the entry rides
+        // the render of every instance running the profile, so the answer is the
+        // whole apply, the running instances the write left drifting beside the
+        // rows of the node (`Manager::set_instance_profile_model`).
+        Request::SetInstanceProfileModel(profile, model, instance, values, revision, principal) => {
+            requester(caller, principal)
+                .and_then(|who| {
+                    manager.set_instance_profile_model(
+                        &who, &profile, &model, &instance, &values, &revision,
+                    )
+                })
+                .map(affected_answer)
         }
         Request::SetInstanceProfile(instance, profile, revision, principal) => {
             requester(caller, principal)
                 .and_then(|who| manager.set_instance_profile(&who, &instance, &profile, &revision))
-                .map(|()| Value::Null)
+                .map(affected_answer)
         }
         Request::SetInstanceAddress(instance, host, port, revision, principal) => {
             requester(caller, principal)
                 .and_then(|who| {
                     manager.set_instance_address(&who, &instance, &host, &port, &revision)
                 })
-                .map(|()| Value::Null)
+                .map(affected_answer)
         }
         // One object per server profile, the instance that runs it the empty
         // string when no instance does: the same answer the bus gives.

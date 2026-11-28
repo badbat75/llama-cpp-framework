@@ -114,6 +114,9 @@ impl FakeManager {
             profile_tags: Vec::new(),
             instance_tags: Vec::new(),
             label: label.map(str::to_string),
+            converged: true,
+            reason: None,
+            pending_restart: false,
         }
     }
 

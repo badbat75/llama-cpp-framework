@@ -88,6 +88,19 @@
 //!                                           SetBootEnabled, SetInstanceTags,
 //!                                           CreateServerProfile,
 //!                                           DeleteServerProfile
+//! {"ok":{"running":["default"],
+//!         "notConverged":[{"instance":"lab","key":"no-model-profile-named",
+//!                          "args":["qwen3"]}]}}
+//!                                           The saves that re-render (IP3c,
+//!                                           WriteFileIf, SetModelProfile,
+//!                                           SetServerProfile,
+//!                                           SetInstanceProfile,
+//!                                           SetInstanceAddress): running, the
+//!                                           instances the save moved to a
+//!                                           restart; notConverged, the
+//!                                           instances that kept their last
+//!                                           good pair, each with the check
+//!                                           that stopped it
 //! {"ok":{"version":"1.2.3","protocol":1}}   Version (protocol: the methods
 //!                                           this manager speaks)
 //! {"error":{"name":"org.privateai.Manager1.Error.<Kind>","message":"..."}}
@@ -96,7 +109,8 @@
 use super::{
     ClientError, DeviceInfo, InstanceInfo, InstanceProfileInfo, InstanceState, ManagerClient,
     ManagerFile, ManagerVersion, ModelFacts, ModelFileRow, ModelFilesReply, ModelInfoReply,
-    ModelProfileSource, NodeDevices, NodeInfoReply, Reason, ServerProfileInfo, TensorRow,
+    ModelProfileSource, NodeDevices, NodeInfoReply, NotConverged, Reason, ServerProfileInfo,
+    TensorRow,
 };
 use crate::host::OsInfo;
 use crate::vulkan::{status_of, Driver, NodeGpu};
@@ -294,7 +308,22 @@ fn profile_row(v: &Value) -> Result<InstanceProfileInfo, ClientError> {
 impl<S: Read + Write> ManagerClient for PipeClient<S> {
     fn list_instances(&self) -> Result<Vec<String>, ClientError> {
         let v = self.call(json!({"method": "ListInstances"}))?;
-        serde_json::from_value(v.clone()).map_err(|_| ClientError::Other(v.to_string()))
+        // One row per instance (IP3c): the row carries the states of the apply
+        // beside the id. A manager of the older answer sends a list of plain
+        // ids, which reads the same way.
+        let rows = v
+            .as_array()
+            .ok_or_else(|| ClientError::Other(v.to_string()))?;
+        rows.iter()
+            .map(|row| match row {
+                Value::String(id) => Ok(id.clone()),
+                row => row
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| ClientError::Other(v.to_string())),
+            })
+            .collect()
     }
     fn status(&self, id: &str) -> Result<InstanceState, ClientError> {
         match self.call(json!({"method": "Status", "id": id}))? {
@@ -342,7 +371,11 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         ))
     }
     fn write_file_if(&self, name: &str, contents: &str, expected: &str) -> Result<(), ClientError> {
-        self.call_unit(self.guarded(
+        // The compare and swap is a save that re-renders, so it answers the apply
+        // (IP3c): the running instances the write moved to a restart, beside the
+        // instances that kept their last good pair. The verb reads the reply's
+        // error alone, like the unit verbs beside it.
+        self.call(self.guarded(
             "WriteFileIf",
             &[
                 ("name", json!(name)),
@@ -350,6 +383,7 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                 ("expected", json!(expected)),
             ],
         ))
+        .map(|_| ())
     }
     fn boot_enabled(&self, id: &str) -> Result<bool, ClientError> {
         match self.call(json!({"method": "BootEnabled", "id": id}))? {
@@ -369,7 +403,9 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         profile: &str,
         value: &str,
     ) -> Result<(), ClientError> {
-        self.call_unit(self.guarded(
+        // The two switches of slice 13 are saves that re-render, so they answer
+        // the apply too (IP3c), read the same way.
+        self.call(self.guarded(
             "SetModelProfile",
             &[
                 ("instance", json!(instance)),
@@ -377,13 +413,15 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                 ("value", json!(value)),
             ],
         ))
+        .map(|_| ())
     }
 
     fn set_server_profile(&self, instance: &str, profile: &str) -> Result<(), ClientError> {
-        self.call_unit(self.guarded(
+        self.call(self.guarded(
             "SetServerProfile",
             &[("instance", json!(instance)), ("profile", json!(profile))],
         ))
+        .map(|_| ())
     }
     fn create_server_profile(
         &self,
@@ -491,16 +529,21 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         self.call_unit(self.guarded("DeleteInstanceProfile", &[("profile", json!(profile))]))
     }
     fn add_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
-        self.call_unit(self.guarded(
+        // The apply's answer (IP3c): the running instances the write moved to a
+        // restart, and the instances that kept their last good pair. The verb
+        // reads the reply's error alone, like the unit verbs beside it.
+        self.call(self.guarded(
             "AddInstanceProfileModel",
             &[("profile", json!(profile)), ("model", json!(model))],
         ))
+        .map(|_| ())
     }
     fn remove_instance_profile_model(&self, profile: &str, model: &str) -> Result<(), ClientError> {
-        self.call_unit(self.guarded(
+        self.call(self.guarded(
             "RemoveInstanceProfileModel",
             &[("profile", json!(profile)), ("model", json!(model))],
         ))
+        .map(|_| ())
     }
     fn set_instance_profile(
         &self,
@@ -508,7 +551,9 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         profile: &str,
         revision: &str,
     ) -> Result<(), ClientError> {
-        self.call_unit(self.guarded(
+        // The record's two writes are saves that re-render, so they answer the
+        // apply too (IP3c), read the same way.
+        self.call(self.guarded(
             "SetInstanceProfile",
             &[
                 ("instance", json!(instance)),
@@ -516,6 +561,7 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                 ("revision", json!(revision)),
             ],
         ))
+        .map(|_| ())
     }
     fn set_instance_address(
         &self,
@@ -524,7 +570,7 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
         port: &str,
         revision: &str,
     ) -> Result<(), ClientError> {
-        self.call_unit(self.guarded(
+        self.call(self.guarded(
             "SetInstanceAddress",
             &[
                 ("instance", json!(instance)),
@@ -533,6 +579,7 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                 ("revision", json!(revision)),
             ],
         ))
+        .map(|_| ())
     }
 
     fn remove_instance(&self, id: &str) -> Result<(), ClientError> {
@@ -590,6 +637,27 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                         Some(Value::String(text)) => Some(text.clone()),
                         Some(_) => return Err(ClientError::Other(v.to_string())),
                     };
+                    // The states of the apply (IP3c), the same way: a row of a
+                    // manager that answers none of them reads converged, with no
+                    // reason and no drift.
+                    let reason = match row.get("reason") {
+                        None | Some(Value::Null) => None,
+                        Some(value) => {
+                            let key = value.get("key").and_then(Value::as_str);
+                            let args = value.get("args").and_then(Value::as_array).map(|list| {
+                                list.iter()
+                                    .filter_map(|a| a.as_str().map(str::to_string))
+                                    .collect::<Vec<String>>()
+                            });
+                            match (key, args) {
+                                (Some(key), Some(args)) => Some(NotConverged {
+                                    key: key.to_string(),
+                                    args,
+                                }),
+                                _ => return Err(ClientError::Other(v.to_string())),
+                            }
+                        }
+                    };
                     out.push(InstanceInfo {
                         id,
                         engine,
@@ -598,6 +666,15 @@ impl<S: Read + Write> ManagerClient for PipeClient<S> {
                         profile_tags,
                         instance_tags,
                         label,
+                        converged: row
+                            .get("converged")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(true),
+                        reason,
+                        pending_restart: row
+                            .get("pendingRestart")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
                     })
                 }
                 _ => return Err(ClientError::Other(v.to_string())),
@@ -1386,6 +1463,9 @@ mod tests {
                     profile_tags: vec!["edge".into(), "v2".into()],
                     instance_tags: vec![],
                     label: None,
+                    converged: true,
+                    reason: None,
+                    pending_restart: false,
                 },
                 InstanceInfo {
                     id: "lan-2".into(),
@@ -1395,6 +1475,9 @@ mod tests {
                     profile_tags: vec![],
                     instance_tags: vec!["gpu".into()],
                     label: None,
+                    converged: true,
+                    reason: None,
+                    pending_restart: false,
                 },
             ],
             "the row's fields, in the manager's order"

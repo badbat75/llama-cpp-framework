@@ -123,6 +123,13 @@ pub(crate) fn manager_pipe_client_e2e() {
         )
         .expect("write render");
     }
+    // Each of the two launched on the pair standing now (IP3c): its `applied`
+    // record is what makes a later write's drift compare answer a real launch.
+    // `lan-2` has no render of its own (its server profile has no file), so it
+    // applied nothing and its state is asked for nothing.
+    for id in ["default", "broken"] {
+        crate::manager::service::write_applied(id).expect("the applied record");
+    }
     // Opaque to the core; shaped like the Windows user SIDs the pipe's
     // client token will give.
     let alice = Caller("S-1-5-21-3623811015-3361044348-30300820-1013".into());
@@ -631,7 +638,17 @@ pub(crate) fn manager_pipe_client_e2e() {
             vec![(alice.clone(), Action::Configure); 3],
             "the guarded call the plain write is, at every call"
         );
-        assert_eq!(calls(&c), vec![], "a file write touches no unit");
+        assert_eq!(
+            calls(&c),
+            vec![
+                Call::Status("default".into()),
+                Call::Status("broken".into()),
+            ],
+            "IP3c: the accepted compare-and-swap answers the apply, whose drift compare asks \
+             the state of the two instances whose pair moved off the pair their launch \
+             recorded, in the record's order, and asks no unit verb; `lan-2` has no pair, so it \
+             applied nothing and is asked for nothing; the two refused writes ask nothing"
+        );
         hang_up(server, client);
         std::fs::write(sys.join("models.ini"), model_profiles).expect("restore presets");
     }
@@ -683,7 +700,17 @@ pub(crate) fn manager_pipe_client_e2e() {
             vec![(alice.clone(), Action::Configure)],
             "the guarded call a write is: configure asked of the caller"
         );
-        assert_eq!(calls(&c), vec![], "an assignment touches no unit");
+        assert_eq!(
+            calls(&c),
+            vec![
+                Call::Status("default".into()),
+                Call::Status("broken".into()),
+            ],
+            "IP3c: the accepted assignment answers the apply, whose drift compare asks the \
+             state of the two instances whose pair moved off the pair their launch recorded, \
+             in the record's order, and asks no unit verb: `lan-2` has no pair, so it applied \
+             nothing and is asked for nothing"
+        );
         assert_eq!(
             client.set_model_profile("default", "Qwen3.8-27B", "off"),
             Ok(()),
@@ -860,7 +887,18 @@ pub(crate) fn manager_pipe_client_e2e() {
             vec![(alice.clone(), Action::Configure)],
             "the guarded call a write is: configure asked of the caller"
         );
-        assert_eq!(calls(&c), vec![], "a server profile change touches no unit");
+        assert_eq!(
+            calls(&c),
+            vec![
+                Call::Status("default".into()),
+                Call::Status("broken".into()),
+            ],
+            "IP3c: the accepted switch answers the apply, whose drift compare asks the state \
+             of the two instances whose pair stands off the pair their launch recorded, in the \
+             record's order, and asks no unit verb; `lan-2`, whose pair the switch renders for \
+             the first time, recorded no pair and so is asked for nothing; the refusals ask \
+             nothing"
+        );
         assert_eq!(
             client.set_server_profile("lan-3", "alt"),
             Err(ClientError::NoInstance),
@@ -2442,10 +2480,12 @@ fn the_pipe_client_reads_the_node_info() {
 }
 
 /// Creating and deleting a model profile over the stream, with pai-core's
-/// client (slice MP1): the three sources of a create, the clone keeping the
-/// source's lines, every rule's refusal decoded by the client, the delete's
-/// section alone out, a caller the authority refuses answered NotAuthorized
-/// with nothing done, and the `As` forms for a member of `pai` and an outsider.
+/// client (slice MP1, its rules of IP3b): the three sources of a create, the
+/// clone keeping the source's lines, every rule's refusal decoded by the client,
+/// the delete's section alone out of the pool, a caller the authority refuses
+/// answered NotAuthorized with nothing done, and the `As` forms for a member of
+/// `pai` and an outsider. A create writes the pool and joins no entry, so it
+/// moves no render; a model an entry lists is not free.
 pub(crate) fn manager_pipe_client_model_profiles_e2e() {
     use crate::manager::service::fakes::FakePasswords;
     use pai_core::client::ModelProfileSource;
@@ -2455,25 +2495,31 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
     crate::paths::redirect_for_tests(dir.path());
     let sys = crate::paths::engine_config_dir();
     std::fs::create_dir_all(&sys).expect("system config dir");
-    let record = "[default]\nServerProfile = default\n\n[lan-2]\nServerProfile = lan-2\n";
-    std::fs::write(sys.join("instances.ini"), record).expect("record");
-    for (id, port) in [("default", 8080), ("lan-2", 8081)] {
+    // The record: two instances, both running the instance profile `gpu`.
+    const RECORD: &str = "[default]\nInstanceProfile = gpu\nPort = 8080\n\n[lan-2]\nInstanceProfile = gpu\nPort = 8081\n";
+    // The entries ARE the model list: `gpu` lists three of the pool's models,
+    // each in its own letter case, and `plain` lists none.
+    const PROFILES: &str = "[gpu]\nServerProfile = gpu\n\n[gpu/On-One]\n\n[gpu/twin]\n\n[gpu/two-places]\n\n[plain]\nServerProfile = plain\n";
+    std::fs::write(sys.join("instances.ini"), RECORD).expect("record");
+    std::fs::write(sys.join("instance-profiles.ini"), PROFILES).expect("instance profiles");
+    for name in ["gpu", "plain"] {
         std::fs::write(
-            sys.join(format!("server@{id}.ini")),
-            format!("[Server]\nPort = {port}\nHostname = 127.0.0.1\n"),
+            sys.join(format!("server@{name}.ini")),
+            "[Server]\nDevices = CUDA0\n",
         )
         .expect("server profile");
     }
-    let on = real_model_files(
+    // The pool: `On-One`, `twin` and `two-places` are listed by an entry,
+    // `off-one` and `free-me` by none. The retired `models.ini.disabled` holds
+    // `Retired` and the retired `assignments.ini` names `two-places`: neither is
+    // read, so neither blocks a delete, and the test pins neither is written.
+    let pool = real_model_files(
         dir.path(),
-        "[On-One]\nmodel = /models/on1.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n",
+        "[On-One]\nmodel = /models/on1.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n\n[off-one]\n; a note\ntemp = 0.3\nmodel = /models/off1.gguf\n\n[two-places]\nmodel = /models/two.gguf\n\n[free-me]\nmodel = /models/free.gguf\n",
     );
-    let off = real_model_files(
-        dir.path(),
-        "[off-one]\n; a note\ntemp = 0.3\nmodel = /models/off1.gguf\n\n[two-places]\nmodel = /models/two.gguf\n\n[free-me]\nmodel = /models/free.gguf\n\n[Twin]\nmodel = /models/twin.gguf\n",
-    );
-    std::fs::write(sys.join("models.ini"), &on).expect("models.ini");
-    std::fs::write(sys.join("models.ini.disabled"), &off).expect("models.ini.disabled");
+    let retired = real_model_files(dir.path(), "[Retired]\nmodel = /models/retired.gguf\n");
+    std::fs::write(sys.join("models.ini"), &pool).expect("models.ini");
+    std::fs::write(sys.join("models.ini.disabled"), &retired).expect("models.ini.disabled");
     let keys = "[default]\ntwo-places = inherit\n\n[lan-2]\ntwo-places = off\n";
     std::fs::write(sys.join("assignments.ini"), keys).expect("assignments.ini");
     let section = |text: &str, id: &str| -> String {
@@ -2482,12 +2528,26 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
     for id in ["default", "lan-2"] {
         std::fs::write(
             sys.join(format!("models@{id}.ini")),
-            pai_core::assign::render(&on, &off, Some(&section(keys, id))),
+            pai_core::assign::render_profile(&pool, PROFILES, "gpu"),
         )
         .expect("render");
     }
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
-    let off_text = || text_of("models.ini.disabled");
+    let pool_text = || text_of("models.ini");
+    // Every render, by instance with its bytes: a create joins no entry, and the
+    // delete below takes a model no entry listed.
+    let renders = || -> Vec<(String, Vec<u8>)> {
+        ["default", "lan-2"]
+            .iter()
+            .map(|id| {
+                (
+                    id.to_string(),
+                    std::fs::read(sys.join(format!("models@{id}.ini"))).expect("render"),
+                )
+            })
+            .collect()
+    };
+    let renders_before = renders();
     let refused = |key: &'static str, values: &[&str]| -> Result<(), ClientError> {
         Err(ClientError::Invalid(Refusal {
             key,
@@ -2509,13 +2569,13 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
         "a profile of a model file of the node"
     );
     assert_eq!(
-        section(&off_text(), "pipe-model"),
+        section(&pool_text(), "pipe-model"),
         "[pipe-model]\nmodel = /models/pipe-model.gguf\n",
-        "the new section, at the end of the switched-off file: {}",
-        off_text()
+        "the new section, at the end of the pool: {}",
+        pool_text()
     );
     assert_eq!(
-        std::fs::metadata(sys.join("models.ini.disabled"))
+        std::fs::metadata(sys.join("models.ini"))
             .expect("metadata")
             .permissions()
             .mode()
@@ -2546,57 +2606,75 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
         "a profile of a repository with no file named"
     );
     assert_eq!(
-        section(&off_text(), "pipe-hf"),
+        section(&pool_text(), "pipe-hf"),
         "[pipe-hf]\nhf-file = Q4_K_M.gguf\nhf-repo = org/repo\n",
         "the pick's two keys, sorted: {}",
-        off_text()
+        pool_text()
     );
     assert_eq!(
-        section(&off_text(), "pipe-repo"),
+        section(&pool_text(), "pipe-repo"),
         "[pipe-repo]\nhf-repo = org/other\n",
         "a repository alone is one key, and no `model`: {}",
-        off_text()
+        pool_text()
     );
 
     // ── The clone: the source's lines, kept ────────────────────────────────
     assert_eq!(
         client.create_model_profile("pipe-clone", &ModelProfileSource::From("off-one".into())),
         Ok(()),
-        "a copy of a switched-off profile"
+        "a copy of a model no entry lists"
     );
     assert_eq!(
-        section(&off_text(), "pipe-clone"),
+        section(&pool_text(), "pipe-clone"),
         // The source's lines with its trailing blank separator left out
         // (MP1, ARCHITECTURE.md done-when): the copy ends with one ending.
         format!(
             "[pipe-clone]\n{}\n",
-            section(&off, "off-one")["[off-one]\n".len()..].trim_end_matches('\n')
+            section(&pool, "off-one")["[off-one]\n".len()..].trim_end_matches('\n')
         ),
         "the source's comment, keys and order, under the new header, no blank at the \
          end: {}",
-        off_text()
+        pool_text()
     );
     assert_eq!(
         client.create_model_profile("pipe-on-clone", &ModelProfileSource::From("On-One".into())),
         Ok(()),
-        "the source of a switched-on profile: the clone is born switched off"
+        "the source of a model an entry lists: the copy joins no entry, so it serves nobody"
     );
     assert_eq!(
-        section(&off_text(), "pipe-on-clone"),
+        section(&pool_text(), "pipe-on-clone"),
         format!(
             "[pipe-on-clone]\n{}\n",
-            section(&on, "On-One")["[On-One]\n".len()..].trim_end_matches('\n')
+            section(&pool, "On-One")["[On-One]\n".len()..].trim_end_matches('\n')
         ),
-        "the source's lines, in the switched-off file: {}",
-        off_text()
+        "the source's lines, in the pool: {}",
+        pool_text()
     );
     assert_eq!(
-        text_of("models.ini"),
-        on,
-        "the switched-on file keeps every byte of itself"
+        text_of("models.ini.disabled"),
+        retired,
+        "the retired switched-off file keeps every byte: a create writes the pool"
     );
-    assert_eq!(text_of("assignments.ini"), keys, "a create assigns nothing");
-    assert_eq!(text_of("instances.ini"), record, "and writes no record");
+    assert_eq!(
+        text_of("assignments.ini"),
+        keys,
+        "a create writes no key of the retired record"
+    );
+    assert_eq!(
+        text_of("instance-profiles.ini"),
+        PROFILES,
+        "and joins no entry: a new model is in no instance's list until a page writes it"
+    );
+    assert_eq!(
+        text_of("instances.ini"),
+        RECORD,
+        "and writes no instance record"
+    );
+    assert_eq!(
+        renders(),
+        renders_before,
+        "no create joined an entry, so no instance's render moved"
+    );
 
     // ── Every rule's refusal, decoded by the client ────────────────────────
     for (id, source, want, why) in [
@@ -2626,43 +2704,49 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
         );
     }
     assert!(
-        !off_text().contains("[pipe-nosuch]"),
+        !pool_text().contains("[pipe-nosuch]"),
         "a refused create wrote nothing: {}",
-        off_text()
+        pool_text()
     );
 
-    // ── The delete: the section alone, out ─────────────────────────────────
+    // ── The delete: the section alone, out of the pool ─────────────────────
     assert_eq!(
         client.delete_model_profile("free-me"),
         Ok(()),
-        "a profile no instance assigns"
+        "a model no entry lists"
     );
-    assert_eq!(section(&off_text(), "free-me"), "", "its section is gone");
+    assert_eq!(section(&pool_text(), "free-me"), "", "its section is gone");
     assert!(
-        section(&off_text(), "pipe-clone").contains("a note"),
+        section(&pool_text(), "pipe-clone").contains("a note"),
         "the neighbour's section is kept: {}",
-        off_text()
+        pool_text()
     );
     for (id, want, why) in [
         (
-            "on-one",
-            refused("model-profile-enabled", &["on-one"]),
-            "a profile that is switched on",
+            "On-One",
+            refused("model-profile-assigned", &["On-One", "gpu"]),
+            "the entry `[gpu/On-One]` lists it",
         ),
         (
-            "Twin",
-            refused("model-profile-enabled", &["Twin"]),
-            "the twin an interrupted switch left in both files",
+            "twin",
+            refused("model-profile-assigned", &["twin", "gpu"]),
+            "the entry `[gpu/twin]`, naming the profile once though two instances run it",
         ),
         (
-            "two-places",
-            refused("model-profile-assigned", &["two-places", "default, lan-2"]),
-            "a profile two instances assign: both named, in the record's order",
+            "TWO-PLACES",
+            refused("model-profile-assigned", &["TWO-PLACES", "gpu"]),
+            "the entry `[gpu/two-places]`, in the other letter case: the retired record's \
+             keys are no rule",
+        ),
+        (
+            "Retired",
+            refused("no-model-profile-named", &["Retired"]),
+            "a section of the retired switched-off file is no proof it exists",
         ),
         (
             "gone",
             refused("no-model-profile-named", &["gone"]),
-            "a profile neither file holds",
+            "a model the pool does not hold",
         ),
         (
             "*",
@@ -2675,11 +2759,16 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
     assert_eq!(
         text_of("assignments.ini"),
         keys,
-        "neither the create nor the delete of a free profile writes a key"
+        "neither the create nor the delete of a free model writes a key of the retired record"
+    );
+    assert_eq!(
+        renders(),
+        renders_before,
+        "and no render moved: the deleted model was in no entry, so in no render"
     );
     assert_eq!(
         asked(&c),
-        vec![(alice.clone(), Action::Configure); 14],
+        vec![(alice.clone(), Action::Configure); 15],
         "every verb asked configure of the connection's caller, once per call"
     );
     assert_eq!(
@@ -2703,9 +2792,10 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
         "the same for a delete"
     );
     assert!(
-        !off_text().contains("[pipe-no]") && section(&off_text(), "pipe-clone").contains("a note"),
+        !pool_text().contains("[pipe-no]")
+            && section(&pool_text(), "pipe-clone").contains("a note"),
         "the refused calls wrote and removed nothing: {}",
-        off_text()
+        pool_text()
     );
     hang_up(server, client);
 
@@ -2723,10 +2813,10 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
         "the member's create, vouched for by the bff"
     );
     assert_eq!(
-        section(&off_text(), "as-mp"),
+        section(&pool_text(), "as-mp"),
         "[as-mp]\nmodel = /models/as.gguf\n",
-        "the profile the member's create wrote: {}",
-        off_text()
+        "the profile the member's create wrote, in the pool: {}",
+        pool_text()
     );
     assert_eq!(
         client
@@ -2741,9 +2831,10 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
             .delete_model_profile("two-places"),
         Err(ClientError::Invalid(Refusal {
             key: "model-profile-assigned",
-            values: vec!["two-places".into(), "default, lan-2".into()],
+            values: vec!["two-places".into(), "gpu".into()],
         })),
-        "the member's delete of an assigned profile is the rule's refusal"
+        "the member's delete of a model an entry lists is the rule's refusal, naming the \
+         instance profile that lists it"
     );
     assert_eq!(
         client.acting_for("alice").delete_model_profile("as-mp"),
@@ -2756,9 +2847,9 @@ pub(crate) fn manager_pipe_client_model_profiles_e2e() {
         "the same for a delete"
     );
     assert!(
-        !off_text().contains("[as-bob]") && section(&off_text(), "pipe-clone").contains("a note"),
+        !pool_text().contains("[as-bob]") && section(&pool_text(), "pipe-clone").contains("a note"),
         "a refusal of the `As` form wrote and removed nothing: {}",
-        off_text()
+        pool_text()
     );
     assert_eq!(
         *asked_admin.lock().unwrap(),
@@ -2819,6 +2910,12 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     std::fs::write(sys.join("models.ini.disabled"), "").expect("models.ini.disabled");
     for id in ["default", "lab"] {
         std::fs::write(sys.join(format!("models@{id}.ini")), "").expect("render");
+    }
+    // Each of the two launched on the pair standing now (IP3c), the render the
+    // fixture wrote: every write that renders moves a pair off that record, so
+    // the writes below answer a real drift and ask those instances' states.
+    for id in ["default", "lab"] {
+        crate::manager::service::write_applied(id).expect("the applied record");
     }
 
     let pool = || std::fs::read_to_string(sys.join("instance-profiles.ini")).expect("pool");
@@ -2982,8 +3079,9 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
     let kept = pool();
     assert_eq!(
         client.remove_instance_profile_model("default", "gone"),
-        Ok(()),
-        "removing an entry the profile does not list is no refusal"
+        refused("no-instance-profile-model", &["default", "gone"]),
+        "removing an entry the profile does not list is its own conflict, naming the \
+         profile and the model"
     );
     assert_eq!(pool(), kept, "and it wrote no byte");
 
@@ -3200,10 +3298,22 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
         "every verb asked configure of the connection's caller, once per call, the \
          reads too: the pool's read is a `configure` read"
     );
-    assert_eq!(
-        calls(&c),
-        vec![],
-        "no verb of an instance profile touches a unit"
+    let states: Vec<String> = calls(&c)
+        .into_iter()
+        .map(|call| match call {
+            Call::Status(id) => id,
+            other => panic!("IP3c: a save of this phase asks a state, no unit verb: {other:?}"),
+        })
+        .collect();
+    assert!(
+        states.iter().all(|id| id == "default" || id == "lab")
+            && states.iter().any(|id| id == "default")
+            && states.iter().any(|id| id == "lab"),
+        "IP3c: every ask is the state of one of the record's two instances, each of which the \
+         fixture launched on the pair standing then: `pipe-new` and `pipe-new2` are created by \
+         this phase, so they applied nothing and no save asks them. Which write answers which \
+         pair, in record order, is pinned with every pair named in `tests::convergence` and \
+         `tests::instance_profile_entries`: {states:?}"
     );
     hang_up(server, client);
 
@@ -3355,10 +3465,22 @@ pub(crate) fn manager_pipe_client_instance_profiles_e2e() {
         "the `As` calls ask polkit nothing: only the plain verb on the bff's own \
          connection asked, of the bff"
     );
-    assert_eq!(
-        calls(&c),
-        vec![],
-        "no verb of an instance profile touches a unit, for a member either"
+    let states: Vec<String> = calls(&c)
+        .into_iter()
+        .map(|call| match call {
+            Call::Status(id) => id,
+            other => panic!("IP3c: a save of this phase asks a state, no unit verb: {other:?}"),
+        })
+        .collect();
+    assert!(
+        states.iter().all(|id| id == "default" || id == "lab")
+            && states.iter().any(|id| id == "default")
+            && states.iter().any(|id| id == "lab"),
+        "IP3c: every ask is the state of one of the two instances that recorded the pair their \
+         launch started with: `pipe-new` and `pipe-new2` were created by this phase, so they \
+         applied nothing and no save asks them. The exact set each write answers, in record \
+         order, is pinned with every pair named in `tests::convergence` and \
+         `tests::instance_profile_entries`: {states:?}"
     );
     hang_up(server, client);
 }

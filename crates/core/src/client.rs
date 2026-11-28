@@ -219,6 +219,14 @@ pub struct ManagerVersion {
 /// wrote it (IL1): the name the web UI shows beside the id. `None` is no
 /// label, which is what a section with no `Label` key is, and what a manager
 /// of an older protocol answers: the UI falls back to the engine and the port.
+///
+/// The last three are the states of the apply (IP3c, `ARCHITECTURE.md`
+/// "Convergence"), derived by the manager from the files and never kept:
+/// `converged` says the instance's rendered pair is the pair its profiles
+/// render, `reason` is the keyed check that stopped the pair when it is not
+/// (`None` for a converged instance), and `pending_restart` says the running
+/// instance runs a pair that is not the one on disk. A manager of a protocol
+/// that answers none of them reads converged with no drift.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceInfo {
     pub id: String,
@@ -228,6 +236,18 @@ pub struct InstanceInfo {
     pub profile_tags: Vec<String>,
     pub instance_tags: Vec<String>,
     pub label: Option<String>,
+    pub converged: bool,
+    pub reason: Option<NotConverged>,
+    pub pending_restart: bool,
+}
+
+/// One instance's not-converged reason: the keyed check that refused to write
+/// its pair, with the arguments the check carried (the strings file fills them
+/// in, `pai_core::checks`). The manager answers it as `{key, args}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotConverged {
+    pub key: String,
+    pub args: Vec<String>,
 }
 
 /// One compute device of the node, as the engine's own probe reported it: the

@@ -31,6 +31,9 @@ fn data_root_e2e() {
 
     // ── The instances' default state directory (paths.rs) ────────────────
     crate::paths::instance_state_dir_e2e();
+
+    // ── The server profile an instance resolves to (paths.rs) ─────────────
+    crate::paths::instance_server_profile_order_e2e();
 }
 
 /// The paths with no test redirect, named after the project, and the old

@@ -4882,8 +4882,15 @@ chose:
   - **`ModelsMax` against the render's `load-on-startup` count is a fit check of the instance**,
     because each instance has its own server profile.
   - The states reach the bff on every transport. The bus's `Instances` row keeps its signature, and
-    a sibling method `InstanceStates(As)` answers `{id, converged, reason, pendingRestart}` per
-    instance, as the pipe's `ListInstances` does.
+    a sibling method `InstanceStates()` answers `{id, converged, reason, pendingRestart}` per
+    instance, as the pipe's `ListInstances` does. Built with no `As` form: it is answered to any
+    caller, as `Instances` is, and reads only files. A manager without the method reads as all
+    converged in the client (a skew of one deploy, no security effect).
+  - Accepted at the re-review (2026-11-28): a `ModelsMax` change that leaves an instance over its
+    cap is saved, and that instance is reported not converged as `load-on-startup-over-max`
+    (args: count, cap, instance). A save whose pair bytes do not change asks no state. A label is
+    metadata: its write renders and asks nothing. An instance with no `applied` record is never in
+    a save's `running` (it already reads `pendingRestart`, once after the deploy).
 - **IP6** (briefs 26, 16 and the Overview): the two marks and the status lists.
 
 ## Removing pai-config (user, 2026-11-26/27): accepted (user, 2026-11-27)

@@ -139,6 +139,35 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Prove a test exists with `-- --list | grep -c "^<name>:"`, never by running it.
 - Judge red from the OUTPUT (`FAILED`, `panicked at`), never the exit code.
 
+### Enumerating EVERY red of the one `data_root_e2e` in one pass
+
+- In a scratch copy (own `CARGO_TARGET_DIR`, never the repo's), rewrite every check into a NON-FATAL mark
+  with a python script, run the one `#[test]` once, and `grep IP3C-RED`: a sequential `data_root_e2e`
+  prints one panic, this prints every site. The marks: `assert!(c, msg)` →
+  `if !(c) { eprintln!("IP3C-RED file:line kind | {}", msg); }`, `assert_eq!(a, b, msg)` →
+  `{ match (&(a), &(b)) { (ip3c_a, ip3c_b) => if ip3c_a != ip3c_b { eprintln!(…) } } }`, a bare `panic!`
+  → mark + `panic!("IP3C-ABORT")` (its type divergence keeps the types). Convert the phases' files AND the
+  `#[cfg(test)]` regions of the production files (the manager's 8 bus phases live inside `manager/dbus.rs`:
+  converting only `tests/*.rs` loses a whole phase's marks to its first raw `assert`). Wrap each phase call
+  in `tests/mod.rs` in `catch_unwind(AssertUnwindSafe(…))` printing `PANIC-IN <phase>`, and print
+  `IP3C-PHASE <label>` BEFORE each call: labels go in before the first run, else the marks after a phase
+  abort are unattributed and the run repeats.
+- The converter must be string/comment-masked, and mask the turbofish `::<…>` lists too (fill them with
+  neutral bytes): a `body::<Vec<(String, …)>>(&r)` turbofish's inner commas and `>` break the delimiter
+  matcher and split the `assert_eq!` in the middle. Apply nested sites (an `assert_eq!` whose operand holds
+  an `.unwrap()`) innermost-out, tracking byte deltas. `.lock().unwrap()` → a helper returning
+  `MutexGuard-poison.into_inner()`: poisoning the shared fakes' mutex kills every later phase.
+- For `.expect`/`.unwrap`, a helper `.ip3c(..)` that marks and hands back `T::default()` lets the phase run
+  on; sites whose `T` is not `Default` (a `TempDir`, a zbus `Connection`) fail the method's bound, so harvest
+  the `E0599` sites from the cargo log (`the method `ip3c` exists for …`) and rewrite them to `.ip3c_fatal(..)`
+  (mark + `panic!("IP3C-ABORT")`), looping rebuild-harvest until the copy compiles. Those sites then show as
+  `PANIC-IN <phase>`, not as marks: convert `.expect_err` and friends too, or enumerate what fires and
+  hand-convert the firing site (one `.expect_err` was the sole abort left in the final run).
+- Count marks by UNIQUE SITE, not lines (an `assert!` in a 5-field loop marks 5 times).
+- A harness `use` under `#[cfg(test)]` inserted at the top of a production file SHIFTS that file's own
+  source-pin: `manager_action_log_e2e` slices `include_str!(service.rs)` at the FIRST `#[cfg(test)]`, so its
+  5 literal pins red in the copy as an ARTIFACT of the harness, not of the tree. Say so in the report.
+
 ### Mutants and scratch proofs
 
 - Write a mutant script that: copies the file to its own backup, applies ONE exact snippet
@@ -336,6 +365,29 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   count must add a probe on the path the save takes (the memory fit check's `gpus.gpus()`, not the device
   bound's), and the phase's EARLIER exact-count pin (an `asks == ["gpus"]` block) masks it: delete that
   marker block to show the later pin's teeth.
+- A pin that a READ of a NOT-converged instance asks the GPU probe nothing needs the not-converged state
+  made by the MEMORY check (grow `ctx-size` past a small card, the `ip3c_fit_split_e2e` fixture):
+  `check_render_memory` asks the seam only once a section grew against the pair on disk or the cards
+  narrowed, so a device-only refusal (`model-profile-device-outside`) probes nothing at the read and the
+  pin is a day-one green with no teeth.
+- A phase's local binding shadows a module helper of the same name for the REST of the function (an early
+  `let rows = rows(&m, &alice)` kills the helper for a later block, which is
+  `error[E0618]: expected function, found Vec<Value>`): call it by full path
+  (`crate::tests::convergence::rows(..)`) and name the binding.
+- Pin a save's `running` as the running instances that DRIFT at the moment it answers, not the ones the
+  save moved (IP3c review): a verb that moves no render still answers a running instance an earlier save
+  left off its `applied` record, and the remove that puts a pair BACK on the record answers nobody. So a
+  helper that pins "the pair keeps its bytes" (`unmoved`) cannot serve a restore: pin the restore's bytes
+  against the pair taken BEFORE the save that moved it.
+- `remove_instance` refuses a running instance (`instance-running`, values `[id]`): a removal pin keeps the
+  id OUT of `FakeService::running`, else the phase reds on that refusal and never reaches its pair pins.
+  `create_instance` proposes the first port the node holds nothing on, so a recreation of a removed id
+  takes the port the removed instance held, and the record's `Port` (not the server profile's own) is what
+  the rendered launch carries.
+- Pin a per-instance fit (IP3c: one model profile, two card sets) with each instance on its OWN server
+  profile through the record's `ServerProfile` key (`desk` → `CUDA0`, `lab` → `CUDA1`): with both
+  instances following the pool's `[gpu] ServerProfile` a device refusal is node-wide, and the criterion's
+  "the row moves to the other instance" half has no fixture.
 - Read the pure render first (`pai_core::assign::render`): it already copies the pool's `[*]` section
   verbatim, so "an explicit pool `[*]` value is copied as is, nothing added" is a day-one green pin, and
   the slice's red is only the line the render ADDS.
@@ -404,6 +456,43 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - A test helper that hands back a manager spells its generics
   (`Manager<fakes::FakeService, fakes::FakeAuthority, fakes::FakeResolver>`): bare `Manager` is
   `error[E0107]: missing generics`, and a compile red is not a red.
+
+### The isolated data-root helper (TS2)
+
+- An isolation body runs in a CHILD of the test binary, which re-runs the calling test function, so the
+  parent learns anything from it through two channels only: the child's stdout (the helper forwards it into
+  its own failure text: pin a panicking body by `catch_unwind` + `payload.contains(<the body's marker>)`),
+  and a file the child writes in a folder the PARENT put in the env the child inherits (the parent cannot
+  pass per-child env: the helper spawns the child). Pin that inheritance as the report file's presence,
+  with the reason in the expect.
+- Because the child re-runs the calling function, a `catch_unwind` around the helper call wraps the CHILD's
+  run of the body too: a panicking body written in the pin's own closure is swallowed there, the child
+  passes, and the parent's catcher has nothing to catch. Put a panicking body in a `#[test]` of its own with
+  no catcher (the TS2b phase shape) and spawn that path; likewise a report dir the child must write into is
+  made and put in the env OUTSIDE the child's function, whose preamble the child runs again.
+- An `#[ignore]`d child test (so it fails no suite run of its own: run plainly it parents itself, spawns a
+  grandchild, and fails on that) runs only when the helper passes `--include-ignored`. The red reads
+  `passed and failed Some((0, 0))` with exit 0 and the child's line `... ignored`; `--exact` keeps the
+  helper's "exactly 1 passed" rule meaningful. Prove the pair green by running the test binary directly with
+  that flag (its path is in the run's `Running` line): the panicking child prints `0 passed; 1 failed`, the
+  reporting one `1 passed` plus its root path, which is then gone with its parent.
+- With `--nocapture` the child's panic text lands on its STDERR only (`grep -c` over `2>/dev/null` answers
+  0): a marker pin has teeth because the helper embeds the child's stderr in its failure text, so say so in
+  the pin's comment and prove the channel with the two split-stream runs.
+- Pin `isolated`'s failure cases so an `unimplemented!()` stub cannot pass them green: assert the caught
+  payload carries the child's marker, and that a 0-test path's payload names the path. A bare
+  `is_err()` is green on the stub.
+- A body that writes under the data root asserts `data_root().starts_with(std::env::temp_dir())` BEFORE
+  the write: a body running with no redirect writes into the user's real tree.
+- "Distinct roots" across two isolated tests is a RACE pin: each body writes its marker, sleeps
+  ~200 ms, then asserts the sibling's marker is absent. It has teeth only while both roots live.
+- `redirect_for_tests` needs a temp-dir guard bound in the 4 lines above (`redirect_lint.rs`), so a stub
+  must not call it: name it in `//` lines only (the scan strips comments).
+- `tempfile` is a `pai-core` DEV-dependency: a helper in the lib that the other crates' tests reach
+  through `feature = "test-support"` compiles for them only once the feature carries
+  `dep:tempfile`. The coder's `Cargo.toml` job, not the tester's.
+- rustfmt's `reorder_modules` sorts `pub mod` lines: a comment-attached `pub mod isolated;` lands where
+  the sort puts it, so place the comment with it and let `fmt --check` (read-only) say where.
 
 ### The bff (Rust)
 
@@ -486,6 +575,57 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   touching the fake. A key the brief REMOVES goes out of `EN` and into that test's `removed` list; a test
   that pins its words are on no page writes the sentence as a literal constant, because `en(key)` throws
   once the key leaves the map (the red then names your test, not the slice).
+
+### Moving a test module out of a production file (a mechanical slice)
+
+- Sweep for a test that reads its OWN source first: `grep -rn 'mod tests {' crates/<crate>/src` and
+  `grep -rn 'include_str!' crates/<crate>/src`. A source lint that slices `src[..src.find("mod tests {")]` (the one in
+  `pai-app`'s `model_profiles_tests.rs`) dies on its own `expect` once the module is a `mod tests;` declaration: the fix
+  is that read and nothing else, `let production = include_str!("<file>.rs");`, because the whole file IS production now.
+- An `include_str!` inside a moved body keeps resolving: a `<name>_tests.rs` sibling sits in the SAME directory as the
+  file it came from. That is the only reason the sibling shape is safe.
+- Dedent the body by 4 (rustfmt wants a top-level file at column 0), but NEVER a line that starts inside a multi-line
+  literal: those bytes are fixture data, and a fixture line at column 0 is common (`[Qwen3-8B-Q4_K_M]\r\n\` in
+  `model_profiles.rs`). A string/comment-aware scanner is required to know: a plain brace counter counts the braces in
+  JSON fixtures, and a `'` rule that reads `'\\'` as a closed char literal, so both lose the module's closing brace.
+  The shape that needs no scanner (pai-core TS1, 8 files): the body is `lines[i+2 .. end]` where `lines[i]` is
+  `#[cfg(test)]`, `lines[i+1]` is exactly `mod tests {`, and `end` is the first line after it that is exactly `}` at
+  column 0; assert `end == len(lines) - 2` (the block is the file's tail) and that the line above is blank. Off by one
+  (body from `i+1`) writes a `mod tests {` with no closer, and rustfmt aborts with `unclosed delimiter`, which reads as
+  a broken block, not as your slice bug.
+- `git diff --stat -- <the moved files>` right after the move: each file's deletions == its block size (block lines -
+  the reused `#[cfg(test)]`) proves the file carried NO other role's uncommitted lines, so HEAD is a valid baseline for
+  the faithfulness diff and a plain `git show HEAD:<file>` reconstruction is safe (never `git checkout` a dirty tree).
+- Move only the `mod tests` block: a file may sit a `#[cfg(test)] pub(crate) fn *_e2e()` phase right ABOVE it
+  (`server_cfg_defaults_e2e` in `pai-core`'s `server_cfg.rs`, called by `src/tests/mod.rs`); that fn is production code
+  the e2e test links, so it stays. And a file whose tests live in TWO NAMED `#[cfg(test)] mod <name>` modules
+  (`vulkan.rs`: `an2_vulkan_parser`, `an2_vulkan_join`) does not fit the `<name>_tests.rs` + `mod tests;` shape without
+  renaming every test in it (a module's NAME fixes the test path): skip it and say so, one path file per named module
+  is the only name-preserving shape and it breaks the `<name>_tests.rs` convention.
+- Format ONLY your new files (`rustfmt --edition 2021 <file>`), never `cargo fmt -p` in a tree carrying another role's
+  uncommitted lines (the one safe shape: every TRACKED file of the crate is yours, then `cargo fmt -p <crate>` proven by
+  a `git status --porcelain -- <crate>` and a `git diff --stat -- <crate>` taken before and after, both byte-equal). rustfmt at column 0 joins lines that fit and unwraps single-expression closures and match arms
+  (`|p| { e }` to `|p| e`, `=> { "x" }` to `=> "x",`), so prove the move by comparing each new file, whitespace-squashed,
+  with `git show HEAD:<file>`'s block body, and re-run the counts after formatting.
+- Prove the counts by NAME LIST, not only totals: diff the sorted `^test .* \.\.\. (ok|ignored)` lines of the before and
+  after logs (`pai-app`: 581 lines, `xtask`: 431), so a module rename shows as a diff and not as the same pass count.
+  Get the BEFORE log by running the crate in a `git worktree add --detach <tmp> HEAD` with the repo's own
+  `CARGO_TARGET_DIR` (its deps are reused, ~1 min), then `git worktree remove <tmp>`.
+- A child `mod x;` declared inside a `#[path]` module is looked up BESIDE the file that DECLARES the module, not beside
+  the `#[path]` file: xtask's `common/msi.rs` tests declare `mod engine_lifecycle; mod minimal; mod two_installers;`,
+  whose files sat in `common/msi/tests/`. Moved to `common/msi_tests/` they still needed
+  `#[path = "msi_tests/<x>.rs"]` on each `mod`, else E0583 names `common/<x>.rs` as the path it wanted.
+- Grep the moved file's AND directory's NAME repo-wide (`grep -rn "msi/tests" xtask crates installer`): a test lint skips
+  files by a hardcoded path (`nothing_names_the_registry_value_the_framework_dropped` in
+  `xtask/src/common/msi_tests/engine_lifecycle.rs` skipped `xtask/src/common/msi/tests`), and a doc comment in one test
+  file points at a test fn in another (`names_lint.rs` named `common/msi.rs`'s test). The first is a red, the second a
+  stale pointer. Shipped strings that name a generator file (the systemd unit text in `linux/system_files.rs`) are
+  production data: report them, edit nothing.
+- Name your scratch script with `$OPENCODE_SESSION_ID`: `/tmp/opencode/` is shared with the other roles, and a peer
+  running the same slice under the same name (`ts1_move.py`) overwrites yours mid-task, so its abort reads as your own.
+- `cargo check -p <crate> --all-targets --target x86_64-pc-windows-gnu -v | grep -c -- --test` answers >= 1: the proof
+  the `cfg(windows)` test code was type-checked. A `#[path]` at a missing file is a hard error, so the green check also
+  proves every moved file was found.
 
 ### The web UI (fe/): running and probing
 
@@ -599,6 +739,11 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 
 - Never query before the async read settles: add an async finder, settle signed-out states by the sign-in
   `h1`, and settle on the page's `h1` before asserting loading text.
+- A file's `loaded()` helper that waits for the page's `table` cannot open the EMPTY state (no table ever
+  lands, so its `waitFor` times out as "expected null not to be null"): open the page and settle on the
+  state's own text, `await findByText(en('<x>-empty'))`. The same for a page's own loading line: while the
+  app boots the shell's U17a skeleton is what shows, so `findByText`, never `getByText`, in a test that
+  opens the page.
 - A row or link that arrives WITH a read is found with `findByRole` after a navigation, never
   `getByRole`: the target page's h1 is on screen while its list read is still open, so a sync query right
   after the h1 reds only under load (`ServerSave.test.tsx`'s `1b.36b` nav to the server profile).
@@ -925,7 +1070,10 @@ frozen list.
   `ModelProfilesDelete1`, `ModelProfilesFilter`, `ModelProfilesOverMemory`, `ModelProfilesSwitch`,
   `U17cSort`, `ModelProfilePage`. Read it through `rowName(cell)` (`fe/src/test/bff.ts`: the cell's text
   without its `.muted` runs). The id alone names the row's controls, so a reader built on the cell's whole
-  text reds on the engine copy, and a reader that spells the engine stays red after the fix.
+  text reds on the engine copy, and a reader that spells the engine stays red after the fix. In a NEW list
+  file write that reader from the start, and match the row on the id EQUALS the name cell
+  (`cellText(name, true) === id`), not `includes(id)`: `includes` answers for the first row whose id merely
+  contains the wanted one (the id `small` found the row whose Server profile line reads `smalldefault`).
 - Amend `MODEL_PROFILE_CARDS` in `fe/src/test/modelProfileCards.ts` when a card gains always-visible
   controls (`extraStops`: a strings key is a button, `{about: key}` its Field's About toggle,
   `{input: key}` a text input, no button), and `EDITABLE_BY_ID` in `ModelProfileSave1.test.tsx` 2h.130,
@@ -968,6 +1116,17 @@ frozen list.
   the `EN[...]` variants), then check tails (`grep -L` for the new key; `grep -rn "slice(-[0-9]"` for
   windowed lists) and `NodePage`'s list. Then rewrite what the sweep cannot: a `parseRoute` pin of
   `not-found` for the new address, a group's href list, an `aria-current` case, a "gains no such key" pin.
+  A windowed list that already carries the new key reds as "expected [x, …(11)] to deeply equal
+  [x, …(12)]": the ARRAY grew, the window did not, so set `slice(0, n)` / `slice(-n)` to the array's own
+  length. Read a group's entry by href (`links.filter((l) => l.href === '#/profiles/server')`, one helper
+  in the file), not `links[0]`: a later entry shifts every index pin of that group. The enumeration pins
+  that move with it are the counts, not the words: `HearthIcons` H8a.2's `svg.icon` count and H8a.8's
+  `nav:` row of its `test.each` table, `NodesMenu1`/`NodesMenu2`'s group href lists, `ProfilesNav` 5b.1's
+  `toHaveLength` and `navLinks()` arrays, and `Reflow` R1.8's frozen `CLASSES` (the new list page's table
+  class joins it). To find the one class a slice adds to the sheet, diff it: read `src/index.css`, strip
+  `/\*..\*/` comments, match `\.([a-zA-Z][\w-]*)`, and drop the names R1.8's namespaces allow
+  (`ot-*`, `instance-name-*`, `instance-models-*`, `restart-offer-*`, `field-after`, `hf-*`,
+  `save-bar-delete`, `card-heading`, plus `table-scroll` and the `woff2` of a `format()`).
 - Pin an alias rule on both paths (address equals the state hash: no navigation; address moves:
   `setHash`).
 - Find a tile or an instance link by its address (`a.tile-id[href="#/instances/<id>"]`), not by its text,
@@ -1025,7 +1184,45 @@ frozen list.
 - Prove which UX-check failures are pre-existing by stashing the state edits
   (`git stash push -- fe/ux/check.js fe/ux/stub.py`), running the check, and popping: the skeleton states
   (`loading-node`, `loading-overview`) flake in one browser, and the count of 18 lines per new state is
-  the 6 configs x 3 browsers.
+  the 6 configs x 3 browsers. Judge the run by its `^<browser> ` lines and its `summary:` line: at exit
+  the stub prints `BrokenPipeError` tracebacks of its own `wfile.write`, which are shutdown noise.
+- A rule about WHERE something lands (a line under a name, a head over its column, where an id breaks) has
+  no jsdom pin, jsdom draws no boxes. Its home is the state's `probe: '<name>'`: a fn in `PROBES`,
+  `(page, width) => string[]`, run in the main pass after the settle (the state's `expect`, `click`,
+  `open`, `hover`, `focus` hooks read presence, never geometry). Scope it by `width`, skip a control
+  `getComputedStyle` calls `display: none` or a rect under 2 px (the folded head is hidden
+  visually-hidden-style, so it is 1 px wide and has no column to align with), and read a text node's line
+  breaks with a one-character `Range` per character over the parent's first text node: the breaks are
+  BROWSER-specific (`overflow-wrap: anywhere` splits a numeric run inside a word in Firefox, not in
+  Chromium), so the pin's value is what one browser shows. A rule of the WIDE layout (a nav column's px, a
+  label on one line beside its icon) goes in the same place: gate it the other way
+  (`if (width < 960) return []`, since the nav is not a column below the sheet's breakpoint), read the label
+  with a `Range` over the entry's OWN text node (a label whose box sits under the icon's bottom has moved
+  whole to a line of its own, the sheet's icon rule), and call the group's pills one line each when their
+  `getBoundingClientRect().height` values agree. Probes run in the MAIN pass only (the text pass reads
+  `scrollWidth` alone), so a probe never reddens at 200 % text.
+- Probe one state in seconds instead of the 5 minute full run: a temp `.cjs` INSIDE `fe/ux/` (`playwright`
+  resolves only from there, a `/tmp/opencode/x.cjs` dies `Cannot find module 'playwright'`), spawning
+  `python3 -I fe/ux/stub.py <abs fe/dist> 0` and taking its port from a stdout `data` listener (a
+  `stub.stdout.read()` loop answers `null` and dies `Cannot read properties of null`), then `rm` it. A
+  probe's findings depend on the BUILD, so `npm --prefix fe run build` first.
+- To prove a probe you just wrote, run ITS OWN code, not a copy: write the temp file as
+  `fe/ux/.probe-lib.cjs`, the text of `check.js` with the trailing `main().then(` block cut and
+  `module.exports = { <the fns>, stubPort, STATES, load, rendered }` appended, and reach it from an
+  `.mjs` with `createRequire` on a path inside `fe/ux/` (the copy needs `fe/ux/node_modules` to resolve
+  `@axe-core/playwright`, and `check.js` is CommonJS: `require` there, so an ESM `import` of it dies
+  `require is not defined`). Take the port with the harness's `stubPort` (its first stdout line is the
+  bare number, a `127.0.0.1:(\d+)` regex never matches and the probe hangs to its timeout), and call the
+  harness's `rendered(page, state)` before the probe: the harness gates every probe behind it, so a probe
+  that reads a nav which renders after its reads sees an empty group and reports a false red.
+- A new stub `/__set` key goes in `DEFAULTS` (the stub's own reset list) AND in the reset query of
+  `check.js`'s `load()`, and the fixture for a wrap rule takes the id cap (32 characters) WITH break
+  points, so the cell is at its narrowest where the id has to break.
+- `npx --prefix fe prettier --write fe/ux/check.js` is right (`fe/.prettierrc.json` is found from the
+  file's own path, `fe/.prettierignore` keeps `ux/` out of `format:check`). Prove it moves no foreign line
+  by formatting a copy of `git show HEAD:fe/ux/check.js` placed INSIDE `fe/ux/` and diffing it (0 lines).
+  Formatting that copy outside `fe/` (in `/tmp`) applies Prettier's defaults, double quotes and semicolons,
+  1014 changed lines, which reads as you having reformatted the whole harness.
 
 ### Behaviour that cannot run here
 
@@ -1062,6 +1259,9 @@ frozen list.
   and pass `&rev`.
 - A background run killed by the shell's timeout leaves a partial log full of `test result: ok` and no
   `FAILED`: judge a run complete only by its own exit line, and rerun the crate whole.
+- `rm -rf` of a scratch copy WITH its cargo target dir runs minutes: it crosses the 5 min foreground
+  timeout and lands in the background, which reads as a failed cleanup. Give the delete a long timeout
+  or run it in the background, and prove the tree is gone with `ls -d <copy>` before reporting.
 - Setting `PRIVATE_AI_FE_DIST` reruns the bff's build script and recompiles every target of the crate (it
   falls back to `crates/bff/fe-fixture`): set it only to escape a stale `fe/dist`. `PAI_BFF_FE_DIR` in the
   shell does nothing.
@@ -1184,6 +1384,17 @@ frozen list.
   pair's bytes unchanged, and name the render that DOES move (an entry save, an instance profile switch).
 - An untracked file shows NOTHING in `git diff`: a test file a slice added is `??` in `git status
   --short`, so review it by reading it, not by the diff.
+- A scripted probe insertion anchored on a LINE PREFIX splits the line: an anchor ending
+  `    let text_of` matches the prefix of `let text_of = |..|` and the after-insert lands INSIDE
+  it, and an insert before a `pub(crate) fn` line wedges between its `#[cfg(test)]` attribute and
+  the fn, so the attribute binds the inserted helper. Anchor whole lines that end with `\n`, and
+  append helper fns at EOF (these phase files end inside `#[cfg(test)]`).
+- A zbus `Dict` iter gives `(&Value, &Value)`: there is no `.as_str()`; decode with
+  `.try_clone()` then `.downcast::<String>()` (the `convergence.rs` idiom; a borrowed
+  `Value::downcast` works, `downcast_ref`'s return needs no extra step only for Copy targets).
+  Pair digests settle Root A pins fast: probe `applied_digest`/`pair_digest` beside the save in a
+  scratch copy and read which pair's BYTES move (`pair_moved` = record present AND digests
+  differ; no `applied` record = never asked).
 
 ### The bff (Rust)
 
@@ -1262,6 +1473,11 @@ frozen list.
   shell jobs queued behind it in the same session print nothing at all, which reads as a broken script.
   Read the file's dicts, and drive the routes only as `python3 fe/ux/stub.py <abs fe/dist>` in the
   background, killed by pid.
+- Inside a probe's `page.evaluate`: a `createTreeWalker(…, SHOW_TEXT)` node has no `.closest` (ask its
+  `parentElement`), and `check.js` is plain CommonJS JavaScript, not TypeScript: a `!` non-null assertion is
+  `SyntaxError: missing ) after argument list` at load. Each kills the run before a state line prints,
+  which reads as a broken harness: `node --check fe/ux/check.js` catches the second, a temp probe of the
+  state (above) catches the first.
 - `npx vitest` from the repo root resolves another config and the node environment: every test reds with
   `window is not defined`. `npx --prefix fe vitest run src/x.test.tsx` is the same trap: the reds are
   `TypeError: Cannot read properties of undefined (reading 'restore')` in every file's `afterEach`
@@ -1274,6 +1490,10 @@ frozen list.
   with `-t '<title part>'` and read the `Tests N passed | M skipped` split.
 - In this environment `npm --prefix fe test` exits 1 with an `EISDIR ... getPackageScopeConfig` and a
   `jsdom` message while every file passed: judge from the `Test Files` / `Tests` lines.
+- A full `npm --prefix fe test` run's headline numbers move between runs (file count, test count, red
+  count: 124/2474/39 and 156/1861/55 for the same tree), and a file red under the suite's load is green
+  solo (`Instances17c` 17c.7a, a focus race): census the reds from the per-file `❯ src/…  N failed` lines
+  and re-baseline the files you touched in a HEAD worktree, never against a remembered total.
 - `npx --prefix fe prettier --check src/x.test.tsx` matches NO file and still ends "All matched files use
   Prettier code style!": judge from its `[error] No files matching` line, and run prettier with the cwd
   in `fe/` (or paths from the repo root).
@@ -1369,4 +1589,7 @@ frozen list.
 - No jest-dom matchers are configured: `toContainElement` is a typecheck red (TS2339), not a test red.
   Pin containment with `expect(row.contains(el), 'msg').toBe(true)`.
 - Never leave CPU burners running and never start them unless the brief asks for a load test: they compete with the local model and Strata on the same machine. Always name every red test of a full run (grep the log for FAIL), never "name lost".
+- A whole-suite run shows `App.test.tsx` `1a.5` (the current page's link carries `aria-current="page"`) red
+  once, while that file is green solo and the suite is green just before and just after: on a nav slice,
+  rerun the file and then the suite before reporting, so a load flake is not reported as the slice's red.
 - A labelling element that also carries a decorative muted line names the control with it: the Models row's switch read `Qwen3-27Bllama.cpp` once 22 D4.35 put the engine inside the `aria-labelledby` target, so 77 `getByRole('switch', {name: id})` and tab-name pins went red across ten files from ONE markup defect. Report the fan-out as one defect, sweep the test-side id readers to `rowName`, and pin the rule (the labelling element holds the id alone, the line sits beside it) in the slice's own file.

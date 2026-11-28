@@ -850,6 +850,9 @@ pub mod fake {
                     profile_tags: vec![],
                     instance_tags: vec![],
                     label: None,
+                    converged: true,
+                    reason: None,
+                    pending_restart: false,
                 }],
                 fail_instances: None,
                 files: Files::default(),
@@ -883,6 +886,9 @@ pub mod fake {
                 profile_tags: vec![],
                 instance_tags: vec![],
                 label: None,
+                converged: true,
+                reason: None,
+                pending_restart: false,
             }];
             self
         }
@@ -1030,6 +1036,9 @@ pub mod fake {
                 profile_tags: Vec::new(),
                 instance_tags: Vec::new(),
                 label: None,
+                converged: true,
+                reason: None,
+                pending_restart: false,
             }])
         }
         fn status(&self, _id: &str) -> Result<InstanceState, ClientError> {

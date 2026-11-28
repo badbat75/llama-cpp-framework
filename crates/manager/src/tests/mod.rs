@@ -40,6 +40,12 @@ mod gt5a_windows_gate;
 // record. Every phase redirects the data root, so they run in the one test
 // below, in order.
 mod instance_profile_entries;
+// IP3c (ARCHITECTURE.md "Convergence: idempotent apply, drift and the last good
+// render"): the fit split judged per instance, the rendered pair as the last good
+// state, the drift of a running instance, and the rows that report both. The rows
+// are read over the stream, so this module is Unix, as `pipe_client` is.
+#[cfg(unix)]
+mod convergence;
 
 #[test]
 fn data_root_e2e() {
@@ -218,6 +224,48 @@ fn data_root_e2e() {
     // ── Manager core: IP3b 7, one pool file, no assignment record ────────
     instance_profile_entries::ip3b_pool_is_one_file_e2e();
 
+    // ── Manager core: IP3c 1, the fit split, the rendered pair, the intrinsic refusal ─
+    // (ARCHITECTURE.md "Convergence: idempotent apply, drift and the last good
+    // render": the save that fits one instance and not the other.)
+    #[cfg(unix)]
+    convergence::ip3c_fit_split_e2e();
+
+    // ── Manager core: IP3c 3, the drift of a running instance, and the save's answer ─
+    #[cfg(unix)]
+    convergence::ip3c_drift_e2e();
+
+    // ── Manager core: IP3c 4, not converged and drift survive a manager restart ─
+    #[cfg(unix)]
+    convergence::ip3c_not_converged_survives_restart_e2e();
+
+    // ── Manager core: IP3c 7, the five re-rendering saves answer `{running, notConverged}`, over the stream and over D-Bus ─
+    #[cfg(target_os = "linux")]
+    convergence::ip3c_saves_answer_convergence_e2e();
+
+    // ── Manager core: IP3c review 1, the removal takes the whole pair (launch included), the recreation is judged with no file standing ─
+    #[cfg(unix)]
+    convergence::ip3c_removal_takes_the_pair_e2e();
+
+    // ── Manager core: IP3c review 3, one instance profile on two instances with card sets of their own ─
+    #[cfg(target_os = "linux")]
+    convergence::ip3c_two_profiles_one_entry_two_card_sets_e2e();
+
+    // ── Manager core: IP3c review 4, the instance list asks the probe nothing and the unit state only of drifters ─
+    #[cfg(unix)]
+    convergence::ip3c_states_ask_nothing_e2e();
+
+    // ── Manager core: IP3c review 8, the reads of a not-converged instance ask the GPU probe nothing ─
+    #[cfg(target_os = "linux")]
+    convergence::ip3c_not_converged_reads_ask_nothing_e2e();
+
+    // ── Manager core: IP3c review 5, a save's `running` is the running instances that now drift ─
+    #[cfg(target_os = "linux")]
+    convergence::ip3c_running_is_drifted_e2e();
+
+    // ── Manager core: IP3c review 7, the load-on-startup count is a fit check of the instance ─
+    #[cfg(target_os = "linux")]
+    convergence::ip3c_startup_is_a_fit_check_e2e();
+
     // ── Manager over D-Bus (manager/dbus.rs `ManagerInterface`) ──────────
     // Served peer to peer on a socket pair, no bus.
     #[cfg(target_os = "linux")]
@@ -271,6 +319,10 @@ fn data_root_e2e() {
     // ── pai-core's client: the node's models folder over the bus (M3 G1) ──
     #[cfg(target_os = "linux")]
     dbus_client::manager_dbus_client_model_files_e2e();
+
+    // ── pai-core's client: the states of the apply over the bus (IP3c review 6) ──
+    #[cfg(target_os = "linux")]
+    dbus_client::manager_dbus_client_convergence_e2e();
 
     // ── pai-core's client of the manager over a stream ──────────────────
     // pai_core::client::pipe against manager::pipe::serve_stream, on a

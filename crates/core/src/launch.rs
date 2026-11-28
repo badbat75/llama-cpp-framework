@@ -239,6 +239,21 @@ pub enum LaunchError {
     StateDir(std::path::PathBuf, std::io::ErrorKind),
 }
 
+/// The prefix of the launch render: `launch@<id>.ini`, the server config
+/// instance `id` launches with, the second file of the pair the apply writes
+/// beside `models@<id>.ini` (`ARCHITECTURE.md`, "Convergence: idempotent apply,
+/// drift and the last good render").
+pub const LAUNCH_PREFIX: &str = "launch@";
+
+/// `launch@<id>.ini` in `paths::engine_config_dir()`, the server config the
+/// instance `id` launches with: the manager writes it with the rest of the
+/// instance's pair, the launch reads it in place of resolving
+/// `server@<profile>.ini`. None for an invalid id.
+pub fn instance_launch_ini(instance: &str) -> Option<std::path::PathBuf> {
+    crate::paths::valid_instance_id(instance)
+        .then(|| crate::paths::engine_config_dir().join(format!("{LAUNCH_PREFIX}{instance}.ini")))
+}
+
 /// The llama-server launch of instance `instance`: the section `instance` of
 /// `paths::instances_ini()` names the server profile in its `ServerProfile`
 /// key, and `exe` is launched with `server_args()` of that profile's file
@@ -255,19 +270,29 @@ pub fn instance_command(
     if !crate::paths::valid_instance_id(instance) {
         return Err(LaunchError::InvalidId);
     }
-    // The record of the instances, and the server profile its section names:
-    // a record with no section, a section with no key, a key with an empty
-    // value, a name that builds no file: no profile to read, and the refusal
-    // names the record.
+    // The launch render the manager wrote, when it wrote one: the server
+    // profile's text with this instance's address over it, so the launch reads
+    // the one file the apply left (`ARCHITECTURE.md`, "Convergence"). Before the
+    // first render there is none, and the profile is resolved as it always was:
+    // the record of the instances, and the server profile its section names. A
+    // record with no section, a section with no key, a key with an empty value,
+    // a name that builds no file: no profile to read, and the refusal names the
+    // record.
     let record = crate::paths::instances_ini();
-    let profile = crate::paths::instance_server_profile(instance)
-        .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
-    // The profile's file.
-    let ini = crate::paths::instance_ini(&profile)
-        .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
-    if !ini.is_file() {
-        return Err(LaunchError::NoConfig(ini));
-    }
+    let ini = match instance_launch_ini(instance).filter(|path| path.is_file()) {
+        Some(path) => path,
+        None => {
+            let profile = crate::paths::instance_server_profile(instance)
+                .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
+            // The profile's file.
+            let ini = crate::paths::instance_ini(&profile)
+                .ok_or_else(|| LaunchError::NoConfig(record.clone()))?;
+            if !ini.is_file() {
+                return Err(LaunchError::NoConfig(ini));
+            }
+            ini
+        }
+    };
     let models_path = crate::paths::instance_models(instance).ok_or(LaunchError::InvalidId)?;
     if !has_model_profiles_in(&models_path) {
         return Err(LaunchError::NoModelProfiles);

@@ -25,6 +25,22 @@ const OFF_POOL: &str = "models.ini.disabled";
 /// that no save of these phases is a memory story.
 const BIG_CARD: u64 = 400_000;
 
+/// The record a launched instance leaves of the pair it started with: `applied`
+/// in its own state folder, which its account writes and the manager reads
+/// (IP3c). A phase marks it at the pair the fixture rendered, so the `running`
+/// of a save's answer is the drift of a real pair: a save that leaves the pair
+/// of a running instance asks it for no restart, one that moves it does.
+fn mark_applied(id: &str) {
+    let path = crate::manager::service::applied_file(id).expect("the applied record's path");
+    std::fs::create_dir_all(path.parent().expect("the instance's state folder"))
+        .expect("the instance's state folder");
+    std::fs::write(
+        &path,
+        crate::manager::service::pair_digest(id).expect("the pair on disk"),
+    )
+    .expect("the applied record");
+}
+
 /// A `llama` GGUF whose KV layout `pai_core::gguf_shape` reads: the same keys
 /// the memory fixtures of `service.rs` write, so the shape measured here is the
 /// shape the memory check measures there.
@@ -129,17 +145,6 @@ fn refused_key(answer: &Result<Vec<String>, ManagerError>, key: &str, facts: &[&
             got.sort();
             want.sort();
             got == want
-        }
-        _ => false,
-    }
-}
-
-/// A refusal of `key` whose values every carry `needle`: for a refusal whose
-/// arguments the shape of the entry check has not fixed yet.
-fn refused_about<T>(answer: &Result<T, ManagerError>, key: &str, needle: &str) -> bool {
-    match answer {
-        Err(ManagerError::Invalid(r)) => {
-            r.key == key && r.values.iter().any(|v| v.contains(needle))
         }
         _ => false,
     }
@@ -313,6 +318,9 @@ pub(crate) fn ip3b_entry_save_e2e() {
         m.render_failures().is_empty(),
         "IP3b 2: the seeded install renders"
     );
+    // `desk` runs the pair the fixture rendered (IP3c): the record of it is what
+    // makes this phase's `running` list the drift of a pair.
+    mark_applied("desk");
 
     let alice = Caller(":1.42".into());
     let read = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
@@ -330,7 +338,9 @@ pub(crate) fn ip3b_entry_save_e2e() {
 
     // ── 2a. The save, and the running instances it answers ───────────────
     let sent = vals(&[("ctx-size", "2048"), ("n-cpu-moe", "4")]);
-    let answer = m.set_instance_profile_model(&alice, "gpu", "alpha", &sent, &revision());
+    let answer = m
+        .set_instance_profile_model(&alice, "gpu", "alpha", "desk", &sent, &revision())
+        .map(|a| a.running);
     assert_eq!(
         answer,
         Ok(vec!["desk".to_string()]),
@@ -362,13 +372,16 @@ pub(crate) fn ip3b_entry_save_e2e() {
     }
 
     // ── 2b. The save of an entry the profile does not list ─────────────────
-    let answer = m.set_instance_profile_model(
-        &alice,
-        "gpu",
-        "beta",
-        &vals(&[("ctx-size", "1")]),
-        &revision(),
-    );
+    let answer = m
+        .set_instance_profile_model(
+            &alice,
+            "gpu",
+            "beta",
+            "desk",
+            &vals(&[("ctx-size", "1")]),
+            &revision(),
+        )
+        .map(|a| a.running);
     assert!(
         refused_key(&answer, "no-instance-profile-model", &["gpu", "beta"]),
         "IP3b 2b: an entry the profile does not list is refused, naming the \
@@ -385,9 +398,11 @@ pub(crate) fn ip3b_entry_save_e2e() {
             &alice,
             "nope",
             "alpha",
+            "desk",
             &vals(&[("ctx-size", "1")]),
             &revision()
-        ),
+        )
+        .map(|a| a.running),
         Err(ManagerError::NoInstanceProfile("nope".to_string())),
         "IP3b 2c: a profile the pool has no section for is refused, naming it"
     );
@@ -400,8 +415,10 @@ pub(crate) fn ip3b_entry_save_e2e() {
 
 /// E2E phase: IP3b 3. The entry save's refusals: a revision the pool no longer
 /// holds, a key that stays in the model profile, a number out of range, a
-/// tensor rule of no shape, a device outside the profile's OWN server profile
-/// `Devices`. Every refusal writes nothing.
+/// tensor rule of no shape. Every refusal writes nothing. A device outside the
+/// profile's OWN server profile `Devices` is a fit check, not a refusal: the
+/// save lands and the instance whose render stops keeps its last good pair
+/// (IP3c review 2).
 pub(crate) fn ip3b_entry_save_refusals_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
@@ -413,6 +430,9 @@ pub(crate) fn ip3b_entry_save_refusals_e2e() {
         m.render_failures().is_empty(),
         "IP3b 3: the seeded install renders"
     );
+    // `desk` runs the pair the fixture rendered (IP3c): the record of it is what
+    // makes this phase's `running` list the drift of a pair.
+    mark_applied("desk");
 
     let alice = Caller(":1.42".into());
     let bytes = |name: &str| std::fs::read(sys.join(name)).ok();
@@ -423,7 +443,8 @@ pub(crate) fn ip3b_entry_save_refusals_e2e() {
             .revision
     };
     let save = |pairs: &[(&str, &str)], revision: &str| {
-        m.set_instance_profile_model(&alice, "gpu", "alpha", &vals(pairs), revision)
+        m.set_instance_profile_model(&alice, "gpu", "alpha", "desk", &vals(pairs), revision)
+            .map(|a| a.running)
     };
 
     // ── 3a. A stale revision ─────────────────────────────────────────────
@@ -467,28 +488,55 @@ pub(crate) fn ip3b_entry_save_refusals_e2e() {
 
     // ── 3e. A device outside the profile's own server profile ────────────
     // `gpu` runs `desk`, whose `Devices` is `CUDA0` alone: the entry's card is
-    // judged against the profile's own server profile, the same file.
+    // judged against the profile's own server profile, the same file. The fit
+    // is the instance's own, so the save LANDS: the entry is written, the
+    // instance whose render stops on the card keeps its last good pair byte for
+    // byte, and is reported not converged with the check's key (IP3c review 2,
+    // `ARCHITECTURE.md` "Convergence": the fit checks decide per instance).
+    let seed_pair = (bytes("models@desk.ini"), bytes("launch@desk.ini"));
     let answer = save(
         &[("ctx-size", "1024"), ("device-draft", "CUDA1")],
         &revision(),
     );
+    assert_eq!(
+        answer,
+        Ok(Vec::<String>::new()),
+        "IP3c 3e: the entry of a card no instance's server profile names lands, and \
+         moves no running instance to a restart: {answer:?}"
+    );
+    let text = std::fs::read_to_string(sys.join(PROFILES)).expect(PROFILES);
     assert!(
-        refused_key(
-            &answer,
-            "model-profile-device-outside",
-            &["gpu", "alpha", "device-draft", "CUDA1"]
-        ),
-        "IP3b 3e: a device outside the profile's server profile `Devices` is \
-         refused, naming the profile, the model, the key and the device: {answer:?}"
+        pai_core::ini::text::section_text(&text, "gpu/alpha")
+            .unwrap_or_default()
+            .contains("device-draft = CUDA1"),
+        "IP3c 3e: the save wrote the entry: {text}"
+    );
+    assert_eq!(
+        (bytes("models@desk.ini"), bytes("launch@desk.ini")),
+        seed_pair,
+        "IP3c 3e: the refused render left the pair on disk byte for byte"
+    );
+    let failures: Vec<(String, String)> = m
+        .render_failures()
+        .iter()
+        .map(|(id, e)| (id.clone(), format!("{e:?}")))
+        .collect();
+    assert!(
+        failures.iter().any(|(id, e)| id == "desk"
+            && e.contains("model-profile-device-outside")
+            && e.contains("CUDA1")),
+        "IP3c 3e: the instance whose render stopped is reported with the device check, \
+         naming the card: {failures:?}"
     );
     let answer = save(
         &[("ctx-size", "1024"), ("override-tensor", "blk.0=CUDA1")],
         &revision(),
     );
-    assert!(
-        refused_about(&answer, "model-profile-device-outside", "CUDA1"),
-        "IP3b 3e: an `override-tensor` rule of a card the profile's server \
-         profile does not name is refused too: {answer:?}"
+    assert_eq!(
+        answer,
+        Ok(Vec::<String>::new()),
+        "IP3c 3e: an `override-tensor` rule of a card the profile's server profile \
+         does not name lands too, the render refused per instance: {answer:?}"
     );
     // A card the server profile names lands.
     assert_eq!(
@@ -558,6 +606,11 @@ pub(crate) fn ip3b_add_remove_e2e() {
         m.render_failures().is_empty(),
         "IP3b 4: the seeded install renders"
     );
+    // Both instances run the pair the fixture rendered (IP3c): the record of it
+    // is what makes this phase's `running` list the drift of a pair.
+    for id in ["desk", "lab"] {
+        mark_applied(id);
+    }
 
     let alice = Caller(":1.42".into());
     let read = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
@@ -599,6 +652,12 @@ pub(crate) fn ip3b_add_remove_e2e() {
             "IP3b 4b: the add lands in the render of every instance running the \
              profile: {id}"
         );
+    }
+
+    // Both restart onto the pair the add left (IP3c): their `applied` record is
+    // the pair on disk now, so the remove that follows moves each pair off it.
+    for id in ["desk", "lab"] {
+        mark_applied(id);
     }
 
     // ── 4c. The remove of a model the profile does not list ──────────────
@@ -653,9 +712,11 @@ pub(crate) fn ip3b_add_remove_e2e() {
 
 /// E2E phase: IP3b 5. The server profile switch of an instance profile:
 /// `SetInstanceProfileServer(p, server)` carries no revision, answers the
-/// running instances that use the profile, and re-checks EVERY entry against
-/// the new server profile's `Devices`: a switch that takes away a card an entry
-/// names is refused, and the profile keeps the server profile it had.
+/// running instances whose pair it moves, and re-checks EVERY entry against
+/// the new server profile's `Devices`. The check is a fit check, so it never
+/// refuses the switch: a switch that takes a card an entry names away lands,
+/// the instances running the profile keep their last good pair, and each is
+/// reported not converged (IP3c review 2).
 pub(crate) fn ip3b_server_switch_e2e() {
     let dir = tempfile::tempdir().expect("tempdir");
     crate::paths::redirect_for_tests(dir.path());
@@ -667,6 +728,11 @@ pub(crate) fn ip3b_server_switch_e2e() {
         m.render_failures().is_empty(),
         "IP3b 5: the seeded install renders"
     );
+    // Both instances run the pair the fixture rendered (IP3c): the record of it
+    // is what makes this phase's `running` list the drift of a pair.
+    for id in ["desk", "lab"] {
+        mark_applied(id);
+    }
 
     let alice = Caller(":1.42".into());
     let read = |name: &str| std::fs::read_to_string(sys.join(name)).expect(name);
@@ -693,24 +759,60 @@ pub(crate) fn ip3b_server_switch_e2e() {
     );
 
     // ── 5b. The switch, and the entry that fits the new cards ────────────
-    // `gpu` runs `desk` (`CUDA0`), so an entry naming `CUDA1` is refused here
-    // and lands once the profile runs `wide`, which names it.
-    let outside = m.set_instance_profile_model(
-        &alice,
-        "gpu",
-        "alpha",
-        &vals(&[("ctx-size", "1024"), ("device-draft", "CUDA1")]),
-        &revision(),
+    // `gpu` runs `desk` and `lab`, both on `desk` (`CUDA0`): an entry naming
+    // `CUDA1` fails the fit of both. The fit is each instance's own, so the
+    // save LANDS (IP3c review 2): the entry is written, every instance keeps
+    // its last good pair byte for byte, and the save moves no running
+    // instance to a restart.
+    let seed_pairs: Vec<(Vec<u8>, Vec<u8>)> = ["desk", "lab"]
+        .iter()
+        .map(|id| {
+            (
+                bytes(&format!("models@{id}.ini")).expect("rendered profiles"),
+                bytes(&format!("launch@{id}.ini")).expect("rendered launch"),
+            )
+        })
+        .collect();
+    let outside = m
+        .set_instance_profile_model(
+            &alice,
+            "gpu",
+            "alpha",
+            "desk",
+            &vals(&[("ctx-size", "1024"), ("device-draft", "CUDA1")]),
+            &revision(),
+        )
+        .map(|a| a.running);
+    assert_eq!(
+        outside,
+        Ok(Vec::<String>::new()),
+        "IP3c 5b: on `desk` the entry's `CUDA1` fails the fit of every instance \
+         running the profile, and the save lands moving nobody: {outside:?}"
     );
-    assert!(
-        refused_key(
-            &outside,
-            "model-profile-device-outside",
-            &["gpu", "alpha", "device-draft", "CUDA1"]
-        ),
-        "IP3b 5b: on `desk` the entry's `CUDA1` is outside the profile's cards: \
-         {outside:?}"
-    );
+    for (id, pair) in ["desk", "lab"].iter().zip(&seed_pairs) {
+        assert_eq!(
+            (
+                bytes(&format!("models@{id}.ini")),
+                bytes(&format!("launch@{id}.ini"))
+            ),
+            (Some(pair.0.clone()), Some(pair.1.clone())),
+            "IP3c 5b: {id} kept its last good pair byte for byte"
+        );
+    }
+    let failures: Vec<(String, String)> = m
+        .render_failures()
+        .iter()
+        .map(|(id, e)| (id.clone(), format!("{e:?}")))
+        .collect();
+    for id in ["desk", "lab"] {
+        assert!(
+            failures
+                .iter()
+                .any(|(who, e)| who == id && e.contains("model-profile-device-outside")),
+            "IP3c 5b: {id} runs the profile and its render stops on the card: \
+             {failures:?}"
+        );
+    }
     assert_eq!(
         m.set_instance_profile_server(&alice, "gpu", "wide"),
         Ok(both.clone()),
@@ -726,54 +828,108 @@ pub(crate) fn ip3b_server_switch_e2e() {
             &alice,
             "gpu",
             "alpha",
+            "desk",
             &vals(&[("ctx-size", "1024"), ("device-draft", "CUDA1")]),
             &revision()
-        ),
+        )
+        .map(|a| a.running),
         Ok(both.clone()),
         "IP3b 5b: on `wide` the same entry lands"
     );
 
-    // ── 5c. The switch back, refused by every entry re-checked ───────────
+    // ── 5c. The switch back: the entry's card is outside the new cards ───
+    // The switch is a save like any other: re-checking the entry against
+    // `desk` fails the fit of every instance running the profile, so the
+    // switch LANDS with the profile moved, every instance keeping the pair
+    // the `wide` render left, and both reported not converged (IP3c
+    // review 2: the fit checks decide per instance, a fit refusal never
+    // refuses the save).
+    let wide_pairs: Vec<(Vec<u8>, Vec<u8>)> = ["desk", "lab"]
+        .iter()
+        .map(|id| {
+            (
+                bytes(&format!("models@{id}.ini")).expect("rendered profiles"),
+                bytes(&format!("launch@{id}.ini")).expect("rendered launch"),
+            )
+        })
+        .collect();
+    // Both restart onto the pair the `wide` render left (IP3c): their `applied`
+    // record is the pair on disk now, so the switch back, which leaves that pair
+    // alone, asks neither of them for a restart.
+    for id in ["desk", "lab"] {
+        mark_applied(id);
+    }
     let answer = m.set_instance_profile_server(&alice, "gpu", "desk");
-    assert!(
-        refused_key(
-            &answer,
-            "model-profile-device-outside",
-            &["gpu", "alpha", "device-draft", "CUDA1"]
-        ),
-        "IP3b 5c: a switch that takes a card an entry names away is refused, \
-         naming the entry and the card: {answer:?}"
+    assert_eq!(
+        answer,
+        Ok(Vec::<String>::new()),
+        "IP3c 5c: a switch that takes a card an entry names away lands, moving \
+         no running instance to a restart: {answer:?}"
     );
     assert_eq!(
         server_profile_of(&pool(), "gpu"),
-        "wide",
-        "IP3b 5c: the refused switch left the profile on its server profile"
+        "desk",
+        "IP3c 5c: the switch landed, the profile's section names the server \
+         profile it switched to"
     );
+    for (id, pair) in ["desk", "lab"].iter().zip(&wide_pairs) {
+        assert_eq!(
+            (
+                bytes(&format!("models@{id}.ini")),
+                bytes(&format!("launch@{id}.ini"))
+            ),
+            (Some(pair.0.clone()), Some(pair.1.clone())),
+            "IP3c 5c: {id} kept the pair the `wide` render left, byte for byte"
+        );
+    }
+    let failures: Vec<(String, String)> = m
+        .render_failures()
+        .iter()
+        .map(|(id, e)| (id.clone(), format!("{e:?}")))
+        .collect();
+    for id in ["desk", "lab"] {
+        assert!(
+            failures
+                .iter()
+                .any(|(who, e)| who == id && e.contains("model-profile-device-outside")),
+            "IP3c 5c: {id} is reported not converged with the device check: \
+             {failures:?}"
+        );
+    }
     for id in ["desk", "lab"] {
         let section = render_section(&sys, id);
         assert!(
             section.contains("device-draft = CUDA1"),
-            "IP3b 5c: the render of {id} still carries the entry that stands: \
+            "IP3c 5c: the render of {id} still carries the entry that stands: \
              {section}"
         );
     }
 
-    // ── 5d. The switch that lands, once no entry names a gone card ───────
+    // ── 5d. The fix that moves the pair, and the no-op switch ────────────
     assert_eq!(
         m.set_instance_profile_model(
             &alice,
             "gpu",
             "alpha",
+            "desk",
             &vals(&[("ctx-size", "1024")]),
             &revision()
-        ),
-        Ok(both.clone()),
-        "IP3b 5d: the entry without the card lands"
+        )
+        .map(|a| a.running),
+        Ok(both),
+        "IP3b 5d: the entry without the card lands, and the pair it moves takes \
+         the running instances to a restart"
     );
+    // Both restart onto the pair that fix left (IP3c): the switch that follows
+    // moves no pair, so it asks neither of them for a restart.
+    for id in ["desk", "lab"] {
+        mark_applied(id);
+    }
     assert_eq!(
         m.set_instance_profile_server(&alice, "gpu", "desk"),
-        Ok(both),
-        "IP3b 5d: with no entry naming a gone card, the switch lands"
+        Ok(Vec::<String>::new()),
+        "IP3c 5d: the profile already runs `desk`: a switch that moves no pair \
+         answers nobody"
     );
     assert_eq!(
         server_profile_of(&pool(), "gpu"),
@@ -810,8 +966,10 @@ pub(crate) fn ip3b_server_switch_e2e() {
 
 /// E2E phase: IP3b 6. The memory check measures the ENTRY keys: an entry save
 /// that makes the render of an instance that runs the profile over the node's
-/// usable memory is refused with the existing `model-profile-over-memory`, and
-/// the same save that stays inside the cards lands. The card is sized from the
+/// usable memory is a fit failure, not a refusal: the save lands, the instance
+/// whose render stops keeps its last good pair and is reported with the
+/// existing `model-profile-over-memory` key (IP3c review 2). The same save
+/// that stays inside the cards lands as before. The card is sized from the
 /// estimate read off the fixture's file, so no figure here restates the
 /// arithmetic.
 pub(crate) fn ip3b_entry_memory_e2e() {
@@ -824,7 +982,6 @@ pub(crate) fn ip3b_entry_memory_e2e() {
     let shape = local_shape(Path::new(&path)).expect("IP3b 6: the fixture shape");
     let need = |ctx: u64| full_gpu_bytes(&shape, ctx, "f16", "f16");
     let mib_up = |bytes: u64| (bytes.div_ceil(MIB)).to_string();
-    let mib_down = |bytes: u64| (bytes / MIB).to_string();
     // A card that finds the entry at 1024 tokens and not at 131072.
     let card = need(1024) / MIB + GPU_RESERVE / MIB + 32;
     assert!(
@@ -838,9 +995,11 @@ pub(crate) fn ip3b_entry_memory_e2e() {
         m.render_failures().is_empty(),
         "IP3b 6: the seeded install renders"
     );
+    // `desk` runs the pair the fixture rendered (IP3c): the record of it is what
+    // makes this phase's `running` list the drift of a pair.
+    mark_applied("desk");
     let alice = Caller(":1.42".into());
     let bytes = |name: &str| std::fs::read(sys.join(name)).ok();
-    let pool_before = bytes(PROFILES);
     let render_before = bytes("models@desk.ini");
     let revision = || {
         m.instance_profile(&alice, "gpu")
@@ -849,36 +1008,48 @@ pub(crate) fn ip3b_entry_memory_e2e() {
     };
 
     // ── 6a. The entry that grows a render over the card ──────────────────
-    let answer = m.set_instance_profile_model(
-        &alice,
-        "gpu",
-        "alpha",
-        &vals(&[("ctx-size", "131072")]),
-        &revision(),
-    );
-    assert!(
-        refused_key(
-            &answer,
-            "model-profile-over-memory",
-            &[
-                "alpha",
-                "desk",
-                &mib_up(need(131_072)),
-                &mib_down(usable(card))
-            ]
-        ),
-        "IP3b 6a: the entry's context, over the model profile's file, is measured \
-         on the render of every instance running the profile: {answer:?}"
-    );
+    // The fit is the instance's own, so the save LANDS: the entry is
+    // written, `desk` keeps its last good pair byte for byte, and the
+    // memory check is reported with its row.
+    let answer = m
+        .set_instance_profile_model(
+            &alice,
+            "gpu",
+            "alpha",
+            "desk",
+            &vals(&[("ctx-size", "131072")]),
+            &revision(),
+        )
+        .map(|a| a.running);
     assert_eq!(
-        bytes(PROFILES),
-        pool_before,
-        "IP3b 6a: the refusal wrote no entry"
+        answer,
+        Ok(Vec::<String>::new()),
+        "IP3c 6a: the entry whose render stands over the card lands, moving no \
+         running instance to a restart: {answer:?}"
+    );
+    let text = std::fs::read_to_string(sys.join(PROFILES)).expect(PROFILES);
+    assert!(
+        pai_core::ini::text::section_text(&text, "gpu/alpha")
+            .unwrap_or_default()
+            .contains("ctx-size = 131072"),
+        "IP3c 6a: the save wrote the entry: {text}"
     );
     assert_eq!(
         bytes("models@desk.ini"),
         render_before,
-        "IP3b 6a: the refusal rendered nothing"
+        "IP3c 6a: the refused render left the pair on disk byte for byte"
+    );
+    let failures: Vec<(String, String)> = m
+        .render_failures()
+        .iter()
+        .map(|(id, e)| (id.clone(), format!("{e:?}")))
+        .collect();
+    assert!(
+        failures.iter().any(|(id, e)| id == "desk"
+            && e.contains("model-profile-over-memory")
+            && e.contains(&mib_up(need(131_072)))),
+        "IP3c 6a: the instance over its card is reported with the memory check, \
+         naming the bytes its render needs: {failures:?}"
     );
 
     // ── 6b. The entry that fits ──────────────────────────────────────────
@@ -887,9 +1058,11 @@ pub(crate) fn ip3b_entry_memory_e2e() {
             &alice,
             "gpu",
             "alpha",
+            "desk",
             &vals(&[("ctx-size", "2048")]),
             &revision()
-        ),
+        )
+        .map(|a| a.running),
         Ok(vec!["desk".to_string()]),
         "IP3b 6b: a context the card finds lands"
     );
@@ -925,17 +1098,23 @@ pub(crate) fn ip3b_entry_memory_shrink_e2e() {
     // The render is grown on a node with room for it.
     let roomy = manager(&["desk"], BIG_CARD);
     roomy.start_up();
+    // `desk` runs the pair the fixture rendered (IP3c): the record of it is what
+    // makes this phase's `running` list the drift of a pair.
+    mark_applied("desk");
     assert_eq!(
-        roomy.set_instance_profile_model(
-            &alice,
-            "gpu",
-            "alpha",
-            &vals(&[("ctx-size", "262144")]),
-            &roomy
-                .instance_profile(&alice, "gpu")
-                .expect("IP3b 6b: the read")
-                .revision,
-        ),
+        roomy
+            .set_instance_profile_model(
+                &alice,
+                "gpu",
+                "alpha",
+                "desk",
+                &vals(&[("ctx-size", "262144")]),
+                &roomy
+                    .instance_profile(&alice, "gpu")
+                    .expect("IP3b 6b: the read")
+                    .revision
+            )
+            .map(|a| a.running),
         Ok(vec!["desk".to_string()]),
         "IP3b 6b: the grown entry lands on the node that has room"
     );
@@ -944,6 +1123,9 @@ pub(crate) fn ip3b_entry_memory_shrink_e2e() {
         grown.contains("ctx-size = 262144"),
         "IP3b 6b: the render that stands is over the small card"
     );
+    // `desk` restarts on the grown pair (IP3c): its record names it, so the save
+    // that shrinks it moves a real running instance to a restart.
+    mark_applied("desk");
 
     // The card is taken away, and the save shrinks the render that stands.
     let tight = manager(&["desk"], card);
@@ -953,16 +1135,19 @@ pub(crate) fn ip3b_entry_memory_shrink_e2e() {
         "IP3b 6b: a render that stands over the cards, and that no write touches, \
          is no failure of the start"
     );
-    let answer = tight.set_instance_profile_model(
-        &alice,
-        "gpu",
-        "alpha",
-        &vals(&[("ctx-size", "1024")]),
-        &tight
-            .instance_profile(&alice, "gpu")
-            .expect("IP3b 6b: the read")
-            .revision,
-    );
+    let answer = tight
+        .set_instance_profile_model(
+            &alice,
+            "gpu",
+            "alpha",
+            "desk",
+            &vals(&[("ctx-size", "1024")]),
+            &tight
+                .instance_profile(&alice, "gpu")
+                .expect("IP3b 6b: the read")
+                .revision,
+        )
+        .map(|a| a.running);
     assert_eq!(
         answer,
         Ok(vec!["desk".to_string()]),

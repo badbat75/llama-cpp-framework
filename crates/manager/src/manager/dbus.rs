@@ -12,8 +12,8 @@ use super::action_log::WriterLog;
 use super::pipe::PROTOCOL;
 pub use super::service::state_name;
 use super::service::{
-    Action, Authority, Caller, HostNodeFacts, Manager, ManagerError, Principal, ProbedGpus,
-    Requester, Resolver, ServiceControl, ServiceError, SystemResolver, UnitState,
+    Action, Affected, Authority, Caller, HostNodeFacts, Manager, ManagerError, Principal,
+    ProbedGpus, Requester, Resolver, ServiceControl, ServiceError, SystemResolver, UnitState,
 };
 use std::sync::Arc;
 use zbus::blocking::{Connection, Proxy};
@@ -174,6 +174,10 @@ fn port_of(port: u16) -> Option<u16> {
 /// uint16, and a signed type has no reading for a device that reports none.
 type DeviceRow = (String, String, String, u64, u64);
 
+/// The bus type of a save that re-renders answers, `a{sv}`
+/// ([`affected_answer`], IP3c).
+type AffectedAnswer = std::collections::HashMap<String, zbus::zvariant::Value<'static>>;
+
 /// The node's device list as the bus answers it, with the moment of the probe
 /// and the host's inventory beside it: `Devices` is
 /// `(t probed_at, a(ssstt) devices, t ram_mib, u cpu_threads)` (R1,
@@ -189,6 +193,34 @@ fn device_list(list: pai_core::client::NodeDevices) -> (u64, Vec<DeviceRow>, u64
         list.ram_mib,
         list.cpu_threads,
     )
+}
+
+/// The answer of a save that re-renders, as the bus carries it (IP3c,
+/// `ARCHITECTURE.md` "Convergence"): `a{sv}` with `running`, the ids of the
+/// running instances the save moved to a restart (`as`), and `notConverged`, one
+/// `a{sv}` row per instance that kept its last good pair (`av`), each with the
+/// `instance`, the `key` of the check that stopped it and its `args`. The fields
+/// are named, as the page reads them by name; the stream's answer is the same
+/// object. A dict of values is the one shape that carries both a list of texts
+/// and a list of dicts, the bus having no null and no optional field.
+fn affected_answer(affected: Affected) -> AffectedAnswer {
+    use std::collections::HashMap;
+    use zbus::zvariant::{OwnedValue, Value};
+    let rows = affected
+        .not_converged
+        .iter()
+        .map(|row| {
+            let mut fields: HashMap<String, Value<'static>> = HashMap::new();
+            fields.insert("instance".to_string(), Value::new(row.instance.clone()));
+            fields.insert("key".to_string(), Value::new(row.key.clone()));
+            fields.insert("args".to_string(), Value::new(row.args.clone()));
+            OwnedValue::from(fields)
+        })
+        .collect::<Vec<_>>();
+    let mut answer: AffectedAnswer = HashMap::new();
+    answer.insert("running".to_string(), Value::new(affected.running));
+    answer.insert("notConverged".to_string(), Value::new(rows));
+    answer
 }
 
 /// The `ModelInfo` reply as the bus answers it:
@@ -320,7 +352,9 @@ where
     /// names none), the last two arrays the tags of that profile and the tags
     /// of its own section, the last field the label of its section (the
     /// empty string when it has none: the bus has no null). Answered to any
-    /// caller, as the list of ids is.
+    /// caller, as the list of ids is. The three states of the apply (IP3c) are
+    /// not in this row: they are the sibling method [`Self::instance_states`],
+    /// which the client merges back into these rows.
     async fn instances(
         &self,
     ) -> Vec<(
@@ -345,6 +379,33 @@ where
                         i.instance_tags,
                         i.label.unwrap_or_default(),
                     )
+                })
+                .collect()
+        })
+        .await
+    }
+
+    /// `InstanceStates`: the three states of the apply of every instance of the
+    /// record, `a(sbssasb)`, one row `(s id, b converged, s reason key,
+    /// as reason args, b pendingRestart)` per instance, the reason the empty
+    /// string and no args for a converged instance. The sibling method of
+    /// [`Self::instances`], whose row keeps its signature (IP3c review 6): the
+    /// client of the bus calls both and merges the rows, as the web service
+    /// reads them in one row over the stream. Converged with its reason are the
+    /// rows the last render pass left in memory (review 8), the drift the compare
+    /// of the pair on disk against what the instance's launch applied: the call
+    /// asks the service manager for no unit and the engine's probe for no card.
+    /// Answered to any caller, as the list it belongs to is.
+    async fn instance_states(&self) -> Vec<(String, bool, String, Vec<String>, bool)> {
+        self.core(|m| {
+            m.instances()
+                .into_iter()
+                .map(|i| {
+                    let (key, args) = match i.reason {
+                        Some(reason) => (reason.key, reason.args),
+                        None => (String::new(), Vec::new()),
+                    };
+                    (i.id, i.converged, key, args, i.pending_restart)
                 })
                 .collect()
         })
@@ -590,11 +651,12 @@ where
         name: String,
         contents: String,
         expected: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
-        Ok(self
-            .core(move |m| m.write_file_if(&who, &name, &contents, &expected))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.write_file_if(&who, &name, &contents, &expected))
+                .await?,
+        ))
     }
 
     /// `Start` for `principal`, the signed-in user the caller vouches for;
@@ -653,11 +715,12 @@ where
         instance: String,
         profile: String,
         value: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
-        Ok(self
-            .core(move |m| m.set_model_profile(&who, &instance, &profile, &value))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.set_model_profile(&who, &instance, &profile, &value))
+                .await?,
+        ))
     }
 
     /// `SetModelProfile` for `principal`, the principal first as every `As`
@@ -669,11 +732,12 @@ where
         instance: String,
         profile: String,
         value: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
-        Ok(self
-            .core(move |m| m.set_model_profile(&who, &instance, &profile, &value))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.set_model_profile(&who, &instance, &profile, &value))
+                .await?,
+        ))
     }
 
     /// `SetServerProfile`: the server profile an instance runs, `(ss)`.
@@ -682,11 +746,12 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         instance: String,
         profile: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
-        Ok(self
-            .core(move |m| m.set_server_profile(&who, &instance, &profile))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.set_server_profile(&who, &instance, &profile))
+                .await?,
+        ))
     }
 
     /// `SetServerProfile` for `principal`, the principal first as every `As`
@@ -697,11 +762,12 @@ where
         principal: String,
         instance: String,
         profile: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
-        Ok(self
-            .core(move |m| m.set_server_profile(&who, &instance, &profile))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.set_server_profile(&who, &instance, &profile))
+                .await?,
+        ))
     }
 
     /// `SetInstanceTags`: the record's own tags of one instance, `(sas)`.
@@ -955,14 +1021,15 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         profile: String,
         model: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
-        Ok(self
-            .core(move |m| m.add_instance_profile_model(&who, &profile, &model))
-            // The client's verb answers nothing: the bus carries the
-            // running instances from slice IP4 on.
-            .await
-            .map(|_| ())?)
+        Ok(affected_answer(
+            self.core(move |m| {
+                m.add_instance_profile_model(&who, &profile, &model)
+                    .and_then(|_| m.affected())
+            })
+            .await?,
+        ))
     }
 
     /// `AddInstanceProfileModel` for `principal`, the principal first (`sss`).
@@ -972,14 +1039,15 @@ where
         principal: String,
         profile: String,
         model: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
-        Ok(self
-            .core(move |m| m.add_instance_profile_model(&who, &profile, &model))
-            // The client's verb answers nothing: the bus carries the
-            // running instances from slice IP4 on.
-            .await
-            .map(|_| ())?)
+        Ok(affected_answer(
+            self.core(move |m| {
+                m.add_instance_profile_model(&who, &profile, &model)
+                    .and_then(|_| m.affected())
+            })
+            .await?,
+        ))
     }
 
     /// `RemoveInstanceProfileModel`: takes a model profile away from an
@@ -989,14 +1057,15 @@ where
         #[zbus(header)] header: zbus::message::Header<'_>,
         profile: String,
         model: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
-        Ok(self
-            .core(move |m| m.remove_instance_profile_model(&who, &profile, &model))
-            // The client's verb answers nothing: the bus carries the
-            // running instances from slice IP4 on.
-            .await
-            .map(|_| ())?)
+        Ok(affected_answer(
+            self.core(move |m| {
+                m.remove_instance_profile_model(&who, &profile, &model)
+                    .and_then(|_| m.affected())
+            })
+            .await?,
+        ))
     }
 
     /// `RemoveInstanceProfileModel` for `principal`, the principal first
@@ -1007,14 +1076,65 @@ where
         principal: String,
         profile: String,
         model: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
-        Ok(self
-            .core(move |m| m.remove_instance_profile_model(&who, &profile, &model))
-            // The client's verb answers nothing: the bus carries the
-            // running instances from slice IP4 on.
-            .await
-            .map(|_| ())?)
+        Ok(affected_answer(
+            self.core(move |m| {
+                m.remove_instance_profile_model(&who, &profile, &model)
+                    .and_then(|_| m.affected())
+            })
+            .await?,
+        ))
+    }
+
+    /// `SetInstanceProfileModel`: the keys of one entry of an instance profile,
+    /// `(sss a(ss) s)`: the profile, the model, the instance whose page the
+    /// entry is written from, the entry's keys as they were sent, and the
+    /// revision, the text of `instance-profiles.ini` the caller read. The entry
+    /// lands in the render of every instance running the profile; the instance
+    /// the page names is checked to be one the record has a section for, the
+    /// same answer the record's own verbs give for a name it does not list
+    /// ([`ManagerError::NoInstance`]). The reply is the apply's rows
+    /// ([`affected_answer`], IP3c): the running instances the save moved to a
+    /// restart, and the instances that kept their last good pair.
+    async fn set_instance_profile_model(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        profile: String,
+        model: String,
+        instance: String,
+        values: Vec<(String, String)>,
+        revision: String,
+    ) -> Result<AffectedAnswer, Error> {
+        let who = requester_of(&header)?;
+        Ok(affected_answer(
+            self.core(move |m| {
+                m.set_instance_profile_model(&who, &profile, &model, &instance, &values, &revision)
+            })
+            .await?,
+        ))
+    }
+
+    /// `SetInstanceProfileModel` for `principal`, the principal first
+    /// (`ssssa(ss)s`).
+    #[allow(clippy::too_many_arguments)]
+    async fn set_instance_profile_model_as(
+        &self,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        principal: String,
+        profile: String,
+        model: String,
+        instance: String,
+        values: Vec<(String, String)>,
+        revision: String,
+    ) -> Result<AffectedAnswer, Error> {
+        let who = requester_as(&header, principal)?;
+        Ok(affected_answer(
+            self.core(move |m| {
+                m.set_instance_profile_model(&who, &profile, &model, &instance, &values, &revision)
+            })
+            .await?,
+        ))
     }
 
     /// `SetInstanceProfile`: points an instance at an instance profile,
@@ -1026,11 +1146,12 @@ where
         instance: String,
         profile: String,
         revision: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
-        Ok(self
-            .core(move |m| m.set_instance_profile(&who, &instance, &profile, &revision))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.set_instance_profile(&who, &instance, &profile, &revision))
+                .await?,
+        ))
     }
 
     /// `SetInstanceProfile` for `principal`, the principal first (`ssss`).
@@ -1041,11 +1162,12 @@ where
         instance: String,
         profile: String,
         revision: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
-        Ok(self
-            .core(move |m| m.set_instance_profile(&who, &instance, &profile, &revision))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.set_instance_profile(&who, &instance, &profile, &revision))
+                .await?,
+        ))
     }
 
     /// `SetInstanceAddress`: the address an instance listens on, `(ssss)`: the
@@ -1058,11 +1180,12 @@ where
         host: String,
         port: String,
         revision: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_of(&header)?;
-        Ok(self
-            .core(move |m| m.set_instance_address(&who, &instance, &host, &port, &revision))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.set_instance_address(&who, &instance, &host, &port, &revision))
+                .await?,
+        ))
     }
 
     /// `SetInstanceAddress` for `principal`, the principal first (`sssss`).
@@ -1074,11 +1197,12 @@ where
         host: String,
         port: String,
         revision: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
-        Ok(self
-            .core(move |m| m.set_instance_address(&who, &instance, &host, &port, &revision))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.set_instance_address(&who, &instance, &host, &port, &revision))
+                .await?,
+        ))
     }
 
     /// `CreateInstance`: writes the record section, the render and the
@@ -1235,11 +1359,12 @@ where
         name: String,
         contents: String,
         expected: String,
-    ) -> Result<(), Error> {
+    ) -> Result<AffectedAnswer, Error> {
         let who = requester_as(&header, principal)?;
-        Ok(self
-            .core(move |m| m.write_file_if(&who, &name, &contents, &expected))
-            .await?)
+        Ok(affected_answer(
+            self.core(move |m| m.write_file_if(&who, &name, &contents, &expected))
+                .await?,
+        ))
     }
 
     /// The framework version this manager was built with, beside the protocol
@@ -1604,6 +1729,72 @@ pub(crate) fn manager_dbus_e2e() {
     fn body<T: for<'de> zbus::zvariant::DynamicDeserialize<'de>>(m: &zbus::Message) -> T {
         m.body().deserialize().expect("reply body")
     }
+    /// What [`answer_on_bus`] answers: the ids a save moved to a restart, and
+    /// its not-converged rows as `(instance, key, args)`.
+    type BusAnswer = (Vec<String>, Vec<(String, String, Vec<String>)>);
+    /// The reply of a save that re-renders, read as the design's answer object
+    /// `a{sv}` (IP3c, `ARCHITECTURE.md` "Convergence", `affected_answer` in this
+    /// file): `running`, the `as` of ids the save moved to a restart, and
+    /// `notConverged`, the `av` of `a{sv}` rows naming the `instance`, the
+    /// `key` and the check's `args` (an `as`). The bus has no JSON, so the
+    /// fields are decoded and compared as the texts they are.
+    fn answer_on_bus(m: &zbus::Message, method: &str) -> BusAnswer {
+        use zbus::zvariant::{Dict, OwnedValue, Value};
+        assert_eq!(
+            m.body().signature().to_string(),
+            "a{sv}".to_string(),
+            "IP3c: {method} answers the answer object, not the unit"
+        );
+        let answer: std::collections::BTreeMap<String, OwnedValue> = m
+            .body()
+            .deserialize()
+            .expect("IP3c: the reply body of a re-rendering save is `a{sv}`");
+        let field = |key: &str| {
+            Value::from(
+                answer
+                    .get(key)
+                    .unwrap_or_else(|| panic!("IP3c: {method} answers `{key}`: {answer:?}"))
+                    .try_clone()
+                    .expect("IP3c: the answer's value clones"),
+            )
+        };
+        let running = field("running")
+            .downcast::<Vec<String>>()
+            .expect("IP3c: `running` is the array of ids (`as`)");
+        let rows = field("notConverged")
+            .downcast::<zbus::zvariant::Array>()
+            .expect("IP3c: `notConverged` is an array of rows (`av`)");
+        let not_converged = rows
+            .inner()
+            .iter()
+            .map(|row| {
+                let fields = row
+                    .try_clone()
+                    .expect("IP3c: the row's value clones")
+                    .downcast::<Dict>()
+                    .expect("IP3c: a not-converged row is a dict (`a{sv}`)");
+                let text = |key: &str| {
+                    let needle = Value::new(key);
+                    fields
+                        .iter()
+                        .find(|(k, _)| *k == &needle)
+                        .and_then(|(_, v)| v.try_clone().ok())
+                        // The field is a variant of `a{sv}`: unwrapped, it is the text.
+                        .and_then(|v| v.downcast::<String>().ok())
+                        .unwrap_or_default()
+                };
+                let needle = Value::new("args");
+                let args = fields
+                    .iter()
+                    .find(|(k, _)| *k == &needle)
+                    .and_then(|(_, v)| v.try_clone().ok())
+                    .and_then(|v| v.downcast::<Vec<String>>().ok())
+                    .unwrap_or_default();
+                (text("instance"), text("key"), args)
+            })
+            .collect();
+        (running, not_converged)
+    }
     let err_name = |kind: &str| format!("org.privateai.Manager1.Error.{kind}");
     let calls = |c: &Arc<Core>| c.service().calls.lock().unwrap().clone();
     let asked = |c: &Arc<Core>| c.authority().asked.lock().unwrap().clone();
@@ -1911,10 +2102,18 @@ pub(crate) fn manager_dbus_e2e() {
         assert_eq!(e.0, err_name("Io"));
         std::fs::remove_dir(sys.join("models.ini.disabled")).unwrap();
 
-        // SetModelProfile: the assignment verb, plain `(sss)`. The accepted
-        // call writes the record and renders the instance's model profiles;
-        // refusals are the core's own errors, and write nothing.
+        // SetModelProfile: the assignment verb, request `(sss)`, the reply the
+        // answer object `a{sv}` (IP3c). The accepted call writes the record and
+        // renders the instance's model profiles; refusals are the core's own
+        // errors, and write nothing.
         std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
+        // Each instance's launch recorded the pair standing on disk now (IP3c):
+        // the drift the answer reports is a pair the save moves off that record,
+        // so the answer's `running` is about a real launch, and the units are
+        // asked only past a pair that moved.
+        for id in ["default", "broken", "lan-2"] {
+            super::service::write_applied(id).expect("the applied record");
+        }
         let asked_before = asked(&c).len();
         let calls_before = calls(&c).len();
         let r = call(
@@ -1923,10 +2122,21 @@ pub(crate) fn manager_dbus_e2e() {
             &("default", "Qwen3.8-27B", "on"),
         )
         .expect("SetModelProfile on");
+        let (running, not_converged) = answer_on_bus(&r, "SetModelProfile");
         assert_eq!(
-            r.body().signature().to_string(),
-            String::new(),
-            "the reply is the unit: ()"
+            running,
+            vec!["default".to_string()],
+            "IP3c: each instance launched on the pair standing on disk, which is the pair the \
+             render gives it, so a save that assigns a model profile to `default` alone moves \
+             one pair: the answer offers a restart to the running instance whose pair moved, \
+             and asks nothing of the two whose pair the save leaves as their launch recorded: \
+             {running:?}"
+        );
+        assert_eq!(
+            not_converged,
+            vec![],
+            "IP3c: no instance kept a pair a fit check refused, so the answer carries no row: \
+             {not_converged:?}"
         );
         assert_eq!(
             std::fs::read_to_string(sys.join("assignments.ini")).unwrap(),
@@ -1962,9 +2172,14 @@ pub(crate) fn manager_dbus_e2e() {
             "the guarded call a write is: configure asked of the sender, every call"
         );
         assert_eq!(
-            calls(&c).len(),
-            calls_before,
-            "an assignment touches no unit"
+            calls(&c)[calls_before..],
+            [Call::Status("default".into())],
+            "IP3c: the answer's drift compare asks the state of the one instance whose pair \
+             the save moves, in record order, and only for the call that moved it: the \
+             assignment ON renders `default` off the pair its launch recorded, and the \
+             assignment OFF puts that very pair back, so the second call sees no drift and \
+             asks nothing; the other two instances' pairs stand on their record throughout; \
+             no unit verb"
         );
         let e = call(&client, "SetModelProfile", &("lan-3", "Qwen3.8-27B", "on"))
             .expect_err("an assignment of no instance");
@@ -2046,10 +2261,20 @@ pub(crate) fn manager_dbus_e2e() {
         .expect("write alt");
         let r = call(&client, "SetServerProfile", &("lan-2", "alt"))
             .expect("SetServerProfile of lan-2");
+        let (running, not_converged) = answer_on_bus(&r, "SetServerProfile");
         assert_eq!(
-            r.body().signature().to_string(),
-            String::new(),
-            "the reply is the unit: ()"
+            running,
+            Vec::<String>::new(),
+            "IP3c: `alt` carries the address lan-2's launch already carries, so the switch \
+             writes no byte of lan-2's pair and moves no other instance's pair: the answer \
+             offers a restart to nobody, because nothing stands off the pair its launch \
+             recorded: {running:?}"
+        );
+        assert_eq!(
+            not_converged,
+            vec![],
+            "IP3c: no instance kept a pair a fit check refused, so the answer carries no row: \
+             {not_converged:?}"
         );
         assert_eq!(
             profile_of("lan-2").as_deref(),
@@ -2062,9 +2287,12 @@ pub(crate) fn manager_dbus_e2e() {
             "the guarded call a write is: configure asked of the sender, every call"
         );
         assert_eq!(
-            calls(&c).len(),
-            calls_before,
-            "a server profile change touches no unit"
+            calls(&c)[calls_before..],
+            Vec::<Call>::new(),
+            "IP3c: the accepted switch's drift compare asks NOTHING of the service manager: \
+             the pair it renders is the pair `lan-2` launched on (the spare profile carries \
+             its address) and the other two pairs stand on their records; the refusals ask \
+             nothing, and no unit verb"
         );
         let landed = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
         assert!(
@@ -2149,8 +2377,9 @@ pub(crate) fn manager_dbus_e2e() {
         // The cap the switch steps into: the new profile's `ModelsMax`, under
         // the loads the instance's render starts. The pool is written for the
         // call, so the render starts two loads and `cap` caps them at 1: the
-        // refusal is the core's own, over D-Bus as `Invalid` with the encoded
-        // refusal, the instance named last.
+        // switch lands, and the fit check stops `lan-2`'s pair and leaves the
+        // answer naming the instance with the check's key and its arguments
+        // (`ARCHITECTURE.md` "Convergence", the IP3c review record).
         std::fs::write(
             sys.join("server@cap.ini"),
             "[Server]\nPort = 8085\nHostname = 127.0.0.1\nModelsMax = 1\n",
@@ -2174,22 +2403,48 @@ pub(crate) fn manager_dbus_e2e() {
             format!("{assignments}\n[lan-2]\n* = inherit\n"),
         )
         .expect("give lan-2 the pool's two loads");
-        let before = std::fs::read_to_string(sys.join("instances.ini")).unwrap();
-        let e = call(&client, "SetServerProfile", &("lan-2", "cap"))
-            .expect_err("a render over the new profile's cap");
-        assert_eq!(e.0, err_name("Invalid"), "the cap is checked: {e:?}");
+        let kept = (
+            std::fs::read_to_string(sys.join("models@lan-2.ini")).unwrap(),
+            std::fs::read_to_string(sys.join("launch@lan-2.ini")).unwrap_or_default(),
+        );
+        let r = call(&client, "SetServerProfile", &("lan-2", "cap"))
+            .expect("IP3c: the cap stops one instance's render, it does not refuse the switch");
+        let (running, not_converged) = answer_on_bus(&r, "SetServerProfile");
         assert_eq!(
-            pai_core::checks::Refusal::decode(&e.1).map(|r| (r.key.to_string(), r.values)),
-            Some((
+            not_converged,
+            vec![(
+                "lan-2".to_string(),
                 "load-on-startup-over-max".to_string(),
-                vec!["2".to_string(), "1".to_string(), "lan-2".to_string()]
-            )),
-            "the refusal, with its key and its values: {e:?}"
+                vec!["2".to_string(), "1".to_string(), "lan-2".to_string()],
+            )],
+            "IP3c: the new profile's cap is a fit check of ONE instance's pair: it stops \
+             lan-2's render and the answer names the instance with that check's key and \
+             its arguments, the loads over the cap, the cap, the instance: {not_converged:?}"
         );
         assert_eq!(
-            std::fs::read_to_string(sys.join("instances.ini")).unwrap(),
-            before,
-            "the refused switch wrote nothing"
+            running,
+            Vec::<String>::new(),
+            "IP3c: the pair stopped is not written, so lan-2 stands on the pair its launch \
+             recorded and no instance drifts: {running:?}"
+        );
+        assert_eq!(
+            profile_of("lan-2").as_deref(),
+            Some("cap"),
+            "IP3c: the switch lands, only the stopped pair does not"
+        );
+        assert!(
+            std::fs::read_to_string(sys.join("instances.ini"))
+                .unwrap()
+                .starts_with("[default]\nServerProfile = default\n\n[broken]\n"),
+            "IP3c: the record's other sections keep their bytes"
+        );
+        assert_eq!(
+            (
+                std::fs::read_to_string(sys.join("models@lan-2.ini")).unwrap(),
+                std::fs::read_to_string(sys.join("launch@lan-2.ini")).unwrap_or_default(),
+            ),
+            kept,
+            "IP3c: the instance whose pair the fit check refused keeps the bytes it had"
         );
         std::fs::write(sys.join("models.ini"), pool.as_bytes()).expect("the pool back");
         std::fs::write(sys.join("assignments.ini"), assignments.as_bytes())
@@ -2671,7 +2926,13 @@ pub(crate) fn manager_dbus_e2e() {
             vec![(alice.clone(), Action::Configure); 3],
             "the write is the guarded call it is: configure asked of the sender, every call"
         );
-        assert_eq!(calls(&c), vec![], "a file write touches no unit");
+        assert_eq!(
+            calls(&c),
+            vec![Call::Status("default".into())],
+            "IP3c: the accepted compare and swap answers the apply, whose drift compare asks \
+             the state of `default`, the one instance whose pair the new server profile moves; \
+             the refusals ask nothing, no unit verb"
+        );
         std::fs::write(sys.join("server@default.ini"), default_ini).expect("restore default");
     }
 }
@@ -3059,6 +3320,9 @@ pub(crate) fn manager_dbus_principal_e2e() {
         "[Qwen3.8-27B]\nmodel = /m/Qwen3.8-27B-Q8_0.gguf\n",
     )
     .expect("models@default.ini");
+    // The launch of `default` recorded the pair standing now (IP3c): the writes
+    // below move a pair off a real record, so their drift compare asks its state.
+    super::service::write_applied("default").expect("the applied record");
     let text_of = |name: &str| std::fs::read_to_string(sys.join(name)).expect("read");
 
     // `core` served on one end of a socket pair (the server built on its own
@@ -3383,8 +3647,12 @@ pub(crate) fn manager_dbus_principal_e2e() {
                 Call::Restart("default".into()),
                 Call::SetBootEnabled("default".into(), true),
                 Call::BootEnabled("default".into()),
+                // IP3c: the accepted compare and swap answers the apply, whose drift
+                // compare asks the state of `default`, the record's one instance.
+                Call::Status("default".into()),
             ],
-            "a file write touches no unit"
+            "the file writes start, stop and restart no unit; the accepted one answers \
+             the apply, whose drift compare asks the state"
         );
         assert_eq!(polkit(&c), vec![], "a principal call asks polkit nothing");
         assert_eq!(
@@ -3407,6 +3675,7 @@ pub(crate) fn manager_dbus_principal_e2e() {
     {
         let admins_before = asked_admin(&admins).len();
         let bff_before = bff_checks(&c).len();
+        let calls_before = calls(&c).len();
         std::fs::write(sys.join("assignments.ini"), "[default]\n").expect("assignments");
         call(
             &client,
@@ -3424,7 +3693,12 @@ pub(crate) fn manager_dbus_principal_e2e() {
             vec![],
             "the principal gate decides the right: polkit is asked nothing"
         );
-        assert_eq!(calls(&c).len(), 5, "an assignment touches no unit");
+        assert_eq!(
+            calls(&c)[calls_before..],
+            [Call::Status("default".into())],
+            "IP3c: the assignment's answer asks the state of the drifting instance, and \
+             starts, stops and restarts nothing"
+        );
         let e = call(
             &client,
             "SetModelProfileAs",
@@ -3633,6 +3907,7 @@ pub(crate) fn manager_dbus_principal_e2e() {
         let admins_before = asked_admin(&admins).len();
         let bff_before = bff_checks(&c).len();
         let polkit_before = polkit(&c).len();
+        let calls_before = calls(&c).len();
         std::fs::write(
             sys.join("server@alt.ini"),
             "[Server]\nPort = 8080\nHostname = 127.0.0.1\n",
@@ -3651,9 +3926,10 @@ pub(crate) fn manager_dbus_principal_e2e() {
             "the principal gate decides the right: polkit is asked nothing"
         );
         assert_eq!(
-            calls(&c).len(),
-            5,
-            "a server profile change touches no unit"
+            calls(&c)[calls_before..],
+            [Call::Status("default".into())],
+            "IP3c: the switch's answer asks the state of the instance whose launch the \
+             switch moves; starts, stops and restarts nothing"
         );
         let e = call(
             &client,
@@ -4140,6 +4416,10 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
         }
         (server.join().expect("server thread"), client)
     };
+    // The GPU pool the render's memory check measures against: a create renders
+    // the new instance, and a check that measures a card pool probes the engine.
+    // The cards are roomy: these phases are about the verbs, not about memory.
+    let gpus = || crate::manager::service::fakes::FakeGpus::new(&[("CUDA0", 400_000)]);
     let core = || -> Arc<Core> {
         Arc::new(
             Manager::new(
@@ -4149,7 +4429,8 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
                 FakeAuthority::new(true),
                 FakeResolver::lan(),
             )
-            .with_group(FakeGroup::new()),
+            .with_group(FakeGroup::new())
+            .with_gpus(gpus()),
         )
     };
     // The bff's own account, vouching for a member of `pai`.
@@ -4161,6 +4442,7 @@ pub(crate) fn manager_dbus_instance_crud_e2e() {
                 FakeResolver::lan(),
             )
             .with_group(FakeGroup::new())
+            .with_gpus(gpus())
             .with_passwords(FakePasswords::new())
             .with_log(FakeActionLog::new()),
         )

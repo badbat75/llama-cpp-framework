@@ -1111,6 +1111,67 @@ pub(crate) fn instance_models_dir_e2e() {
     assert!(!models.exists(), "asking creates nothing");
 }
 
+/// E2E phase for [`instance_server_profile`], for the e2e test of this crate to
+/// call (`src/tests/mod.rs`): the resolution order of `ARCHITECTURE.md`
+/// "Instance profiles", the decision's "the pool file ... `paths::instance_server_profile`
+/// resolves through the instance profile". The record names an INSTANCE profile
+/// and the server profile sits one step behind it, so the server profile of
+/// that instance profile's section answers, and a `ServerProfile` the record
+/// still carries from before the migration is stale.
+#[cfg(test)]
+pub(crate) fn instance_server_profile_order_e2e() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    redirect_for_tests(dir.path());
+    let engine = engine_config_dir();
+    std::fs::create_dir_all(&engine).expect("engine config dir");
+    // `both` names the instance profile AND carries the record's own key, the
+    // shape the migration leaves when it writes `InstanceProfile` and drops the
+    // stale `ServerProfile`: the fixture writes both, so the pin faces the pair.
+    // `through` is the migrated record, `legacy` the record of an install the
+    // migration has not written, `dangling` one naming a profile the pool has no
+    // section for.
+    std::fs::write(
+        instances_ini(),
+        "[both]\nInstanceProfile = prof\nServerProfile = stale\n\n\
+         [through]\nInstanceProfile = prof\n\n\
+         [legacy]\nServerProfile = own\n\n\
+         [dangling]\nInstanceProfile = gone\n",
+    )
+    .expect("instances.ini");
+    std::fs::write(instance_profiles_ini(), "[prof]\nServerProfile = live\n")
+        .expect("instance-profiles.ini");
+
+    // The design's order: the instance profile's server profile answers, the
+    // record's stale key is not read.
+    assert_eq!(
+        instance_server_profile("both"),
+        Some("live".to_string()),
+        "the server profile of the instance profile the record names wins over the \
+         `ServerProfile` left in the record"
+    );
+    // The migrated record: one step, the same answer.
+    assert_eq!(
+        instance_server_profile("through"),
+        Some("live".to_string()),
+        "a record naming only its instance profile is applied through it"
+    );
+    // A record that names no instance profile is the pre-migration shape: its
+    // own key answers, the instance profile having nothing to say.
+    assert_eq!(
+        instance_server_profile("legacy"),
+        Some("own".to_string()),
+        "a record naming no instance profile names the server profile itself"
+    );
+    // The refusals the doc names: no section, and an instance profile the pool
+    // has no section for, are an instance with no profile to read.
+    assert_eq!(instance_server_profile("dangling"), None, "no pool section");
+    assert_eq!(
+        instance_server_profile("nobody"),
+        None,
+        "the record has no such section"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

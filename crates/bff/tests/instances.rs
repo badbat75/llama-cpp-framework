@@ -159,6 +159,9 @@ impl FakeManager {
             profile_tags: profile_tags.iter().map(|t| t.to_string()).collect(),
             instance_tags: instance_tags.iter().map(|t| t.to_string()).collect(),
             label: None,
+            converged: true,
+            reason: None,
+            pending_restart: false,
         }
     }
 

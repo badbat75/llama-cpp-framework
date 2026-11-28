@@ -138,6 +138,9 @@ fn row(id: &str, profile: &str, port: u16) -> InstanceInfo {
         profile_tags: Vec::new(),
         instance_tags: Vec::new(),
         label: None,
+        converged: true,
+        reason: None,
+        pending_restart: false,
     }
 }
 

@@ -84,6 +84,14 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   matches 0 tests, filter by that name.
 - Gate a test-only wrapper `#[cfg(test)]` (never `allow(dead_code)`), avoid a `#[cfg(test)]` variant that
   a production `match` names, and gate a `#[cfg(unix)]`-only helper too.
+- A lint red sitting in the tester's test code: the mechanical fix is yours, the assertion is not. A
+  `type_complexity` tuple a test helper returns becomes a `type` alias in the same scope (items nest
+  inside a test `fn`, as `manager/dbus.rs`'s `answer_on_bus`), and a caller that destructures the tuple
+  needs no change at all: one red, zero assertions moved. Name the file in the report.
+- A "vacuous checks" review flag: the window's line numbers ride the slice's own shifts, so read the
+  hunk's tail, not the numbers. In a Rust `match` arm the vacuous check is the prose block riding on a
+  bare `Ok(())` that restates the item's own doc comment: drop the prose, keep every check that runs.
+  The test-side shape is a `for` over a list an assert above proved empty.
 - Before adding a public field, enumerate the crates that write a full struct literal of that type;
   report those sites as the tester's, and prove production with clippy without `--all-targets`.
 - Sort edits so a serialised file's order never depends on a map; reproduce an order-only red with both
@@ -760,6 +768,10 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   keep") reads as a defect to a later reader and invites re-proposing it: the contract in code states
   what the code does, the rejected shape and its consequence go in `ARCHITECTURE.md`, which is where
   the design is kept.
+- A "revert this order" instruction can be a no-op in the tree you get: `git diff --stat -- <file>`
+  and `git show HEAD:<file> | sed -n '/fn <name>/,/^}/p'` before probing the other order. A tester's red
+  baseline log names a pin of a file with NO production diff against `HEAD`: the tree moved under the
+  baseline, so that pin is not a code change to make.
 
 ### A cargo run
 
@@ -796,6 +808,15 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   "the running instances" through `FakeService { running: &[..] }` needs `state: UnitState::Inactive` on
   the same fake. A running-list red naming an instance the fixture never listed is the fixture's, prove
   it in a copy by setting that state: no verb shape tells `running` from `state`.
+- A manager phase on `FakeGpus` runs the PRODUCTION GPU probe as well whenever the engine exe is
+  unreachable (the fake sets the cards, not the probe): every probe site costs `GPU_PROBE_TIMEOUT`, so a
+  phase list of ten takes minutes and libtest's "has been running for over 60 seconds" is normal, not a
+  hang.
+- A per-instance card split in a manager fixture comes from each instance's server profile pinning
+  `Devices`. `paths::instance_server_profile` resolves THROUGH the instance profile (the design), so two
+  instances of ONE instance profile share ONE card set and a save that fits one and not the other has no
+  mechanism; a record `ServerProfile` key beside `InstanceProfile` is never read. A fit-split phase needs
+  its own instance profile per instance, so a red there is the fixture's shape, not the render's rule.
 - A manager `start_up()` over a MIGRATED record deletes `assignments.ini` and `models.ini.disabled`
   (backed up as `<name>.2.99.0`, `service.rs` `retired`, pinned by
   `manager_ip2_stray_assignments_e2e`), so a new phase that seeds a migrated tree cannot pin those two
@@ -1005,6 +1026,15 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   a Server-form page, so a test's unnamed `within(main).queryByRole('group')` can never be `null` there
   and can never find one. Prove it by listing `getAllByRole('group')` in a copy. A `role="region"` with
   no name IS named by its contents, so a "right after the opener" node can answer a named query.
+- A new nav entry reddens, by name, every file that ENUMERATES the nav: `HearthIcons` H8a.2 and H8a.8
+  (the shell's icon list), `ProfilesNav` 5b.1 (the Profiles group's two links), `NodesMenu1` 20 N.3 and
+  `NodesMenu2` 20 N.8 (the group's hrefs), and every tab list whose slice is a fixed length
+  (`ServerProfiles1` 17a.2 `slice(0, 12)`, `ModelProfilesFilter` 2d.60 `slice(-11)`): the tester grew the
+  expected arrays and left the slices, so those two are off by one and can never pass. Run those six
+  files and report them; no production shape adds an entry and keeps the old lists.
+- The shell shows its own boot skeleton until the session read lands (one microtask after mount), so a
+  test that asserts a PAGE's words in the same frame as `render(<App />)` finds `Loading…` and can never
+  pass: every page test of the repo awaits its `h1` first (`findByRole('heading', …)`).
 - An `aria-disabled` button is no shield, its `onClick` runs.
 - The react-hooks `immutability` lint reddens `x.current = true` when `x` arrived as a prop (it trusts
   only a `useRef` local of that very function).
@@ -1146,6 +1176,21 @@ written multi-line; a `return Err(format!(..))` at deep indent is written broken
   flex row needs `min-width: 0`.
 - The check's stub prints `BrokenPipeError` tracebacks when a browser closes a page mid-read: that is
   noise, the run is judged by its `summary: ... N failing` line.
+- A folded table column's head is a layout trap: `position: absolute` (the
+  `.visually-hidden` shape, what `.model-profiles th:nth-child(2)` uses) leaves the
+  head OUT of the row's cells, so the row's remaining heads pack LEFT in the grid.
+  With ONE folded column the head lands over the 0-width box and reads aligned; with
+  TWO, every visible head shifts one column left and squeezes a visible column to the
+  head's width (brief 26 IP6a review R3: the Instance profiles list's Used by column
+  at 38 px, "llama.cpp :9931" one letter per line at 320 px). A second folded
+  column's head therefore keeps its SLOT: `visibility: hidden` + `width: 0` +
+  `max-width: 0` + `overflow: hidden` (`max-width: 0` is what collapses the
+  auto-layout column; `clip-path: inset(50%)` for the pin). `font-size: 0` is NOT
+  available: `HearthTokens.test.ts` H1a.7 allows only a `var(--fs-*)`. The ux check
+  reports the break, never the cause: probe it with Playwright reading
+  `getBoundingClientRect()` (x AND width) of every `th` and `td` of the table at
+  320 px, and read the column boxes against the head boxes.
+
 - A backgrounded `cmd 2>&1 | tail -N` can finish with a 0-byte capture file (the pipe dies with the
   shell): redirect the run to a log file and read that.
 
