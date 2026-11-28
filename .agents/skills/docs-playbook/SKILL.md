@@ -557,6 +557,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   sentence was written, so a "not built" sentence written early became false inside the same session.
   Re-read `git log --oneline -5 main` and `git status --porcelain` before the final pass, and re-check
   every "not built" / "no page of its own" claim against the new HEAD.
+- A slice in progress sits in `crates/` as much as in `fe/`: the whole IP5 tree carried uncommitted
+  manager, bff and core edits, so a route's served JSON and a check's key list were read with
+  `git show HEAD:<path>`, never from the working copy.
+- The `fe/` route table of `crates/bff/README.md` is one line per page and lags the briefs: the model
+  page's row still said the Save bar opened the section, sticky to the viewport's top, after 22 L2.B1
+  (the user's ruling of 2026-11-26) moved it to the section's last child, sticky to the bottom, and
+  L2.A2 put Delete last in its group. A later ruling in the same brief reverses an earlier item, so
+  re-check every layout claim of a row you touch against the component and `fe/src/index.css`
+  (`.save-bar { position: sticky; bottom: 0 }`), and cite the ruling, not the item it reversed.
+- A Rust list mirrored in `fe/` goes by a shorter name: `checks::MODEL_PROFILE_STAY_KEYS` is
+  `STAY_KEYS` in `fe/src/ModelProfileCards.tsx`. Grep the fe file for the const before naming it; the
+  brief's name is the Rust one.
 - The last docs commit is not the baseline for a served/not-served claim: `AGENTS.md` still said the
   server profile pool had "no page of its own" long after the pages landed (56d5f66 predates the docs
   commit 4d4a55f). Check every such claim against `fe/src/route.ts` and the `call(` paths on `main`, not

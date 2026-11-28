@@ -7,8 +7,9 @@ beside the sign-in is for a signed-in user: the framework version, this host's n
 runtime versions its packages installed, the node's compute devices ([below](#the-node)), the manager's
 instances with their state, the run verbs, the start-at-boot flag, an instance's tags, an instance's label
 ([below](#the-label-of-an-instance)), an instance's server file read and saved, the model profile
-list, the model profile on/off switch and one model profile, read and saved, the server profile
-pool: its list, a new profile, one profile read and saved, and its delete
+list and one model profile, read and saved (the model profile switch route is served with no caller
+since IP5, 0d855368), the server profile pool: its list, a new profile, one profile read and saved,
+and its delete
 ([below](#the-server-profile-pool)), and an instance's associations: its server profile switched, and
 its model profiles listed and assigned, one at a time or as the whole pool
 ([below](#the-association-routes)), and an instance created and its record removed
@@ -24,9 +25,9 @@ member signs in, a right password of anyone else is 403 `session-not-administrat
 (`fe/briefs/api-contract.md`). Behind
 sign-in it has the Overview (version, instances), the About page (the framework's version and the operating system),
 a Node info page (this host's name, OS and kernel, each installed engine's version and backends, and each GPU's drivers, [below](#the-node)), an instance page (the server file, Start, Stop, Restart, start at boot, the instance's label set: all served)
-and the Model profiles page (the model profile list, the on/off switch per model profile, that switch on
-one model profile's own page too, and that page read, saved and deleted: all served,
-[below](#the-model-profile-routes)); on that page every settings card is editable, the Engine field, the
+and the Model profiles page (the model profile list plain, each row ending with a delete, and one model
+profile's page read, saved and deleted: all served, [below](#the-model-profile-routes), no on/off switch on
+either since IP5, 0d855368); on that page every settings card is editable, the Engine field, the
 Assets card and the file picks read-only ([below](#the-web-ui-fe)).
 
 **It runs as a service on Linux and Windows, never on macOS.** `xtask build` compiles it into
@@ -410,7 +411,8 @@ ends. With no failure `nodeInfo` is absent. The web UI reads it for the Node inf
   (`model_profiles::read_answer`): 403 `session-not-administrator` and the session ended when the
   manager refused that user, 503 `client-unavailable` for no manager or an answer that does not land
   within the bound, 502 `client-other` for anything else, never the manager's detail. **No page calls
-  it yet**: the fe's GPU distribution card is the open brief `fe/briefs/14-gpu-distribution.md`.
+  it**: the model profile page stopped at IP5 (0d855368), when the GPU distribution card left it, and
+  that card's new home is the instance profile's per-model entry (IP6, `fe/briefs/26-instance-profiles.md`).
 - **The node's model files are `GET /api/node/model-files`** (`node.rs` `model_files`, da525bd, slice
   M3 of "Choosing the model file on the web" in [ARCHITECTURE.md](../../ARCHITECTURE.md)): the same
   shape as the device list, the manager's `ModelFilesAs` as the signed-in user (its gate is the
@@ -722,8 +724,11 @@ never removed on a record read failure. The 503 and 504 are the create's. A retr
 (`crates/bff/src/model_profiles.rs`, built 2026-11-17; the fifth, the model's facts
 `GET /api/profiles/model/{id}/model-info`, [below](#the-model-info); the create and the delete, 76163d1, [below](#the-create-and-the-delete); `PLAN.md` step 10 items 11, 11b, 11c and 11e, the
 designs "The switch on and off (item 11b)" and "Saving a preset from the web" in `ARCHITECTURE.md`):
-the Model profiles page's list and switch, the read, the save and the delete of one model profile, and
-the model source a save carries. All of them are behind
+the Model profiles page's list, the read, the save and the delete of one model profile, and
+the model source a save carries. Since IP5 (0d855368) the web UI has no on/off switch and the page owns no
+placement key, so the switch route is served with no caller ([below](#the-switch)) and the save carries no
+placement key ([below](#the-save)). The design removes the route with the 17d and 17e ones (IP4,
+`ARCHITECTURE.md`), the plan's open work (`PLAN.md` step 10). All of them are behind
 sign-in and all of them ask `private-ai-manager` on **one connect as the signed-in user**, so it is
 that user's own membership of `pai`, re-checked by the
 manager at the call, that answers: 401 `session-required` with no session (the manager is not
@@ -770,6 +775,10 @@ One read of each file, and one row per section except llama-server's global `[*]
   never a row, in either file, and the sections beside it keep their place. The switch answers 404
   for it ([below](#the-switch)).
 - A missing file is an empty group, not an error: no `models.ini` answers `[]`.
+- **What the page makes of it** (IP5, 0d855368): the Models list has no on/off switch, and its Used by cell reads
+  the row's `usedBy`, an array of instance profile ids. This list does not answer `usedBy` yet (IP4 open), so
+  every row reads "No instance profile" and its delete minus can act, the bff's delete being the one that
+  refuses ([below](#the-create-and-the-delete)).
 
 | Status | Body | When |
 | --- | --- | --- |
@@ -780,6 +789,10 @@ One read of each file, and one row per section except llama-server's global `[*]
 | 502 | `client-other` | anything else, never the manager's detail: among them a record of `assignments.ini` the manager answers as unreadable, and an instances list answered as a failure |
 
 ### The switch
+
+**Served with no caller** since IP5 (0d855368): the Models list has no on/off switch and neither has the model
+profile page, so nothing in `fe/` asks this route; the design removes it, 404 (IP4, `ARCHITECTURE.md`).
+What it does:
 
 The body is `{"enabled": true|false}`. Both files are read, the section is looked for in each, and
 if it is in neither, or the name is llama-server's global `[*]`, the answer is 404
@@ -853,7 +866,7 @@ written first, so a refusal leaves both files as they were.
 `CreateModelProfileAs` and `DeleteModelProfileAs` (823a7c3: [crates/config/README.md](../config/README.md))
 on one connect as the signed-in user, under the write's 15 s (`WRITE_TIMEOUT`). The create is served as
 an API with no page of its own; the delete is the minus on the profile's row in the Models list and the
-**Delete** at the start of the page's Save bar (22D, e1eea89, 28a028f, 22D4 eb042d8,
+**Delete** in the page's Save bar (22D, e1eea89, 28a028f, 22D4 eb042d8,
 [above](#the-web-ui-fe)). The session rules are the pool's: 401 `session-required` with no
 session and the manager not connected to; 403 `session-not-administrator` ending the session; 503
 `client-unavailable` with no manager or a 15 s that ran out before the call was handed over, nothing
@@ -876,21 +889,37 @@ The delete answers 204 with no body. The manager judges it on the state under it
 `no-model-profile-named` `[id]` for a name neither file holds; 409 `model-profile-enabled` `[id]` for
 one switched on; 409 `model-profile-assigned` `[id, instances]` for one an instance's section of
 `assignments.ini` names; any other refusal 422 with its key and args. A retried create after a 504 is
-the 409 and a retried delete the 404, which is how the ambiguity shows. Tests:
+the 409 and a retried delete the 404, which is how the ambiguity shows. The page's rule is one thing since
+IP5 (0d855368, `fe/src/modelProfileDelete.ts`): a model profile an instance profile lists is not deletable,
+`usedBy` being that list, and `fe/src/RowDelete.tsx` reads 409 `model-profile-assigned` as the refusal that
+keeps it. With the list answering no `usedBy` (IP4 open) the row's minus and the page's **Delete** act on every
+profile, so a switched-on one meets the 409 `model-profile-enabled` here, and IP5 took that key's words out of
+`fe/src/strings/en_US.json`: the list answers with its generic "The request did not go through. Try again."
+Tests:
 `crates/bff/tests/model_profile_create.rs`.
 
 ### The model profile page
 
 `GET /api/profiles/model/{id}` (`model_profiles.rs` `read`) is the read of one model profile, the route
 `#/profiles/model/<id>` reads (`fe/src/ModelProfilePage.tsx`, reached from the model profiles table's id link): the page
-whose save is [below](#the-save). This route only reads. One connect as the
+whose save is [below](#the-save). Since IP5 (0d855368) that page draws the model's own keys only: a card's rows
+are the ones whose key is in `checks::MODEL_PROFILE_STAY_KEYS` (mirrored by `STAY_KEYS` in
+`fe/src/ModelProfileCards.tsx`, a card dropped when no field of it stays), so the GPU distribution, Tensor
+placement, Hardware config and Resource / context cards are off the page, every key of `checks::PLACEMENT_KEYS`
+with them; there is no on/off switch, and the page asks [the model info](#the-model-info) and the node's devices
+for nothing. Its head carries the list's Used by row
+(`usedBy`: "No instance profile" muted, or one link per instance profile) and under it a note saying the
+placement lives in the instance profile's entry, with a link to the first of them. The read answers no `usedBy`
+(IP4 open), so today the row is muted, the note carries no link, and the links land on the not-found page until
+the instance profile pages exist (IP6, `fe/briefs/26-instance-profiles.md`). This route only reads. One connect as the
 session's user, one read of each file, under the reads'
 5 s `MANAGER_TIMEOUT`. The `{id}` is a section name, matched in any letter case, never a path, and
 the enabled file is read first: a section in both files answers the `models.ini` copy, as the list
 does the same id. The answer is exactly seven fields:
 
 - `id`, `engine`, `engineAvailable`: the list row's, the id as the file spells it.
-- `enabled`: which of the two files the section was found in.
+- `enabled`: which of the two files the section was found in. The page shows nothing of it since IP5 (0d855368):
+  the field is in the answer, the page has no switch.
 - `values`: the section's keys as that file's parser reads them (`ini::parse_sections`), an object of
   strings, no path resolution and no check: the key as the file spells it, the value trimmed and cut
   at the first `;` or `#` (`q8#0` reads as `q8`), a key repeated in the section keeping its last
@@ -931,12 +960,17 @@ no connect to the manager.
 key to remove, and the section is rewritten in place: the keys the body does not list, the comments
 and the rest of the file stand. The keys the body may touch are `checks::WEB_MODEL_PROFILE_KEYS`: the
 GPU distribution keys `device`, `split-mode` and `tensor-split` joined them at 66b2bb3 (the design's
-G1), the page
-having no control for them yet (`fe/briefs/14-gpu-distribution.md`); `n-cpu-moe` at 4cfa909 (L3, an
+G1), the page's control for them being the GPU distribution card, which IP5 (0d855368) took off the model
+profile page (`fe/briefs/14-gpu-distribution.md`); `n-cpu-moe` at 4cfa909 (L3, an
 integer 0 to 4096, `checks::MODEL_PROFILE_INT_KEYS`) and `override-tensor` at 6570557 (J1). The model's
 source, `model`, `hf-repo` and `hf-file`, joined at b1e52c8 (M3b, [below](#the-source-a-save-carries)).
 Only `mmproj`, `model-draft`, `spec-type` and `moe-cache-mib` are still refused
-(`checks::MODEL_PROFILE_KEYS_NOT_ON_WEB`).
+(`checks::MODEL_PROFILE_KEYS_NOT_ON_WEB`). The page sends no placement key (`checks::PLACEMENT_KEYS`) since IP5
+(0d855368): it owns none of them ([above](#the-model-profile-page)), and a body that carried one is refused by
+the manager on a tree its migration has written (`checks::model_profile_placement`, run at the write in
+`crates/manager/src/manager/service.rs`), so the set above is wider than what a migrated model profile
+takes; the page has the words for that refusal (`api-model-profile-placement-key`, IP5.7), which show only
+for a key of a hand-edited file.
 
 The body is read in full before a file is opened, and is refused whole:
 
@@ -986,7 +1020,7 @@ the safe answer after a write that stands, as the switch's.
 | 404 | `no-model-profile-named` | neither file has that section, or the name is llama-server's global `*`. `args` as the switch's ([above](#the-switch)) |
 | 409 | `model-profile-changed-elsewhere` | the body's revision is not the section's, or the compare and swap found its file changed: nothing written |
 | 413 | `payload-too-large` | a body over the bff's 64 KiB limit ([above](#saving-the-server-file)) |
-| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node), `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB those GPUs have, no `field`: a model profile the write makes larger does not fit the usable memory of the GPUs the instance's server profile names, 5fb7b0e), `device-bad-name` (args the key and the entry, `field` the key: a `device`, `device-draft` or `mmproj-device` entry llama.cpp's parser throws on, judged on the value the preset reader sees, never against the node's probe) and `tensor-split-format` (args the whole value, `field` `tensor-split`: weights the engine's parser throws on); `override-no-pattern`, `override-no-device`, and on a changed line `override-tensor-space` (a space at the ends of a rule's pattern or device) and `override-bad-device` (a device not of letters, digits and `_`, or the CPU not spelled `CPU`), args the rule's position first, `field` `override-tensor`; `model-profile-device-outside` (args the model profile, the instance, the key and the device, 4cfa909: see [the device bound](#the-device-bound)) |
+| 422 | `{"key", "args", "field"}` | the bff's comment-marker check of a value, or the manager's refusal of the new file, among them `model-profile-model-missing` (args the model profile, the instance and the file, `field` `model`: a file the new render puts in effect on an instance is not on the node), `model-profile-over-memory` (args the model profile, the instance, the MiB it needs and the MiB those GPUs have, no `field`: a model profile the write makes larger does not fit the usable memory of the GPUs the instance's server profile names, 5fb7b0e), `device-bad-name` (args the key and the entry, `field` the key: a `device`, `device-draft` or `mmproj-device` entry llama.cpp's parser throws on, judged on the value the preset reader sees, never against the node's probe) and `tensor-split-format` (args the whole value, `field` `tensor-split`: weights the engine's parser throws on); `override-no-pattern`, `override-no-device`, and on a changed line `override-tensor-space` (a space at the ends of a rule's pattern or device) and `override-bad-device` (a device not of letters, digits and `_`, or the CPU not spelled `CPU`), args the rule's position first, `field` `override-tensor`; `model-profile-device-outside` (args the model profile, the instance, the key and the device, 4cfa909: see [the device bound](#the-device-bound)), `model-profile-placement-key` (args and `field` the key: a key of `checks::PLACEMENT_KEYS` left in the section, the manager's check above) |
 | 503 | `client-unavailable` | no manager, with no write asked yet |
 | 504 | `client-timeout` | from the moment a write was asked and its outcome is unknown, the rule the server save shares ([above](#saving-the-server-file)): a limit that runs out before any write is 503 and the file is what it was, one that runs out after the write landed is the 200 above. The writes' 15 s are counted from the request, the reads' 5 s spent first taken off |
 | 502 | `client-other` | anything else, never the manager's detail |
@@ -1035,9 +1069,10 @@ tensor list 6570557 slice J1; the design "Layers, MoE and tensor placement on th
 page" in `ARCHITECTURE.md`) relays the manager's `ModelInfoAs` asked as the signed-in user on one
 connect: the layer facts of the GGUF file the model profile names
 ([crates/config/README.md](../config/README.md), the `ModelInfo` bullet, says how the manager finds and
-reads it). The model profile page reads it when it opens: the model's facts line (block count, MoE,
+reads it). No page reads it since IP5 (0d855368): the model's facts line (block count, MoE,
 experts, or the reason there are none) and the GPU distribution card's Blocks mode (LS1, d6181ff,
-`fe/src/gpuBlocks.ts`). The 200 is always one shape, each part `null` where the
+`fe/src/gpuBlocks.ts`) went with the cards that moved, and the instance profile's entry is where they land (IP6,
+`fe/briefs/26-instance-profiles.md`): the route is served. The 200 is always one shape, each part `null` where the
 manager answered none:
 
     {"model": "<the resolved path>",
@@ -1373,8 +1408,8 @@ nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark i
 | `#/` | The Overview: the version (`/api/version`, a fixed message on any failure) and the instances (`/api/instances`) as a table of instance, each a link to its page, and state (the five known states as Running, Stopped, Starting, Stopping, Failed; another as `Unknown (<name>)`), with an engine column only when they run on more than one engine; a message when there is none. The section is named by the host the shell read. Each tile carries its facts with the list, no read of its own: the port, the tags, and a Start at boot row from `boot`, absent when that is `null` (fe slice 12 T1, boot from 13 N.1). Each tile ends with the instance page's run buttons (Start, Stop, Restart, the ones its state cannot use disabled, the names carrying the instance, the run logic shared with the instance page in `fe/src/run.ts`, A1 ffa71ac): one write at a time per tile, the outcome in a status or alert line under them with a link to the instance page, an accepted write whose state has not settled saying it was sent, a 504 reading the list again at once, and a 409 `instance-no-model-profiles` saying the instance has no model profile to serve. Both reads are 401 with no session, so an unsigned visitor has nothing to show (user, 2026-11-19; the sign-in-only shell the web UI shows here is `fe/briefs/09-signin-only.md`, slices S1a and S1b) | signed in; otherwise the sign-in form in its place |
 | `#/sign-in` | The sign-in form (`POST /api/session`) | anyone |
 | `#/instances/<id>` | The instance's id, engine and state (from `/api/instances`, kept live), Start, Stop and Restart (`POST /api/instances/<id>/start`, `/stop`, `/restart`; a 409 `instance-no-model-profiles` says the instance has no model profile to serve, A1 ffa71ac), Start at boot (`GET` and `PUT /api/instances/<id>/boot`, both behind the session), the tags field (`PUT /api/instances/<id>/tags`, 12 T1), and a pencil after the heading, named for editing the display name, whose Save sends `PUT /api/instances/<id>/label` (f70d631, 16 17f.5 to 17f.9, 17f2 4c53fb5: the field opens with the label, a text that trims to the label the instance has sends nothing, an empty one clears it and the focus goes back to the pencil, a 504 says the write is not confirmed; 17f's **Rename** is gone). The Server section names the server profile the record gives the instance, as a link to that profile's page: the Server form is on the profile's page, not here (17a.10, 098c177) | signed in; otherwise the sign-in form in its place |
-| `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of model profile, engine (with "(not available)" when its engine is not) and status On or Off, each row with a switch named by its model profile that sends `PUT /api/profiles/model/<id>/enabled` at once, one write at a time; the status line says what was switched and, when an instance of the engine runs, to restart it; a failure shows its message above the table and the switch takes the state read again (`fe/src/ModelProfiles.tsx`). Each row's status cell ends with a 40 px minus named `Delete model profile <id>` (`fe/src/RowDelete.tsx`, 22D4 eb042d8): it is switched off (`aria-disabled`, drawn inactive) while the profile is on, and its reason `Switch it off to delete it.` shows as a line under the minus on hover and on focus; pressing it opens a confirm as a row of the table right after the row, whose **Delete** sends `DELETE /api/profiles/model/<id>`; the row leaves the list when it lands, every row's minus going inactive with the write, and a refusal reads the list again and puts its words on the line above the table (409 `model-profile-enabled` naming the profile, 404 `no-model-profile-named` saying it is gone, a 504 `Not confirmed:` read again to see whether it went), the focus landing on the next row's minus | signed in; otherwise the sign-in form in its place |
-| `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the Engine field and the Assets card as text; every settings card's fields are editable (fe slices 2h.1 to 2h.10: 57e5573, 39529ef, 40d19a7, dc1ff69, f2fda3b, 4071f1e, 64cda2f, ce5fee0, c155194, b4a4343, 84cd76e; the GPU distribution card 3585c39, `n-cpu-moe` 7d9ba6e, the draft and vision devices d2dc056), the file picks `mmproj` and `model-draft` and the `moe-cache-mib` field staying read-only (2h.7's 178: it needs the model's facts) and the GPU list `device` with it (its control is the open brief `fe/briefs/14-gpu-distribution.md`); a save sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d). After GPU distribution, the Tensor placement card shows `override-tensor` as rule rows (tensor kind, layers, a custom pattern, Goes on, a 40 px `x` named `Remove Rule N`) with a 40 px outlined `+` named **Add rule**, each label above its control and the row's controls on one line (157d075, TP1b), and after them a **Rules as text** field with the whole value as llama.cpp reads it: paste a value from a guide, reorder the rules, and Enter or the focus leaving rebuilds the rows (2e0a027, TP2, 21 T.10 to T.13). Save is refused, the fields marked, while a rule has an unreadable Layers text, an empty pattern, a pattern holding `,` or `=`, or no device, and the manager's refusals land on the rule they name (21 T.11, T.12). The key is sent only when the rules differ from the loaded ones (1b98fee, TP1, `fe/src/TensorPlacement.tsx`, `fe/briefs/21-tensor-placement.md` 21 T.1 to T.9). Under the summary line a plain paragraph says the state and carries the page's own on/off switch, over the page's width and outside the settings section (22 D4.9: 22D2's status row and its minus are gone; A2 b3b1446: the switch took the state paragraph's place, sharing the Models list's route and refusal texts in `fe/src/modelProfileSwitch.ts`, one write at a time with Save held while it writes, the switch off while the page has unsaved edits, the bar's Delete and its reason following it at once, a failed write adopting the revision the re-read brings, and "To delete it, switch it off first." gone). The settings section opens with the Save bar, right after its heading and sticky to the viewport's top (22 D2.5, 22 D2.6), and the first button of its group is **Delete model profile** (22 D4.10): switched off while the profile is switched on, its reason `Switch it off to delete it.` a visible line under the bar's buttons; pressing it opens the confirm under them, whose **Delete** sends `DELETE /api/profiles/model/<id>`, and the page becomes the paragraph that says it is gone (e1eea89, 28a028f, 22D4 eb042d8, `fe/briefs/22-model-sources.md` 22 D.1 to 22 D.7 and 22 D4.9 to 22 D4.14); a refusal whose read again took the Delete away leaves its words in a paragraph of the bar's own | signed in; otherwise the sign-in form in its place |
+| `#/profiles/model` | The model profiles of every engine (`GET /api/profiles/model`) as a table of four columns, Model profile, Engine (with "(not available)" when its engine is not), Used by and Actions (`fe/src/ModelProfiles.tsx`), the rows in the list's order, filterable and sortable. No on/off switch since IP5 (0d855368): the route is served with no caller ([above](#the-switch)). The Used by cell reads the row's `usedBy`, and the list answers none (IP4 open), so every row reads `No instance profile` (`model-profiles-unused`). Each row ends with a 40 px minus named `Delete model profile <id>` (`fe/src/RowDelete.tsx`, 22D4 eb042d8): inert (`aria-disabled`, drawn inactive) with the reason `An instance profile uses it: remove it from that instance profile to delete this one.` while `usedBy` names one, the one rule of `fe/src/modelProfileDelete.ts` the page shares (IP5.3, IP5.6); pressing it opens a confirm as a row of the table right after the row, whose **Delete** sends `DELETE /api/profiles/model/<id>`; the row leaves the list when it lands, every row's minus going inactive with the write, and a refusal reads the list again and puts its words on the line above the table (409 `model-profile-assigned` naming the profile and the instances, 404 `no-model-profile-named` saying it is gone, a 504 `Not confirmed:` read again to see whether it went), the focus landing on the next row's minus; a 409 `model-profile-enabled` has no words of its own since IP5, so the row says the generic "The request did not go through. Try again." ([above](#the-create-and-the-delete)) | signed in; otherwise the sign-in form in its place |
+| `#/profiles/model/<id>` | One model profile, read once from `GET /api/profiles/model/<id>`, reached from the row's id link in that table (`fe/src/ModelProfilePage.tsx`): the way back to the list, the id as the heading, the summary line naming the engine and the model file, and the head's Used by row (IP5.4: `No instance profile` muted, or one link per instance profile) with, under it, the note that where the model runs, its context and its memory are set per model in each instance profile that lists it, plus a **Placement in {0}** link to the first of them (`model-profile-placement-elsewhere`, `model-profile-placement-link`: `usedBy` answers empty today, so the row is muted and the note carries no link, and the links land on the not-found page until the instance profile pages exist, IP6, `fe/briefs/26-instance-profiles.md`). The page's cards are the model's own keys, IP5.5: the rows of its eight cards whose key is in `checks::MODEL_PROFILE_STAY_KEYS`, mirrored by `STAY_KEYS` in `fe/src/ModelProfileCards.tsx` (the model source, the `mmproj` and `model-draft` picks, the sampling, chat and reasoning, embeddings, `cache-reuse`, the image tokens, the speculation bounds), so every placement key of `checks::PLACEMENT_KEYS` is off the page, among them the GPU list `device`, `split-mode`, `tensor-split` and its rule rows, `n-gpu-layers`, `n-cpu-moe`, `moe-cache-mib`, the context and the batches, the cache types, the draft and vision devices, the memory fit, `load-on-startup`. The model's facts line is gone with them, so the page asks [the model info](#the-model-info) and `GET /api/node/devices` for nothing, and there is no on/off switch (22 D4.9, A2 b3b1446 and `fe/src/modelProfileSwitch.ts` are gone). The card fields, the rule rows (`fe/src/TensorPlacement.tsx`) and the Blocks mode (`fe/src/gpuBlocks.ts`) stay in the code, filtered out by `STAY_KEYS`, drawn by no page until the instance profile's entry exists (IP6). A save sends `PUT /api/profiles/model/<id>` with the page's revision and the keys that changed (2h.2, 9ea579d) and never a placement key (IP5.7). The Save bar is the settings section's last child, sticky to the viewport's bottom edge (22 L2.B1, the user's ruling of 2026-11-26, reversing 22 D2.5 and D2.6), its group ordered Discard, Save changes, Delete (22 D4.30, L2.A2): **Delete model profile** (`model-profile-delete`) last of them, switched off with the reason of `fe/src/modelProfileDelete.ts` while `usedBy` names one (IP5.6); pressing it opens the confirm under them, whose **Delete** sends `DELETE /api/profiles/model/<id>`, and the page becomes the paragraph that says it is gone (e1eea89, 28a028f, 22D4 eb042d8, `fe/briefs/22-model-sources.md` 22 D.1 to 22 D.7 and 22 D4.9 to 22 D4.14); a refusal whose read again took the Delete away leaves its words in a paragraph of the bar's own | signed in; otherwise the sign-in form in its place |
 | `#/profiles/server` | The server profile pool (`fe/src/ServerProfiles.tsx`, 17a, 17b): the pool read once each time the page opens from `GET /api/profiles/server`, one row per profile in the reply's order, the id a link to its page, the port, the tags, and the instance that runs it a link to that page, the rows not sorted. At the end of the list a 40 px `+` (e73d922, 17b2.1) discloses the **Create** form in place: the new profile's id and port, sent as `POST /api/profiles/server`, a 201 opening the new profile's page, and a 503 or 504 reading the list again to say whether the profile landed (17b.4, 17b.5). Each row ends with a 40 px minus named `Delete server profile <id>` (`fe/src/RowDelete.tsx`, 22D4 eb042d8): it is switched off (`aria-disabled`, drawn inactive) while an instance runs the profile, and its reason `An instance uses it: give that instance another server profile to delete this one.` shows as a line under the minus on hover and on focus; pressing it opens a confirm as a row of the table right after the row, whose **Delete** sends `DELETE /api/profiles/server/<id>`; the row leaves the list when it lands, every row's minus going inactive with the write, and a refusal reads the list again and puts its words on the line above the table (409 `client-server-profile-in-use` naming the instance, 404 `client-no-server-profile` saying it is gone, a 504 `Not confirmed:` read again to see whether it went) | signed in; otherwise the sign-in form in its place |
 | `#/profiles/server/<id>` | One server profile's page (`fe/src/ServerProfilePage.tsx`, 17a.5 to 17a.9, 17b.6 to 17b.9): the way back, the id as the heading, and the whole Server form of that profile, read from `GET /api/profiles/server/<id>` (the server document plus `instance`) and saved as `PUT` there. Under the heading a definition row says **Used by**: `Unused` as muted text, or the instance as a link to its page, carrying the name the menu uses (22 D2.10). The Save bar at the end of the form starts its group with **Delete server profile** (22 D4.10): switched off while an instance runs the profile, its reason `An instance uses it: give that instance another server profile to delete this one.` a visible line under the bar's buttons; pressing it opens the confirm under them, whose **Delete** sends `DELETE /api/profiles/server/<id>` (22 D2.8, 22D4 eb042d8); a 409 `client-server-profile-in-use` read again leaves the words in a paragraph of the bar's own | signed in; otherwise the sign-in form in its place |
 | `#/node` | Node info (`fe/src/NodePage.tsx`, fe slice AN5, `fe/briefs/18-about-node-info.md`), read again at every arrival from `GET /api/node` (an engine upgrade does not restart the web service): the host name, the operating system and kernel, the framework's version, one section per installed engine with its version and a row per GPU runtime package (the three known suffixes by their own word, any other as sent; a `null` version as Unknown, an engine with no runtime as None, CPU only, `engines: []` as a paragraph that there is no engine), then one block per GPU (vendor, PCI address, driver, Vulkan driver). When the reply carries `nodeInfo` (the manager did not answer), the OS and kernel show as Unknown and the GPU section is a paragraph saying the manager did not answer or could not read them. A read with nothing to show is a fixed message, and a 401 ends the session | signed in; otherwise the sign-in form in its place |
@@ -1397,7 +1432,9 @@ nobody out; a sign-out and a sign-in read it again. An old `#/models` bookmark i
 - **Every model profile call of the contract is served**: the page's read, its save and its delete
   ([above](#the-save), [above](#the-create-and-the-delete)), the model info read
   ([above](#the-model-info)), and the Model profiles page's list and switch
-  ([above](#the-model-profile-routes)). The fe has no page that creates a model profile, and no page
+  ([above](#the-model-profile-routes)). The fe asks neither the switch nor the model info since IP5 (0d855368):
+  its list and its page have no switch and draw no card that reads the model's facts. The fe has no page that
+  creates a model profile, and no page
   picks a model source: the file pick and the Hugging Face pick (M4) are open `PLAN.md` work. The fe is tested against that contract with mocked
   replies only, never against a real bff, so what those pages show takes a run on a machine. Everything the
   instance page makes is served: the
