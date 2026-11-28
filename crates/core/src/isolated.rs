@@ -2,9 +2,8 @@
 //! data-root tests (TS2, decided 2026-11-28, test-only)".
 //!
 //! The data root is the process-wide `PRIVATE_AI_DATA_ROOT`, read again on
-//! every call, so a test that redirects it must run alone in its process: that
-//! is why every phase sits in the one `data_root_e2e` of `src/tests/mod.rs`.
-//! `isolated` gives such a test its own process instead: the parent spawns this
+//! every call, so a test that redirects it must run alone in its process.
+//! `isolated` gives such a test its own process: the parent spawns this
 //! test binary again with `--exact <its own test path>` and a marker naming it,
 //! the child sees the marker, redirects the data root to a temp dir of its own
 //! and runs the body. libtest runs the parents in parallel, so every
@@ -53,8 +52,8 @@ const ROOT: &str = "PAI_TEST_ISOLATED_ROOT";
 const BOUND_MS: &str = "PAI_TEST_ISOLATED_BOUND_MS";
 
 /// The bound of a call that names none. It has to fit the slowest phase of the
-/// crate with the most of them, the manager's `data_root_e2e`: TS2b runs its
-/// phases through this helper, the parents in parallel, so a phase runs beside
+/// crate with the most of them: the manager runs all of its phases through
+/// this helper, the parents in parallel, so a phase runs beside
 /// the whole suite. The measurement that set the figure, and the figure, live
 /// in the TS2 entry of `PLAN.md`: re-time the phases of
 /// `crates/manager/src/tests/mod.rs` there if the machine changes.

@@ -894,8 +894,8 @@ pub(crate) fn friendly_model_name(id: &str, model_path: &str) -> String {
 
 /// The API key withheld by the manager (the caller may not configure): the
 /// Integrations tab's preview and Save leave opencode.json's `apiKey` exactly
-/// as the file has it, while an unset key still removes it. Runs in
-/// `data_root_e2e` (`src/tests/mod.rs`): it writes opencode.json under the
+/// as the file has it, while an unset key still removes it. Runs as an
+/// isolated test of `src/tests/mod.rs`: it writes opencode.json under the
 /// redirected tree.
 #[cfg(test)]
 pub(crate) fn api_key_withheld_e2e() {

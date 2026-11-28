@@ -1415,7 +1415,7 @@ fn report_leg(leg: &Leg, mode: Mode) {
     }
 }
 
-/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the
+/// E2E phase (an isolated test of `tests/mod.rs`): the
 /// value a sweep will put back is read from the instance's models.ini through
 /// the seam (the manager's file), not from the per-user one.
 #[cfg(test)]
@@ -1446,7 +1446,7 @@ pub(crate) fn sweep_config_e2e() {
     );
 }
 
-/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): a value
+/// E2E phase (an isolated test of `tests/mod.rs`): a value
 /// the setter takes but the save refuses (`parallel = 0`) fails the
 /// Benchmark tab's A/B check with the save's own refusal: nothing is written,
 /// no marker made. The sweep's own up-front check (`run`, which only the CLI

@@ -346,7 +346,7 @@ pub fn restore_newest_with(
     slot_action(port, "restore", model, &filename).map(Some)
 }
 
-/// E2E phase for `data_root_e2e` (`src/tests/mod.rs`): it redirects the data
+/// E2E phase, an isolated test of `src/tests/mod.rs`: it redirects the data
 /// tree. Under the manager (Linux and Windows; the test build's default
 /// backend is a manager) an instance whose StateDir is unset writes its
 /// snapshots to the folder of ITS OWN: the engine's state root

@@ -1200,7 +1200,7 @@ pub mod fake {
     }
 }
 
-/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the save of
+/// E2E phase (an isolated test of `tests/mod.rs`): the save of
 /// a server config read with the API key withheld. `server_cfg::load` reads
 /// no key (the manager blanked it); saved untouched, the manager is asked to
 /// keep its own; saved with a key the user typed, that key is sent and
@@ -1268,7 +1268,7 @@ pub(crate) fn api_key_kept_e2e() {
     });
 }
 
-/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the
+/// E2E phase (an isolated test of `tests/mod.rs`): the
 /// `Manager` backend's start and restart, which load server.ini, and that it
 /// leaves the per-user tree to the manager (no model profiles or binary check, no log
 /// rotation).
@@ -1420,7 +1420,7 @@ pub(crate) fn server_control_e2e() {
     assert_eq!(listed, [std::ffi::OsString::from("llama-server.log")]);
 }
 
-/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): every
+/// E2E phase (an isolated test of `tests/mod.rs`): every
 /// reader and writer of the instance's configuration files goes through the
 /// seam. `Direct` keeps the per-user files under their names; the `Manager`
 /// backend reads and writes the manager's files and nothing under the

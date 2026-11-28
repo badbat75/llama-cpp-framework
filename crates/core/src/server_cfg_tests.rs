@@ -399,7 +399,7 @@ fn default_config_reloads_as_explicit_defaults() {
     assert_eq!(reloaded.rocm_host_memory_gtt, None);
     assert_eq!(reloaded.cuda_allreduce, None);
     // ModelsDir and StateDir are written resolved, through `paths::`,
-    // which `data_root_e2e` redirects on another thread: here only that
+    // which an isolated phase redirects in a child of its own: here only that
     // both materialize; their exact values are `server_cfg_defaults_e2e`.
     let models = reloaded.models_dir.expect("ModelsDir materialized");
     assert!(models.ends_with(".llama.cpp"), "{models:?}");
@@ -464,7 +464,7 @@ fn rocm_host_memory_gtt_round_trips_both_states_and_stays_unset_when_absent() {
 #[test]
 fn rocm_host_memory_gtt_renders_as_a_key_only_when_set() {
     // The directories are named so the render resolves nothing through
-    // `paths::`, which `data_root_e2e` redirects on another thread.
+    // `paths::`, which an isolated phase redirects in a child of its own.
     let dirs = || ServerConfig {
         models_dir: Some("/var/lib/llama.cpp/models".into()),
         state_dir: Some("/var/lib/llama.cpp/state".into()),

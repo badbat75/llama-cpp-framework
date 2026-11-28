@@ -1,46 +1,96 @@
-//! The end-to-end test of this crate.
+//! The end-to-end tests of this crate: one `#[test]` per phase (TS2c).
 //!
-//! WARNING: its phases redirect config IO by setting the process-wide
-//! `PRIVATE_AI_DATA_ROOT` env var and never restore it, so they all run
-//! in this ONE `#[test]`, one after the other. Unit tests elsewhere must not
-//! touch `paths::` (or anything that resolves the config dir): cargo runs
-//! tests on parallel threads, so they would race this one nondeterministically.
+//! Every phase runs through `isolated` (ARCHITECTURE.md "Isolated data-root
+//! tests (TS2)"): the `#[test]` re-runs itself in a child process of this test
+//! binary, the child redirects the process-wide `PRIVATE_AI_DATA_ROOT` to a
+//! temp dir of its own and runs the phase there, and the parent fails unless
+//! the child passed. libtest runs the parents in parallel, so each phase runs
+//! alone, in its own process, under a data root of its own, and a phase that
+//! needs a file reads one its own setup wrote. The path `isolated` is given is
+//! the path libtest names the test by, so it is `tests::<name>` here. Unit
+//! tests elsewhere must not touch `paths::` (or anything that resolves the
+//! config dir): cargo runs them on parallel threads beside these tests, and
+//! the redirect of a phase's child is process-wide.
+use crate::isolated::isolated;
 
 mod redirect_lint;
 
 #[test]
-fn data_root_e2e() {
+fn instance_paths_e2e() {
     // ── System config paths (paths.rs `system_config_dir`, instances) ────
-    crate::paths::instance_paths_e2e();
+    isolated(
+        "tests::instance_paths_e2e",
+        crate::paths::instance_paths_e2e,
+    );
+}
 
+#[test]
+fn instance_launch_e2e() {
     // ── Service launch (launch.rs `instance_command`) ────────────────────
-    crate::launch::instance_launch_e2e();
+    isolated(
+        "tests::instance_launch_e2e",
+        crate::launch::instance_launch_e2e,
+    );
+}
 
+#[cfg(not(windows))]
+#[test]
+fn migrate_e2e() {
     // ── The old user tree moved to the new names (migrate.rs) ────────────
-    #[cfg(not(windows))]
-    crate::migrate::migrate_e2e();
+    isolated("tests::migrate_e2e", crate::migrate::migrate_e2e);
+}
 
+#[test]
+fn instance_log_paths_e2e() {
     // ── The instances' log files (paths.rs `instance_log`) ───────────────
-    crate::paths::instance_log_paths_e2e();
+    isolated(
+        "tests::instance_log_paths_e2e",
+        crate::paths::instance_log_paths_e2e,
+    );
+}
 
+#[test]
+fn server_cfg_defaults_e2e() {
     // ── The defaults a saved server.ini resolves (server_cfg.rs) ─────────
-    crate::server_cfg::server_cfg_defaults_e2e();
+    isolated(
+        "tests::server_cfg_defaults_e2e",
+        crate::server_cfg::server_cfg_defaults_e2e,
+    );
+}
 
+#[test]
+fn instance_models_dir_e2e() {
     // ── The instances' default models directory (paths.rs) ───────────────
-    crate::paths::instance_models_dir_e2e();
+    isolated(
+        "tests::instance_models_dir_e2e",
+        crate::paths::instance_models_dir_e2e,
+    );
+}
 
+#[test]
+fn instance_state_dir_e2e() {
     // ── The instances' default state directory (paths.rs) ────────────────
-    crate::paths::instance_state_dir_e2e();
+    isolated(
+        "tests::instance_state_dir_e2e",
+        crate::paths::instance_state_dir_e2e,
+    );
+}
 
+#[test]
+fn instance_server_profile_order_e2e() {
     // ── The server profile an instance resolves to (paths.rs) ─────────────
-    crate::paths::instance_server_profile_order_e2e();
+    isolated(
+        "tests::instance_server_profile_order_e2e",
+        crate::paths::instance_server_profile_order_e2e,
+    );
 }
 
 /// The paths with no test redirect, named after the project, and the old
 /// redirect variable ignored. They need `PRIVATE_AI_DATA_ROOT` unset, which no
-/// test may do in this process (`data_root_e2e` sets it on another thread), so
-/// this runs `real_paths_child` in a child process of this test binary with a
-/// fake profile: nothing is created, the paths are only computed.
+/// test may do in this process (the isolated phases above set it in a child of
+/// their own, and libtest runs their parents on parallel threads), so this runs
+/// `real_paths_child` in a child process of this test binary with a fake
+/// profile: nothing is created, the paths are only computed.
 #[test]
 fn real_paths_follow_the_new_names() {
     let profile = tempfile::tempdir().expect("tempdir");

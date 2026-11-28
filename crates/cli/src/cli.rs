@@ -1762,7 +1762,7 @@ fn run_control_with(c: ControlCmd, server: &crate::server_control::Backend) -> R
 #[path = "cli_tests.rs"]
 mod tests;
 
-/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): the
+/// E2E phase (an isolated test of `src/tests/mod.rs`): the
 /// `control` commands on the manager backend (a recording fake, with a
 /// llama-server stand-in on a loopback port): each asks the manager for the
 /// `default` instance; the command line sends NO snapshot request, because
@@ -1922,7 +1922,7 @@ pub(crate) fn cli_control_e2e() {
     }
 }
 
-/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): `server
+/// E2E phase (an isolated test of `src/tests/mod.rs`): `server
 /// set` and `model-profile enable` / `disable` write the manager's files through the
 /// seam and nothing under the per-user config directory, and a write the
 /// manager refuses fails the command with the refusal's own text, which
@@ -2063,7 +2063,7 @@ pub(crate) fn cli_config_e2e() {
     }
 }
 
-/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): `server
+/// E2E phase (an isolated test of `src/tests/mod.rs`): `server
 /// set` refuses what the Server tab refuses, before anything is written, on
 /// the manager backend (which would refuse some of it too) and on the direct
 /// one (macOS, no manager), with the refusal's text; and stores the base URL
@@ -2245,7 +2245,7 @@ pub(crate) fn cli_server_checks_e2e() {
     }
 }
 
-/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`):
+/// E2E phase (an isolated test of `src/tests/mod.rs`):
 /// `config import` hands the per-user files to the manager through the seam,
 /// leaves them in place, fails with the refusal's text (which `main` prints
 /// on stderr before exiting non-zero) after keeping what was written, and
@@ -2346,7 +2346,7 @@ pub(crate) fn cli_import_e2e() {
     );
 }
 
-/// E2E phase (called from `data_root_e2e` in `src/tests/mod.rs`): the server
+/// E2E phase (an isolated test of `src/tests/mod.rs`): the server
 /// file `pai server …` reads and writes is the profile the manager's record
 /// names, never `server@<id>.ini`, and a record that cannot be read fails the
 /// command with its own text and no server file read (`ARCHITECTURE.md`,

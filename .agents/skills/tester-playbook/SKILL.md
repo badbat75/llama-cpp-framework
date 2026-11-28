@@ -162,11 +162,12 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
 - Prove a test exists with `-- --list | grep -c "^<name>:"`, never by running it.
 - Judge red from the OUTPUT (`FAILED`, `panicked at`), never the exit code.
 
-### Enumerating EVERY red of the one `data_root_e2e` in one pass
+### Enumerating EVERY red of a sequential e2e in one pass
 
 - In a scratch copy (own `CARGO_TARGET_DIR`, never the repo's), rewrite every check into a NON-FATAL mark
-  with a python script, run the one `#[test]` once, and `grep IP3C-RED`: a sequential `data_root_e2e`
-  prints one panic, this prints every site. The marks: `assert!(c, msg)` →
+  with a python script, run the one `#[test]` once, and `grep IP3C-RED`: a sequential test prints
+  one panic, this prints every site. (No crate's data-root e2e is sequential any more: TS2b and TS2c
+  made every phase its own isolated `#[test]`, so each phase's red is its own line of the suite run.) The marks: `assert!(c, msg)` →
   `if !(c) { eprintln!("IP3C-RED file:line kind | {}", msg); }`, `assert_eq!(a, b, msg)` →
   `{ match (&(a), &(b)) { (ip3c_a, ip3c_b) => if ip3c_a != ip3c_b { eprintln!(…) } } }`, a bare `panic!`
   → mark + `panic!("IP3C-ABORT")` (its type divergence keeps the types). Convert the phases' files AND the
@@ -679,6 +680,27 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   first: a word-internal map breaks identifiers and `mod` file names. A stale pointer in a comment is a
   defect.
 - List every whole-object `json!` literal an additive wire key reddens; patch none.
+- Retargeting those literals (a brief asks for it): the values are the file's OWN fake's, read from its
+  `row()` helper, and where the fake's rows read FAILS the bff's row defaults (`converged: true`,
+  `reason: null`, `pendingRestart: false`, from the `is_none_or`/`is_some_and` in `lib.rs`) are what the
+  reply carries: read them off the baseline log's `left:` line, never from the contract (it says the
+  states come from the manager, and says nothing about a manager with no rows verb). A scripted sweep with
+  a per-file count assert on the literal's tail key (`"removable": false }`) moves every site at once.
+- A create body carrying a key the route retired reddens EVERY pin behind it at the shared
+  `assert_error` helper (one cause, many names): retarget the body, then the refusal-table entries whose
+  keys the shared `write_failure` renamed (`client-address-in-use` 422 `field` → 409 `address-in-use`
+  no field; `client-unresolvable-host` → 422 `invalid-hostname` no field), and keep the entries the
+  manager can still answer one step behind (a create of an instance profile answers
+  `client-no-server-profile` for the server profile that profile names). A brief that names a const by a
+  key its BODY carries ("SERVER_CREATE") names the key, not the identifier: locate the red by the log's
+  panic line.
+- An old malformed-bodies list whose entries break the RETIRED key is green and vacuous: retarget the
+  broken values onto the live key and keep one entry naming the retired key (it is the route's own rule
+  that a body naming it at all is refused, never read as the new one).
+- Prove a retargeted whole-row pin pins VALUES not presence: mutate the shared fake's field
+  (`converged: true` → `false`) and its create answer (8581 → 8582) and watch the strict equality red.
+- The client trait and its wire structs are `crates/core/src/client.rs` (transports in
+  `crates/core/src/client/dbus.rs` and `pipe.rs`); there is no `client/mod.rs`.
 - Rename and re-count when a ruling moves a key onto a list: it reddens the off-list 400 loop and the
   exclusion test whose NAME carries the count; grep `exclude_the_`.
 - When a brief gives an existing key a placeholder (`Remove` to `Remove {0}`), change the value in the test
@@ -870,6 +892,18 @@ Rules are in `AGENTS.md`. Format of this file: `AGENTS.md`, under "Skills".
   count. An id like `Qwen3-27B` pins nothing: `encodeURIComponent` is the identity on it. Open the page at
   the encoded hash (`startAt` keeps `%23` in the fragment, `parseRoute` decodes it) and settle on the
   cards' `h3` before pressing the page's own control: the h1 alone renders while the read is open.
+
+- A slice that shows the model profile's cards filtered to a key list: pin the filter by the field ids,
+  not by the visible text. `CardIntro` draws NOTHING when `lines` has one entry and the card defines no
+  `about` (the GPU card's intro only shows because the card has a panel), so a card's own note (Vision's
+  `model-profile-vision-off`) is reachable as `section.textContent` alone: a filter pin that reads
+  `.intro` reds for a reason outside the slice. Pin the keys the filter keeps as "some id of the card's
+  one key" (`section.querySelector('#' + fieldId(key))`) and the keys it drops as the ids `fieldId(key)`
+  plus `-control`, `-error`, `-hint` being absent document-wide, the drop list computed from `CARDS` once.
+  `enabledWhen: 'mmproj'` and `specGroupOn: 'draft'` read the `values` of the WHOLE document the page
+  passes, so a document that carries `spec-type: 'draft-mtp'` turns the draft group on with no draft model:
+  pin a rule that reads a second document as the pair of states (note plus disabled control with the key
+  absent, both gone with it present), never the bare disabled state.
 
 ### The web UI (fe/): async settling
 
@@ -1764,4 +1798,7 @@ frozen list.
 - A whole-suite run shows `App.test.tsx` `1a.5` (the current page's link carries `aria-current="page"`) red
   once, while that file is green solo and the suite is green just before and just after: on a nav slice,
   rerun the file and then the suite before reporting, so a load flake is not reported as the slice's red.
+- A key written twice in `strings/en_US.json` is legal JSON and the import keeps the LAST one, so a
+  duplicate-key guard must read the RAW text (`/^ {2}"([^"]+)":/gm`) and assert its match count equals
+  `Object.keys(import).length`: without that second line a file shape the regex cannot read goes green.
 - A labelling element that also carries a decorative muted line names the control with it: the Models row's switch read `Qwen3-27Bllama.cpp` once 22 D4.35 put the engine inside the `aria-labelledby` target, so 77 `getByRole('switch', {name: id})` and tab-name pins went red across ten files from ONE markup defect. Report the fan-out as one defect, sweep the test-side id readers to `rowName`, and pin the rule (the labelling element holds the id alone, the line sits beside it) in the slice's own file.

@@ -2218,7 +2218,7 @@ pub fn tri_bool(s: &str) -> Option<bool> {
     }
 }
 
-/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): the save
+/// E2E phase (an isolated test of `tests/mod.rs`): the save
 /// refuses what the Models tab refuses on every backend, `Direct` (macOS,
 /// no manager to check anything) and the manager (a fake that writes what
 /// it is given, as an old manager would), and writes nothing then.
@@ -2284,7 +2284,7 @@ pub(crate) fn model_profile_checks_every_backend_e2e() {
     assert_eq!(fake::writes(&log), ["write_file models.ini"]);
 }
 
-/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): a model profile
+/// E2E phase (an isolated test of `tests/mod.rs`): a model profile
 /// created from a Hugging Face pick (`hf-repo` with the picker's quant tag,
 /// `hf-file`, no `model`) survives a save on every backend: load it, save it
 /// unchanged, and the file still holds both keys with their values. The save

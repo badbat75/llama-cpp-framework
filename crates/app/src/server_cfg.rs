@@ -307,7 +307,8 @@ mod tests {
             (Kind::Direct, Os::Windows),
         ] {
             // The user's default is `<data root>/state`; the data root is
-            // not compared, since `data_root_e2e` moves it on another thread.
+            // not compared, since an isolated phase redirects it in a child of
+            // its own while this unit test runs on its own thread.
             for cfg in unset_state_configs() {
                 let got = effective_state_dir(&cfg, kind, os, instance_state(os));
                 assert_ne!(got, instance_state(os), "{kind:?} {os:?} {cfg:?}");

@@ -1,12 +1,23 @@
 //! Cross-cutting tests of the crate.
 //!
 //! The phases that redirect the data tree (`paths::redirect_for_tests`, which
-//! sets the process-wide `PRIVATE_AI_DATA_ROOT` and never restores it) run in
-//! ONE `#[test]`, `data_root_e2e`, one after the other. Unit tests elsewhere
-//! must not touch `paths::` (or anything that resolves the config dir): cargo
-//! runs tests on parallel threads, so they would race this one.
+//! sets the process-wide `PRIVATE_AI_DATA_ROOT` and never restores it) each run
+//! through `pai_core::isolated::isolated` (ARCHITECTURE.md "Isolated data-root
+//! tests (TS2)"): the `#[test]` re-runs itself in a child process of this test
+//! binary, the child redirects the data root to a temp dir of its own and runs
+//! the phase there, and the parent fails unless the child passed. libtest runs
+//! the parents in parallel, so each phase runs alone, in its own process, under
+//! a data root of its own, and a phase that needs a file reads one its own
+//! setup wrote. The path `isolated` is given is the path libtest names the test
+//! by, so it is `tests::<name>` here. Unit tests elsewhere must not touch
+//! `paths::` (or anything that resolves the config dir): cargo runs them on
+//! parallel threads beside these tests, and the redirect of a phase's child is
+//! process-wide.
+use pai_core::isolated::isolated;
 
 mod deps_lint;
+// The `model-profile` phases, run as isolated tests below.
+mod model_profile;
 mod split_lint;
 
 /// The text scan shared with pai-config's lint of the GUI's stop worker
@@ -15,165 +26,56 @@ mod split_lint;
 #[path = "../../../app/src/tests/gate_lint.rs"]
 pub(crate) mod gate_lint;
 
-use clap::Parser;
-use pai_core::paths;
+#[test]
+fn cli_control_e2e() {
+    // ── The `control` commands on the manager backend (cli.rs) ───────────
+    isolated("tests::cli_control_e2e", crate::cli::cli_control_e2e);
+}
 
 #[test]
-fn data_root_e2e() {
-    // ── The `control` commands on the manager backend (cli.rs) ───────────
-    crate::cli::cli_control_e2e();
-
+fn cli_config_e2e() {
     // ── `server set` and `model-profile enable` through the seam (cli.rs) ─
-    crate::cli::cli_config_e2e();
+    isolated("tests::cli_config_e2e", crate::cli::cli_config_e2e);
+}
 
+#[test]
+fn cli_server_checks_e2e() {
     // ── `server set` refuses what the Server tab refuses (cli.rs) ────────
-    crate::cli::cli_server_checks_e2e();
+    isolated(
+        "tests::cli_server_checks_e2e",
+        crate::cli::cli_server_checks_e2e,
+    );
+}
 
+#[test]
+fn cli_import_e2e() {
     // ── The per-user config handed to the manager (cli.rs) ───────────────
-    crate::cli::cli_import_e2e();
+    isolated("tests::cli_import_e2e", crate::cli::cli_import_e2e);
+}
 
+#[test]
+fn cli_server_profile_e2e() {
     // ── The server file is the profile the record names (cli.rs) ─────────
-    crate::cli::cli_server_profile_e2e();
-
-    // ── `model-profile delete|disable|enable` on the test backend ────────
-    model_profile_commands_e2e();
-
-    // ── `model-profile delete --delete-files` on disk (cli.rs, linked_files)
-    model_profile_delete_files_e2e();
+    isolated(
+        "tests::cli_server_profile_e2e",
+        crate::cli::cli_server_profile_e2e,
+    );
 }
 
-/// `model-profile delete <typo>` errors instead of a false "Removed", and
-/// `model-profile disable|enable` is the same move the Models tab's switch makes: a
-/// case-insensitive lookup acting on the STORED id, opencode.json untouched
-/// (only the Integrations tab's Save writes it). The default test backend keeps
-/// the model profile files at the per-user paths, under the redirect.
+#[test]
 fn model_profile_commands_e2e() {
-    use pai_app::model_profiles;
-    let dir = tempfile::tempdir().expect("tempdir");
-    paths::redirect_for_tests(dir.path());
-    let ini = paths::models_ini();
-    std::fs::create_dir_all(ini.parent().expect("config dir")).expect("config dir");
-    std::fs::write(&ini, "[e2e]\nmodel = /models/e2e-Q8_0.gguf\n").expect("models.ini");
-    let opencode = paths::opencode_user_config();
-    std::fs::create_dir_all(opencode.parent().expect("opencode dir")).expect("opencode dir");
-    let opencode_text = concat!(
-        "{\n  \"provider\": {\n    \"llama.cpp\": {\n",
-        "      \"models\": { \"e2e\": { \"name\": \"e2e\" } }\n    }\n  }\n}\n"
-    );
-    std::fs::write(&opencode, opencode_text).expect("opencode.json");
-
-    let pai = |args: &[&str]| {
-        let argv: Vec<&str> = std::iter::once("pai").chain(args.iter().copied()).collect();
-        let cli = crate::cli::Cli::try_parse_from(&argv)
-            .unwrap_or_else(|e| panic!("pai {}: {e}", args.join(" ")));
-        crate::cli::run(cli)
-    };
-
-    assert!(
-        pai(&["model-profile", "delete", "no-such-preset"]).is_err(),
-        "deleting a nonexistent preset must error, not report success"
-    );
-    assert!(
-        model_profiles::load_all().iter().any(|p| p.id == "e2e"),
-        "nothing deleted"
-    );
-
-    pai(&["model-profile", "disable", "E2E"]).expect("model-profile disable");
-    assert!(model_profiles::load_all().iter().all(|p| p.id != "e2e"));
-    assert!(model_profiles::load_listed()
-        .iter()
-        .any(|l| l.model_profile.id == "e2e" && !l.enabled));
-    assert_eq!(
-        std::fs::read_to_string(&opencode).expect("opencode.json"),
-        opencode_text,
-        "the CLI never touches opencode.json: only the Integrations tab's Save does"
-    );
-    pai(&["model-profile", "disable", "e2e"]).expect("already off is not an error");
-    pai(&["model-profile", "enable", "e2e"]).expect("model-profile enable");
-    assert!(model_profiles::load_all().iter().any(|p| p.id == "e2e"));
-    assert!(
-        pai(&["model-profile", "enable", "no-such-preset"]).is_err(),
-        "an unknown id must error"
+    // ── `model-profile delete|disable|enable` on the test backend ────────
+    isolated(
+        "tests::model_profile_commands_e2e",
+        model_profile::model_profile_commands_e2e,
     );
 }
 
-/// `model-profile delete --delete-files` follows the Models tab's delete dialog: a
-/// file another model profile links is refused before anything changes, unless
-/// `--even-if-shared`; the picked files go with the Hugging Face repo folders
-/// they leave empty under ModelsDir; without the flag every file stays.
+#[test]
 fn model_profile_delete_files_e2e() {
-    use pai_app::model_profiles::{self, ModelProfile};
-    let dir = tempfile::tempdir().expect("tempdir");
-    paths::redirect_for_tests(dir.path());
-    let models_dir = dir.path().join("models-root");
-    let mut cfg = pai_app::server_cfg::load();
-    cfg.models_dir = Some(models_dir.to_string_lossy().into_owned());
-    pai_app::server_cfg::save(&cfg).expect("save server.ini");
-
-    let path = |p: &std::path::Path| p.to_string_lossy().into_owned();
-    let touch = |p: &std::path::Path, n: usize| {
-        std::fs::create_dir_all(p.parent().expect("folder")).expect("folder");
-        std::fs::write(p, vec![0u8; n]).expect("file");
-    };
-    let repo = |sub: &str, name: &str| models_dir.join(sub).join("org").join(name);
-    let cli_model = repo("models", "Cli-GGUF").join("cli.gguf");
-    let cli_draft = repo("mtps", "Cli-GGUF").join("cli-mtp.gguf");
-    let other_model = repo("models", "Other-GGUF").join("other.gguf");
-    touch(&cli_model, 2);
-    touch(&cli_draft, 1);
-    touch(&other_model, 3);
-    model_profiles::save(&ModelProfile {
-        id: "cli-del".into(),
-        model: path(&cli_model),
-        model_draft: path(&cli_draft),
-        ..ModelProfile::default()
-    })
-    .expect("save cli-del");
-    model_profiles::save(&ModelProfile {
-        id: "cli-other".into(),
-        model: path(&other_model),
-        model_draft: path(&cli_draft),
-        ..ModelProfile::default()
-    })
-    .expect("save cli-other");
-
-    let pai = |args: &[&str]| {
-        let argv: Vec<&str> = std::iter::once("pai").chain(args.iter().copied()).collect();
-        let cli = crate::cli::Cli::try_parse_from(&argv)
-            .unwrap_or_else(|e| panic!("pai {}: {e}", args.join(" ")));
-        crate::cli::run(cli)
-    };
-    let listed = |id: &str| {
-        model_profiles::load_listed()
-            .iter()
-            .any(|l| l.model_profile.id == id)
-    };
-
-    let err = pai(&[
-        "model-profile",
-        "delete",
-        "cli-del",
-        "--delete-files",
-        "all",
-    ])
-    .expect_err("a shared drafter is refused");
-    assert!(err.to_string().contains("[cli-other]"), "{err}");
-    assert!(
-        listed("cli-del") && cli_model.exists() && cli_draft.exists(),
-        "a refusal changes nothing"
+    // ── `model-profile delete --delete-files` on disk (cli.rs, linked_files)
+    isolated(
+        "tests::model_profile_delete_files_e2e",
+        model_profile::model_profile_delete_files_e2e,
     );
-    pai(&[
-        "model-profile",
-        "delete",
-        "cli-del",
-        "--delete-files",
-        "all",
-        "--even-if-shared",
-    ])
-    .expect("forced");
-    assert!(!listed("cli-del") && !cli_model.exists() && !cli_draft.exists());
-    assert!(!repo("models", "Cli-GGUF").exists() && !repo("mtps", "Cli-GGUF").exists());
-    // Without the flag, every file stays.
-    pai(&["model-profile", "delete", "cli-other"]).expect("plain delete");
-    assert!(!listed("cli-other") && other_model.exists());
 }

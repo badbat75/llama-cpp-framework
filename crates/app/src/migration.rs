@@ -237,7 +237,7 @@ pub(crate) fn migration_e2e() {
     assert!(new_entry.is_file() && !old_entry.exists());
 }
 
-/// E2E phase (called from `data_root_e2e` in `tests/mod.rs`): what
+/// E2E phase (an isolated test of `tests/mod.rs`): what
 /// the hand-over reports, named with the system paths under the redirect,
 /// and the offer's body naming the system directory.
 #[cfg(test)]
